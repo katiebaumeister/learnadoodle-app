@@ -1,0 +1,4108 @@
+import React, { useState, useEffect } from 'react'
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  Image,
+} from 'react-native'
+import { supabase } from '../lib/supabase'
+import DatePicker from 'react-datepicker'
+import 'react-datepicker/dist/react-datepicker.css'
+import SyllabusUpload from './SyllabusUpload'
+import OpenAITest from './OpenAITest'
+import AIChatModal from './AIChatModal'
+import AIConversationTest from './AIConversationTest'
+import { getSubjectRecommendations, processLiveClass, analyzeProgress, chatWithDoodleBot } from '../lib/aiProcessor.js'
+import { AIConversationService } from '../lib/aiConversationService.js'
+
+export default function WebContent({ activeTab, activeSubtab, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange }) {
+  // Avatar sources - static mapping for React Native with error handling
+  const avatarSources = {
+    prof1: require('../assets/prof1.png'),
+    prof2: require('../assets/prof2.png'),
+    prof3: require('../assets/prof3.png'),
+    prof4: require('../assets/prof4.png'),
+    prof5: require('../assets/prof5.png'),
+    prof6: require('../assets/prof6.png'),
+    prof7: require('../assets/prof7.png'),
+    prof8: require('../assets/prof8.png'),
+    prof9: require('../assets/prof9.png'),
+    prof10: require('../assets/prof10.png'),
+  }
+
+  // Helper function to safely get avatar source
+  const getAvatarSource = (avatarKey) => {
+    try {
+      return avatarSources[avatarKey] || avatarSources.prof1
+    } catch (error) {
+      console.warn('Avatar source error:', error)
+      return avatarSources.prof1
+    }
+  }
+
+  // Debug function to log any text node issues
+  const debugTextNode = (value, context) => {
+    if (typeof value === 'string' && value.includes('.')) {
+      console.warn('Potential text node issue:', { value, context })
+    }
+  }
+
+  // Stepper state
+  const [onboardingStep, setOnboardingStep] = useState(0)
+  const [children, setChildren] = useState([])
+
+  // Enhanced child fields
+  const [childName, setChildName] = useState('')
+  const [childAge, setChildAge] = useState('')
+  const [childGrade, setChildGrade] = useState('')
+  const [childInterests, setChildInterests] = useState('')
+  const [childStandards, setChildStandards] = useState('')
+  const [childStyle, setChildStyle] = useState('')
+  const [childCollegeBound, setChildCollegeBound] = useState(false)
+
+  const [isLoading, setIsLoading] = useState(false)
+  const [childData, setChildData] = useState(null)
+
+  // Calendar onboarding state
+  const [calendarStepData, setCalendarStepData] = useState({
+    startDate: new Date(),
+    yearRound: true,
+    totalDays: '',
+    totalHours: '',
+    hoursPerDay: 5,
+    teachingDays: [1,2,3,4,5], // M-F
+    holidays: [], // array of holiday_date strings
+    customVacations: [], // array of date strings
+  })
+  const [globalHolidays, setGlobalHolidays] = useState([])
+
+  // Subjects onboarding state
+  const [subjects, setSubjects] = useState([])
+  const [subjectName, setSubjectName] = useState('')
+  const [subjectGrade, setSubjectGrade] = useState('')
+  const [subjectNotes, setSubjectNotes] = useState('')
+  const subjectSuggestions = [
+    'Math', 'English Language Arts', 'Science', 'Social Studies', 'History', 'Art', 'Music', 'Physical Education', 'Foreign Language', 'Computer Science'
+  ]
+
+  // Activities onboarding state
+  const [activities, setActivities] = useState([])
+  const [activityName, setActivityName] = useState('')
+  const [activitySubject, setActivitySubject] = useState('')
+  const [activityChildren, setActivityChildren] = useState([])
+  const [activityType, setActivityType] = useState('live')
+  const [activityPlatform, setActivityPlatform] = useState('')
+  const [activityLink, setActivityLink] = useState('')
+  const [activityStartDate, setActivityStartDate] = useState('')
+  const [activityEndDate, setActivityEndDate] = useState('')
+  const [activityClassSchedule, setActivityClassSchedule] = useState('')
+  const [activityStudyDays, setActivityStudyDays] = useState('')
+  const [activityTravelMinutes, setActivityTravelMinutes] = useState('')
+  const [activityInitialPlan, setActivityInitialPlan] = useState('')
+  const [activityCourseOutlineRaw, setActivityCourseOutlineRaw] = useState('')
+
+  const [onboardingLoading, setOnboardingLoading] = useState(false)
+  const [onboardingSuccess, setOnboardingSuccess] = useState(false)
+  const [onboardingError, setOnboardingError] = useState('')
+
+  // Syllabus upload state
+  const [processedSyllabi, setProcessedSyllabi] = useState([])
+
+  // Add child form state
+  const [addChildName, setAddChildName] = useState('')
+  const [addChildAge, setAddChildAge] = useState('')
+  const [addChildGrade, setAddChildGrade] = useState('')
+  const [addChildInterests, setAddChildInterests] = useState('')
+  const [addChildStandards, setAddChildStandards] = useState('')
+  const [addChildStyle, setAddChildStyle] = useState('')
+  const [addChildCollegeBound, setAddChildCollegeBound] = useState(false)
+  const [addChildAvatar, setAddChildAvatar] = useState('prof1')
+  const [isAddingChild, setIsAddingChild] = useState(false)
+
+  // OpenAI test state
+  const [showOpenAITest, setShowOpenAITest] = useState(false)
+  const [showAIConversationTest, setShowAIConversationTest] = useState(false)
+
+  // Subject selection assistant state
+  const [showSubjectAssistant, setShowSubjectAssistant] = useState(false)
+  const [subjectMessages, setSubjectMessages] = useState([])
+  const [subjectAssistantLoading, setSubjectAssistantLoading] = useState(false)
+  const [subjectConversationId, setSubjectConversationId] = useState(null)
+
+  // Live-class AI processing state
+  const [liveClassProcessing, setLiveClassProcessing] = useState(false)
+  const [liveClassResult, setLiveClassResult] = useState(null)
+  const [showConflictWarning, setShowConflictWarning] = useState(false)
+  const [conflictDetails, setConflictDetails] = useState('')
+
+  // Progress tracking state
+  const [showProgressModal, setShowProgressModal] = useState(false)
+  const [progressData, setProgressData] = useState({
+    childName: '',
+    subject: '',
+    activityType: '',
+    currentProgress: 0,
+    expectedProgress: 0,
+    daysOffset: 0,
+    recentCompletionRate: 0,
+    learningNotes: '',
+    startDate: '',
+    currentDate: '',
+    totalUnits: 0,
+    completedUnits: 0,
+    studyDaysPerWeek: 0
+  })
+  const [progressAnalysis, setProgressAnalysis] = useState(null)
+  const [progressProcessing, setProgressProcessing] = useState(false)
+
+  // Daily tasks state
+  const [dailyTasks, setDailyTasks] = useState([])
+  const [today] = useState(new Date().toISOString().split('T')[0])
+  const [showPlanningModal, setShowPlanningModal] = useState(false)
+  const [planningComments, setPlanningComments] = useState('')
+  const [planningFromDate, setPlanningFromDate] = useState('')
+  const [showLastDayPrompt, setShowLastDayPrompt] = useState(false)
+
+  // DoodleBot AI chat state
+  const [doodleMessages, setDoodleMessages] = useState([])
+  const [doodleLoading, setDoodleLoading] = useState(false)
+  const [showDoodleChat, setShowDoodleChat] = useState(false)
+  const [doodleInput, setDoodleInput] = useState('')
+  const [doodleConversationId, setDoodleConversationId] = useState(null)
+
+  // Fetch child data when activeTab changes to a child tab
+  useEffect(() => {
+    if (activeTab.startsWith('child-')) {
+      const childId = activeTab.replace('child-', '')
+      fetchChildData(childId)
+    }
+  }, [activeTab])
+
+  // Fetch global holidays on mount
+  useEffect(() => {
+    if (onboardingStep === 1 && globalHolidays.length === 0) {
+      fetchGlobalHolidays()
+    }
+  }, [onboardingStep])
+
+  useEffect(() => {
+    const getUserId = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        console.log('Current user ID:', user.id);
+      }
+    };
+    getUserId();
+  }, []);
+
+
+
+  const fetchChildData = async (childId) => {
+    try {
+      const { data, error } = await supabase
+        .from('children')
+        .select('*')
+        .eq('id', childId)
+        .single()
+
+      if (error) {
+        console.error('Error fetching child data:', error)
+      } else {
+        setChildData(data)
+      }
+    } catch (error) {
+      console.error('Error fetching child data:', error)
+    }
+  }
+
+  const handleEditChild = () => {
+    if (childData && navigation) {
+      navigation.navigate('EditChild', { childId: childData.id })
+    }
+  }
+
+  const handleAddChildToList = () => {
+    if (!childName.trim() || !childAge.trim()) {
+      alert('Please fill in both name and age')
+      return
+    }
+    setChildren([
+      ...children,
+      {
+        name: childName.trim(),
+        age: parseInt(childAge),
+        grade: childGrade.trim(),
+        interests: childInterests.trim(),
+        standards: childStandards.trim(),
+        style: childStyle.trim(),
+        college_bound: childCollegeBound,
+      },
+    ])
+    setChildName('')
+    setChildAge('')
+    setChildGrade('')
+    setChildInterests('')
+    setChildStandards('')
+    setChildStyle('')
+    setChildCollegeBound(false)
+  }
+
+  const handleRemoveChild = (index) => {
+    setChildren(children.filter((_, i) => i !== index))
+  }
+
+  const handleNextStep = () => {
+    if (onboardingStep === 0 && children.length === 0) {
+      alert('Please add at least one child to continue')
+      return
+    }
+    setOnboardingStep(onboardingStep + 1)
+  }
+
+  const handlePrevStep = () => {
+    setOnboardingStep(onboardingStep - 1)
+  }
+
+  const fetchGlobalHolidays = async () => {
+    const { data, error } = await supabase
+      .from('global_official_holidays')
+      .select('*')
+      .order('holiday_date', { ascending: true })
+    if (!error && data) setGlobalHolidays(data)
+  }
+
+  const handleTeachingDayToggle = (day) => {
+    setCalendarStepData((prev) => {
+      const teachingDays = prev.teachingDays.includes(day)
+        ? prev.teachingDays.filter((d) => d !== day)
+        : [...prev.teachingDays, day]
+      return { ...prev, teachingDays }
+    })
+  }
+
+  const handleHolidayToggle = (date) => {
+    setCalendarStepData((prev) => {
+      const holidays = prev.holidays.includes(date)
+        ? prev.holidays.filter((d) => d !== date)
+        : [...prev.holidays, date]
+      return { ...prev, holidays }
+    })
+  }
+
+  const handleAddCustomVacation = (date) => {
+    setCalendarStepData((prev) => {
+      if (!prev.customVacations.includes(date)) {
+        return { ...prev, customVacations: [...prev.customVacations, date] }
+      }
+      return prev
+    })
+  }
+
+  const handleRemoveCustomVacation = (date) => {
+    setCalendarStepData((prev) => ({
+      ...prev,
+      customVacations: prev.customVacations.filter((d) => d !== date),
+    }))
+  }
+
+  const calculateEndDate = () => {
+    const { startDate, yearRound, totalDays, totalHours, hoursPerDay, teachingDays, holidays, customVacations } = calendarStepData
+    let days = 0
+    if (yearRound) {
+      days = 365
+    } else if (totalDays) {
+      days = parseInt(totalDays)
+    } else if (totalHours && hoursPerDay) {
+      days = Math.ceil(parseInt(totalHours) / parseFloat(hoursPerDay))
+    }
+    // Calculate end date by skipping non-teaching days and holidays
+    let current = new Date(startDate)
+    let counted = 0
+    let end = new Date(current)
+    while (counted < days) {
+      const dow = current.getDay()
+      const dateStr = current.toISOString().slice(0,10)
+      const isTeaching = teachingDays.includes(dow)
+      const isHoliday = holidays.includes(dateStr) || customVacations.includes(dateStr)
+      if (isTeaching && !isHoliday) counted++
+      end = new Date(current)
+      current.setDate(current.getDate() + 1)
+    }
+    return end
+  }
+
+  const handleAddSubject = () => {
+    if (!subjectName.trim()) {
+      alert('Please enter a subject name')
+      return
+    }
+    setSubjects([
+      ...subjects,
+      {
+        name: subjectName.trim(),
+        grade: subjectGrade.trim(),
+        notes: subjectNotes.trim(),
+      },
+    ])
+    setSubjectName('')
+    setSubjectGrade('')
+    setSubjectNotes('')
+  }
+
+  const handleRemoveSubject = (index) => {
+    setSubjects(subjects.filter((_, i) => i !== index))
+  }
+
+  const handleAddActivity = () => {
+    if (!activityName.trim() || !activitySubject || activityChildren.length === 0) {
+      alert('Please fill in all required fields (name, subject, children)')
+      return
+    }
+    setActivities([
+      ...activities,
+      {
+        name: activityName.trim(),
+        subject: activitySubject,
+        children: [...activityChildren],
+        type: activityType,
+        platform: activityPlatform.trim(),
+        link: activityLink.trim(),
+        start_date: activityStartDate,
+        end_date: activityEndDate,
+        class_schedule: activityClassSchedule.trim(),
+        study_days: activityStudyDays.trim(),
+        travel_minutes: activityTravelMinutes.trim(),
+        initial_plan: activityInitialPlan.trim(),
+        course_outline_raw: activityCourseOutlineRaw.trim(),
+      },
+    ])
+    setActivityName('')
+    setActivitySubject('')
+    setActivityChildren([])
+    setActivityType('live')
+    setActivityPlatform('')
+    setActivityLink('')
+    setActivityStartDate('')
+    setActivityEndDate('')
+    setActivityClassSchedule('')
+    setActivityStudyDays('')
+    setActivityTravelMinutes('')
+    setActivityInitialPlan('')
+    setActivityCourseOutlineRaw('')
+  }
+
+  const handleRemoveActivity = (index) => {
+    setActivities(activities.filter((_, i) => i !== index))
+  }
+
+  // Syllabus upload handlers
+  const handleSyllabusProcessed = (syllabusData) => {
+    setProcessedSyllabi(prev => [...prev, syllabusData])
+    if (onSyllabusProcessed) {
+      onSyllabusProcessed(syllabusData)
+    }
+  }
+
+  const handleSubjectMessage = async (message) => {
+    try {
+      setSubjectAssistantLoading(true)
+      
+      // Get family_id for conversation
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('No authenticated user');
+      
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', user.id)
+        .single();
+      
+      if (!profile?.family_id) throw new Error('No family_id found for user');
+      const familyId = profile.family_id;
+
+      // Create or get existing conversation
+      let conversationId = subjectConversationId;
+      if (!conversationId) {
+        conversationId = await AIConversationService.createConversation(
+          familyId,
+          'subject_assistant',
+          'Subject Selection Assistant'
+        );
+        setSubjectConversationId(conversationId);
+      }
+
+      // Add user message to database
+      await AIConversationService.addMessage(conversationId, 'user', message);
+      
+      // Add user message to conversation
+      const updatedMessages = [...subjectMessages, { role: 'user', content: message, timestamp: Date.now() }]
+      setSubjectMessages(updatedMessages)
+      
+      // If this is the first message, add a welcome message
+      if (subjectMessages.length === 0) {
+        const welcomeMessage = `Hi! I'm here to help you choose the right subjects for your child. I can see you have ${children.length} child(ren) and ${subjects.length} subject(s) already added. 
+
+What would you like to know? I can help with:
+- Subject recommendations based on age and grade
+- Learning path suggestions
+- Subject combinations for different goals
+- Questions about specific subjects
+
+Just tell me about your child's interests, learning style, or ask for recommendations!`
+        
+        await AIConversationService.addMessage(conversationId, 'assistant', welcomeMessage);
+        setSubjectMessages([{ role: 'assistant', content: welcomeMessage, timestamp: Date.now() }])
+        setSubjectAssistantLoading(false)
+        return
+      }
+      
+      // Prepare child and family context for AI
+      const childInfo = {
+        age: children.length > 0 ? children[0].age : 'Not specified',
+        grade: children.length > 0 ? children[0].grade : 'Not specified',
+        interests: children.length > 0 ? children[0].interests : 'Not specified',
+        learning_style: children.length > 0 ? children[0].learning_style : 'Not specified',
+        college_bound: children.length > 0 ? children[0].college_bound : false
+      }
+      
+      const familyContext = {
+        existing_subjects: subjects.map(s => String(s.name || '')).join(', ') || 'None',
+        goals: 'Educational planning and homeschooling support'
+      }
+      
+      // Get AI recommendations
+      const aiResponse = await getSubjectRecommendations(childInfo, familyContext)
+      
+      // Add AI response to database
+      await AIConversationService.addMessage(conversationId, 'assistant', aiResponse);
+      
+      // Add AI response to conversation
+      setSubjectMessages([...updatedMessages, { role: 'assistant', content: aiResponse, timestamp: Date.now() }])
+      
+    } catch (error) {
+      console.error('Error getting subject recommendations:', error)
+      
+      // Add error message to conversation
+      const errorMessage = 'Sorry, I encountered an error while processing your request. Please try again.'
+      setSubjectMessages(prev => [...prev, { role: 'assistant', content: errorMessage, timestamp: Date.now() }])
+    } finally {
+      setSubjectAssistantLoading(false)
+    }
+  }
+
+  const handleOpenSyllabusUpload = () => {
+    // This will be handled by the parent component through the sidebar
+    // For now, we'll use a simple approach
+    if (onCloseSyllabusUpload) {
+      // We need to trigger the upload modal to open
+      // This is a bit of a workaround since the button is in the content area
+      // but the modal state is managed by the parent
+    }
+  }
+
+  const handleLiveClassProcessing = async () => {
+    if (!activityName.trim() || !activitySubject || activityChildren.length === 0) {
+      Alert.alert('Missing Information', 'Please fill in activity name, subject, and select children.');
+      return;
+    }
+
+    setLiveClassProcessing(true);
+    setLiveClassResult(null);
+    setShowConflictWarning(false);
+    setConflictDetails('');
+
+    try {
+      // Prepare live-class data for AI processing
+      const liveClassData = {
+        activityName: activityName,
+        subject: activitySubject,
+        children: activityChildren,
+        platform: activityPlatform,
+        link: activityLink,
+        classSchedule: activityClassSchedule,
+        studyDays: activityStudyDays,
+        travelMinutes: parseInt(activityTravelMinutes) || 0,
+        startDate: activityStartDate,
+        endDate: activityEndDate,
+        initialPlan: activityInitialPlan,
+        // Add family context
+        familyContext: {
+          teachingDays: calendarStepData.teachingDays,
+          holidays: calendarStepData.holidays,
+          customVacations: calendarStepData.customVacations,
+          totalDays: calendarStepData.totalDays,
+          totalHours: calendarStepData.totalHours,
+          hoursPerDay: calendarStepData.hoursPerDay
+        }
+      };
+
+      // Process with AI
+      const result = await processLiveClass(liveClassData);
+      setLiveClassResult(result);
+
+      // Check for conflicts
+      if (result.conflict_check) {
+        setShowConflictWarning(true);
+        setConflictDetails(result.conflict_check);
+      }
+
+    } catch (error) {
+      console.error('Error processing live-class:', error);
+      Alert.alert('Processing Error', 'There was an error processing your live-class. Please try again.');
+    } finally {
+      setLiveClassProcessing(false);
+    }
+  };
+
+  const handleProgressAnalysis = async () => {
+    if (!progressData.childName || !progressData.subject) {
+      Alert.alert('Missing Information', 'Please fill in child name and subject.');
+      return;
+    }
+
+    setProgressProcessing(true);
+    setProgressAnalysis(null);
+
+    try {
+      // Prepare progress data for AI analysis
+      const analysisData = {
+        ...progressData,
+        familyContext: {
+          teachingDays: calendarStepData.teachingDays,
+          hoursPerDay: calendarStepData.hoursPerDay,
+          currentLoad: activities.length // Number of current activities
+        }
+      };
+
+      // Analyze with AI
+      const result = await analyzeProgress(analysisData);
+      setProgressAnalysis(result);
+
+    } catch (error) {
+      console.error('Error analyzing progress:', error);
+      Alert.alert('Analysis Error', 'There was an error analyzing progress. Please try again.');
+    } finally {
+      setProgressProcessing(false);
+    }
+  };
+
+  const handleProgressAction = (action) => {
+    switch (action) {
+      case 'repace_roadmap':
+        Alert.alert('Repacing Roadmap', 'This would trigger repacing functionality for self-paced activities.');
+        break;
+      case 'replan_two_weeks':
+        Alert.alert('Replanning 2-Week Plan', 'This would trigger 2-week plan regeneration.');
+        break;
+      default:
+        Alert.alert('Action', `Action: ${action}`);
+    }
+  };
+
+  // Generate daily tasks from activities
+  const generateDailyTasks = () => {
+    const tasks = [];
+    
+    console.log('Generating daily tasks with activities:', activities);
+    console.log('Children:', children);
+    
+    // Add parent tasks (all children)
+    activities.forEach(activity => {
+      console.log('Processing activity:', activity);
+              if (activity.type === 'live' && activity.classSchedule) {
+          const task = {
+            id: `parent-${String(activity.name || '')}`,
+            type: 'parent',
+            title: `${String(activity.name || '')} - ${String(activity.subject || '')}`,
+            description: `Live class for ${activity.children.map(c => String(c || '')).join(', ')}`,
+            time: activity.classSchedule,
+            status: 'pending',
+            progress: null,
+            activity: activity
+          };
+          console.log('Created parent task:', task);
+          tasks.push(task);
+        }
+    });
+
+    // Add child-specific tasks
+    children.forEach(child => {
+      activities.forEach(activity => {
+        if (activity.children.includes(child.name)) {
+          // Study tasks for each child
+          if (activity.studyDays) {
+            const task = {
+              id: `child-${String(child.name || '')}-${String(activity.name || '')}`,
+              type: 'child',
+              childName: String(child.name || ''),
+              title: `${String(activity.name || '')} - ${String(activity.subject || '')}`,
+              description: `Study session for ${String(child.name || '')}`,
+              time: 'Flexible',
+              status: 'pending',
+              progress: null,
+              activity: activity,
+              child: child
+            };
+            console.log('Created child task:', task);
+            tasks.push(task);
+          }
+        }
+      });
+    });
+
+    return tasks;
+  };
+
+  // Update task status
+  const updateTaskStatus = (taskId, status, note = '') => {
+    setDailyTasks(prevTasks => 
+      prevTasks.map(task => 
+        task.id === taskId 
+          ? { ...task, status, progress: { status, note, timestamp: new Date().toISOString() } }
+          : task
+      )
+    );
+  };
+
+  // Check if planning is needed
+  const checkPlanningNeeded = () => {
+    const completedTasks = dailyTasks.filter(task => task.status === 'done').length;
+    const totalTasks = dailyTasks.length;
+    const completionRate = totalTasks > 0 ? completedTasks / totalTasks : 0;
+
+    // If most tasks are completed, plan from tomorrow
+    if (completionRate >= 0.5) {
+      setPlanningFromDate('tomorrow');
+      setShowPlanningModal(true);
+    } else {
+      // Ask user to choose
+      setShowLastDayPrompt(true);
+    }
+  };
+
+  // Handle planning from date selection
+  const handlePlanningFromDate = (date) => {
+    setPlanningFromDate(date);
+    setShowLastDayPrompt(false);
+    setShowPlanningModal(true);
+  };
+
+  // Initialize daily tasks when component mounts
+  useEffect(() => {
+    if (activities.length > 0 && children.length > 0) {
+      setDailyTasks(generateDailyTasks());
+    }
+  }, [activities, children]);
+
+  // Handle DoodleBot messages
+  const handleDoodleMessage = async (message) => {
+    if (!message.trim()) return;
+    
+    try {
+      setDoodleLoading(true);
+      const updatedMessages = [...doodleMessages, { role: 'user', content: message, timestamp: Date.now() }];
+      setDoodleMessages(updatedMessages);
+
+      // Get family_id for conversation
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('No authenticated user');
+      
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', user.id)
+        .single();
+      
+      if (!profile?.family_id) throw new Error('No family_id found for user');
+      const familyId = profile.family_id;
+
+      // Create or get existing conversation
+      let conversationId = doodleConversationId;
+      if (!conversationId) {
+        conversationId = await AIConversationService.createConversation(
+          familyId,
+          'doodlebot',
+          'DoodleBot Chat'
+        );
+        setDoodleConversationId(conversationId);
+      }
+
+      // Add user message to database
+      await AIConversationService.addMessage(conversationId, 'user', message);
+
+      // Prepare context for DoodleBot
+      const context = {
+        children: children,
+        activities: activities,
+        subjects: subjects,
+        dailyTasks: dailyTasks,
+        processedSyllabi: processedSyllabi,
+        calendarStepData: calendarStepData,
+        today: today,
+        conversationId: conversationId
+      };
+
+      // Get response from DoodleBot
+      const response = await chatWithDoodleBot(message, context, conversationId);
+      
+      // Add assistant message to database
+      await AIConversationService.addMessage(conversationId, 'assistant', response);
+      
+      setDoodleMessages([...updatedMessages, { role: 'assistant', content: response, timestamp: Date.now() }]);
+
+    } catch (error) {
+      console.error('Error with DoodleBot:', error);
+      const errorMessage = "I'm sorry, I'm having trouble processing your request right now. Please try again in a moment.";
+      setDoodleMessages([...doodleMessages, { role: 'assistant', content: errorMessage, timestamp: Date.now() }]);
+    } finally {
+      setDoodleLoading(false);
+    }
+  };
+
+  // Handle sending message from input
+  const handleSendMessage = () => {
+    if (doodleInput.trim() && !doodleLoading) {
+      handleDoodleMessage(doodleInput);
+      setDoodleInput('');
+    }
+  };
+
+  // Initialize DoodleBot with welcome message
+  useEffect(() => {
+    if (showDoodleChat && doodleMessages.length === 0) {
+      const welcomeMessage = `Hi! I'm DoodleBot, your AI assistant for homeschooling! 🤖✨
+
+I can help you with:
+- Finding information in your children's outlines and syllabi
+- Rescheduling tasks and activities
+- Recommending activities based on learning progress
+- Answering questions about curriculum and schedules
+- Providing educational insights and suggestions
+
+What would you like to know? You can ask me anything about your family's learning journey!`;
+      
+      setDoodleMessages([{ role: 'assistant', content: welcomeMessage, timestamp: Date.now() }]);
+    }
+  }, [showDoodleChat]);
+
+  const handleFinishOnboarding = async () => {
+    setOnboardingLoading(true)
+    setOnboardingError('')
+    setOnboardingSuccess(false)
+    try {
+      // 1. Insert children
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('No authenticated user')
+      // Get family_id from profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', user.id)
+        .single()
+      if (!profile?.family_id) throw new Error('No family_id found for user')
+      const family_id = profile.family_id
+
+      // Insert children
+      let childIds = []
+      for (const child of children) {
+        const { data: childData, error: childError } = await supabase
+          .from('children')
+          .insert([{ ...child, family_id }])
+          .select('id')
+          .single()
+        if (childError) throw childError
+        childIds.push(childData.id)
+      }
+
+      // 2. Insert family_years
+      const { startDate, yearRound, totalDays, totalHours, hoursPerDay } = calendarStepData
+      const endDate = calculateEndDate()
+      const { data: yearData, error: yearError } = await supabase
+        .from('family_years')
+        .insert([{
+          family_id,
+          global_year_id: null, // You can link to global_academic_years if desired
+          start_date: startDate.toISOString().slice(0,10),
+          end_date: endDate.toISOString().slice(0,10),
+          total_days: yearRound ? 365 : (totalDays ? parseInt(totalDays) : null),
+          total_hours: totalHours ? parseInt(totalHours) : (yearRound ? 365 * hoursPerDay : null),
+          hours_per_day: hoursPerDay,
+          is_current: true,
+        }])
+        .select('id')
+        .single()
+      if (yearError) throw yearError
+      const family_year_id = yearData.id
+
+      // 3. Insert family_teaching_days
+      for (let dow = 0; dow < 7; dow++) {
+        await supabase.from('family_teaching_days').insert({
+          family_id,
+          family_year_id,
+          day_of_week: dow,
+          label: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow],
+          is_teaching: calendarStepData.teachingDays.includes(dow),
+        })
+      }
+
+      // 4. Insert calendar_days (holidays/vacations)
+      for (const date of [...calendarStepData.holidays, ...calendarStepData.customVacations]) {
+        await supabase.from('calendar_days').insert({
+          family_id,
+          family_year_id,
+          calendar_date: date,
+          is_vacation: true,
+          is_teaching: false,
+        })
+      }
+
+      // 5. Insert subjects
+      let subjectIds = []
+      for (const subject of subjects) {
+        // For now, link to first child (can be expanded)
+        const { data: subjectData, error: subjectError } = await supabase
+          .from('subject')
+          .insert({
+            family_id,
+            children_id: childIds[0],
+            name: subject.name,
+            grade: subject.grade,
+            notes: subject.notes,
+          })
+          .select('id')
+          .single()
+        if (subjectError) throw subjectError
+        subjectIds.push(subjectData.id)
+      }
+
+      // 6. Insert activities (subject_track)
+      for (const activity of activities) {
+        await supabase.from('subject_track').insert({
+          family_id,
+          name: activity.name,
+          start_date: activity.start_date,
+          end_date: activity.end_date,
+          class_schedule: activity.class_schedule,
+          study_days: activity.study_days,
+          travel_minutes: activity.travel_minutes,
+          platform: activity.platform,
+          link: activity.link,
+          initial_plan: activity.initial_plan,
+          busy_time: '',
+          roadmap: null,
+          course_outline_raw: activity.course_outline_raw,
+          course_outline: '',
+          status: '',
+        })
+      }
+
+      setOnboardingSuccess(true)
+      // Refresh sidebar
+      if (onChildAdded) onChildAdded()
+      // Route to the first new child's dashboard
+      if (childIds.length > 0) {
+        setActiveTab(`child-${childIds[0]}`)
+        setActiveSubtab(`lesson-plan-${childIds[0]}`)
+      }
+    } catch (err) {
+      setOnboardingError(err.message || 'Error saving onboarding data')
+    } finally {
+      setOnboardingLoading(false)
+    }
+  }
+
+  const renderContent = () => {
+    console.log('🔍 RENDER CONTENT - activeTab:', activeTab);
+    
+    // Check if this is a dynamic child tab
+    if (activeTab.startsWith('child-')) {
+      const childId = activeTab.replace('child-', '')
+      console.log('🔍 Rendering child content for:', childId);
+      return renderChildContent(childId)
+    }
+    
+    switch (activeTab) {
+      case 'home':
+        console.log('🔍 Rendering home content');
+        return renderHomeContent()
+      case 'search':
+        console.log('🔍 Rendering search content');
+        return renderSearchContent()
+      case 'calendar':
+        console.log('🔍 Rendering calendar content');
+        return renderCalendarContent()
+      case 'templates':
+        console.log('🔍 Rendering templates content');
+        return renderTemplatesContent()
+      case 'add-child':
+        console.log('🔍 Rendering add-child content');
+        return renderAddChildContent()
+      default:
+        console.log('🔍 Rendering default home content');
+        return renderHomeContent()
+    }
+  }
+
+  const renderSearchContent = () => {
+    return (
+      <View style={styles.content}>
+        <View style={styles.doodleHeader}>
+          <Text style={styles.title}>Ask Doodle</Text>
+          <Text style={styles.subtitle}>Your AI assistant for homeschooling</Text>
+        </View>
+
+        {/* DoodleBot Chat Interface */}
+        <View style={styles.doodleChatContainer}>
+          <View style={styles.doodleChatHeader}>
+            <View style={styles.doodleAvatar}>
+              <Text style={styles.doodleAvatarText}>🤖</Text>
+        </View>
+            <View style={styles.doodleInfo}>
+              <Text style={styles.doodleName}>DoodleBot</Text>
+              <Text style={styles.doodleStatus}>
+                {doodleLoading ? 'Typing...' : 'Online'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Chat Messages */}
+          <ScrollView style={styles.chatMessages} showsVerticalScrollIndicator={false}>
+            {doodleMessages.map((message, index) => (
+              <View 
+                key={index} 
+                style={[
+                  styles.messageContainer,
+                  message.role === 'user' ? styles.userMessage : styles.botMessage
+                ]}
+              >
+                {message.role === 'assistant' && (
+                  <View style={styles.botAvatar}>
+                    <Text style={styles.botAvatarText}>🤖</Text>
+                  </View>
+                )}
+                <View style={[
+                  styles.messageBubble,
+                  message.role === 'user' ? styles.userBubble : styles.botBubble
+                ]}>
+                  <Text style={[
+                    styles.messageText,
+                    message.role === 'user' ? styles.userText : styles.botText
+                  ]}>
+                    {String(message.content || '')}
+                  </Text>
+                  <Text style={styles.messageTime}>
+                    {new Date(message.timestamp).toLocaleTimeString([], { 
+                      hour: '2-digit', 
+                      minute: '2-digit' 
+                    })}
+                  </Text>
+                </View>
+              </View>
+            ))}
+            {doodleLoading && (
+              <View style={styles.messageContainer}>
+                <View style={styles.botAvatar}>
+                  <Text style={styles.botAvatarText}>🤖</Text>
+                </View>
+                <View style={styles.typingIndicator}>
+                  <Text style={styles.typingText}>DoodleBot is thinking...</Text>
+                  <View style={styles.typingDots}>
+                    <View style={styles.dot} />
+                    <View style={styles.dot} />
+                    <View style={styles.dot} />
+                  </View>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+
+          {/* Quick Actions */}
+          <View style={styles.quickActions}>
+            <Text style={styles.quickActionsTitle}>Quick Actions</Text>
+            <View style={styles.quickActionButtons}>
+              <TouchableOpacity 
+                style={styles.quickActionButton}
+                onPress={() => handleDoodleMessage("What activities do we have planned for today?")}
+                disabled={doodleLoading}
+              >
+                <Text style={styles.quickActionText}>Today's Tasks</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.quickActionButton}
+                onPress={() => handleDoodleMessage("Find information about math in our syllabi")}
+                disabled={doodleLoading}
+              >
+                <Text style={styles.quickActionText}>Find in Syllabus</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.quickActionButton}
+                onPress={() => handleDoodleMessage("Suggest activities for this week")}
+                disabled={doodleLoading}
+              >
+                <Text style={styles.quickActionText}>Activity Ideas</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.quickActionButton}
+                onPress={() => handleDoodleMessage("Help me reschedule a task")}
+                disabled={doodleLoading}
+              >
+                <Text style={styles.quickActionText}>Reschedule</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Chat Input */}
+          <View style={styles.chatInputContainer}>
+            <TextInput
+              style={styles.chatInput}
+              value={doodleInput}
+              onChangeText={setDoodleInput}
+              placeholder="Ask DoodleBot anything about your homeschooling..."
+              placeholderTextColor="#787774"
+              multiline
+              maxLength={500}
+              editable={!doodleLoading}
+              onSubmitEditing={handleSendMessage}
+            />
+            <TouchableOpacity 
+              style={[styles.sendButton, (doodleLoading || !doodleInput.trim()) && styles.sendButtonDisabled]}
+              onPress={handleSendMessage}
+              disabled={doodleLoading || !doodleInput.trim()}
+            >
+              <Text style={styles.sendButtonText}>Send</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Empty State */}
+        {children.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No family data yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Add children and activities to get personalized help from DoodleBot
+            </Text>
+          </View>
+        )}
+      </View>
+    )
+  }
+
+  const renderHomeContent = () => {
+    const parentTasks = dailyTasks.filter(task => task.type === 'parent');
+    const childTasks = dailyTasks.filter(task => task.type === 'child');
+    const pendingTasks = dailyTasks.filter(task => task.status === 'pending');
+    const completedTasks = dailyTasks.filter(task => task.status === 'done');
+
+    console.log('🔍 RENDERING HOME CONTENT');
+    console.log('🔍 today:', today, typeof today);
+    console.log('🔍 completedTasks.length:', completedTasks.length, typeof completedTasks.length);
+    console.log('🔍 dailyTasks.length:', dailyTasks.length, typeof dailyTasks.length);
+    console.log('🔍 pendingTasks.length:', pendingTasks.length, typeof pendingTasks.length);
+
+    return (
+      <View style={styles.content}>
+        <View style={styles.homeHeader}>
+          <Text style={styles.title}>Today's Tasks</Text>
+          <Text style={styles.subtitle}>
+            {(() => {
+              const todayStr = String(today || '');
+              const completedStr = String(completedTasks.length || 0);
+              const totalStr = String(dailyTasks.length || 0);
+              const subtitle = `${todayStr} - ${completedStr} of ${totalStr} completed`;
+              console.log('🔍 SUBTITLE DEBUG:', { todayStr, completedStr, totalStr, subtitle });
+              return subtitle;
+            })()}
+          </Text>
+        </View>
+
+        {/* Parent Tasks Section */}
+        {parentTasks.length > 0 && (
+          <View style={styles.taskSection}>
+            <Text style={styles.sectionTitle}>👨‍👩‍👧‍👦 Parent Tasks</Text>
+            <Text style={styles.sectionSubtitle}>Live classes and activities for all children</Text>
+            
+            {parentTasks.map(task => (
+              <View key={task.id} style={styles.taskCard}>
+                <View style={styles.taskHeader}>
+                                          <Text style={styles.taskTitle}>{String(task.title || '')}</Text>
+                        <Text style={styles.taskTime}>{String(task.time || '')}</Text>
+        </View>
+                      <Text style={styles.taskDescription}>{String(task.description || '')}</Text>
+                
+                {task.status === 'pending' ? (
+                  <View style={styles.taskActions}>
+                    <TouchableOpacity 
+                      style={[styles.taskButton, styles.doneButton]}
+                      onPress={() => updateTaskStatus(task.id, 'done')}
+                    >
+                      <Text style={styles.taskButtonText}>✅ Done</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.taskButton, styles.partialButton]}
+                      onPress={() => updateTaskStatus(task.id, 'partial')}
+                    >
+                      <Text style={styles.taskButtonText}>⏸️ Partial</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.taskButton, styles.skipButton]}
+                      onPress={() => updateTaskStatus(task.id, 'skipped')}
+                    >
+                      <Text style={styles.taskButtonText}>⏭️ Skip</Text>
+                    </TouchableOpacity>
+      </View>
+                ) : (
+                  <View style={styles.taskStatus}>
+                    <Text style={[
+                      styles.statusText,
+                      task.status === 'done' && styles.statusDone,
+                      task.status === 'partial' && styles.statusPartial,
+                      task.status === 'skipped' && styles.statusSkipped
+                    ]}>
+                      {task.status === 'done' ? '✅ Completed' : 
+                       task.status === 'partial' ? '⏸️ Partially Done' : '⏭️ Skipped'}
+                    </Text>
+                    {task.progress?.note && (
+                      <Text style={styles.taskNote}>{task.progress.note}</Text>
+                    )}
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Child Tasks Section */}
+        {childTasks.length > 0 && (
+          <View style={styles.taskSection}>
+            <Text style={styles.sectionTitle}>👶 Child Tasks</Text>
+            <Text style={styles.sectionSubtitle}>Individual study sessions and activities</Text>
+            
+            {children.map(child => {
+              const childTaskList = childTasks.filter(task => task.childName === child.name);
+              if (childTaskList.length === 0) return null;
+              
+    return (
+                <View key={child.name} style={styles.childTaskGroup}>
+                  <View style={styles.childTaskGroupHeader}>
+                    <Image
+                      source={getAvatarSource(child.avatar)}
+                      style={styles.childTaskAvatar}
+                      resizeMode="contain"
+                    />
+                    <Text style={styles.childName}>{String(child.name || '')}'s Tasks</Text>
+                  </View>
+                  
+                  {childTaskList.map(task => {
+                    console.log('task:', task);
+                    return (
+                      <View key={task.id} style={styles.taskCard}>
+                        <View style={styles.taskHeader}>
+                          <Text style={styles.taskTitle}>{String(task.title || '')}</Text>
+                          <Text style={styles.taskTime}>{String(task.time || '')}</Text>
+        </View>
+                        <Text style={styles.taskDescription}>{String(task.description || '')}</Text>
+                      
+                      {task.status === 'pending' ? (
+                        <View style={styles.taskActions}>
+                          <TouchableOpacity 
+                            style={[styles.taskButton, styles.doneButton]}
+                            onPress={() => updateTaskStatus(task.id, 'done')}
+                          >
+                            <Text style={styles.taskButtonText}>✅ Done</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            style={[styles.taskButton, styles.partialButton]}
+                            onPress={() => updateTaskStatus(task.id, 'partial')}
+                          >
+                            <Text style={styles.taskButtonText}>⏸️ Partial</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            style={[styles.taskButton, styles.skipButton]}
+                            onPress={() => updateTaskStatus(task.id, 'skipped')}
+                          >
+                            <Text style={styles.taskButtonText}>⏭️ Skip</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <View style={styles.taskStatus}>
+                          <Text style={[
+                            styles.statusText,
+                            task.status === 'done' && styles.statusDone,
+                            task.status === 'partial' && styles.statusPartial,
+                            task.status === 'skipped' && styles.statusSkipped
+                          ]}>
+                            {task.status === 'done' ? '✅ Completed' : 
+                             task.status === 'partial' ? '⏸️ Partially Done' : '⏭️ Skipped'}
+                          </Text>
+                          {task.progress?.note && (
+                            <Text style={styles.taskNote}>{String(task.progress.note || '')}</Text>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Planning Section */}
+        {dailyTasks.length > 0 && (
+          <View style={styles.planningSection}>
+            <Text style={styles.planningTitle}>📅 Next Steps</Text>
+            <Text style={styles.planningSubtitle}>
+              {(() => {
+                const pendingCount = String(pendingTasks.length || 0);
+                const subtitle = pendingTasks.length > 0 
+                  ? `${pendingCount} tasks remaining for today`
+                  : 'All tasks completed! Ready to plan next steps.';
+                console.log('🔍 PLANNING SUBTITLE DEBUG:', { pendingCount, subtitle });
+                return subtitle;
+              })()}
+            </Text>
+            
+            <TouchableOpacity 
+              style={styles.planningButton}
+              onPress={checkPlanningNeeded}
+            >
+              <Text style={styles.planningButtonText}>
+                Plan Next 2 Weeks
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Test Buttons */}
+        <View style={styles.testSection}>
+          <Text style={styles.sectionTitle}>🧪 Development Tests</Text>
+          <View style={styles.testButtons}>
+            <TouchableOpacity 
+              style={styles.testButton}
+              onPress={() => setShowOpenAITest(true)}
+            >
+              <Text style={styles.testButtonText}>Test OpenAI API</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.testButton}
+              onPress={() => setShowAIConversationTest(true)}
+            >
+              <Text style={styles.testButtonText}>Test AI Conversations</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Empty State - No Children */}
+        {children.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>Welcome to Learnadoodle!</Text>
+            <Text style={styles.emptySubtitle}>
+              Get started by adding your children to create personalized learning experiences
+            </Text>
+            <TouchableOpacity 
+              style={styles.addChildButton}
+              onPress={() => {
+                // Navigate to add-child tab
+                if (onTabChange) {
+                  onTabChange('add-child');
+                } else if (navigation && navigation.navigate) {
+                  navigation.navigate('AddChild');
+                } else {
+                  console.log('Navigate to add-child');
+                }
+              }}
+            >
+              <Text style={styles.addChildButtonText}>👶 Add Your First Child</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Empty State - No Tasks */}
+        {children.length > 0 && dailyTasks.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No tasks for today</Text>
+            <Text style={styles.emptySubtitle}>
+              Add activities in the onboarding to see your daily tasks here
+            </Text>
+          </View>
+        )}
+      </View>
+    )
+  }
+
+
+
+  const renderCalendarContent = () => {
+    return (
+      <View style={styles.content}>
+        <Text style={styles.title}>Calendar</Text>
+        <Text style={styles.subtitle}>Manage your schedule and events</Text>
+        
+        <View style={styles.placeholder}>
+          <Text style={styles.placeholderText}>Calendar</Text>
+          <Text style={styles.placeholderSubtext}>View and manage your schedule, appointments, and events</Text>
+        </View>
+      </View>
+    )
+  }
+
+
+
+
+
+  const renderTemplatesContent = () => {
+    return (
+      <View style={styles.content}>
+        <Text style={styles.title}>Templates</Text>
+        <Text style={styles.subtitle}>Reusable learning templates</Text>
+        
+        <View style={styles.placeholder}>
+          <Text style={styles.placeholderText}>Templates</Text>
+          <Text style={styles.placeholderSubtext}>Create and manage reusable lesson plans, schedules, and activity templates</Text>
+        </View>
+      </View>
+    )
+  }
+
+
+
+
+
+  const renderOnboardingChildrenStep = () => (
+    <View style={styles.content}>
+      <Text style={styles.title}>Add Children</Text>
+      <Text style={styles.subtitle}>Enter each child's information</Text>
+      <View style={styles.form}>
+        <TextInput
+          style={styles.input}
+          placeholder="Name or Nickname"
+          value={childName}
+          onChangeText={setChildName}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Age"
+          value={childAge}
+          onChangeText={setChildAge}
+          keyboardType="numeric"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Grade (e.g. 3, 7, 10)"
+          value={childGrade}
+          onChangeText={setChildGrade}
+          keyboardType="numeric"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Interests (optional)"
+          value={childInterests}
+          onChangeText={setChildInterests}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Standards/Tests (optional)"
+          value={childStandards}
+          onChangeText={setChildStandards}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Learning Style (visual, verbal, kinesthetic, etc.)"
+          value={childStyle}
+          onChangeText={setChildStyle}
+        />
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+          <Text style={{ marginRight: 8 }}>College Bound?</Text>
+          <TouchableOpacity
+            style={[styles.checkbox, childCollegeBound && styles.checkboxChecked]}
+            onPress={() => setChildCollegeBound(!childCollegeBound)}
+          >
+            {childCollegeBound && <Text style={{ color: '#fff' }}>✓</Text>}
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleAddChildToList}
+        >
+          <Text style={styles.buttonText}>Add Child</Text>
+        </TouchableOpacity>
+      </View>
+      {children.length > 0 && (
+        <View style={{ marginTop: 24 }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Children Added:</Text>
+          {children.map((child, idx) => (
+            <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ flex: 1 }}>{child.name} (Age: {child.age}, Grade: {child.grade})</Text>
+              <TouchableOpacity onPress={() => handleRemoveChild(idx)}>
+                <Text style={{ color: '#e53e3e', fontWeight: 'bold' }}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+      <View style={{ flexDirection: 'row', marginTop: 32 }}>
+        {/* No Back button on first step */}
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity style={[styles.button, { minWidth: 120 }]} onPress={handleNextStep}>
+          <Text style={styles.buttonText}>Next</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+
+  const renderOnboardingCalendarStep = () => {
+    const { startDate, yearRound, totalDays, totalHours, hoursPerDay, teachingDays, holidays, customVacations } = calendarStepData
+    const endDate = calculateEndDate()
+    return (
+      <View style={styles.content}>
+        <Text style={styles.title}>School Year Setup</Text>
+        <Text style={styles.subtitle}>Configure your family's school year</Text>
+        <View style={styles.form}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Start Date</Text>
+          <View style={{ marginBottom: 16 }}>
+            <DatePicker
+              selected={startDate}
+              onChange={date => setCalendarStepData(prev => ({ ...prev, startDate: date }))}
+              dateFormat="yyyy-MM-dd"
+              className="datepicker-input" // you can style this as needed
+            />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 16 }}>
+            <Text style={{ marginRight: 8 }}>Homeschool year-round?</Text>
+            <TouchableOpacity
+              style={[styles.checkbox, yearRound && styles.checkboxChecked]}
+              onPress={() => setCalendarStepData((prev) => ({ ...prev, yearRound: !prev.yearRound }))}
+            >
+              {yearRound && <Text style={{ color: '#fff' }}>✓</Text>}
+            </TouchableOpacity>
+          </View>
+          {!yearRound && (
+            <>
+              <TextInput
+                style={styles.input}
+                placeholder="Total School Days"
+                value={totalDays}
+                onChangeText={(v) => setCalendarStepData((prev) => ({ ...prev, totalDays: v }))}
+                keyboardType="numeric"
+              />
+              <Text style={{ textAlign: 'center', marginVertical: 8 }}>or</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Total School Hours"
+                value={totalHours}
+                onChangeText={(v) => setCalendarStepData((prev) => ({ ...prev, totalHours: v }))}
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Hours per Day (default 5)"
+                value={hoursPerDay.toString()}
+                onChangeText={(v) => setCalendarStepData((prev) => ({ ...prev, hoursPerDay: v }))}
+                keyboardType="numeric"
+              />
+            </>
+          )}
+          <Text style={{ fontWeight: 'bold', marginTop: 16 }}>Teaching Days</Text>
+          <View style={{ flexDirection: 'row', marginVertical: 8 }}>
+            {[0,1,2,3,4,5,6].map((d) => (
+              <TouchableOpacity
+                key={d}
+                style={[styles.checkbox, calendarStepData.teachingDays.includes(d) && styles.checkboxChecked, { marginRight: 8 }]}
+                onPress={() => handleTeachingDayToggle(d)}
+              >
+                <Text style={{ color: calendarStepData.teachingDays.includes(d) ? '#fff' : '#37352f' }}>
+                  {['S','M','T','W','T','F','S'][d] || '?'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={{ fontWeight: 'bold', marginTop: 16 }}>Vacations & Holidays</Text>
+          <Text style={{ color: '#787774', marginBottom: 8 }}>Select holidays to observe as vacations:</Text>
+          <ScrollView style={{ maxHeight: 120 }}>
+            {globalHolidays.map((h) => (
+              <TouchableOpacity
+                key={h.holiday_date}
+                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}
+                onPress={() => handleHolidayToggle(h.holiday_date)}
+              >
+                <View style={[styles.checkbox, holidays.includes(h.holiday_date) && styles.checkboxChecked, { marginRight: 8 }]}>
+                  {holidays.includes(h.holiday_date) && <Text style={{ color: '#fff' }}>✓</Text>}
+                </View>
+                <Text>{h.name} ({h.holiday_date})</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <Text style={{ fontWeight: 'bold', marginTop: 16 }}>Custom Vacations</Text>
+          <TouchableOpacity
+            style={[styles.button, { marginBottom: 8 }]}
+            onPress={() => {
+              const today = new Date().toISOString().slice(0,10)
+              handleAddCustomVacation(today)
+            }}
+          >
+            <Text style={styles.buttonText}>Add Today as Vacation</Text>
+          </TouchableOpacity>
+          {customVacations.length > 0 && (
+            <View style={{ marginTop: 8 }}>
+              {customVacations.map((date) => (
+                <View key={date} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ flex: 1 }}>{date}</Text>
+                  <TouchableOpacity onPress={() => handleRemoveCustomVacation(date)}>
+                    <Text style={{ color: '#e53e3e', fontWeight: 'bold' }}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+          <Text style={{ marginTop: 24, fontWeight: 'bold' }}>Preview</Text>
+          <Text>Start: {startDate.toDateString()}</Text>
+          <Text>End: {endDate.toDateString()}</Text>
+          <Text>Total Days: {yearRound ? 365 : calendarStepData.totalDays || 'N/A'}</Text>
+          <Text>Total Hours: {calendarStepData.totalHours || (yearRound ? 365 * hoursPerDay : 'N/A')}</Text>
+          <Text>Hours/Day: {hoursPerDay}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', marginTop: 32 }}>
+          <TouchableOpacity style={[styles.button, { minWidth: 120, marginRight: 16 }]} onPress={handlePrevStep}>
+            <Text style={styles.buttonText}>Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.button, { minWidth: 120 }]} onPress={handleNextStep}>
+            <Text style={styles.buttonText}>Next</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
+
+  const renderOnboardingSubjectsStep = () => (
+    <View style={styles.content}>
+      <Text style={styles.title}>Add Subjects</Text>
+      <Text style={styles.subtitle}>Add the main subjects for your family or children</Text>
+      
+      {/* AI Subject Selection Assistant */}
+      <View style={styles.assistantSection}>
+        <Text style={styles.assistantTitle}>Need help choosing subjects?</Text>
+        <Text style={styles.assistantSubtitle}>
+          Get personalized subject recommendations based on your child's age, grade, and interests
+        </Text>
+        <TouchableOpacity 
+          style={styles.assistantButton}
+          onPress={() => setShowSubjectAssistant(true)}
+        >
+          <Text style={styles.assistantButtonText}>Get AI Recommendations</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.form}>
+        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Subject Name</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+          {subjectSuggestions.map((s) => (
+            <TouchableOpacity
+              key={s}
+              style={{
+                backgroundColor: subjectName === s ? '#37352f' : '#f7f7f7',
+                borderColor: '#e1e1e1',
+                borderWidth: 1,
+                borderRadius: 16,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                marginRight: 8,
+                marginBottom: 8,
+              }}
+              onPress={() => setSubjectName(s)}
+            >
+              <Text style={{ color: subjectName === s ? '#fff' : '#37352f' }}>{s}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TextInput
+          style={styles.input}
+          placeholder="Or enter a custom subject"
+          value={subjectName}
+          onChangeText={setSubjectName}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Grade (optional)"
+          value={subjectGrade}
+          onChangeText={setSubjectGrade}
+          keyboardType="numeric"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Notes (optional)"
+          value={subjectNotes}
+          onChangeText={setSubjectNotes}
+        />
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleAddSubject}
+        >
+          <Text style={styles.buttonText}>Add Subject</Text>
+        </TouchableOpacity>
+      </View>
+      {subjects.length > 0 && (
+        <View style={{ marginTop: 24 }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Subjects Added:</Text>
+          {subjects.map((subject, idx) => (
+            <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ flex: 1 }}>{String(subject.name || '')} {subject.grade ? `(Grade: ${String(subject.grade || '')})` : ''}</Text>
+              <TouchableOpacity onPress={() => handleRemoveSubject(idx)}>
+                <Text style={{ color: '#e53e3e', fontWeight: 'bold' }}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+      <View style={{ flexDirection: 'row', marginTop: 32 }}>
+        <TouchableOpacity style={[styles.button, { minWidth: 120, marginRight: 16 }]} onPress={handlePrevStep}>
+          <Text style={styles.buttonText}>Back</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.button, { minWidth: 120 }]} onPress={handleNextStep}>
+          <Text style={styles.buttonText}>Next</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+
+  const renderOnboardingActivitiesStep = () => (
+    <View style={styles.content}>
+      <Text style={styles.title}>Add Activities / Courses</Text>
+      <Text style={styles.subtitle}>Add activities, courses, or custom plans for each subject and child</Text>
+      
+      {/* Syllabus Upload Section */}
+      <View style={styles.syllabusSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Course Syllabi</Text>
+          <Text style={styles.sectionSubtitle}>Use the "Upload Syllabus" option in the sidebar to add course outlines</Text>
+        </View>
+        
+        {processedSyllabi.length > 0 ? (
+          <View style={styles.syllabiList}>
+            {processedSyllabi.map((syllabus, index) => (
+              <View key={index} style={styles.syllabusCard}>
+                <Text style={styles.syllabusTitle}>{String(syllabus.course_title || '')}</Text>
+                <Text style={styles.syllabusProvider}>{String(syllabus.provider_name || '')}</Text>
+                <Text style={styles.syllabusDate}>
+                  Processed: {syllabus.created_at ? new Date(syllabus.created_at).toLocaleDateString() : 'Unknown date'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.emptySyllabi}>
+            <Text style={styles.emptySyllabiText}>No syllabi uploaded yet</Text>
+            <Text style={styles.emptySyllabiSubtext}>Click "Upload Syllabus" in the sidebar to get started</Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.form}>
+        <TextInput
+          style={styles.input}
+          placeholder="Activity/Course Name"
+          value={activityName}
+          onChangeText={setActivityName}
+        />
+        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Subject</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+          {subjects.map((s, idx) => (
+            <TouchableOpacity
+              key={idx}
+              style={{
+                backgroundColor: activitySubject === s.name ? '#37352f' : '#f7f7f7',
+                borderColor: '#e1e1e1',
+                borderWidth: 1,
+                borderRadius: 16,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                marginRight: 8,
+                marginBottom: 8,
+              }}
+              onPress={() => setActivitySubject(s.name)}
+            >
+              <Text style={{ color: activitySubject === s.name ? '#fff' : '#37352f' }}>{String(s.name || '')}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Children</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+          {children.map((c, idx) => (
+            <TouchableOpacity
+              key={idx}
+              style={{
+                backgroundColor: activityChildren.includes(c.name) ? '#37352f' : '#f7f7f7',
+                borderColor: '#e1e1e1',
+                borderWidth: 1,
+                borderRadius: 16,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                marginRight: 8,
+                marginBottom: 8,
+              }}
+              onPress={() => setActivityChildren(
+                activityChildren.includes(c.name)
+                  ? activityChildren.filter((n) => n !== c.name)
+                  : [...activityChildren, c.name]
+              )}
+            >
+              <Text style={{ color: activityChildren.includes(c.name) ? '#fff' : '#37352f' }}>{String(c.name || '')}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Type</Text>
+        <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+          {['live', 'self-paced', 'custom'].map((type) => (
+            <TouchableOpacity
+              key={type}
+              style={{
+                backgroundColor: activityType === type ? '#37352f' : '#f7f7f7',
+                borderColor: '#e1e1e1',
+                borderWidth: 1,
+                borderRadius: 16,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                marginRight: 8,
+              }}
+              onPress={() => setActivityType(type)}
+            >
+              <Text style={{ color: activityType === type ? '#fff' : '#37352f' }}>{type === 'live' ? 'Live Class' : type === 'self-paced' ? 'Self-Paced' : 'Custom Plan'}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {/* Type-specific fields */}
+        {(activityType === 'live' || activityType === 'self-paced') && (
+          <>
+            <TextInput
+              style={styles.input}
+              placeholder="Platform (e.g. Khan, Outschool, Tutor)"
+              value={activityPlatform}
+              onChangeText={setActivityPlatform}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Link (optional)"
+              value={activityLink}
+              onChangeText={setActivityLink}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Start Date (YYYY-MM-DD)"
+              value={activityStartDate}
+              onChangeText={setActivityStartDate}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="End Date (YYYY-MM-DD)"
+              value={activityEndDate}
+              onChangeText={setActivityEndDate}
+            />
+          </>
+        )}
+        {activityType === 'live' && (
+          <>
+            <TextInput
+              style={styles.input}
+              placeholder="Class Schedule (e.g. Mondays 10am)"
+              value={activityClassSchedule}
+              onChangeText={setActivityClassSchedule}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Study Days per Week (in addition to class)"
+              value={activityStudyDays}
+              onChangeText={setActivityStudyDays}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Travel/Get Ready Minutes (before/after class)"
+              value={activityTravelMinutes}
+              onChangeText={setActivityTravelMinutes}
+              keyboardType="numeric"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Course Outline (paste syllabus, optional)"
+              value={activityCourseOutlineRaw}
+              onChangeText={setActivityCourseOutlineRaw}
+              multiline
+            />
+          </>
+        )}
+        {activityType === 'self-paced' && (
+          <>
+            <TextInput
+              style={styles.input}
+              placeholder="Study Days per Week"
+              value={activityStudyDays}
+              onChangeText={setActivityStudyDays}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Course Outline (paste syllabus, optional)"
+              value={activityCourseOutlineRaw}
+              onChangeText={setActivityCourseOutlineRaw}
+              multiline
+            />
+          </>
+        )}
+        {activityType === 'custom' && (
+          <>
+            <TextInput
+              style={styles.input}
+              placeholder="Study Days per Week"
+              value={activityStudyDays}
+              onChangeText={setActivityStudyDays}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Initial Plan (describe your plan)"
+              value={activityInitialPlan}
+              onChangeText={setActivityInitialPlan}
+              multiline
+            />
+          </>
+        )}
+        
+        {/* Live-Class AI Processing */}
+        {activityType === 'live' && (
+          <View style={styles.aiProcessingSection}>
+            <Text style={styles.aiProcessingTitle}>AI-Powered Live-Class Analysis</Text>
+            <Text style={styles.aiProcessingSubtitle}>
+              Get conflict checking, roadmap generation, and skills tracking for your live class
+            </Text>
+            <TouchableOpacity
+              style={[styles.aiProcessingButton, liveClassProcessing && styles.disabledButton]}
+              onPress={handleLiveClassProcessing}
+              disabled={liveClassProcessing}
+            >
+              {liveClassProcessing ? (
+                <>
+                  <ActivityIndicator size="small" color="#ffffff" />
+                  <Text style={styles.aiProcessingButtonText}>Processing with AI...</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.aiProcessingButtonText}>Analyze Live Class</Text>
+                </>
+              )}
+            </TouchableOpacity>
+            
+            {/* Conflict Warning */}
+            {showConflictWarning && (
+              <View style={styles.conflictWarning}>
+                <Text style={styles.conflictTitle}>⚠️ Schedule Conflict Detected</Text>
+                <Text style={styles.conflictText}>{conflictDetails}</Text>
+                <View style={styles.conflictActions}>
+                  <TouchableOpacity style={styles.conflictButton}>
+                    <Text style={styles.conflictButtonText}>Accept & Continue</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.conflictButtonSecondary}>
+                    <Text style={styles.conflictButtonTextSecondary}>Modify Schedule</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+            
+            {/* AI Results */}
+            {liveClassResult && !showConflictWarning && (
+              <View style={styles.aiResults}>
+                <Text style={styles.aiResultsTitle}>✅ AI Analysis Complete</Text>
+                {liveClassResult.roadmap && (
+                  <View style={styles.aiResultItem}>
+                    <Text style={styles.aiResultLabel}>Learning Roadmap:</Text>
+                    <Text style={styles.aiResultText}>{liveClassResult.roadmap}</Text>
+                  </View>
+                )}
+                {liveClassResult.skills && liveClassResult.skills.length > 0 && (
+                  <View style={styles.aiResultItem}>
+                    <Text style={styles.aiResultLabel}>Skills to Develop:</Text>
+                    {liveClassResult.skills.map((skill, index) => (
+                      <Text key={index} style={styles.aiResultText}>- {skill}</Text>
+                    ))}
+                  </View>
+                )}
+                {liveClassResult.progress_insights && (
+                  <View style={styles.aiResultItem}>
+                    <Text style={styles.aiResultLabel}>Progress Insights:</Text>
+                    <Text style={styles.aiResultText}>{liveClassResult.progress_insights}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+        
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleAddActivity}
+        >
+          <Text style={styles.buttonText}>Add Activity</Text>
+        </TouchableOpacity>
+      </View>
+      {activities.length > 0 && (
+        <View style={{ marginTop: 24 }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Activities Added:</Text>
+          {activities.map((activity, idx) => (
+            <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ flex: 1 }}>{activity.name} ({activity.subject}) [{activity.children.map(c => String(c || '')).join(', ')}]</Text>
+              <TouchableOpacity onPress={() => handleRemoveActivity(idx)}>
+                <Text style={{ color: '#e53e3e', fontWeight: 'bold' }}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+      
+      {/* Progress Tracking Section */}
+      {activities.length > 0 && (
+        <View style={styles.progressSection}>
+          <Text style={styles.progressTitle}>📊 Progress Tracking & Analysis</Text>
+          <Text style={styles.progressSubtitle}>
+            Track learning progress and get AI-powered insights for pacing adjustments
+          </Text>
+          
+          <TouchableOpacity
+            style={styles.progressButton}
+            onPress={() => setShowProgressModal(true)}
+          >
+            <Text style={styles.progressButtonText}>Track Progress</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {onboardingLoading && <Text style={{ color: '#007AFF', marginTop: 16 }}>Saving onboarding data...</Text>}
+      {onboardingSuccess && <Text style={{ color: '#3c763d', marginTop: 16 }}>Onboarding complete! 🎉</Text>}
+      {onboardingError && <Text style={{ color: '#e53e3e', marginTop: 16 }}>{onboardingError}</Text>}
+      <View style={{ flexDirection: 'row', marginTop: 32 }}>
+        <TouchableOpacity style={[styles.button, { minWidth: 120, marginRight: 16 }]} onPress={handlePrevStep} disabled={onboardingLoading}>
+          <Text style={styles.buttonText}>Back</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.button, { minWidth: 120 }]} onPress={handleFinishOnboarding} disabled={onboardingLoading}>
+          <Text style={styles.buttonText}>{onboardingLoading ? 'Saving...' : 'Finish'}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+
+  const renderOnboardingStep = () => {
+    if (onboardingStep === 0) return renderOnboardingChildrenStep()
+    if (onboardingStep === 1) return renderOnboardingCalendarStep()
+    if (onboardingStep === 2) return renderOnboardingSubjectsStep()
+    if (onboardingStep === 3) return renderOnboardingActivitiesStep()
+    // Placeholder for next steps
+    return (
+      <View style={styles.content}>
+        <Text style={styles.title}>Onboarding Step {onboardingStep + 1}</Text>
+        <Text style={styles.subtitle}>Coming soon...</Text>
+        <View style={{ flexDirection: 'row', marginTop: 32 }}>
+          <TouchableOpacity style={[styles.button, { minWidth: 120, marginRight: 16 }]} onPress={handlePrevStep}>
+            <Text style={styles.buttonText}>Back</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+        </View>
+      </View>
+    )
+  }
+
+    const renderAddChildContent = () => {
+    const handleAddChild = async () => {
+      if (!addChildName.trim() || !addChildAge.trim() || !addChildGrade.trim()) {
+        Alert.alert('Required Fields', 'Please fill in the name, age, and grade fields.')
+        return
+      }
+
+      setIsAddingChild(true)
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          Alert.alert('Error', 'User not authenticated')
+          return
+        }
+
+        // Get family_id from profiles
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('family_id')
+          .eq('id', user.id)
+          .single()
+
+        if (profileError || !profile?.family_id) {
+          Alert.alert('Error', 'Family not found')
+          return
+        }
+
+        // Add child to database
+        const { data: newChild, error: childError } = await supabase
+          .from('children')
+          .insert([
+            {
+              name: addChildName.trim(),
+              age: parseInt(addChildAge),
+              grade: parseInt(addChildGrade),
+              interests: addChildInterests.trim() || null,
+              standards: addChildStandards.trim() || null,
+              learning_style: addChildStyle.trim() || null,
+              college_bound: addChildCollegeBound,
+              avatar: addChildAvatar,
+              family_id: profile.family_id
+            }
+          ])
+          .select()
+          .single()
+
+        if (childError) {
+          console.error('Error adding child:', childError)
+          Alert.alert('Error', 'Failed to add child: ' + childError.message)
+          return
+        }
+
+        // Reset form
+        setAddChildName('')
+        setAddChildAge('')
+        setAddChildGrade('')
+        setAddChildInterests('')
+        setAddChildStandards('')
+        setAddChildStyle('')
+        setAddChildCollegeBound(false)
+        setAddChildAvatar('prof1')
+
+        Alert.alert('Success', `${addChildName} has been added successfully!`)
+        
+        // Trigger sidebar refresh
+        if (onChildAdded) {
+          onChildAdded()
+        }
+      } catch (error) {
+        console.error('Error adding child:', error)
+        Alert.alert('Error', 'An unexpected error occurred')
+      } finally {
+        setIsAddingChild(false)
+      }
+    }
+
+    return (
+      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
+          <Text style={styles.title}>Family Setup</Text>
+          <Text style={styles.subtitle}>Complete your family profile and learning preferences</Text>
+          
+          {/* Children Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>👶 Add Children</Text>
+            <Text style={styles.sectionSubtitle}>Enter each child's information</Text>
+            
+            <View style={styles.form}>
+              {/* Avatar Selection */}
+              <Text style={styles.inputLabel}>Choose an Avatar</Text>
+              <View style={styles.avatarGrid}>
+                {Object.keys(avatarSources).map((avatarKey) => (
+                  <TouchableOpacity
+                    key={avatarKey}
+                    style={[styles.avatarOption, addChildAvatar === avatarKey && styles.avatarOptionSelected]}
+                    onPress={() => setAddChildAvatar(avatarKey)}
+                  >
+                    <Image source={getAvatarSource(avatarKey)} style={styles.avatarImage} resizeMode="contain" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              </View>
+              
+              <TextInput
+                style={styles.input}
+                placeholder="Name *"
+                value={String(addChildName || '')}
+                onChangeText={setAddChildName}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Age *"
+                value={String(addChildAge || '')}
+                onChangeText={setAddChildAge}
+                keyboardType="numeric"
+              />
+              <TouchableOpacity
+                style={[styles.button, isAddingChild && styles.disabledButton]}
+                onPress={handleAddChild}
+                disabled={isAddingChild}
+              >
+                <Text style={styles.buttonText}>
+                  {isAddingChild ? 'Adding...' : 'Add Child'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+    );
+    }
+                value={subjectGrade}
+                onChangeText={setSubjectGrade}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Notes (optional)"
+                value={subjectNotes}
+                onChangeText={setSubjectNotes}
+                multiline
+                numberOfLines={3}
+              />
+              
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handleAddSubject}
+              >
+                <Text style={styles.buttonText}>Add Subject</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Display Added Subjects */}
+            {subjects.length > 0 && (
+              <View style={styles.subjectsList}>
+                <Text style={styles.sectionTitle}>Added Subjects:</Text>
+                {subjects.map((subject, index) => (
+                  <View key={index} style={styles.subjectCard}>
+                    <Text style={styles.subjectName}>{subject.name}</Text>
+                    <Text style={styles.subjectDetails}>Grade: {subject.grade}</Text>
+                    {subject.notes && <Text style={styles.subjectNotes}>{subject.notes}</Text>}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Activities Section */}
+          <View style={styles.section}>
+            {(() => {
+              console.log('🔍 ACTIVITIES SECTION DEBUG - activities:', activities);
+              console.log('🔍 ACTIVITIES SECTION DEBUG - activityName:', activityName, typeof activityName);
+              console.log('🔍 ACTIVITIES SECTION DEBUG - activityType:', activityType, typeof activityType);
+              return null;
+            })()}
+            <Text style={styles.sectionTitle}>🎯 Activities</Text>
+            <Text style={styles.sectionSubtitle}>Set up learning activities and classes</Text>
+            
+            <View style={styles.form}>
+              <TextInput
+                style={styles.input}
+                placeholder="Activity Name (e.g., Math Class, Science Lab)"
+                value={activityName}
+                onChangeText={setActivityName}
+              />
+              
+              <Text style={styles.inputLabel}>Activity Type</Text>
+              <View style={styles.typeButtons}>
+                {['live', 'self-paced', 'custom'].map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[
+                      styles.typeButton,
+                      activityType === type && styles.typeButtonActive
+                    ]}
+                    onPress={() => setActivityType(type)}
+                  >
+                    <Text style={[
+                      styles.typeButtonText,
+                      activityType === type && styles.typeButtonTextActive
+                    ]}>
+                      {type === 'live' ? 'Live Class' : type === 'self-paced' ? 'Self-Paced' : 'Custom Plan'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Platform (e.g., Zoom, Outschool, Khan Academy)"
+                value={activityPlatform}
+                onChangeText={setActivityPlatform}
+              />
+              
+              <TextInput
+                style={styles.input}
+                placeholder="Link (optional)"
+                value={activityLink}
+                onChangeText={setActivityLink}
+              />
+
+              {activityType === 'live' && (
+                <>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Class Schedule (e.g., Mondays 10 AM)"
+                    value={activityClassSchedule}
+                    onChangeText={setActivityClassSchedule}
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Travel Time (minutes)"
+                    value={activityTravelMinutes}
+                    onChangeText={setActivityTravelMinutes}
+                    keyboardType="numeric"
+                  />
+                </>
+              )}
+
+              <TextInput
+                style={styles.input}
+                placeholder="Initial Plan or Goals"
+                value={activityInitialPlan}
+                onChangeText={setActivityInitialPlan}
+                multiline
+                numberOfLines={3}
+              />
+              
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handleAddActivity}
+              >
+                <Text style={styles.buttonText}>Add Activity</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Display Added Activities */}
+            {activities.length > 0 && (
+              <View style={styles.activitiesList}>
+                <Text style={styles.sectionTitle}>Added Activities:</Text>
+                {activities.map((activity, index) => (
+                  <View key={index} style={styles.activityCard}>
+                    <Text style={styles.activityName}>{activity.name}</Text>
+                    <Text style={styles.activityDetails}>Type: {activity.activityType} | Platform: {activity.platform}</Text>
+                    {activity.classSchedule && <Text style={styles.activitySchedule}>Schedule: {activity.classSchedule}</Text>}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Finish Setup Button */}
+          <View style={styles.section}>
+            {(() => {
+              console.log('🔍 FINISH SETUP DEBUG - onboardingLoading:', onboardingLoading, typeof onboardingLoading);
+              console.log('🔍 FINISH SETUP DEBUG - onboardingError:', onboardingError, typeof onboardingError);
+              console.log('🔍 FINISH SETUP DEBUG - onboardingSuccess:', onboardingSuccess, typeof onboardingSuccess);
+              return null;
+            })()}
+            <TouchableOpacity
+              style={[styles.button, styles.finishButton]}
+              onPress={handleFinishOnboarding}
+              disabled={onboardingLoading}
+            >
+              <Text style={styles.buttonText}>
+                {onboardingLoading ? 'Setting up...' : 'Finish Family Setup'}
+              </Text>
+            </TouchableOpacity>
+            
+            {onboardingError && (
+              <Text style={styles.errorText}>{String(onboardingError || '')}</Text>
+            )}
+            
+            {onboardingSuccess && (
+              <Text style={styles.successText}>Family setup completed successfully!</Text>
+            )}
+          </View>
+                  </View>
+        </ScrollView>
+      </React.Fragment>
+    );
+  }
+
+  const renderChildContent = (childId) => {
+    console.log('🔍 RENDER CHILD CONTENT DEBUG - childId:', childId);
+    console.log('🔍 RENDER CHILD CONTENT DEBUG - childData:', childData);
+    console.log('🔍 RENDER CHILD CONTENT DEBUG - activeSubtab:', activeSubtab);
+    
+    // Use the fetched child data if available, otherwise fall back to ID
+    const childName = childData?.name || `Child ${childId}`
+    
+    // Extract the base subtab name from the activeSubtab
+    const baseSubtab = activeSubtab.replace(`-${childId}`, '')
+    
+    const renderChildHeader = (title, subtitle) => (
+      <View style={styles.childHeader}>
+        <View style={styles.childHeaderContent}>
+          {childData && (
+            <Image
+              source={getAvatarSource(childData.avatar)}
+              style={styles.childHeaderAvatar}
+              resizeMode="contain"
+            />
+          )}
+          <View style={styles.childHeaderText}>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
+          </View>
+        </View>
+        {childData && (
+          <TouchableOpacity style={styles.editButton} onPress={handleEditChild}>
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    )
+    
+    switch (baseSubtab) {
+      case 'lesson-plan':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Lesson Plan`, 'Current learning objectives and activities')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Lesson Plan</Text>
+              <Text style={styles.placeholderSubtext}>View and edit {childName}'s current lesson plan and learning objectives</Text>
+            </View>
+          </View>
+        )
+      
+      case 'to-do-list':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s To-Do List`, 'All tasks and activities')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>To-Do List</Text>
+              <Text style={styles.placeholderSubtext}>Manage {childName}'s tasks, assignments, and learning activities</Text>
+            </View>
+          </View>
+        )
+      
+      case 'by-class':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Tasks by Class`, 'Organized by subject area')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Tasks by Class</Text>
+              <Text style={styles.placeholderSubtext}>View {childName}'s tasks organized by subject or class</Text>
+            </View>
+          </View>
+        )
+      
+      case 'by-activity':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Tasks by Activity`, 'Organized by activity type')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Tasks by Activity</Text>
+              <Text style={styles.placeholderSubtext}>View {childName}'s tasks organized by activity type</Text>
+            </View>
+          </View>
+        )
+      
+      case 'all-tasks':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s All Tasks`, 'Complete task overview')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>All Tasks</Text>
+              <Text style={styles.placeholderSubtext}>View all of {childName}'s tasks in one comprehensive list</Text>
+            </View>
+          </View>
+        )
+      
+      case 'projects':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Projects`, 'Long-term learning projects')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Projects</Text>
+              <Text style={styles.placeholderSubtext}>Manage {childName}'s ongoing and completed learning projects</Text>
+            </View>
+          </View>
+        )
+      
+      case 'notes-pages':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Notes Pages`, 'Learning notes and observations')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Notes Pages</Text>
+              <Text style={styles.placeholderSubtext}>View and edit {childName}'s learning notes, observations, and reflections</Text>
+            </View>
+          </View>
+        )
+      
+      case 'calendar-schedule':
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Calendar & Schedule`, 'Personal learning schedule')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Calendar & Schedule</Text>
+              <Text style={styles.placeholderSubtext}>Manage {childName}'s personal learning schedule and appointments</Text>
+            </View>
+          </View>
+        )
+      
+      default:
+        return (
+          <View style={styles.content}>
+            {renderChildHeader(`${childName}'s Dashboard`, 'Overview and quick actions')}
+            
+            <View style={styles.placeholder}>
+              <Text style={styles.placeholderText}>Dashboard</Text>
+              <Text style={styles.placeholderSubtext}>Overview of {childName}'s learning progress and quick access to key features</Text>
+            </View>
+          </View>
+        )
+    }
+  }
+
+  return (
+    <View style={styles.container}>
+      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      {renderContent()}
+    </ScrollView>
+      
+      {/* Syllabus Upload Modal */}
+      <SyllabusUpload
+        visible={showSyllabusUpload}
+        onClose={onCloseSyllabusUpload}
+        onSyllabusProcessed={handleSyllabusProcessed}
+      />
+
+      {/* OpenAI Test Modal */}
+      <Modal
+        visible={showOpenAITest}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowOpenAITest(false)}
+      >
+        <OpenAITest onClose={() => setShowOpenAITest(false)} />
+      </Modal>
+
+      {/* AI Conversation Test Modal */}
+      <Modal
+        visible={showAIConversationTest}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowAIConversationTest(false)}
+      >
+        <AIConversationTest />
+      </Modal>
+
+      {/* Subject Selection Assistant Modal */}
+      <Modal
+        visible={showSubjectAssistant}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowSubjectAssistant(false)}
+      >
+        <AIChatModal
+          visible={showSubjectAssistant}
+          onClose={() => setShowSubjectAssistant(false)}
+          title="Subject Selection Assistant"
+          subtitle="Get personalized subject recommendations for your child"
+          messages={subjectMessages}
+          onSendMessage={handleSubjectMessage}
+          isLoading={subjectAssistantLoading}
+          placeholder="Tell me about your child's interests, learning style, or ask for subject recommendations..."
+        />
+      </Modal>
+
+      {/* Progress Tracking Modal */}
+      <Modal
+        visible={showProgressModal}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowProgressModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>📊 Progress Tracking & Analysis</Text>
+            <Text style={styles.modalSubtitle}>Track learning progress and get AI-powered insights</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowProgressModal(false)}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={styles.modalContent}>
+            {/* Progress Data Form */}
+            <View style={styles.progressForm}>
+              <Text style={styles.formSectionTitle}>Progress Information</Text>
+              
+              <Text style={styles.inputLabel}>Child Name</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={progressData.childName}
+                onChangeText={(text) => setProgressData({...progressData, childName: text})}
+                placeholder="Enter child's name"
+              />
+              
+              <Text style={styles.inputLabel}>Subject</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={progressData.subject}
+                onChangeText={(text) => setProgressData({...progressData, subject: text})}
+                placeholder="Enter subject name"
+              />
+              
+              <Text style={styles.inputLabel}>Activity Type</Text>
+              <View style={styles.typeButtons}>
+                {['live', 'self-paced', 'custom'].map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[
+                      styles.typeButton,
+                      progressData.activityType === type && styles.typeButtonActive
+                    ]}
+                    onPress={() => setProgressData({...progressData, activityType: type})}
+                  >
+                    <Text style={[
+                      styles.typeButtonText,
+                      progressData.activityType === type && styles.typeButtonTextActive
+                    ]}>
+                      {type === 'live' ? 'Live Class' : type === 'self-paced' ? 'Self-Paced' : 'Custom Plan'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              
+              <Text style={styles.inputLabel}>Current Progress (%)</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={progressData.currentProgress.toString()}
+                onChangeText={(text) => setProgressData({...progressData, currentProgress: parseInt(text) || 0})}
+                placeholder="0-100"
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Expected Progress (%)</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={progressData.expectedProgress.toString()}
+                onChangeText={(text) => setProgressData({...progressData, expectedProgress: parseInt(text) || 0})}
+                placeholder="0-100"
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Days Behind/Ahead</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={progressData.daysOffset.toString()}
+                onChangeText={(text) => setProgressData({...progressData, daysOffset: parseInt(text) || 0})}
+                placeholder="0 (on track), -5 (ahead), +5 (behind)"
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Recent Completion Rate (%)</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={progressData.recentCompletionRate.toString()}
+                onChangeText={(text) => setProgressData({...progressData, recentCompletionRate: parseInt(text) || 0})}
+                placeholder="0-100"
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Learning Notes (Optional)</Text>
+              <TextInput
+                style={[styles.modalInput, styles.textArea]}
+                value={progressData.learningNotes}
+                onChangeText={(text) => setProgressData({...progressData, learningNotes: text})}
+                placeholder="Any observations about learning progress, challenges, or successes..."
+                multiline
+                numberOfLines={3}
+              />
+              
+              <TouchableOpacity
+                style={[styles.analyzeButton, progressProcessing && styles.disabledButton]}
+                onPress={handleProgressAnalysis}
+                disabled={progressProcessing}
+              >
+                {progressProcessing ? (
+                  <>
+                    <ActivityIndicator size="small" color="#ffffff" />
+                    <Text style={styles.analyzeButtonText}>Analyzing Progress...</Text>
+                  </>
+                ) : (
+                  <Text style={styles.analyzeButtonText}>Analyze Progress</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+            
+            {/* Progress Analysis Results */}
+            {progressAnalysis && (
+              <View style={styles.analysisResults}>
+                <Text style={styles.analysisTitle}>🤖 AI Analysis Results</Text>
+                
+                {progressAnalysis.analysis && (
+                  <View style={styles.analysisItem}>
+                    <Text style={styles.analysisLabel}>Progress Analysis:</Text>
+                    <Text style={styles.analysisText}>{progressAnalysis.analysis}</Text>
+                  </View>
+                )}
+                
+                {progressAnalysis.recommendations && progressAnalysis.recommendations.length > 0 && (
+                  <View style={styles.analysisItem}>
+                    <Text style={styles.analysisLabel}>Recommendations:</Text>
+                    {progressAnalysis.recommendations.map((rec, index) => (
+                      <Text key={index} style={styles.analysisText}>- {rec}</Text>
+                    ))}
+                  </View>
+                )}
+                
+                {progressAnalysis.summary && (
+                  <View style={styles.analysisItem}>
+                    <Text style={styles.analysisLabel}>Summary:</Text>
+                    <Text style={styles.analysisText}>{progressAnalysis.summary}</Text>
+                  </View>
+                )}
+                
+                {progressAnalysis.triggers && (
+                  <View style={styles.analysisItem}>
+                    <Text style={styles.analysisLabel}>System Actions:</Text>
+                    <Text style={styles.analysisText}>{progressAnalysis.triggers}</Text>
+                  </View>
+                )}
+                
+                {progressAnalysis.action_required && (
+                  <View style={styles.actionSection}>
+                    <Text style={styles.actionTitle}>Action Required:</Text>
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={() => handleProgressAction(progressAnalysis.action_required)}
+                    >
+                      <Text style={styles.actionButtonText}>
+                        {progressAnalysis.action_required === 'repace_roadmap' ? 'Repace Roadmap' :
+                         progressAnalysis.action_required === 'replan_two_weeks' ? 'Replan 2-Week Plan' :
+                         'Take Action'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Last Day Prompt Modal */}
+      <Modal
+        visible={showLastDayPrompt}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowLastDayPrompt(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.lastDayPrompt}>
+            <Text style={styles.lastDayTitle}>When should we plan from?</Text>
+            <Text style={styles.lastDaySubtitle}>
+              Based on your progress today, we need to know the last day of classes to plan effectively.
+            </Text>
+            
+            <View style={styles.lastDayOptions}>
+              <TouchableOpacity 
+                style={styles.lastDayOption}
+                onPress={() => handlePlanningFromDate('today')}
+              >
+                <Text style={styles.lastDayOptionTitle}>Today</Text>
+                <Text style={styles.lastDayOptionSubtitle}>Plan starting from today onwards</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.lastDayOption}
+                onPress={() => handlePlanningFromDate('tomorrow')}
+              >
+                <Text style={styles.lastDayOptionTitle}>Tomorrow</Text>
+                <Text style={styles.lastDayOptionSubtitle}>Finish logging today, plan from tomorrow</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <TouchableOpacity 
+              style={styles.cancelButton}
+              onPress={() => setShowLastDayPrompt(false)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Planning Modal */}
+      <Modal
+        visible={showPlanningModal}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowPlanningModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>📅 Plan Next 2 Weeks</Text>
+            <Text style={styles.modalSubtitle}>
+              Planning from {planningFromDate === 'tomorrow' ? 'tomorrow' : 'today'} onwards
+            </Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowPlanningModal(false)}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={styles.modalContent}>
+            <View style={styles.planningForm}>
+              <Text style={styles.formSectionTitle}>Planning Comments</Text>
+              <Text style={styles.inputLabel}>
+                Any changes or notes for the next 2 weeks? (optional)
+              </Text>
+              <TextInput
+                style={[styles.modalInput, styles.textArea]}
+                value={planningComments}
+                onChangeText={setPlanningComments}
+                placeholder="e.g., soccer practice moved to Friday, family vacation next week..."
+                multiline
+                numberOfLines={4}
+              />
+              
+              <View style={styles.planningSummary}>
+                <Text style={styles.summaryTitle}>Planning Summary</Text>
+                <Text style={styles.summaryText}>
+                  - Planning from: {planningFromDate === 'tomorrow' ? 'Tomorrow' : 'Today'}
+                </Text>
+                <Text style={styles.summaryText}>
+                  - Children: {children.map(c => String(c.name || '')).join(', ')}
+                </Text>
+                <Text style={styles.summaryText}>
+                  - Activities: {activities.length} total
+                </Text>
+                {planningComments && (
+                  <Text style={styles.summaryText}>
+                    - Notes: {planningComments}
+                  </Text>
+                )}
+              </View>
+              
+              <TouchableOpacity
+                style={styles.planButton}
+                onPress={() => {
+                  // Here we would trigger the 2-week planning AI
+                  Alert.alert('Planning', 'This would trigger the 2-week planning AI with the provided context.');
+                  setShowPlanningModal(false);
+                }}
+              >
+                <Text style={styles.planButtonText}>Generate 2-Week Plan</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  content: {
+    padding: 32,
+    minHeight: '100vh',
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#37352f',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#787774',
+    marginBottom: 32,
+  },
+  placeholder: {
+    backgroundColor: '#ffffff',
+    padding: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 300,
+  },
+  placeholderText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#37352f',
+    marginBottom: 16,
+  },
+  placeholderSubtext: {
+    fontSize: 16,
+    color: '#787774',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  form: {
+    marginTop: 32,
+  },
+  input: {
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    marginBottom: 16,
+  },
+  button: {
+    backgroundColor: '#f1f3f4',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#37352f',
+  },
+  buttonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  disabledButton: {
+    backgroundColor: '#e1e1e1',
+    opacity: 0.6,
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    color: '#37352f',
+    marginRight: 12,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#e1e1e1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  checkboxChecked: {
+    backgroundColor: '#37352f',
+    borderColor: '#37352f',
+  },
+  checkboxText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  childHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  editButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  editButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#37352f',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  checkboxChecked: {
+    backgroundColor: '#37352f',
+    borderColor: '#37352f',
+  },
+  scrollContainer: {
+    flex: 1,
+  },
+  syllabusSection: {
+    marginBottom: 32,
+    padding: 20,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#37352f',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  addButton: {
+    backgroundColor: '#38B6FF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  addButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#ffffff',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  syllabiList: {
+    gap: 12,
+  },
+  syllabusCard: {
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  syllabusTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  syllabusProvider: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  syllabusDate: {
+    fontSize: 12,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptySyllabi: {
+    padding: 32,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  emptySyllabiText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptySyllabiSubtext: {
+    fontSize: 14,
+    color: '#787774',
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  testButton: {
+    backgroundColor: '#38B6FF',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  testButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  assistantSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 20,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  assistantTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  assistantSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 16,
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  assistantButton: {
+    backgroundColor: '#38B6FF',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  assistantButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  aiProcessingSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 20,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  aiProcessingTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  aiProcessingSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 16,
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  aiProcessingButton: {
+    backgroundColor: '#38B6FF',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  aiProcessingButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  conflictWarning: {
+    backgroundColor: '#fef2f2',
+    border: '1px solid #fecaca',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  conflictTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#dc2626',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  conflictText: {
+    fontSize: 14,
+    color: '#dc2626',
+    lineHeight: 20,
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  conflictActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  conflictButton: {
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    flex: 1,
+    alignItems: 'center',
+  },
+  conflictButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  conflictButtonSecondary: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    flex: 1,
+    alignItems: 'center',
+  },
+  conflictButtonTextSecondary: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  aiResults: {
+    backgroundColor: '#f0fdf4',
+    border: '1px solid #bbf7d0',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  aiResultsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#16a34a',
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  aiResultItem: {
+    marginBottom: 12,
+  },
+  aiResultLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  aiResultText: {
+    fontSize: 14,
+    color: '#787774',
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  progressSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 20,
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  progressTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  progressSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 16,
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  progressButton: {
+    backgroundColor: '#B799D6',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  progressButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e1e1e1',
+    backgroundColor: '#f8f9fa',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#37352f',
+    flex: 1,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  closeButton: {
+    padding: 8,
+  },
+  closeButtonText: {
+    fontSize: 18,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  progressForm: {
+    marginBottom: 24,
+  },
+  formSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 16,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  modalInput: {
+    backgroundColor: '#ffffff',
+    padding: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    marginBottom: 16,
+    fontSize: 14,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+  typeButtons: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    gap: 8,
+  },
+  typeButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+  },
+  typeButtonActive: {
+    backgroundColor: '#38B6FF',
+    borderColor: '#38B6FF',
+  },
+  typeButtonText: {
+    fontSize: 14,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  typeButtonTextActive: {
+    color: '#ffffff',
+  },
+  analyzeButton: {
+    backgroundColor: '#38B6FF',
+    padding: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  analyzeButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  analysisResults: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 8,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  analysisTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#16a34a',
+    marginBottom: 16,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  analysisItem: {
+    marginBottom: 16,
+  },
+  analysisLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  analysisText: {
+    fontSize: 14,
+    color: '#787774',
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  actionSection: {
+    marginTop: 16,
+    padding: 16,
+    backgroundColor: '#fef3c7',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  actionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#d97706',
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  actionButton: {
+    backgroundColor: '#f59e0b',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  // Daily Task Styles
+  homeHeader: {
+    marginBottom: 24,
+  },
+  taskSection: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 16,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  taskCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  taskHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  taskTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#37352f',
+    flex: 1,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  taskTime: {
+    fontSize: 14,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  taskDescription: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  taskActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  taskButton: {
+    flex: 1,
+    padding: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  doneButton: {
+    backgroundColor: '#16a34a',
+  },
+  partialButton: {
+    backgroundColor: '#f59e0b',
+  },
+  skipButton: {
+    backgroundColor: '#dc2626',
+  },
+  taskButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  taskStatus: {
+    marginTop: 8,
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  statusDone: {
+    color: '#16a34a',
+  },
+  statusPartial: {
+    color: '#f59e0b',
+  },
+  statusSkipped: {
+    color: '#dc2626',
+  },
+  taskNote: {
+    fontSize: 12,
+    color: '#787774',
+    marginTop: 4,
+    fontStyle: 'italic',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  childTaskGroup: {
+    marginBottom: 20,
+  },
+  childName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#38B6FF',
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  planningSection: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  planningTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  planningSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 16,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  planningButton: {
+    backgroundColor: '#B799D6',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  planningButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 48,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  // Modal Overlay Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  lastDayPrompt: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  lastDayTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 12,
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  lastDaySubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 24,
+    textAlign: 'center',
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  lastDayOptions: {
+    marginBottom: 20,
+  },
+  lastDayOption: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  lastDayOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  lastDayOptionSubtitle: {
+    fontSize: 14,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  cancelButton: {
+    padding: 12,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  // Planning Modal Styles
+  planningForm: {
+    marginBottom: 24,
+  },
+  planningSummary: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  summaryTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  summaryText: {
+    fontSize: 14,
+    color: '#787774',
+    marginBottom: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  planButton: {
+    backgroundColor: '#38B6FF',
+    padding: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  planButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  // DoodleBot Chat Styles
+  doodleHeader: {
+    marginBottom: 24,
+  },
+  doodleChatContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    overflow: 'hidden',
+  },
+  doodleChatHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e1e1e1',
+  },
+  doodleAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#38B6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  doodleAvatarText: {
+    fontSize: 20,
+  },
+  doodleInfo: {
+    flex: 1,
+  },
+  doodleName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#37352f',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  doodleStatus: {
+    fontSize: 12,
+    color: '#787774',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  chatMessages: {
+    flex: 1,
+    padding: 16,
+    maxHeight: 400,
+  },
+  messageContainer: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    alignItems: 'flex-start',
+  },
+  userMessage: {
+    justifyContent: 'flex-end',
+  },
+  botMessage: {
+    justifyContent: 'flex-start',
+  },
+  botAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#38B6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  botAvatarText: {
+    fontSize: 16,
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    padding: 12,
+    borderRadius: 16,
+    position: 'relative',
+  },
+  userBubble: {
+    backgroundColor: '#38B6FF',
+    borderBottomRightRadius: 4,
+  },
+  botBubble: {
+    backgroundColor: '#f1f3f4',
+    borderBottomLeftRadius: 4,
+  },
+  messageText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  userText: {
+    color: '#ffffff',
+  },
+  botText: {
+    color: '#37352f',
+  },
+  messageTime: {
+    fontSize: 10,
+    color: '#787774',
+    marginTop: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  typingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#f1f3f4',
+    borderRadius: 16,
+    borderBottomLeftRadius: 4,
+  },
+  typingText: {
+    fontSize: 14,
+    color: '#787774',
+    marginRight: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  typingDots: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#787774',
+    opacity: 0.6,
+  },
+  quickActions: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+    backgroundColor: '#f8f9fa',
+  },
+  quickActionsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 12,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  quickActionButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  quickActionButton: {
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  quickActionText: {
+    fontSize: 12,
+    color: '#37352f',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  chatInputContainer: {
+    flexDirection: 'row',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+    backgroundColor: '#ffffff',
+    alignItems: 'flex-end',
+  },
+  chatInput: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginRight: 12,
+    maxHeight: 100,
+    fontSize: 14,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  sendButton: {
+    backgroundColor: '#38B6FF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#e1e1e1',
+  },
+  sendButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  testSection: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  testButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  testButton: {
+    backgroundColor: '#B799D6',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    flex: 1,
+    alignItems: 'center',
+  },
+  testButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  section: {
+    marginBottom: 32,
+    padding: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 20,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  childrenList: {
+    marginTop: 20,
+  },
+  childCard: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  childName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  childDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  childCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  childAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  childInfo: {
+    flex: 1,
+  },
+  childTaskGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  childTaskAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  childHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  childHeaderAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 16,
+  },
+  childHeaderText: {
+    flex: 1,
+  },
+  dayButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  dayButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    backgroundColor: '#ffffff',
+  },
+  dayButtonActive: {
+    backgroundColor: '#38B6FF',
+    borderColor: '#38B6FF',
+  },
+  dayButtonText: {
+    fontSize: 12,
+    color: '#666',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  dayButtonTextActive: {
+    color: '#ffffff',
+  },
+  subjectsList: {
+    marginTop: 20,
+  },
+  subjectCard: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  subjectName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  subjectDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  subjectNotes: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 4,
+    fontStyle: 'italic',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  activitiesList: {
+    marginTop: 20,
+  },
+  activityCard: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  activityName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  activityDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  activitySchedule: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  finishButton: {
+    backgroundColor: '#28a745',
+    marginTop: 20,
+  },
+  errorText: {
+    color: '#dc3545',
+    fontSize: 14,
+    marginTop: 10,
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  successText: {
+    color: '#28a745',
+    fontSize: 14,
+    marginTop: 10,
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  addChildButton: {
+    backgroundColor: '#38B6FF',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    marginTop: 20,
+    alignItems: 'center',
+    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+  },
+  addChildButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  avatarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 20,
+    justifyContent: 'center',
+  },
+  avatarOption: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 2,
+    borderColor: '#e1e1e1',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarOptionSelected: {
+    borderColor: '#38B6FF',
+    borderWidth: 3,
+    boxShadow: '0 2px 4px rgba(56, 182, 255, 0.3)',
+  },
+  avatarImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+  },
+}) 

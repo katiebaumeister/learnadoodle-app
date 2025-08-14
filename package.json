@@ -6,13 +6,30 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test:openai": "expo start --web --port 19006",
+    "build": "npx expo export --platform web",
+    "vercel-build": "npx expo export --platform web"
   },
   "dependencies": {
+    "@expo/metro-runtime": "~5.0.4",
+    "@react-navigation/native": "^7.1.14",
+    "@react-navigation/stack": "^7.4.2",
+    "@supabase/supabase-js": "^2.50.0",
+    "date-fns": "^4.1.0",
     "expo": "~53.0.12",
+    "expo-font": "~13.0.0",
     "expo-status-bar": "~2.2.3",
+    "lucide-react": "^0.523.0",
     "react": "19.0.0",
-    "react-native": "0.79.4"
+    "react-datepicker": "^8.4.0",
+    "react-dom": "19.0.0",
+    "react-native": "0.79.4",
+    "react-native-calendars": "^1.1313.0",
+    "react-native-dotenv": "^3.4.11",
+    "react-native-safe-area-context": "^5.5.0",
+    "react-native-screens": "^4.11.1",
+    "react-native-web": "^0.20.0"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0"
