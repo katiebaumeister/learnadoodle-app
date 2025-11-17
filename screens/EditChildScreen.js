@@ -46,7 +46,7 @@ export default function EditChildScreen({ route, navigation }) {
         console.error('Error fetching child data:', error)
         Alert.alert('Error', 'Failed to load child information')
       } else if (data) {
-        setChildName(data.name || '')
+        setChildName(data.first_name || '')
         setChildAge(data.age ? data.age.toString() : '')
       }
     } catch (error) {
@@ -84,7 +84,7 @@ export default function EditChildScreen({ route, navigation }) {
       const { data, error } = await supabase
         .from('children')
         .update({
-          name: childName.trim(),
+          first_name: childName.trim(),
           age: age,
           updated_at: new Date().toISOString()
         })

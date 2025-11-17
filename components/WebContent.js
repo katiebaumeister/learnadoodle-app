@@ -16,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { Clock, ArrowRight, UserCircle, Link, MapPin, Eye, Plus, Upload, Copy, Sparkles, Download, Users, Settings, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { proposeReschedule, getWeekStart } from '../lib/apiClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import SyllabusUpload from './SyllabusUpload'
@@ -23,6 +24,15 @@ import OpenAITest from './OpenAITest'
 import AIChatModal from './AIChatModal'
 import AIConversationTest from './AIConversationTest'
 import CalendarPlanning from './CalendarPlanning'
+import TaskCreateModal from './TaskCreateModal'
+import EventModal from './events/EventModal'
+import ExploreContent from './ExploreContent'
+import RebalanceModal from './year/RebalanceModal'
+import EventOutcomeModal from './events/EventOutcomeModal'
+import ChildDashboard from './dashboards/ChildDashboard'
+import TutorDashboard from './dashboards/TutorDashboard'
+import IntegrationsSettings from './settings/IntegrationsSettings'
+import InspireLearning from './inspire/InspireLearning'
 
 // Simple notification system
 import { 
@@ -49,8 +59,8 @@ import {
 import { smartRefreshCache, refreshFamilyCache } from '../lib/cacheRefresh'
 
 import AddChildForm from './AddChildForm'
+import AddChildModal from './AddChildModal'
 import AddOptions from './AddOptions'
-import AddActivityForm from './AddActivityForm'
 import SubjectGoalsManager from './SubjectGoalsManager'
 import StudentDetailsModal from './StudentDetailsModal'
 import ScheduleRulesButton from './ScheduleRulesButton'
@@ -65,8 +75,9 @@ import UpcomingBigEvents from './home/UpcomingBigEvents'
 import RecommendedReads from './home/RecommendedReads'
 import TasksToday from './home/TasksToday'
 import NextUpTile from './home/NextUpTile'
-import PlannerWeek from './planner/PlannerWeek'
 import DayDrawer from './planner/DayDrawer'
+import AIActions from './planner/AIActions'
+import CenterPane from './planner/CenterPane'
 import ChildProfile from './ChildProfile'
 import Attendance from './records/Attendance'
 import Uploads from './documents/Uploads'
@@ -74,7 +85,7 @@ import UploadsEnhanced from './documents/UploadsEnhanced'
 // import DocumentsEnhanced from './documents/DocumentsEnhanced' // Causes bundler issues
 import LessonPlans from './lesson-plans/LessonPlans'
 import Reports from './records/Reports'
-import KanbanBoard from './planner/KanbanBoard'
+import RecordsPhase4 from './records/RecordsPhase4'
 import { colors, shadows } from '../theme/colors'
 
 import SubjectSelectForm from './SubjectSelectForm'
@@ -82,7 +93,7 @@ import { getSubjectRecommendations, processLiveClass, analyzeProgress, chatWithD
 import { AIConversationService } from '../lib/aiConversationService.js'
 import { processDoodleMessage, executeTool } from '../lib/doodleAssistant.js'
 
-export default function WebContent({ activeTab, activeSubtab, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, onRightSidebarRender }) {
   // Create rotating animation for loading spinners
   const spinValue = useRef(new Animated.Value(0)).current;
   
@@ -108,6 +119,76 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
   const [homeData, setHomeData] = useState(null);
   const [homeLoading, setHomeLoading] = useState(true);
   const [selectedChildId, setSelectedChildId] = useState(null);
+
+  // Ref to store refreshCalendarData function for event listener
+  const refreshCalendarDataRef = useRef(null);
+
+  // Listen for calendar refresh events from global task modal
+  // This allows the TaskCreateModal in WebLayout to trigger a calendar refresh
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    
+    const handleRefreshCalendar = () => {
+      // Always refresh calendar data when requested, regardless of active tab
+      // This ensures new events appear immediately after year plan creation
+      if (refreshCalendarDataRef.current) {
+        refreshCalendarDataRef.current().catch(err => console.error('Calendar refresh failed:', err));
+      }
+    };
+    
+    window.addEventListener('refreshCalendar', handleRefreshCalendar);
+    return () => {
+      window.removeEventListener('refreshCalendar', handleRefreshCalendar);
+    };
+  }, [activeTab]);
+
+  // Listen for rebalance modal events from PlannerWeek
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    
+    const handleOpenRebalance = (e) => {
+      const { event, yearPlanId } = e.detail;
+      setRebalanceEvent(event);
+      setRebalanceYearPlanId(yearPlanId);
+      setShowRebalanceModal(true);
+    };
+    
+    window.addEventListener('openRebalanceModal', handleOpenRebalance);
+    return () => {
+      window.removeEventListener('openRebalanceModal', handleOpenRebalance);
+    };
+  }, []);
+
+  // User role state
+  const [userRole, setUserRole] = useState(null);
+  const [accessibleChildren, setAccessibleChildren] = useState([]);
+
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      if (!user) return;
+      try {
+        const { getMe } = await import('../lib/apiClient');
+        const { data: meData, error: meError } = await getMe();
+        if (!meError && meData) {
+          setUserRole(meData.role || 'parent');
+          setAccessibleChildren(meData.accessible_children || []);
+        } else {
+          // Fallback: get from profile
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('role, family_id')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (profileData) {
+            setUserRole(profileData.role || 'parent');
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching user info:', error);
+      }
+    };
+    fetchUserInfo();
+  }, [user]);
 
   useEffect(() => {
     const fetchHomeData = async () => {
@@ -269,8 +350,14 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
       `;
       document.head.appendChild(style);
       
-      // Prevent default context menu globally
+      // Prevent default context menu globally, but allow it on events
       const preventContextMenu = (e) => {
+        // Allow context menu on event elements (they handle their own right-click)
+        const target = e.target;
+        if (target && (target.closest('[data-event-id]') || target.hasAttribute('data-event-id'))) {
+          // Don't prevent - let the event handle it
+          return;
+        }
         e.preventDefault();
       };
       document.addEventListener('contextmenu', preventContextMenu);
@@ -391,6 +478,11 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [showStudentModal, setShowStudentModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
+  const [eventModalVisible, setEventModalVisible] = useState(false)
+  const [eventModalEventId, setEventModalEventId] = useState(null)
+  const [showOutcomeModal, setShowOutcomeModal] = useState(false)
+  const [outcomeEvent, setOutcomeEvent] = useState(null)
+  const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null)
   const [isEditingEvent, setIsEditingEvent] = useState(false)
   const [editedEventData, setEditedEventData] = useState({})
   const [showActionMenu, setShowActionMenu] = useState(false)
@@ -423,10 +515,17 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
 
   // Right Pane New Event State
   const [showNewEventForm, setShowNewEventForm] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [taskModalDate, setTaskModalDate] = useState(null);
   
   // Home Page Modal State
   const [showHomeEventModal, setShowHomeEventModal] = useState(false);
   const [homeEventType, setHomeEventType] = useState('lesson');
+  
+  // Rebalance Modal State
+  const [showRebalanceModal, setShowRebalanceModal] = useState(false);
+  const [rebalanceEvent, setRebalanceEvent] = useState(null);
+  const [rebalanceYearPlanId, setRebalanceYearPlanId] = useState(null);
   const [homeEventFormData, setHomeEventFormData] = useState({
     title: '',
     description: '',
@@ -643,7 +742,6 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
       return null
     }
   }
-
   // Home Page Modal Functions
   const saveHomeEvent = async () => {
     // Validate required fields before saving
@@ -1403,7 +1501,6 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
     }
       )
   }
-
   // Handle description change with save
   const handleDescriptionChange = async (newDescription) => {
     if (!selectedEvent?.id) {
@@ -2152,7 +2249,6 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
     }
     setEditingFinishTime(true)
   }
-
   // Combined function to save both scheduled and finish times together
   const handleBothTimesSave = async () => {
     if (!selectedEvent?.id) {
@@ -2943,7 +3039,6 @@ export default function WebContent({ activeTab, activeSubtab, user, onChildAdded
       })
     }
   }
-
   const handleAddChild = async () => {
     if (!addChildName.trim() || !addChildAge.trim() || !addChildGrade.trim()) {
       Alert.alert('Required Fields', 'Please fill in the name, age, and grade fields.')
@@ -3173,13 +3268,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     if (activeTab === 'calendar') {
       return renderCalendarContent()
     }
-    // Planner tab - show week view
+    // Planner tab - show CenterPane with view switcher
     if (activeTab === 'planner') {
-      // Ensure we're in week view
-      if (calendarView !== 'week') {
-        setCalendarView('week');
-      }
-      return renderCalendarContent()
+      return renderPlannerContent()
     }
     // Schedule Rules and AI Planner are now modals, not separate tabs
     // If somehow navigated to these tabs, redirect to calendar
@@ -3201,7 +3292,36 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'search':
         return renderSearchContent()
       case 'home':
-        return renderHomeContent()
+        // Route to appropriate dashboard based on role
+        if (userRole === 'child' && accessibleChildren.length > 0) {
+          return <ChildDashboard childId={accessibleChildren[0].id} childName={accessibleChildren[0].name || accessibleChildren[0].first_name} />
+        } else if (userRole === 'tutor') {
+          return <TutorDashboard accessibleChildren={accessibleChildren} />
+        } else {
+          return renderHomeContent()
+        }
+      case 'child-dashboard':
+        if (activeSubtab) {
+          const child = accessibleChildren.find(c => c.id === activeSubtab);
+          return <ChildDashboard childId={activeSubtab} childName={child?.name || child?.first_name} />
+        }
+        return accessibleChildren.length > 0 ? (
+          <ChildDashboard childId={accessibleChildren[0].id} childName={accessibleChildren[0].name || accessibleChildren[0].first_name} />
+        ) : renderHomeContent()
+      case 'tutor-dashboard':
+        return <TutorDashboard accessibleChildren={accessibleChildren} />
+      case 'explore':
+        return <ExploreContent familyId={familyId} children={children} />
+      case 'inspire-learning':
+      case 'inspire':
+        return (
+          <View style={styles.content}>
+            <InspireLearning 
+              familyId={familyId}
+              children={children}
+            />
+          </View>
+        )
       case 'add-child':
         // Add child is now a modal, redirect to home or children list
         return activeSubtab ? renderChildrenListContent() : renderHomeContent()
@@ -3223,6 +3343,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'reports':
       case 'records':
         return renderRecordsContent()
+      case 'integrations':
+      case 'settings':
+        return <IntegrationsSettings user={user} />
       case 'templates':
       case 'syllabi':
       case 'imports':
@@ -3231,31 +3354,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'calendar-planning':
         return renderCalendarPlanningContent()
       case 'kanban':
-        return renderKanbanContent()
+        return renderComingSoonContent()
       default:
-        return renderHomeContent()
+        // Default routing based on role
+        if (userRole === 'child' && accessibleChildren.length > 0) {
+          return <ChildDashboard childId={accessibleChildren[0].id} childName={accessibleChildren[0].name || accessibleChildren[0].first_name} />
+        } else if (userRole === 'tutor') {
+          return <TutorDashboard accessibleChildren={accessibleChildren} />
+        } else {
+          return renderHomeContent()
+        }
     }
-  }
-
-  const renderKanbanContent = () => {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.bgSubtle }}>
-        <View style={{ padding: 24, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.card }}>
-          <Text style={{ fontSize: 24, fontWeight: '600', color: colors.text, marginBottom: 4 }}>
-            Kanban Board
-          </Text>
-          <Text style={{ fontSize: 14, color: colors.muted }}>
-            Manage tasks by status
-          </Text>
-        </View>
-        <KanbanBoard
-          childId={selectedCalendarChildren?.[0]}
-          subjectId={null}
-          weekStart={null}
-          weekEnd={null}
-        />
-      </View>
-    )
   }
 
   const renderSearchContent = () => {
@@ -3340,32 +3449,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
     return (
       <View style={styles.content}>
-        {/* Time-based Greeting + Quick Actions */}
+        {/* Time-based Greeting */}
         <View style={styles.greetingSection}>
           <Text style={styles.greetingTitle}>{getTimeBasedGreeting()}</Text>
-          <View style={styles.quickActions}>
-            <TouchableOpacity 
-              style={styles.quickActionButton}
-              onPress={() => onTabChange('add-activity')}
-            >
-              <Plus size={16} color={colors.accentContrast} />
-              <Text style={styles.quickActionText}>Add Activity</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.quickActionButtonSecondary}
-              onPress={() => onTabChange('ai-planner')}
-            >
-              <Sparkles size={16} color={colors.accent} />
-              <Text style={styles.quickActionTextSecondary}>AI Planner</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.quickActionButtonSecondary}
-              onPress={() => onTabChange('children')}
-            >
-              <Users size={16} color={colors.accent} />
-              <Text style={styles.quickActionTextSecondary}>Add Child</Text>
-            </TouchableOpacity>
-          </View>
         </View>
 
         {/* Stories Row (Flo-style) */}
@@ -3492,6 +3578,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             />
             
             <RecommendedReads />
+            
+            <InspireLearning 
+              familyId={familyId}
+              children={children}
+            />
           </View>
         </View>
       </View>
@@ -3763,7 +3854,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       </ScrollView>
   )
   }
-
   const renderDocumentsContent = () => {
     return (
       <UploadsEnhanced familyId={familyId} initialChildren={children} />
@@ -3781,6 +3871,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               childId={child.id}
               childName={child.first_name}
               familyId={familyId}
+              activeChildSection={activeChildSection || 'overview'}
               onBack={() => {
                 console.log('Back to children list');
                 onSubtabChange?.(null);
@@ -3820,6 +3911,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onAISummary={() => {
                 console.log('Generate AI summary for:', child.id);
                 // TODO: Call AI summary API
+              }}
+              onPlanYear={() => {
+                // Trigger year wizard from parent (WebLayout)
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openYearWizard'));
+                }
               }}
               onOpenPlanner={(params) => {
                 console.log('Open planner for next week:', params);
@@ -3868,7 +3965,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           actions={childrenActions}
         />
         
-        <ScrollView style={{ flex: 1, padding: 32 }}>
+        <ScrollView style={{ flex: 1, paddingVertical: 32, minHeight: 0 }}>
           {/* Show Archived Toggle */}
           {archivedChildren.length > 0 && (
             <View style={styles.archivedToggle}>
@@ -3935,7 +4032,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
           {/* Empty State */}
           {children.length === 0 && archivedChildren.length === 0 && (
-            <View style={{ alignItems: 'center', padding: 60 }}>
+            <View style={{ alignItems: 'center', padding: 64 }}>
               <Text style={{ fontSize: 16, color: '#6b7280', marginBottom: 16 }}>No children added yet</Text>
               <TouchableOpacity
                 style={styles.button}
@@ -3955,56 +4052,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }
 
   const renderRecordsContent = () => {
-    // Show attendance or reports based on subtab
+    // Phase 4: Use new comprehensive Records component
+    // Fallback to old attendance/reports views if subtab is specified
     if (activeSubtab === 'attendance') {
       return <Attendance familyId={familyId} />;
     } else if (activeSubtab === 'reports') {
       return <Reports familyId={familyId} />;
     }
 
-    const recordsActions = [
-      { 
-        label: 'View Attendance', 
-        icon: Plus, 
-        primary: true,
-        onPress: () => onSubtabChange?.('attendance')
-      },
-      { 
-        label: 'View Reports', 
-        icon: Download,
-        onPress: () => onSubtabChange?.('reports')
-      },
-    ];
-
-    return (
-      <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
-        <PageHeader
-          title="Records"
-          subtitle="Track attendance and generate reports"
-          actions={recordsActions}
-        />
-        
-        <ScrollView style={{ flex: 1, padding: 32 }}>
-          <View style={styles.recordsGrid}>
-            <TouchableOpacity 
-              style={styles.recordCard}
-              onPress={() => onSubtabChange?.('attendance')}
-            >
-              <Text style={styles.recordCardTitle}>Attendance</Text>
-              <Text style={styles.recordCardSubtitle}>Track daily attendance and learning time</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.recordCard}
-              onPress={() => onSubtabChange?.('reports')}
-            >
-              <Text style={styles.recordCardTitle}>Reports</Text>
-              <Text style={styles.recordCardSubtitle}>Generate attendance and progress summaries</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </View>
-    )
+    // Default: Show Phase 4 Records component
+    return <RecordsPhase4 familyId={familyId} />;
   }
 
   const renderComingSoonContent = () => {
@@ -4115,9 +4172,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
     // Calendar state
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState({});
   const [calendarLoading, setCalendarLoading] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(null);
   
   // Web-compatible alert function
   const showAlert = (title, message) => {
@@ -4130,6 +4187,22 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
   };
 
+  const getMonthKeyFromIso = (isoString) => {
+    if (!isoString) return null;
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return null;
+    return `${date.getFullYear()}-${date.getMonth()}`;
+  };
+
+  const monthKeyToDate = (monthKey) => {
+    if (!monthKey) return null;
+    const [yearStr, monthStr] = monthKey.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (Number.isNaN(year) || Number.isNaN(month)) return null;
+    return new Date(year, month, 1);
+  };
+
 
 
 
@@ -4137,21 +4210,153 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       
 
 
+  // Handle event completion (mark as done + optionally open outcome modal)
+  const handleEventComplete = async (event) => {
+    if (!event?.id) return;
+    
+    // Optimistically update the UI immediately
+    setCalendarEvents(prevEvents => {
+      const updated = { ...prevEvents };
+      Object.keys(updated).forEach(dateKey => {
+        updated[dateKey] = updated[dateKey].map(ev => 
+          ev.id === event.id ? { ...ev, status: 'done' } : ev
+        );
+      });
+      return updated;
+    });
+    
+    try {
+      const { completeEvent } = await import('../lib/services/attendanceClient');
+      const result = await completeEvent(event.id);
+      
+      if (result.error) {
+        console.error('[WebContent] Error completing event:', result.error);
+        // Revert optimistic update on error
+        setCalendarEvents(prevEvents => {
+          const reverted = { ...prevEvents };
+          Object.keys(reverted).forEach(dateKey => {
+            reverted[dateKey] = reverted[dateKey].map(ev => 
+              ev.id === event.id ? { ...ev, status: event.status || 'scheduled' } : ev
+            );
+          });
+          return reverted;
+        });
+        if (Platform.OS === 'web') {
+          alert(`Failed to complete event: ${result.error.message || result.error}`);
+        }
+        return;
+      }
+      
+      // Refresh calendar to ensure we have the latest data from server
+      if (refreshCalendarDataRef.current) {
+        refreshCalendarDataRef.current().catch(err => console.error('Calendar refresh failed:', err));
+      } else {
+        // Fallback: dispatch refresh event
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        }
+      }
+      
+      // Optionally prompt for outcome (for now, just complete silently)
+      // User can click on completed event later to add reflection
+    } catch (error) {
+      console.error('[WebContent] Exception completing event:', error);
+      // Revert optimistic update on error
+      setCalendarEvents(prevEvents => {
+        const reverted = { ...prevEvents };
+        Object.keys(reverted).forEach(dateKey => {
+          reverted[dateKey] = reverted[dateKey].map(ev => 
+            ev.id === event.id ? { ...ev, status: event.status || 'scheduled' } : ev
+          );
+        });
+        return reverted;
+      });
+      if (Platform.OS === 'web') {
+        alert(`Error: ${error.message || 'Unknown error'}`);
+      }
+    }
+  };
+
   // Fetch real calendar events from Supabase
   const handleEventSelect = (event) => {
-    
-    setSelectedEvent(event)
-    setIsEditingEvent(false)
+    setShowNewEventForm(false);
+    setShowTaskModal(false);
+    setEventModalVisible(true);
+    setEventModalEventId(event?.id || null);
+    if (event) {
+      setEventModalInitialEvent({
+        id: event.id,
+        title: event.title,
+        description: event.description || event.data?.description || '',
+        status: event.status || event.data?.status,
+        start_ts: event.start_ts || event.start || event.data?.start_ts || event.data?.start,
+        end_ts: event.end_ts || event.end || event.data?.end_ts || event.data?.end,
+        child_id: event.childId || event.child_id || event.data?.child_id,
+        tags: event.tags || event.data?.tags,
+        source: event.source || event.data?.source,
+      });
+    } else {
+      setEventModalInitialEvent(null);
+    }
+    setSelectedEvent(null);
+    setIsEditingEvent(false);
     setEditedEventData({
-      title: event.title,
-      childName: event.childName,
-      time: event.time,
-      type: event.type,
-      date: event.date,
-      location: event.location || '',
-      notes: event.notes || ''
-    })
+      title: event?.title,
+      childName: event?.childName,
+      time: event?.time,
+      type: event?.type,
+      date: event?.date,
+      location: event?.location || '',
+      notes: event?.notes || ''
+    });
   }
+
+  const handleEventModalPatched = async (patch) => {
+    if (!patch) return;
+    const eventId = patch.id || eventModalEventId;
+    if (!eventId) return;
+
+    const previousStart =
+      patch.previous_start_ts ||
+      eventModalInitialEvent?.start_ts ||
+      eventModalInitialEvent?.start ||
+      eventModalInitialEvent?.data?.start_ts ||
+      null;
+
+    const newStart =
+      patch.start_ts ||
+      eventModalInitialEvent?.start_ts ||
+      eventModalInitialEvent?.start ||
+      previousStart;
+
+    setEventModalInitialEvent((prev) => {
+      const base = prev ? { ...prev } : {};
+      return { ...base, ...patch, id: eventId };
+    });
+
+    const monthKeysToRefresh = new Set();
+    const prevMonthKey = getMonthKeyFromIso(previousStart);
+    if (prevMonthKey) {
+      monthKeysToRefresh.add(prevMonthKey);
+    }
+    const newMonthKey = getMonthKeyFromIso(newStart);
+    if (newMonthKey) {
+      monthKeysToRefresh.add(newMonthKey);
+    }
+
+    if (monthKeysToRefresh.size === 0) {
+      monthKeysToRefresh.add(`${currentMonth.getFullYear()}-${currentMonth.getMonth()}`);
+    }
+
+    const refreshPromises = Array.from(monthKeysToRefresh)
+      .map((key) => monthKeyToDate(key))
+      .filter(Boolean)
+      .map((date) => refreshCalendarData(date));
+
+    if (refreshPromises.length > 0) {
+      await Promise.all(refreshPromises);
+    }
+  };
 
   const handleEditEvent = () => {
     setIsEditingEvent(true)
@@ -4197,7 +4402,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       menuItems.forEach((item, index) => {
         const div = document.createElement('div');
         div.style.cssText = `
-          padding: 12px 20px;
+          padding: 16px 24px;
           color: #374151;
           font-size: 15px;
           font-weight: 500;
@@ -4206,7 +4411,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 16px;
         `;
         
         // Add hover effect
@@ -4304,6 +4509,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         menuItems.push({ text: 'Delete Event', action: () => handleDeleteEvent(event), isDelete: true });
       }
       
+      // Add rebalance option if event has year_plan_id (from year plan seeding)
+      if (event.year_plan_id) {
+        menuItems.push({ 
+          text: 'Rebalance subject from here...', 
+          action: () => {
+            setRebalanceEvent(event);
+            setRebalanceYearPlanId(event.year_plan_id);
+            setShowRebalanceModal(true);
+          }
+        });
+      }
+      
       // If no menu items are available (global holiday), show informational message
       if (menuItems.length === 0) {
         menuItems.push({ text: 'Global holidays cannot be modified', action: () => {}, isDisabled: true });
@@ -4312,7 +4529,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       menuItems.forEach((item, index) => {
         const div = document.createElement('div');
         div.style.cssText = `
-          padding: 12px 20px;
+          padding: 16px 24px;
           color: ${item.isDisabled ? '#9ca3af' : (item.isDelete ? '#dc2626' : '#374151')};
           font-size: 15px;
           font-weight: 500;
@@ -4321,7 +4538,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 16px;
         `;
         
         // Add hover effect only for non-disabled items
@@ -4550,7 +4767,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     setNewEventType('lesson');
     setShowNewEventForm(true);
   };
-
   const handleCutEvent = async (event) => {
     if (event && event.id) {
       try {
@@ -4951,8 +5167,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       const eventsByDate = data.events_by_date || {};
       console.log('Sample events from RPC:', Object.keys(eventsByDate).slice(0, 3).map(date => ({
         date,
-        events: eventsByDate[date]?.slice(0, 2).map(e => ({ title: e.title, source: e.source, start_local: e.start_local }))
+        events: eventsByDate[date]?.slice(0, 2).map(e => ({ title: e.title, source: e.source, start_local: e.start_local, year_plan_id: e.year_plan_id }))
       })));
+      // Debug: Check if year_plan_id is in the RPC response
+      const sampleEvent = Object.values(eventsByDate)[0]?.[0];
+      if (sampleEvent) {
+        console.log('[WebContent] Sample event from RPC has year_plan_id?', {
+          hasYearPlanId: !!sampleEvent.year_plan_id,
+          year_plan_id: sampleEvent.year_plan_id,
+          allKeys: Object.keys(sampleEvent),
+          title: sampleEvent.title
+        });
+      }
 
       // Convert the RPC response to the format expected by the calendar
       const events = {};
@@ -4960,17 +5186,39 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       // Convert events_by_date to the format expected by calendar
       Object.keys(eventsByDate).forEach(date => {
         const dayEvents = eventsByDate[date] || [];
-        events[date] = dayEvents.map(event => ({
-          id: event.id,
-          type: event.source || 'activity',
-          title: event.title || 'Untitled Event',
-          childName: data.children?.find(c => c.id === event.child_id)?.name || 'Child',
-          time: event.start_local || 'Scheduled',
-          color: event.source === 'lesson' ? 'blue' : 'orange',
-          data: event,
-          assignee: event.child_id,
-          assignees: event.child_id ? [event.child_id] : []
-        }));
+        events[date] = dayEvents.map(event => {
+          // Determine color based on subject (if available) or default to teal
+          let eventColor = 'teal'; // Default color
+          const subjectName = event.subject_name || event.subject || '';
+          if (subjectName) {
+            const subjectLower = subjectName.toLowerCase();
+            // Map subjects to EventChip-supported colors: teal, violet, amber, sky
+            if (subjectLower.includes('reading') || subjectLower.includes('literacy') || subjectLower.includes('english') || subjectLower.includes('language')) {
+              eventColor = 'sky'; // Blue-ish for reading/language
+            } else if (subjectLower.includes('math') || subjectLower.includes('mathematics')) {
+              eventColor = 'amber'; // Yellow/orange for math
+            } else if (subjectLower.includes('art') || subjectLower.includes('arts') || subjectLower.includes('creative')) {
+              eventColor = 'violet'; // Purple for arts
+            } else if (subjectLower.includes('science')) {
+              eventColor = 'teal'; // Teal for science
+            }
+          }
+          
+          return {
+            id: event.id,
+            type: event.source || 'activity',
+            title: event.title || 'Untitled Event',
+            childName: data.children?.find(c => c.id === event.child_id)?.name || 'Child',
+            time: event.start_local || 'Scheduled',
+            color: eventColor,
+            subject: subjectName,
+            status: event.status || 'scheduled',
+            year_plan_id: event.year_plan_id, // Preserve year_plan_id from RPC
+            data: event,
+            assignee: event.child_id,
+            assignees: event.child_id ? [event.child_id] : []
+          };
+        });
       });
 
       console.log('Month data loaded successfully. Events by date:', Object.keys(events).length);
@@ -5328,34 +5576,58 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       setCalendarDataLoading(false);
     }
   };
+  const refreshCalendarData = async (referenceDate = null) => {
+    if (!familyId) return;
+    
+    // Store function reference for event listener
+    refreshCalendarDataRef.current = () => refreshCalendarData(referenceDate);
 
-  const refreshCalendarData = async () => {
-    if (familyId) {
-      // Don't reset isCalendarDataLoaded to avoid showing loading screen
-      // Don't clear the cache to avoid removing all calendar data
-      await preloadCalendarDataRPC();
-      
-      // Force calendar re-render by updating the calendar events state
-      // This ensures the calendar chips update with the new data
-      const currentYear = currentMonth.getFullYear();
-      const month = currentMonth.getMonth();
-      const monthKey = `${currentYear}-${month}`;
-      const monthEvents = calendarDataCache[monthKey] || {};
-      console.log('Background refresh completed - calendar data updated in cache for month:', monthKey, 'with', Object.keys(monthEvents).length, 'days');
-      
-      // Log some event details to debug
-      Object.keys(monthEvents).forEach(dateKey => {
-        const events = monthEvents[dateKey];
-        events.forEach(event => {
-          if (event.id === '1782ad40-937e-4a54-91c5-a53babdfcd5f') {
-            console.log('Found updated event in calendar data:', event);
-          }
-        });
+    try {
+      let baseDate;
+      if (referenceDate instanceof Date) {
+        baseDate = referenceDate;
+      } else if (referenceDate) {
+        baseDate = new Date(referenceDate);
+      } else {
+        baseDate = currentMonth;
+      }
+
+      if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) {
+        baseDate = currentMonth;
+      }
+
+      const targetYear = baseDate.getFullYear();
+      const targetMonthIndex = baseDate.getMonth();
+      const targetMonthNum = targetMonthIndex + 1;
+      const monthKey = `${targetYear}-${targetMonthIndex}`;
+
+      console.log('Refreshing calendar data for month:', monthKey);
+
+      // Clear the cache for this month to force a fresh load
+      setCalendarDataCache(prevCache => {
+        const newCache = { ...prevCache };
+        delete newCache[monthKey];
+        return newCache;
       });
-      
-      // Note: We don't update calendarEvents here anymore because it would
-      // overwrite our optimistic updates. The useEffect with calendarDataCache
-      // dependency will handle updating the calendar when needed.
+
+      const events = await loadMonthData(targetYear, targetMonthNum);
+
+      setCalendarDataCache(prevCache => ({
+        ...prevCache,
+        [monthKey]: events,
+      }));
+
+      // Also update calendarEvents state if we're on the calendar tab
+      // Always update to ensure checkmarks reflect latest status
+      setCalendarEvents(events);
+
+      if (!isCalendarDataLoaded) {
+        setIsCalendarDataLoaded(true);
+      }
+
+      console.log('Refresh complete. Updated', Object.keys(events).length, 'days in month:', monthKey);
+    } catch (error) {
+      console.error('Error refreshing calendar data:', error);
     }
   };
 
@@ -5475,7 +5747,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   // Separate useEffect to update calendar events when cache changes
   useEffect(() => {
-    if (familyId && activeTab === 'calendar' && isCalendarDataLoaded && Object.keys(calendarDataCache).length > 0) {
+    if (familyId && isCalendarDataLoaded && Object.keys(calendarDataCache).length > 0) {
       // Merge all events from cache
       const allEvents = {};
       Object.keys(calendarDataCache).forEach(key => {
@@ -5495,11 +5767,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   // Force calendar re-render when month changes to ensure events display correctly
   useEffect(() => {
-    if (familyId && activeTab === 'calendar' && isCalendarDataLoaded && Object.keys(calendarEvents).length > 0) {
+    if (familyId && isCalendarDataLoaded && Object.keys(calendarEvents).length > 0) {
       // Force re-render by updating calendarEvents with a new object reference
       setCalendarEvents(prevEvents => ({ ...prevEvents }));
     }
-  }, [currentMonth, familyId, activeTab, isCalendarDataLoaded]);
+  }, [currentMonth, familyId, isCalendarDataLoaded]);
 
   // Note: Filtering is now handled by the cache watcher useEffect above
   // This useEffect was causing events to be reduced to only current month
@@ -5507,7 +5779,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   // Fetch calendar data when switching to calendar tab
   useEffect(() => {
-    if (activeTab === 'calendar' && familyId && !isCalendarDataLoaded) {
+    if ((activeTab === 'calendar' || activeTab === 'planner') && familyId && !isCalendarDataLoaded) {
       console.log('Calendar tab activated, triggering data pre-load');
       preloadCalendarDataRPC();
     }
@@ -5580,50 +5852,2035 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
   }, [calendarView, selectedCalendarChildren]);
 
-  const renderCalendarContent = () => {
+  // Generate right sidebar content for planner
+  const getRightSidebarContent = React.useCallback(() => {
+    if (!onRightSidebarRender) return null;
+    
+    if (activeTab !== 'planner' && activeTab !== 'calendar-planning' && calendarView !== 'month') {
+      return null;
+    }
+
+      return (
+      <>
+              {showNewEventForm ? (
+          // New Event Form View
+                <ScrollView 
+            style={{ flex: 1, zIndex: 1, minHeight: 0 }} 
+                  contentContainerStyle={{ 
+                    padding: 16,
+                    paddingBottom: 60
+                  }}
+                  showsVerticalScrollIndicator={true}
+                  bounces={false}
+                  nestedScrollEnabled={true}
+                >
+                  {/* Close Button - Top Right */}
+                  <TouchableOpacity 
+                    onPress={closeNewEventForm}
+                    style={{
+                      position: 'absolute',
+                    top: 16,
+                    right: 16,
+                      zIndex: 1000
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, color: '#6b7280' }}>✕</Text>
+                  </TouchableOpacity>
+
+                  {/* New Event Header */}
+                  <View style={{ 
+                    marginBottom: 16,
+              marginTop: 40,
+              flexShrink: 0
+                  }}>
+                    <View style={{ position: 'relative', marginBottom: showEventTypeDropdown ? 120 : 0 }}>
+                      <TouchableOpacity
+                        onPress={() => setShowEventTypeDropdown(!showEventTypeDropdown)}
+                          style={{
+                    flexDirection: 'row', 
+                          alignItems: 'center',
+                    justifyContent: 'space-between', 
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                          padding: 8,
+                          minWidth: 120
+                        }}
+                      >
+                        <Text style={{ 
+                          fontSize: 12, 
+                            fontWeight: '600',
+                            color: '#111827',
+                          textTransform: 'capitalize'
+                        }}>
+                          {newEventType === 'holiday' ? 'Days Off' : newEventType}
+                    </Text>
+                        <Ionicons 
+                          name={showEventTypeDropdown ? "chevron-up" : "chevron-down"} 
+                          size={14} 
+                          color="#6b7280" 
+                        />
+                      </TouchableOpacity>
+                      
+                      {showEventTypeDropdown && (
+                          <View style={{
+                            position: 'absolute',
+                          top: '100%',
+                          left: 0,
+                          right: 0,
+                          backgroundColor: '#ffffff',
+                          borderWidth: 1,
+                          borderColor: '#e1e5e9',
+                          borderRadius: 6,
+                          marginTop: 4,
+                          zIndex: 9999,
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4,
+                          elevation: 5
+                        }}>
+                          {['lesson', 'activity', 'holiday'].map((type) => (
+                            <TouchableOpacity
+                              key={type}
+                              onPress={() => {
+                                setNewEventType(type);
+                                setShowEventTypeDropdown(false);
+                              }}
+                              style={{
+                                padding: 16,
+                                borderBottomWidth: type !== 'holiday' ? 1 : 0,
+                                borderBottomColor: '#f3f4f6',
+                                backgroundColor: newEventType === type ? '#f3f4f6' : 'transparent'
+                              }}
+                            >
+                              <Text style={{
+                                fontSize: 14,
+                                color: newEventType === type ? '#1e40af' : '#374151',
+                                fontWeight: newEventType === type ? '600' : '400',
+                                textTransform: 'capitalize'
+                              }}>
+                                {type === 'holiday' ? 'Days Off' : type}
+                    </Text>
+                            </TouchableOpacity>
+                          ))}
+                          </View>
+                      )}
+                        </View>
+                  </View>
+
+                  {/* Title Section */}
+            <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                        <TextInput
+                          style={{
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                            padding: 8,
+                          fontSize: 12,
+                          color: '#111827'
+                        }}
+                        placeholder="Title"
+                        value={newEventFormData.title}
+                        onChangeText={(text) => setNewEventFormData({...newEventFormData, title: text})}
+                      />
+                    </View>
+                    </View>
+                    
+                  {/* Description Section */}
+            <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                      <TextInput
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderWidth: 1,
+                          borderColor: '#e1e5e9',
+                          borderRadius: 6,
+                          padding: 8,
+                          fontSize: 12,
+                            color: '#111827',
+                          minHeight: 60
+                        }}
+                        placeholder="Description"
+                        value={newEventFormData.description}
+                        onChangeText={(text) => setNewEventFormData({...newEventFormData, description: text})}
+                        multiline
+                        textAlignVertical="top"
+                      />
+                    </View>
+                  </View>
+
+                  {/* Track Selection Section - Only for lessons */}
+                  {newEventType === 'lesson' && (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ position: 'relative', padding: 4 }}>
+                        <TouchableOpacity
+                          ref={trackTriggerRef}
+                          onPress={() => {
+                            measureTriggerPosition(trackTriggerRef, setTrackTriggerDimensions);
+                            setShowTrackDropdown(!showTrackDropdown);
+                          }}
+                          style={{
+                            flexDirection: 'row', 
+                            alignItems: 'center',
+                            justifyContent: 'space-between', 
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                            padding: 8,
+                            fontSize: 12,
+                            color: '#111827',
+                            width: '100%'
+                          }}
+                        >
+                          <Text style={{ 
+                            fontSize: 12, 
+                            color: '#111827'
+                          }}>
+                            {newEventFormData.trackId ? 
+                              availableTracks.find(t => t.id === newEventFormData.trackId)?.name || 'Select Track' :
+                              'Select Track'
+                            }
+                    </Text>
+                          <Ionicons 
+                            name={showTrackDropdown ? "chevron-up" : "chevron-down"} 
+                            size={14} 
+                            color="#6b7280" 
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Activity Selection Section - Only for lessons */}
+                  {newEventType === 'lesson' && (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ position: 'relative', padding: 4 }}>
+                        <TouchableOpacity 
+                          ref={activityTriggerRef}
+                          onPress={() => {
+                            measureTriggerPosition(activityTriggerRef, setActivityTriggerDimensions);
+                            setShowActivityDropdown(!showActivityDropdown);
+                          }}
+                          style={{
+                            flexDirection: 'row', 
+                            alignItems: 'center',
+                            justifyContent: 'space-between', 
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                            padding: 8,
+                            fontSize: 12,
+                            color: '#111827',
+                            width: '100%'
+                          }}
+                        >
+                          <Text style={{ 
+                            fontSize: 12, 
+                            color: '#111827'
+                          }}>
+                            {newEventFormData.activityId ? 
+                              availableActivities.find(a => a.id === newEventFormData.activityId)?.title || 'Select Activity' :
+                              'Select Activity'
+                            }
+                      </Text>
+                          <Ionicons 
+                            name={showActivityDropdown ? "chevron-up" : "chevron-down"} 
+                            size={14} 
+                            color="#6b7280" 
+                          />
+                        </TouchableOpacity>
+                    </View>
+                    </View>
+                  )}
+
+                  {/* Date Selection Section - Different for holidays */}
+                  {newEventType === 'holiday' ? (
+                    <>
+                      {/* Date Range Toggle */}
+                <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                        <View style={{ padding: 4 }}>
+                          <View style={{
+                            flexDirection: 'row', 
+                            alignItems: 'center',
+                            gap: 8,
+                            marginBottom: 8
+                          }}>
+                            <TouchableOpacity
+                              onPress={() => setHolidayDateRange(prev => ({ ...prev, isRange: false }))}
+                              style={{
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                               borderRadius: 4,
+                                backgroundColor: !holidayDateRange.isRange ? '#3b82f6' : '#f3f4f6',
+                              borderWidth: 1,
+                                borderColor: !holidayDateRange.isRange ? '#3b82f6' : '#d1d5db'
+                              }}
+                            >
+                              <Text style={{ 
+                                fontSize: 11, 
+                                color: !holidayDateRange.isRange ? '#ffffff' : '#374151',
+                                fontWeight: '500'
+                              }}>
+                                Single Day
+                    </Text>
+                      </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => setHolidayDateRange(prev => ({ ...prev, isRange: true }))}
+                              style={{
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 4,
+                                backgroundColor: holidayDateRange.isRange ? '#3b82f6' : '#f3f4f6',
+                                borderWidth: 1,
+                                borderColor: holidayDateRange.isRange ? '#3b82f6' : '#d1d5db'
+                            }}
+                          >
+                            <Text style={{ 
+                                fontSize: 11, 
+                                color: holidayDateRange.isRange ? '#ffffff' : '#374151',
+                                fontWeight: '500'
+                              }}>
+                                Date Range
+                              </Text>
+                          </TouchableOpacity>
+                          </View>
+                        </View>
+                  </View>
+
+                      {/* Single Date Input */}
+                      {!holidayDateRange.isRange && (
+                  <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                          <View style={{ padding: 4 }}>
+                            <TextInput
+                      style={{
+                      backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                      borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                      padding: 8,
+                                fontSize: 12,
+                                color: '#111827'
+                              }}
+                              placeholder="Date (YYYY-MM-DD)"
+                              value={newEventFormData.scheduledDate}
+                              onChangeText={(text) => setNewEventFormData({...newEventFormData, scheduledDate: text})}
+                            />
+                          </View>
+                    </View>
+                  )}
+
+                      {/* Date Range Inputs */}
+                      {holidayDateRange.isRange && (
+                        <>
+                    <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                            <View style={{ padding: 4 }}>
+                              <TextInput
+                      style={{
+                                  backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                                  borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                                  padding: 8,
+                                  fontSize: 12,
+                                  color: '#111827'
+                                }}
+                                placeholder="Start Date (YYYY-MM-DD)"
+                                value={holidayDateRange.startDate}
+                                onChangeText={(text) => setHolidayDateRange(prev => ({ ...prev, startDate: text }))}
+                              />
+                    </View>
+                          </View>
+                    <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                            <View style={{ padding: 4 }}>
+                              <TextInput
+                                style={{
+                                  backgroundColor: '#ffffff',
+                                  borderWidth: 1,
+                                  borderColor: '#e1e5e9',
+                                  borderRadius: 6,
+                                  padding: 8,
+                                  fontSize: 12,
+                                  color: '#111827'
+                                }}
+                                placeholder="End Date (YYYY-MM-DD)"
+                                value={holidayDateRange.endDate}
+                                onChangeText={(text) => setHolidayDateRange(prev => ({ ...prev, endDate: text }))}
+                              />
+                            </View>
+                          </View>
+                        </>
+                      )}
+
+                      {/* Repeat Options */}
+                <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                        <View style={{ padding: 4 }}>
+                          <View style={{
+                        flexDirection: 'row',
+                            alignItems: 'center', 
+                        justifyContent: 'space-between',
+                            marginBottom: 8
+                          }}>
+                            <Text style={{ fontSize: 11, color: '#6b7280', fontWeight: '500' }}>
+                              Repeat
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => setHolidayRepeat(prev => ({ ...prev, enabled: !prev.enabled }))}
+                              style={{
+                                width: 32,
+                            height: 16,
+                                backgroundColor: holidayRepeat.enabled ? '#3b82f6' : '#d1d5db',
+                                borderRadius: 8,
+                                padding: 2
+                              }}
+                            >
+                        <View style={{
+                                width: 12,
+                                height: 12,
+                                backgroundColor: '#ffffff',
+                                borderRadius: 6,
+                                transform: [{ translateX: holidayRepeat.enabled ? 16 : 0 }]
+                              }} />
+                      </TouchableOpacity>
+                          </View>
+                    
+                          {holidayRepeat.enabled && (
+                            <View style={{ gap: 8 }}>
+                      <View style={{
+                                flexDirection: 'row', 
+                            alignItems: 'center',
+                                gap: 8
+                              }}>
+                                <View style={{ 
+                                  flexDirection: 'row', 
+                                  gap: 4
+                                }}>
+                                  {['weekly', 'monthly', 'yearly'].map((freq) => (
+                          <TouchableOpacity 
+                                      key={freq}
+                                      onPress={() => setHolidayRepeat(prev => ({ ...prev, frequency: freq }))}
+                            style={{ 
+                                        paddingHorizontal: 6,
+                                        paddingVertical: 2,
+                                        borderRadius: 3,
+                                        backgroundColor: holidayRepeat.frequency === freq ? '#3b82f6' : '#f3f4f6',
+                              borderWidth: 1,
+                                        borderColor: holidayRepeat.frequency === freq ? '#3b82f6' : '#d1d5db'
+                            }}
+                          >
+                                      <Text style={{ 
+                                        fontSize: 10, 
+                                        color: holidayRepeat.frequency === freq ? '#ffffff' : '#374151'
+                                      }}>
+                                        {freq.charAt(0).toUpperCase() + freq.slice(1)}
+                                      </Text>
+                    </TouchableOpacity>
+                                  ))}
+                    </View>
+                  </View>
+                      </View>
+                    )}
+                  </View>
+                      </View>
+                    </>
+                  ) : (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ padding: 4 }}>
+                                                <TextInput
+                      style={{
+                      backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                      borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                      padding: 8,
+                            fontSize: 12,
+                            color: '#111827',
+                            textAlign: 'left',
+                            letterSpacing: 2
+                          }}
+                          placeholder="MM/DD/YY"
+                          placeholderTextColor="#9ca3af"
+                          value={newEventFormData.scheduledDate}
+                          onChangeText={(text) => {
+                            if (text.length < newEventFormData.scheduledDate.length) {
+                              setNewEventFormData({...newEventFormData, scheduledDate: text})
+                              return
+                            }
+                      let formatted = text.replace(/\D/g, '')
+                            if (formatted.length >= 2) {
+                              formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
+                            }
+                            if (formatted.length >= 5) {
+                              formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
+                            }
+                            setNewEventFormData({...newEventFormData, scheduledDate: formatted})
+                          }}
+                          maxLength={8}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Due Date Section - Only for lessons and activities */}
+                  {newEventType !== 'holiday' && (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ padding: 4 }}>
+                                                <TextInput
+                      style={{
+                      backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                      borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                      padding: 8,
+                            fontSize: 12,
+                            color: '#111827',
+                            textAlign: 'left',
+                            letterSpacing: 2
+                          }}
+                          placeholder="MM/DD/YY (optional)"
+                          placeholderTextColor="#9ca3af"
+                          value={newEventFormData.dueDate}
+                          onChangeText={(text) => {
+                            if (text.length < newEventFormData.dueDate.length) {
+                              setNewEventFormData({...newEventFormData, dueDate: text})
+                              return
+                            }
+                      let formatted = text.replace(/\D/g, '')
+                            if (formatted.length >= 2) {
+                              formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
+                            }
+                            if (formatted.length >= 5) {
+                              formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
+                            }
+                            setNewEventFormData({...newEventFormData, dueDate: formatted})
+                          }}
+                          maxLength={8}
+                          keyboardType="numeric"
+                        />
+                    </View>
+                  </View>
+                  )}
+
+                  {/* Scheduled Time Section - Only for lessons and activities */}
+                  {newEventType !== 'holiday' && (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ padding: 4 }}>
+                        {Platform.OS === 'web' ? (
+                    <View style={{
+                      backgroundColor: '#ffffff',
+                      borderWidth: 1,
+                      borderColor: '#e1e5e9',
+                      borderRadius: 6,
+                      padding: 8,
+                            minHeight: 32
+                          }}>
+                            <input
+                              type="time"
+                              value={newEventFormData.scheduledTime}
+                              onChange={(e) => setNewEventFormData({...newEventFormData, scheduledTime: e.target.value})}
+                              style={{ 
+                                border: 'none',
+                                outline: 'none',
+                                fontSize: 12,
+                                color: '#111827',
+                                backgroundColor: 'transparent',
+                                width: '100%',
+                                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+                              }}
+                            />
+                          </View>
+                        ) : (
+                          <TextInput
+                            style={{
+                              backgroundColor: '#ffffff',
+                              borderWidth: 1,
+                              borderColor: '#e1e5e9',
+                              borderRadius: 6,
+                              padding: 8,
+                              fontSize: 12,
+                              color: '#111827',
+                              minHeight: 32
+                            }}
+                            value={newEventFormData.scheduledTime}
+                            onChangeText={(text) => setNewEventFormData({...newEventFormData, scheduledTime: text})}
+                            placeholder="9:00"
+                            placeholderTextColor="#9ca3af"
+                          />
+                        )}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Finish Time Section - Only for lessons and activities */}
+                  {newEventType !== 'holiday' && (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ padding: 4 }}>
+                        {Platform.OS === 'web' ? (
+                          <View style={{
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                            padding: 8,
+                            minHeight: 32
+                          }}>
+                            <input
+                              type="time"
+                              value={newEventFormData.finishTime}
+                              onChange={(e) => setNewEventFormData({...newEventFormData, finishTime: e.target.value})}
+                      style={{
+                                border: 'none',
+                                outline: 'none',
+                                fontSize: 12,
+                                color: '#111827',
+                                backgroundColor: 'transparent',
+                                width: '100%',
+                                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+                              }}
+                            />
+                          </View>
+                        ) : (
+                          <TextInput
+                            style={{
+                              backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                              borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                              padding: 8,
+                              fontSize: 12,
+                              color: '#111827',
+                              minHeight: 32
+                            }}
+                            value={newEventFormData.finishTime}
+                            onChangeText={(text) => setNewEventFormData({...newEventFormData, finishTime: text})}
+                            placeholder="10:30"
+                            placeholderTextColor="#9ca3af"
+                          />
+                        )}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Student Section - Auto-populated from track */}
+                  {newEventType !== 'holiday' && newEventFormData.trackId && (
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                      <View style={{ padding: 4 }}>
+                        <View style={{
+                          backgroundColor: '#f8fafc',
+                          borderWidth: 1,
+                          borderColor: '#e2e8f0',
+                          borderRadius: 6,
+                          padding: 8,
+                        flexDirection: 'row',
+                        alignItems: 'center'
+                        }}>
+                          <Text style={{ fontSize: 12, color: '#64748b', marginRight: 8 }}>Student:</Text>
+                          <Text style={{ fontSize: 12, color: '#1e293b', fontWeight: '500' }}>
+                            {(() => {
+                              const selectedTrack = availableTracks.find(t => t.id === newEventFormData.trackId);
+                              if (selectedTrack) {
+                                if (selectedTrack.name.includes("Max")) return "Max";
+                                if (selectedTrack.name.includes("Lilly")) return "Lilly";
+                              }
+                              return "Auto-selected from track";
+                            })()}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Status Section - Only for lessons and activities */}
+                  {newEventType !== 'holiday' && (
+                    <View style={{ marginBottom: 16 }}>
+                      <View style={{ position: 'relative', padding: 4 }}>
+                        <TouchableOpacity
+                          ref={statusTriggerRef}
+                          onPress={() => {
+                            measureTriggerPosition(statusTriggerRef, setStatusTriggerDimensions);
+                            setShowStatusDropdown(!showStatusDropdown);
+                          }}
+                          style={{
+                            flexDirection: 'row', 
+                            alignItems: 'center',
+                            justifyContent: 'space-between', 
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                            padding: 8,
+                            fontSize: 12,
+                            color: '#111827',
+                            width: '100%'
+                          }}
+                        >
+                          <Text style={{ 
+                            fontSize: 12, 
+                            color: '#111827',
+                            textTransform: 'capitalize'
+                          }}>
+                            {newEventFormData.status === 'planned' ? 'To Do' : newEventFormData.status.replace('_', ' ')}
+                        </Text>
+                          <Ionicons 
+                            name={showStatusDropdown ? "chevron-up" : "chevron-down"} 
+                            size={14} 
+                            color="#6b7280" 
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Save Button */}
+                            <TouchableOpacity 
+                    onPress={saveNewEventFromForm}
+                    disabled={
+                      !newEventFormData.title || 
+                      !newEventFormData.scheduledDate ||
+                      (newEventType === 'lesson' && (!newEventFormData.trackId || !newEventFormData.activityId || !newEventFormData.assignees || newEventFormData.assignees.length === 0 || !newEventFormData.timeEstimate || parseInt(newEventFormData.timeEstimate) <= 0)) ||
+                      (newEventType === 'holiday' ? 
+                        (holidayDateRange.isRange ? 
+                          (!holidayDateRange.startDate || !holidayDateRange.endDate) : 
+                          !newEventFormData.scheduledDate
+                        ) : 
+                        !newEventFormData.scheduledDate
+                      )
+                    }
+                              style={{ 
+                      backgroundColor: (
+                        !newEventFormData.title || 
+                        (newEventType === 'lesson' && (!newEventFormData.trackId || !newEventFormData.activityId)) ||
+                        (newEventType === 'holiday' ? 
+                          (holidayDateRange.isRange ? 
+                            (!holidayDateRange.startDate || !holidayDateRange.endDate) : 
+                            !newEventFormData.scheduledDate
+                          ) : 
+                          !newEventFormData.scheduledDate
+                        )
+                      ) ? '#d1d5db' : '#3b82f6',
+                      padding: 10,
+                      borderRadius: 8,
+                      alignItems: 'center',
+                      marginTop: 12
+                    }}
+                  >
+                              <Text style={{ 
+                        color: '#ffffff',
+                                fontSize: 14,
+                        fontWeight: '600'
+                      }}>
+                        Create {newEventType === 'holiday' ? 'Days Off' : newEventType.charAt(0).toUpperCase() + newEventType.slice(1)}
+                    </Text>
+                    </TouchableOpacity>
+                                  </ScrollView>
+              ) : (selectedEvent && !eventModalVisible) ? (
+          selectedEvent.type === 'holiday' ? (
+            // Holiday Details View
+            <ScrollView 
+              style={{ flex: 1, minHeight: 0 }} 
+              contentContainerStyle={{ 
+                padding: 16,
+                paddingBottom: 60
+              }}
+              showsVerticalScrollIndicator={true}
+              bounces={false}
+              nestedScrollEnabled={true}
+            >
+              {/* Close Button */}
+              <TouchableOpacity 
+                onPress={handleCloseEvent}
+                  style={{
+                    position: 'absolute',
+                    top: 16,
+                    right: 16,
+                    zIndex: 1000
+                  }}
+              >
+                <Text style={{ fontSize: 16, color: '#6b7280' }}>✕</Text>
+              </TouchableOpacity>
+
+              {/* Holiday Header */}
+              <View style={{ 
+                marginBottom: 16,
+                marginTop: 40,
+                flexShrink: 0
+              }}>
+                <Text style={{ fontSize: 18, fontWeight: '600', color: '#111827', marginBottom: 8 }}>
+                  {selectedEvent.title}
+                </Text>
+              </View>
+
+              {/* Holiday Date */}
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                <View style={{ padding: 4 }}>
+                  <Text style={{ color: '#111827', fontSize: 12 }}>
+                    {selectedEvent.data?.holiday_date ? new Date(selectedEvent.data.holiday_date).toLocaleDateString('en-US', { 
+                      weekday: 'long', 
+                      year: 'numeric', 
+                      month: 'long', 
+                      day: 'numeric' 
+                    }) : 'Date not available'}
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
+          ) : (
+                  // Event Details View - Matching Add Event Form Structure
+                  <ScrollView 
+              style={{ flex: 1, minHeight: 0 }} 
+                    contentContainerStyle={{ 
+                        padding: 16,
+                      paddingBottom: 60
+                    }}
+                    showsVerticalScrollIndicator={true}
+                    bounces={false}
+                    nestedScrollEnabled={true}
+                  >
+                    {/* Close Button - Top Right */}
+                    <TouchableOpacity 
+                      onPress={handleCloseEvent}
+                      style={{
+                        position: 'absolute',
+                    top: 16,
+                    right: 16,
+                        zIndex: 1000
+                      }}
+                    >
+                      <Text style={{ fontSize: 16, color: '#6b7280' }}>✕</Text>
+                    </TouchableOpacity>
+
+              {/* Title Section */}
+              <View style={{ marginBottom: 16, marginTop: 40, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                      {editingTitle ? (
+                        <View>
+                          <TextInput
+                            style={{
+                              backgroundColor: '#ffffff',
+                                      borderWidth: 1,
+                              borderColor: '#e1e5e9',
+                              borderRadius: 6,
+                              padding: 8,
+                              fontSize: 12,
+                              color: '#111827',
+                              marginBottom: 8,
+                              minHeight: 32
+                            }}
+                            value={tempTitle}
+                            onChangeText={setTempTitle}
+                            placeholder="Title"
+                            placeholderTextColor="#9ca3af"
+                          />
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: '#10b981',
+                                paddingHorizontal: 16,
+                                paddingVertical: 6,
+                                borderRadius: 4,
+                                flex: 1
+                              }}
+                              onPress={handleTitleSave}
+                            >
+                              <Text style={{ 
+                                color: 'white', 
+                                fontSize: 12, 
+                                textAlign: 'center', 
+                                fontWeight: '500'
+                              }}>
+                                Save
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                              style={{
+                                backgroundColor: '#f3f4f6',
+                                paddingHorizontal: 16,
+                                paddingVertical: 6,
+                                borderRadius: 4,
+                                flex: 1
+                              }}
+                              onPress={handleTitleCancel}
+                            >
+                                      <Text style={{ 
+                                color: '#374151', 
+                                        fontSize: 12, 
+                                textAlign: 'center', 
+                                        fontWeight: '500' 
+                                      }}>
+                                Cancel
+                                      </Text>
+                            </TouchableOpacity>
+                                    </View>
+                                </View>
+                      ) : (
+                        <TouchableOpacity 
+                          style={{
+                            padding: 8,
+                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
+                          }}
+                      onPress={handleTitleEdit}
+                          activeOpacity={0.7}
+                        >
+                      <Text style={{ color: '#111827', fontSize: 12 }}>
+                        {selectedEvent.data?.title || selectedEvent.title || 'No title'}
+                                </Text>
+                        </TouchableOpacity>
+                      )}
+                              </View>
+                      </View>
+
+                  {/* Status Section */}
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                      {editingStatus ? (
+                      <View style={{
+                        backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                        borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                        padding: 8,
+                          marginBottom: 8
+                        }}>
+                          {['planned', 'in_progress', 'completed', 'skipped'].map((status) => (
+                            <TouchableOpacity 
+                              key={status}
+                              style={{ 
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                paddingVertical: 6,
+                                paddingHorizontal: 4
+                              }}
+                              onPress={() => setTempStatus(status)}
+                            >
+                              <View style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: getStatusColor(status),
+                                marginRight: 8
+                              }} />
+                              <Text style={{ 
+                                color: tempStatus === status ? '#111827' : '#6b7280',
+                                fontSize: 12,
+                                fontWeight: tempStatus === status ? '500' : '400'
+                              }}>
+                                {(() => {
+                                  switch(status) {
+                                    case 'planned': return 'To Do'
+                                    case 'in_progress': return 'In Progress'
+                                    case 'completed': return 'Completed'
+                                    case 'skipped': return 'Skipped'
+                                    default: return status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
+                                  }
+                                })()}
+                    </Text>
+                            </TouchableOpacity>
+                          ))}
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity 
+                        style={{
+                                backgroundColor: '#10b981',
+                          paddingHorizontal: 16,
+                          paddingVertical: 6,
+                                borderRadius: 4,
+                                flex: 1
+                              }}
+                              onPress={handleStatusSave}
+                            >
+                              <Text style={{ 
+                                color: 'white', 
+                                fontSize: 12,
+                                textAlign: 'center', 
+                                fontWeight: '500' 
+                              }}>
+                                Save
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                              style={{ 
+                            backgroundColor: '#f3f4f6',
+                            paddingHorizontal: 16,
+                            paddingVertical: 6,
+                                borderRadius: 4,
+                                flex: 1
+                              }}
+                              onPress={handleStatusCancel}
+                            >
+                              <Text style={{ 
+                                color: '#374151', 
+                                fontSize: 12, 
+                                textAlign: 'center', 
+                                fontWeight: '500' 
+                              }}>
+                                Cancel
+                              </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                      ) : (
+                        <TouchableOpacity 
+                          style={{
+                            padding: 8,
+                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
+                          }}
+                          onPress={handleStatusEdit}
+                          activeOpacity={0.7}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <View style={{
+                              width: 6,
+                              height: 6,
+                                borderRadius: 3,
+                              backgroundColor: getStatusColor((selectedEvent.data?.status || selectedEvent.status) || 'planned'),
+                              marginRight: 8
+                            }} />
+                            <Text style={{ color: '#111827', fontSize: 12 }}>
+                              {(() => {
+                                const currentStatus = (selectedEvent.data?.status || selectedEvent.status) || 'planned'
+                                switch(currentStatus) {
+                                  case 'planned': return 'To Do'
+                                  case 'in_progress': return 'In Progress'
+                                  case 'completed': return 'Completed'
+                                  case 'skipped': return 'Skipped'
+                                  default: return currentStatus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
+                                }
+                              })()}
+                    </Text>
+                              </View>
+                            </TouchableOpacity>
+                      )}
+                          </View>
+                  </View>
+
+                                    {/* Time Range Section */}
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                      {(editingScheduledTime || editingFinishTime) ? (
+                      <View>
+                          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                            {/* Start Time Input */}
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Start Time</Text>
+                              {Platform.OS === 'web' ? (
+                      <View style={{
+                        backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                        borderColor: '#e1e5e9',
+                        borderRadius: 6,
+                        padding: 8,
+                                  minHeight: 32
+                                }}>
+                                  <input
+                                    type="time"
+                                    value={tempScheduledTime}
+                                    onChange={(e) => setTempScheduledTime(e.target.value)}
+                              style={{ 
+                                      border: 'none',
+                                      outline: 'none',
+                                      fontSize: 12,
+                                      color: '#111827',
+                                      backgroundColor: 'transparent',
+                                      width: '100%',
+                                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+                                    }}
+                                  />
+                                </View>
+                              ) : (
+                        <TextInput
+                          style={{
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                                    padding: 8,
+                                    fontSize: 12,
+                            color: '#111827',
+                                    minHeight: 32
+                                  }}
+                                  value={tempScheduledTime}
+                                  onChangeText={setTempScheduledTime}
+                                  placeholder={selectedEvent.data?.scheduled_time ? "9:00" : "Add start time"}
+                          placeholderTextColor="#9ca3af"
+                                />
+                        )}
+                      </View>
+                              
+                            {/* Finish Time Input */}
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Finish Time</Text>
+                              {Platform.OS === 'web' ? (
+                              <View style={{
+                                  backgroundColor: '#ffffff',
+                                  borderWidth: 1,
+                                  borderColor: '#e1e5e9',
+                                  borderRadius: 6,
+                                  padding: 8,
+                                  minHeight: 32
+                                }}>
+                                  <input
+                                    type="time"
+                                    value={tempFinishTime}
+                                    onChange={(e) => setTempFinishTime(e.target.value)}
+                                    style={{
+                                      border: 'none',
+                                      outline: 'none',
+                                      fontSize: 12,
+                                color: '#111827', 
+                                      backgroundColor: 'transparent',
+                                      width: '100%',
+                                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+                                    }}
+                                  />
+                                </View>
+                              ) : (
+                                <TextInput
+                                  style={{
+                                    backgroundColor: '#ffffff',
+                                    borderWidth: 1,
+                                    borderColor: '#e1e5e9',
+                                    borderRadius: 6,
+                                    padding: 8,
+                                    fontSize: 12,
+                                    color: '#111827',
+                                    minHeight: 32
+                                  }}
+                                  value={tempFinishTime}
+                                  onChangeText={setTempFinishTime}
+                                  placeholder={selectedEvent.data?.finish_time ? "10:30" : "Add end time"}
+                                  placeholderTextColor="#9ca3af"
+                                />
+                              )}
+                            </View>
+                  </View>
+
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <TouchableOpacity 
+                            style={{
+                              backgroundColor: '#10b981',
+                                paddingHorizontal: 16,
+                                paddingVertical: 6,
+                                borderRadius: 4,
+                              flex: 1
+                            }}
+                            onPress={() => {
+                                handleBothTimesSave()
+                            }}
+                          >
+                            <Text style={{ 
+                              color: 'white', 
+                                fontSize: 12, 
+                              textAlign: 'center', 
+                              fontWeight: '500' 
+                            }}>
+                              Save
+                    </Text>
+                          </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={{
+                            backgroundColor: '#f3f4f6',
+                            paddingHorizontal: 16,
+                            paddingVertical: 6,
+                                borderRadius: 4,
+                              flex: 1
+                            }}
+                            onPress={() => {
+                                handleScheduledTimeCancel()
+                                handleFinishTimeCancel()
+                              }}
+                            >
+                              <Text style={{ 
+                                color: '#374151', 
+                                fontSize: 12, 
+                                textAlign: 'center', 
+                                fontWeight: '500'
+                              }}>
+                                Cancel
+                              </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                        <TouchableOpacity
+                          style={{
+                            padding: 8,
+                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
+                          }}
+                          onPress={() => {
+                            handleScheduledTimeEdit()
+                            handleFinishTimeEdit()
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
+                            {/* Start Time Display */}
+                            <View style={{ flexShrink: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 0 }}>Start</Text>
+                              <Text style={{ color: '#111827', fontSize: 12 }}>
+                            {selectedEvent.data?.scheduled_time ? (() => {
+                              const time = selectedEvent.data.scheduled_time
+                              const timeMatch = time.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i)
+                              if (timeMatch) {
+                                let hours = parseInt(timeMatch[1])
+                                const minutes = timeMatch[2]
+                                const period = timeMatch[3]?.toUpperCase()
+                                
+                                if (!period) {
+                                  if (hours >= 12) {
+                                    if (hours > 12) hours -= 12
+                                    return `${hours}:${minutes} PM`
+                                  } else {
+                                    if (hours === 0) hours = 12
+                                    return `${hours}:${minutes} AM`
+                                  }
+                                } else {
+                                  return `${hours}:${minutes} ${period}`
+                                }
+                              }
+                              return time
+                            })() : 'Set time'}
+                          </Text>
+                        </View>
+
+                        {/* Arrow */}
+                        <Text style={{ color: '#6b7280', fontSize: 12, marginHorizontal: 0 }}>→</Text>
+
+                        {/* Finish Time Display */}
+                        <View style={{ flexShrink: 0 }}>
+                          <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 0 }}>Finish</Text>
+                          <Text style={{ color: '#111827', fontSize: 12 }}>
+                            {(() => {
+                              const finishTime = selectedEvent.data?.finish_time
+                              if (finishTime) {
+                                const timeMatch = finishTime.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i)
+                                  if (timeMatch) {
+                                    let hours = parseInt(timeMatch[1])
+                                    const minutes = timeMatch[2]
+                                    const period = timeMatch[3]?.toUpperCase()
+                                    
+                                    if (!period) {
+                                      if (hours >= 12) {
+                                        if (hours > 12) hours -= 12
+                                        return `${hours}:${minutes} PM`
+                                      } else {
+                                        if (hours === 0) hours = 12
+                                        return `${hours}:${minutes} AM`
+                                      }
+                                    } else {
+                                      return `${hours}:${minutes} ${period}`
+                                    }
+                                  }
+                                return finishTime
+                              } else {
+                                const scheduledTime = selectedEvent.data?.scheduled_time || selectedEvent.scheduled_time
+                                const timeEstimate = selectedEvent.data?.minutes || selectedEvent.estimateMinutes || 0
+                                if (scheduledTime && timeEstimate > 0) {
+                                  const calculatedFinishTime = calculateFinishTime(scheduledTime, timeEstimate)
+                                  return calculatedFinishTime || 'Auto-calc'
+                                } else {
+                                return 'Set time'
+                                }
+                              }
+                              })()}
+                      </Text>
+                        </View>
+
+                        {/* Duration Display */}
+                        <View style={{ flexShrink: 0, alignSelf: 'flex-end' }}>
+                          <Text style={{ color: '#9ca3af', fontSize: 12 }}>
+                            {(() => {
+                              const timeEstimate = selectedEvent.data?.minutes || selectedEvent.estimateMinutes || 0
+                              if (timeEstimate > 0) {
+                                if (timeEstimate >= 60) {
+                                  const hours = Math.floor(timeEstimate / 60)
+                                  const minutes = timeEstimate % 60
+                                  if (minutes === 0) {
+                                    return `${hours}h`
+                                  } else {
+                                    const decimalHours = (timeEstimate / 60).toFixed(1)
+                                    return `${decimalHours}h`
+                                  }
+                                } else {
+                                  return `${timeEstimate}m`
+                                }
+                              }
+                              return ''
+                            })()}
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                  </View>
+
+                                    {/* Date Range Section */}
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                      {(editingScheduledDate || editingDueDate) ? (
+                      <View>
+                          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                            {/* Start Date Input */}
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Start Date</Text>
+                        <TextInput
+                          style={{
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                                  padding: 8,
+                                  fontSize: 12,
+                            color: '#111827',
+                                  minHeight: 32,
+                                  textAlign: 'left',
+                                  letterSpacing: 2
+                                }}
+                                value={tempScheduledDate}
+                                onChangeText={(text) => {
+                                  if (text.length < tempScheduledDate.length) {
+                                    setTempScheduledDate(text)
+                                    return
+                                  }
+                              let formatted = text.replace(/\D/g, '')
+                                  if (formatted.length >= 2) {
+                                    formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
+                                  }
+                                  if (formatted.length >= 5) {
+                                    formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
+                                  }
+                                  setTempScheduledDate(formatted)
+                                }}
+                                placeholder="MM/DD/YY"
+                          placeholderTextColor="#9ca3af"
+                                maxLength={8}
+                                keyboardType="numeric"
+                              />
+                            </View>
+
+                            {/* Due Date Input */}
+                        <View style={{ flex: 1, minHeight: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Due Date</Text>
+                              <TextInput
+                                style={{
+                                  backgroundColor: '#ffffff',
+                                  borderWidth: 1,
+                                  borderColor: '#e1e5e9',
+                                  borderRadius: 6,
+                                  padding: 8,
+                                  fontSize: 12,
+                                  color: '#111827',
+                                  minHeight: 32,
+                                  textAlign: 'left',
+                                  letterSpacing: 2
+                                }}
+                                value={tempDueDate}
+                                onChangeText={(text) => {
+                                  if (text.length < tempDueDate.length) {
+                                    setTempDueDate(text)
+                                    return
+                                  }
+                              let formatted = text.replace(/\D/g, '')
+                                  if (formatted.length >= 2) {
+                                    formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
+                                  }
+                                  if (formatted.length >= 5) {
+                                    formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
+                                  }
+                                  setTempDueDate(formatted)
+                                }}
+                                placeholder="MM/DD/YY"
+                                placeholderTextColor="#9ca3af"
+                                maxLength={8}
+                                keyboardType="numeric"
+                              />
+                            </View>
+                          </View>
+
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <TouchableOpacity 
+                            style={{
+                              backgroundColor: '#10b981',
+                                paddingHorizontal: 16,
+                                paddingVertical: 6,
+                                borderRadius: 4,
+                              flex: 1
+                            }}
+                            onPress={() => {
+                                handleScheduledDateSave()
+                                handleDueDateSave()
+                            }}
+                          >
+                            <Text style={{ 
+                              color: 'white', 
+                                fontSize: 12, 
+                              textAlign: 'center', 
+                              fontWeight: '500' 
+                            }}>
+                              Save
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            style={{
+                              backgroundColor: '#f3f4f6',
+                          paddingHorizontal: 16,
+                          paddingVertical: 6,
+                                borderRadius: 4,
+                              flex: 1
+                            }}
+                            onPress={() => {
+                                handleScheduledDateCancel()
+                                handleDueDateCancel()
+                              }}
+                            >
+                              <Text style={{ 
+                                color: '#374151', 
+                                fontSize: 12, 
+                                textAlign: 'center', 
+                                fontWeight: '500' 
+                              }}>
+                                Cancel
+                              </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                        <TouchableOpacity
+                          style={{
+                            padding: 8,
+                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
+                          }}
+                          onPress={() => {
+                            handleScheduledDateEdit()
+                            handleDueDateEdit()
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
+                            {/* Start Date Display */}
+                            <View style={{ flexShrink: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 0 }}>Start</Text>
+                              <Text style={{ color: '#111827', fontSize: 12 }}>
+                            {selectedEvent.data?.scheduled_date ? (() => {
+                              const date = new Date(selectedEvent.data.scheduled_date)
+                              const month = (date.getMonth() + 1).toString().padStart(2, '0')
+                              const day = date.getDate().toString().padStart(2, '0')
+                              const year = date.getFullYear().toString().slice(-2)
+                              return `${month}/${day}/${year}`
+                            })() : 'Set date'}
+                      </Text>
+                  </View>
+
+                            {/* Arrow */}
+                            <Text style={{ color: '#6b7280', fontSize: 12, marginHorizontal: 0 }}>→</Text>
+
+                            {/* Due Date Display */}
+                            <View style={{ flexShrink: 0 }}>
+                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 0 }}>Due</Text>
+                              <Text style={{ color: '#111827', fontSize: 12 }}>
+                            {selectedEvent.data?.due_date ? 
+                              (() => {
+                                const [year, month, day] = selectedEvent.data.due_date.split('-')
+                                const dueDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+                                const formattedDate = `${dueDate.getMonth() + 1}/${dueDate.getDate()}/${dueDate.getFullYear()}`
+                                return formattedDate
+                              })() : 
+                              'Set date'
+                            }
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+              {/* Assignee Section */}
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                <View style={{ padding: 4 }}>
+                  {editingAssignee ? (
+                    <View style={{
+                      backgroundColor: '#ffffff',
+                      borderWidth: 1,
+                      borderColor: '#e1e5e9',
+                      borderRadius: 6,
+                      padding: 8,
+                      marginBottom: 8
+                    }}>
+                      {/* Children options */}
+                      {children.map(child => (
+                        <TouchableOpacity 
+                          key={child.id}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            paddingVertical: 6,
+                            paddingHorizontal: 4
+                          }}
+                          onPress={() => {
+                            const assignee = child.first_name
+                            if (tempAssignee.includes(assignee)) {
+                              setTempAssignee(tempAssignee.filter(a => a !== assignee))
+                            } else {
+                              setTempAssignee([...tempAssignee, assignee])
+                            }
+                          }}
+                        >
+                          <View style={{
+                            width: 14,
+                            height: 14,
+                            borderWidth: 1,
+                            borderColor: '#d1d5db',
+                            borderRadius: 3,
+                            marginRight: 8,
+                            backgroundColor: tempAssignee.includes(child.first_name) ? '#3b82f6' : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}>
+                            {tempAssignee.includes(child.first_name) && (
+                              <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
+                            )}
+                          </View>
+                          <Text style={{ 
+                            color: tempAssignee.includes(child.first_name) ? '#111827' : '#6b7280',
+                            fontSize: 12,
+                            fontWeight: tempAssignee.includes(child.first_name) ? '500' : '400'
+                          }}>
+                            {child.first_name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                      
+                      {/* Parent option */}
+                      <TouchableOpacity 
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingVertical: 6,
+                          paddingHorizontal: 4
+                        }}
+                        onPress={() => {
+                          const assignee = 'Parent'
+                          if (tempAssignee.includes(assignee)) {
+                            setTempAssignee(tempAssignee.filter(a => a !== assignee))
+                          } else {
+                            setTempAssignee([...tempAssignee, assignee])
+                          }
+                        }}
+                      >
+                        <View style={{
+                          width: 14,
+                          height: 14,
+                          borderWidth: 1,
+                          borderColor: '#d1d5db',
+                          borderRadius: 3,
+                          marginRight: 8,
+                          backgroundColor: tempAssignee.includes('Parent') ? '#3b82f6' : 'transparent',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          {tempAssignee.includes('Parent') && (
+                            <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
+                          )}
+                        </View>
+                        <Text style={{ 
+                          color: tempAssignee.includes('Parent') ? '#111827' : '#6b7280',
+                          fontSize: 12,
+                          fontWeight: tempAssignee.includes('Parent') ? '500' : '400'
+                        }}>
+                          Parent
+                        </Text>
+                      </TouchableOpacity>
+                      
+                      {/* Clear All option */}
+                      <TouchableOpacity 
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingVertical: 6,
+                          paddingHorizontal: 4,
+                          borderTopWidth: 1,
+                          borderTopColor: '#e5e7eb',
+                          marginTop: 8,
+                          paddingTop: 8
+                        }}
+                        onPress={() => setTempAssignee([])}
+                      >
+                        <Text style={{ 
+                          color: '#dc2626', 
+                          fontSize: 12,
+                          fontWeight: '500'
+                        }}>
+                          Clear All Assignees
+                        </Text>
+                      </TouchableOpacity>
+
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity 
+                          style={{
+                            backgroundColor: '#10b981',
+                            paddingHorizontal: 16,
+                            paddingVertical: 6,
+                            borderRadius: 4,
+                            flex: 1
+                          }}
+                          onPress={handleAssigneeSave}
+                        >
+                          <Text style={{ 
+                            color: 'white', 
+                            fontSize: 12, 
+                            textAlign: 'center', 
+                            fontWeight: '500' 
+                          }}>
+                            Save
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={{
+                            backgroundColor: '#f3f4f6',
+                            paddingHorizontal: 16,
+                            paddingVertical: 6,
+                            borderRadius: 4,
+                            flex: 1
+                          }}
+                          onPress={handleAssigneeCancel}
+                        >
+                          <Text style={{ 
+                            color: '#374151', 
+                            fontSize: 12, 
+                            textAlign: 'center', 
+                            fontWeight: '500' 
+                          }}>
+                            Cancel
+                          </Text>
+                        </TouchableOpacity>
+                            </View>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={{
+                        padding: 8,
+                        cursor: Platform.OS === 'web' ? 'pointer' : 'default'
+                      }}
+                      onPress={handleAssigneeEdit}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <UserCircle size={14} color="#6b7280" style={{ marginRight: 8 }} />
+                        <Text style={{ color: '#111827', fontSize: 12 }}>
+                          {(() => {
+                            const assignees = getCurrentAssignees()
+                            if (assignees.length === 0) return 'Not assigned'
+                            return assignees.join(', ')
+                          })()}
+                        </Text>
+                          </View>
+                      </TouchableOpacity>
+                    )}
+                    </View>
+                  </View>
+
+                  {/* Description Section */}
+              <View style={{ marginBottom: 16, flexShrink: 0 }}>
+                    <View style={{ padding: 4 }}>
+                    {isEditingEvent ? (
+                      <View>
+                        <TextInput
+                          style={{
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: '#e1e5e9',
+                            borderRadius: 6,
+                              padding: 8,
+                              fontSize: 12,
+                            color: '#111827',
+                              minHeight: 60,
+                            textAlignVertical: 'top',
+                              marginBottom: 8
+                          }}
+                            value={editedEventData.description || selectedEvent.data?.description || selectedEvent.description || ''}
+                          onChangeText={(text) => setEditedEventData({...editedEventData, description: text})}
+                            placeholder="Description"
+                          placeholderTextColor="#9ca3af"
+                          multiline={true}
+                          numberOfLines={4}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: '#10b981',
+                                paddingHorizontal: 16,
+                                paddingVertical: 6,
+                                borderRadius: 4,
+                            flex: 1
+                          }}
+                            onPress={() => {
+                                const newDescription = editedEventData.description || selectedEvent.data?.description || selectedEvent.description || '';
+                              handleDescriptionChange(newDescription);
+                              setIsEditingEvent(false);
+                              setEditedEventData({});
+                            }}
+                          >
+                            <Text style={{ 
+                              color: 'white', 
+                                fontSize: 12, 
+                              textAlign: 'center', 
+                              fontWeight: '500' 
+                            }}>
+                              Save
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{
+                              backgroundColor: '#f3f4f6',
+                                paddingHorizontal: 16,
+                                paddingVertical: 6,
+                                borderRadius: 4,
+                            flex: 1
+                          }}
+                            onPress={() => {
+                              setIsEditingEvent(false);
+                              setEditedEventData({});
+                            }}
+                        >
+                              <Text style={{ color: '#6b7280', fontSize: 12, textAlign: 'center' }}>Cancel</Text>
+                        </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={{
+                            padding: 8,
+                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
+                          }}
+                          onPress={() => setIsEditingEvent(true)}
+                          activeOpacity={0.7}
+                        >
+                      <Text style={{ 
+                            fontSize: 12, 
+                            color: (selectedEvent.data?.description || selectedEvent.description) ? '#111827' : '#9ca3af',
+                            fontStyle: (selectedEvent.data?.description || selectedEvent.description) ? 'normal' : 'italic',
+                            lineHeight: 16
+                          }}>
+                            {selectedEvent.data?.description || selectedEvent.description || 'Description'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                </ScrollView>
+          )
+              ) : (
+          // Default Right Pane Content
+                <ScrollView 
+                  showsVerticalScrollIndicator={true}
+                  contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
+                  nestedScrollEnabled={true}
+            style={{ flex: 1, minHeight: 0 }}
+                >
+                                {/* Search Section */}
+            <View style={{ marginBottom: 24, flexShrink: 0 }}>
+                  <View 
+                    style={{
+                      backgroundColor: isSearchFocused ? '#ffffff' : '#f8fafc',
+                    borderRadius: 8,
+                    borderWidth: 1,
+                      borderColor: isSearchFocused ? '#e1e5e9' : 'transparent',
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+                      elevation: 1,
+                  transition: 'all 0.2s ease'
+                    }}
+                    {...(typeof window !== 'undefined' && {
+                      onMouseEnter: (e) => {
+                        if (!isSearchFocused) {
+                          e.target.style.borderColor = '#e1e5e9';
+                        }
+                      },
+                      onMouseLeave: (e) => {
+                        if (!isSearchFocused) {
+                          e.target.style.borderColor = 'transparent';
+                        }
+                      }
+                    })}
+                  >
+                    <TextInput
+                      style={{ 
+                        fontSize: 14, 
+                        color: '#374151',
+                        backgroundColor: 'transparent',
+                        borderWidth: 0,
+                        padding: 0,
+                        margin: 0,
+                        outline: 'none'
+                      }}
+                      placeholder="Search events"
+                      placeholderTextColor="#9ca3af"
+                      value={searchQuery}
+                      onChangeText={setSearchQuery}
+                      onSubmitEditing={handleSearch}
+                      onFocus={() => setIsSearchFocused(true)}
+                      onBlur={() => setIsSearchFocused(false)}
+                    />
+                  </View>
+              {searchQuery.length > 0 && (
+                <TouchableOpacity 
+                  onPress={() => setSearchQuery('')}
+                  style={{
+                    position: 'absolute',
+                    right: 16,
+                    top: 6,
+                    padding: 4
+                  }}
+                >
+                  <Text style={{ color: '#9ca3af', fontSize: 16 }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            {/* Search Results Section */}
+              {searchQuery.length > 0 && (
+                <View style={{ 
+                height: 'calc(100vh - 120px)',
+                  overflow: 'hidden'
+                }}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: '600',
+                    color: '#111827',
+                    marginBottom: 12
+                  }}>
+                    Search Results
+                  </Text>
+                  {isSearching ? (
+                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 0 }}>
+                    <Text style={{ color: '#6b7280', textAlign: 'center' }}>Searching...</Text>
+                    </View>
+                  ) : searchResults.length > 0 ? (
+                    <ScrollView 
+                    style={{ height: 'calc(100vh - 180px)' }}
+                      showsVerticalScrollIndicator={true}
+                      contentContainerStyle={{ paddingBottom: 20 }}
+                    >
+                  <View style={{ gap: 8 }}>
+                    {searchResults.map((result, index) => (
+                        <TouchableOpacity
+                        key={`search-result-${index}`}
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderRadius: 6,
+                          padding: 12,
+                          borderWidth: 1,
+                          borderColor: '#e1e5e9'
+                        }}
+                          onPress={() => {
+                            handleEventSelect(result);
+                          }}
+                        >
+                          <Text style={{
+                            fontSize: 14,
+                          fontWeight: '500',
+                            color: '#111827',
+                          marginBottom: 4
+                          }}>
+                          {result.title}
+                          </Text>
+                          <Text style={{
+                            fontSize: 12,
+                          color: '#6b7280'
+                          }}>
+                          {result.type} • {result.childName} • {result.date}
+                          </Text>
+                        </TouchableOpacity>
+                    ))}
+                    </View>
+                    </ScrollView>
+                  ) : (
+                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 0 }}>
+                    <Text style={{ color: '#6b7280', textAlign: 'center' }}>
+                      No results found
+                    </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+              
+            {/* Today's Schedule Section */}
+            {!searchQuery && (
+              <View style={{ marginTop: 20, flexShrink: 0 }}>
+                <Text style={{
+                  fontSize: 14,
+                  color: '#6b7280',
+                  textAlign: 'left'
+                }}>
+                  Nothing scheduled for today
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+        )}
+      </>
+    );
+  }, [activeTab, calendarView, showNewEventForm, selectedEvent, searchQuery, isSearching, searchResults, newEventType, showEventTypeDropdown, isSearchFocused, onRightSidebarRender, closeNewEventForm, handleCloseEvent, handleEventSelect, handleSearch, newEventFormData, setNewEventFormData, holidayDateRange, setHolidayDateRange, holidayRepeat, setHolidayRepeat, availableTracks, availableActivities, trackTriggerRef, activityTriggerRef, statusTriggerRef, measureTriggerPosition, setShowTrackDropdown, setShowActivityDropdown, setShowStatusDropdown, setTrackTriggerDimensions, setActivityTriggerDimensions, setStatusTriggerDimensions, saveNewEventFromForm, editingTitle, tempTitle, handleTitleEdit, handleTitleSave, handleTitleCancel, editingStatus, tempStatus, handleStatusEdit, handleStatusSave, handleStatusCancel, editingScheduledTime, editingFinishTime, tempScheduledTime, tempFinishTime, handleScheduledTimeEdit, handleFinishTimeEdit, handleBothTimesSave, handleScheduledTimeCancel, handleFinishTimeCancel, editingScheduledDate, editingDueDate, tempScheduledDate, tempDueDate, handleScheduledDateEdit, handleDueDateEdit, handleScheduledDateSave, handleDueDateSave, handleScheduledDateCancel, handleDueDateCancel, editingAssignee, tempAssignee, handleAssigneeEdit, handleAssigneeSave, handleAssigneeCancel, isEditingEvent, editedEventData, setIsEditingEvent, setEditedEventData, handleDescriptionChange, children, getStatusColor, getCurrentAssignees, calculateFinishTime]);
+
+  // Memoize right sidebar content to avoid infinite loops
+  const rightSidebarContent = React.useMemo(() => {
+    if (!onRightSidebarRender) return null;
+    
+    if (activeTab !== 'planner' && activeTab !== 'calendar-planning' && calendarView !== 'month') {
+      return null;
+    }
+
+    return getRightSidebarContent();
+  }, [activeTab, calendarView, showNewEventForm, selectedEvent, searchQuery, isSearching, searchResults, newEventType, showEventTypeDropdown, isSearchFocused, onRightSidebarRender, eventModalVisible]);
+
+  // Track previous content key to avoid unnecessary updates
+  const prevContentKeyRef = React.useRef(null);
+  
+  // Notify parent about right sidebar content only when it actually changes
+  useEffect(() => {
+    if (!onRightSidebarRender) return;
+    
+    // Create a key from the actual values that determine the content
+    const contentKey = JSON.stringify({
+      activeTab,
+      calendarView,
+      showNewEventForm,
+      selectedEventId: selectedEvent?.id,
+      searchQuery,
+      isSearching,
+      searchResultsCount: searchResults.length,
+      newEventType,
+      showEventTypeDropdown,
+      isSearchFocused,
+      editingTitle,
+      editingStatus,
+      editingScheduledTime,
+      editingFinishTime,
+      editingScheduledDate,
+      editingDueDate,
+      editingAssignee,
+      isEditingEvent,
+      eventModalVisible
+    });
+    
+    // Only update if the key actually changed
+    if (prevContentKeyRef.current !== contentKey) {
+      prevContentKeyRef.current = contentKey;
+      const content = getRightSidebarContent();
+      onRightSidebarRender(content);
+    }
+  }, [activeTab, calendarView, showNewEventForm, selectedEvent, searchQuery, isSearching, searchResults, newEventType, showEventTypeDropdown, isSearchFocused, editingTitle, editingStatus, editingScheduledTime, editingFinishTime, editingScheduledDate, editingDueDate, editingAssignee, isEditingEvent, eventModalVisible, onRightSidebarRender, getRightSidebarContent]);
+
+  // Convert calendarEvents object to array format for CenterPane
+  const convertCalendarEventsToArray = () => {
+    const eventsArray = [];
+    Object.entries(calendarEvents).forEach(([dateKey, dayEvents]) => {
+      if (Array.isArray(dayEvents)) {
+        dayEvents.forEach(event => {
+          if (event && event.id) {
+            // Parse the date from dateKey (YYYY-MM-DD) as LOCAL date, not UTC
+            // This prevents timezone shifts (e.g., Nov 20 UTC midnight = Nov 19 EST evening)
+            const [year, month, day] = dateKey.split('-').map(Number);
+            let date = new Date(year, month - 1, day); // month is 0-indexed in JS, creates LOCAL date
+            
+            // Use start_ts from event data if available (preserves exact time)
+            if (event.data?.start_ts) {
+              const tsDate = new Date(event.data.start_ts);
+              if (!isNaN(tsDate.getTime())) {
+                // Extract local date components to verify it matches dateKey
+                const tsYear = tsDate.getFullYear();
+                const tsMonth = tsDate.getMonth() + 1;
+                const tsDay = tsDate.getDate();
+                
+                // If the timestamp's local date matches dateKey, use the timestamp
+                // Otherwise, use the dateKey date with parsed time
+                if (tsYear === year && tsMonth === month && tsDay === day) {
+                  date = tsDate; // Use the full timestamp
+                } else if (event.time) {
+                  // Date mismatch - use dateKey date with parsed time
+                  const timeMatch = event.time.match(/(\d{1,2}):(\d{2})/);
+                  if (timeMatch) {
+                    let hours = parseInt(timeMatch[1]);
+                    const minutes = parseInt(timeMatch[2]);
+                    if (event.time.includes('PM') && hours !== 12) hours += 12;
+                    if (event.time.includes('AM') && hours === 12) hours = 0;
+                    date.setHours(hours, minutes, 0, 0);
+                  }
+                }
+              } else if (event.time) {
+                // Invalid timestamp, fall back to parsing time string
+                const timeMatch = event.time.match(/(\d{1,2}):(\d{2})/);
+                if (timeMatch) {
+                  let hours = parseInt(timeMatch[1]);
+                  const minutes = parseInt(timeMatch[2]);
+                  if (event.time.includes('PM') && hours !== 12) hours += 12;
+                  if (event.time.includes('AM') && hours === 12) hours = 0;
+                  date.setHours(hours, minutes, 0, 0);
+                }
+              }
+            } else if (event.time) {
+              // No start_ts, parse time string (e.g., "9:00 AM" or "09:00")
+              const timeMatch = event.time.match(/(\d{1,2}):(\d{2})/);
+              if (timeMatch) {
+                let hours = parseInt(timeMatch[1]);
+                const minutes = parseInt(timeMatch[2]);
+                // Check for AM/PM
+                if (event.time.includes('PM') && hours !== 12) hours += 12;
+                if (event.time.includes('AM') && hours === 12) hours = 0;
+                date.setHours(hours, minutes, 0, 0);
+              }
+            }
+            // Ensure color is valid for EventChip (teal, violet, amber, sky)
+            const validColors = ['teal', 'violet', 'amber', 'sky'];
+            let eventColor = event.color || 'teal';
+            if (!validColors.includes(eventColor)) {
+              // Map invalid colors to valid ones
+              if (eventColor === 'blue') eventColor = 'sky';
+              else if (eventColor === 'orange') eventColor = 'amber';
+              else eventColor = 'teal'; // Default fallback
+            }
+            
+            eventsArray.push({
+              id: event.id,
+              title: event.title || 'Untitled Event',
+              start: date.toISOString(),
+              childId: event.childId || event.student_id || event.data?.child_id,
+              subject: event.subject || event.subjectName || event.data?.subject_name,
+              color: eventColor,
+              status: event.status || event.data?.status || 'scheduled',
+              type: event.type,
+              year_plan_id: event.year_plan_id || event.data?.year_plan_id, // Preserve year_plan_id
+              ...event
+            });
+          }
+        });
+      }
+    });
+    return eventsArray;
+  };
+
+  const renderPlannerContent = () => {
+    console.log('[Planner] renderPlannerContent called');
     if (!familyId) {
       return (
         <View style={styles.content}>
-          <Text style={styles.title}>Calendar</Text>
+          <Text style={styles.title}>Planner</Text>
           <Text style={styles.subtitle}>Loading family information...</Text>
         </View>
-      )
-    }
-
-    // Show Week View
-    if (calendarView === 'week') {
-      return (
-        <View style={styles.content}>
-          <PlannerWeek 
-            familyId={familyId}
-            selectedChildIds={selectedCalendarChildren}
-            onChildFilterChange={setSelectedCalendarChildren}
-            onViewChange={setCalendarView}
-            onAddActivity={(params) => {
-              console.log('Add activity:', params);
-              onTabChange('add-activity');
-            }}
-            onOpenAIPlanner={() => onTabChange('ai-planner')}
-          />
-        </View>
-      )
-    }
-
-    // Show Month View (original calendar)
-    if (!familyId) {
-      return (
-        <View style={styles.content}>
-          <Text style={styles.title}>Calendar</Text>
-          <Text style={styles.subtitle}>Loading family information...</Text>
-        </View>
-      )
+      );
     }
 
     // Show loading state for initial calendar load
     if (!isCalendarDataLoaded || calendarDataLoading) {
       return (
         <View style={styles.content}>
-          <Text style={styles.title}>Calendar</Text>
+          <Text style={styles.title}>Planner</Text>
           <Text style={styles.subtitle}>Pre-loading calendar data...</Text>
           <View style={{ 
             marginTop: 20,
@@ -5647,6 +7904,256 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               This will make navigation instant!
             </Text>
           </View>
+        </View>
+      );
+    }
+
+    const eventsArray = convertCalendarEventsToArray();
+    const filters = {
+      childIds: selectedCalendarChildren,
+      subjects: null // Can be added later if needed
+    };
+
+    return (
+      <View style={{ flex: 1, backgroundColor: 'white' }}>
+        <CenterPane
+          date={currentMonth}
+          events={eventsArray}
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
+          onEventSelect={handleEventSelect}
+          onEventComplete={handleEventComplete}
+          onEventRightClick={(event, nativeEvent) => {
+            console.log('[WebContent] CenterPane right-click on event:', event?.title);
+            if (typeof window !== 'undefined' && nativeEvent) {
+              // Prevent default if it's a native event
+              if (nativeEvent.preventDefault) {
+                nativeEvent.preventDefault();
+              }
+              
+              // Get position from event (handle both native and synthetic events)
+              const clientX = nativeEvent.clientX || (nativeEvent.nativeEvent && nativeEvent.nativeEvent.clientX) || (typeof window !== 'undefined' && window.event && window.event.clientX) || 0;
+              const clientY = nativeEvent.clientY || (nativeEvent.nativeEvent && nativeEvent.nativeEvent.clientY) || (typeof window !== 'undefined' && window.event && window.event.clientY) || 0;
+              
+              // Create context menu directly in DOM (same pattern as PlannerWeek)
+              const existingMenu = document.getElementById('context-menu');
+              if (existingMenu) {
+                existingMenu.remove();
+              }
+              
+              const menu = document.createElement('div');
+              menu.id = 'context-menu';
+              menu.style.cssText = `
+                position: fixed;
+                top: ${clientY}px;
+                left: ${clientX}px;
+                background-color: #ffffff;
+                border-radius: 12px;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+                z-index: 999999;
+                min-width: 200px;
+                padding: 8px 0;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              `;
+              
+              const menuItems = [];
+              
+              menuItems.push({ text: 'Edit Event', action: () => handleEventSelect(event) });
+              
+              // Add "Add reflection" option for completed events
+              if (event.status === 'done') {
+                menuItems.push({ 
+                  text: 'Add reflection...', 
+                  action: () => {
+                    setOutcomeEvent(event);
+                    setShowOutcomeModal(true);
+                  }
+                });
+              }
+              
+              // Add rebalance option if event has year_plan_id (check multiple possible field names)
+              const yearPlanId = event.year_plan_id || event.yearPlanId;
+              console.log('[WebContent] Event year_plan_id check:', { 
+                eventId: event.id, 
+                title: event.title,
+                year_plan_id: event.year_plan_id,
+                yearPlanId: event.yearPlanId,
+                hasYearPlanId: !!yearPlanId,
+                allKeys: Object.keys(event),
+                eventData: event // Log full event for debugging
+              });
+              if (yearPlanId) {
+                console.log('[WebContent] Adding Rebalance option for event:', event.title, 'yearPlanId:', yearPlanId);
+              } else {
+                console.log('[WebContent] NO year_plan_id found for event:', event.title, '- Rebalance option will NOT appear');
+              }
+              if (yearPlanId) {
+                menuItems.push({ 
+                  text: 'Rebalance subject from here...', 
+                  action: () => {
+                    // Dispatch custom event to open rebalance modal
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openRebalanceModal', {
+                        detail: { event, yearPlanId: yearPlanId }
+                      }));
+                    }
+                  }
+                });
+              }
+              
+              menuItems.push({ text: 'Delete Event', action: () => {
+                if (window.confirm('Are you sure you want to delete this event?')) {
+                  console.log('Delete event:', event.id);
+                  // TODO: Implement delete logic
+                }
+              }, isDelete: true });
+              
+              menuItems.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.style.cssText = `
+                  padding: 16px 24px;
+                  color: ${item.isDelete ? '#dc2626' : '#374151'};
+                  font-size: 15px;
+                  font-weight: 500;
+                  cursor: pointer;
+                  transition: all 0.15s ease;
+                  border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};
+                `;
+                
+                div.addEventListener('mouseenter', () => {
+                  div.style.backgroundColor = item.isDelete ? '#fef2f2' : '#f8fafc';
+                });
+                
+                div.addEventListener('mouseleave', () => {
+                  div.style.backgroundColor = 'transparent';
+                });
+                
+                div.textContent = item.text;
+                div.addEventListener('click', () => {
+                  item.action();
+                  menu.remove();
+                });
+                menu.appendChild(div);
+              });
+              
+              document.body.appendChild(menu);
+              
+              const closeMenu = (e) => {
+                if (!menu.contains(e.target)) {
+                  menu.remove();
+                  document.removeEventListener('click', closeMenu);
+                }
+              };
+              setTimeout(() => document.addEventListener('click', closeMenu), 100);
+            }
+          }}
+          onCreateTask={() => {
+            setTaskModalDate(selectedDate || new Date());
+            setShowTaskModal(true);
+          }}
+          filters={filters}
+        />
+        
+        {/* Task Create Modal */}
+        <TaskCreateModal
+          visible={showTaskModal}
+          onClose={() => setShowTaskModal(false)}
+          defaultDate={taskModalDate}
+          familyId={familyId}
+          familyMembers={children.map(child => ({
+            id: child.id,
+            name: child.first_name || child.name || 'Unknown',
+            role: 'child'
+          }))}
+          lists={[
+            { id: 'inbox', name: 'Inbox' },
+            ...children.map(child => ({
+              id: `child:${child.id}`,
+              name: child.first_name || child.name || 'Unknown'
+            }))
+          ]}
+          onCreated={async (task) => {
+            // Refresh calendar data after task creation
+            await refreshCalendarData();
+          }}
+        />
+        <EventModal
+          visible={eventModalVisible}
+          eventId={eventModalEventId}
+          initialEvent={eventModalInitialEvent}
+          onClose={() => {
+            setEventModalVisible(false);
+            setEventModalEventId(null);
+            setEventModalInitialEvent(null);
+          }}
+          onEventUpdated={async () => {
+            await refreshCalendarData();
+          }}
+          onEventDeleted={async () => {
+            await refreshCalendarData();
+            setEventModalVisible(false);
+            setEventModalEventId(null);
+            setEventModalInitialEvent(null);
+          }}
+          onEventPatched={handleEventModalPatched}
+          familyMembers={children.map(child => ({
+            id: child.id,
+            name: child.first_name || child.name || 'Unknown',
+          }))}
+        />
+      </View>
+    );
+  };
+
+  const renderCalendarContent = () => {
+    if (!familyId) {
+                    return (
+        <View style={styles.content}>
+          <Text style={styles.title}>Calendar</Text>
+          <Text style={styles.subtitle}>Loading family information...</Text>
+        </View>
+      )
+    }
+
+    // Show Month View (original calendar)
+    if (!familyId) {
+                                return (
+        <View style={styles.content}>
+          <Text style={styles.title}>Calendar</Text>
+          <Text style={styles.subtitle}>Loading family information...</Text>
+        </View>
+      )
+    }
+
+    // Show loading state for initial calendar load
+    if (!isCalendarDataLoaded || calendarDataLoading) {
+      return (
+        <View style={styles.content}>
+          <Text style={styles.title}>Calendar</Text>
+          <Text style={styles.subtitle}>Pre-loading calendar data...</Text>
+          <View style={{ 
+            marginTop: 20,
+            alignItems: 'center' 
+          }}>
+            <Animated.View style={[styles.loadingSpinner, { transform: [{ rotate: spin }] }]} />
+                            <Text style={{
+              marginTop: 16,
+                                            fontSize: 14,
+              color: '#6b7280',
+              textAlign: 'center'
+            }}>
+              Loading entire year of calendar events...
+                            </Text>
+                                          <Text style={{
+              marginTop: 8,
+                                            fontSize: 12,
+              color: '#9ca3af',
+              textAlign: 'center'
+                                          }}>
+              This will make navigation instant!
+                                          </Text>
+                                        </View>
         </View>
       )
     }
@@ -5674,460 +8181,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     const formatMonthYear = (date) => {
       return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     };
-        
-        return (
-          <View style={{ flex: 1, backgroundColor: '#ffffff', flexDirection: 'row', height: '100vh', overflow: 'hidden' }}>
-                        {/* Left Sidebar - Collapsible Calendar Sidebar */}
-            <View style={{
-              width: sidebarCollapsed ? 72 : 220,
-              backgroundColor: '#ffffff',
-              borderRightWidth: 1,
-              borderRightColor: '#e5e7eb',
-              transition: 'width 0.3s ease',
-              height: '100vh',
-              overflow: 'hidden'
-            }}>
-
-
-                 {!sidebarCollapsed ? (
-                   <View style={{
-                  padding: 8, 
-                  flex: 1, 
-                  flexDirection: 'column',
-                  justifyContent: 'space-between'
-                }}>
-                  {/* Content Area - Takes up available space */}
-                  <View style={{ flex: 1 }}>
-                    {/* Filters Section */}
-                     <View style={{
-                      padding: 8,
-                      backgroundColor: '#ffffff',
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: '#e5e7eb'
-                    }}>
-
-
-                      <Text style={{
-                        fontSize: 11,
-                        color: '#6b7280',
-                        marginTop: 2,
-                        marginBottom: 2
-                      }}>
-                        Children
-                      </Text>
-                      {children.map((child) => {
-                          const isSelected = selectedCalendarChildren === null || selectedCalendarChildren.includes(child.id);
-                          return (
-                            <TouchableOpacity
-                              key={child.id} 
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                paddingVertical: 4,
-                                gap: 8
-                              }}
-                              onPress={() => {
-                                if (selectedCalendarChildren === null) {
-                                  // Break out of 'all' mode - select all OTHER children (exclude this one)
-                                  const otherChildren = children
-                                    .filter(c => c.id !== child.id)
-                                    .map(c => c.id);
-                                  setSelectedCalendarChildren(otherChildren.length > 0 ? otherChildren : null);
-                                } else if (isSelected) {
-                                  // Deselect this child
-                                  const newSelection = selectedCalendarChildren.filter(id => id !== child.id);
-                                  // If nothing left, show all (set to null)
-                                  setSelectedCalendarChildren(newSelection.length === 0 ? null : newSelection);
-                                } else {
-                                  // Select this child
-                                  setSelectedCalendarChildren([...selectedCalendarChildren, child.id]);
-                                }
-                              }}
-                            >
-                              <View style={{
-                                width: 16,
-                                height: 16,
-                                borderWidth: 2,
-                                borderColor: isSelected ? '#3b82f6' : '#d1d5db',
-                                backgroundColor: isSelected ? '#3b82f6' : 'transparent',
-                                borderRadius: 3,
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}>
-                                {isSelected && (
-                                  <Text style={{
-                                    color: '#ffffff',
-                                    fontSize: 10,
-                                    fontWeight: 'bold'
-                                  }}>
-                                    ✓
-                                  </Text>
-                                )}
-                              </View>
-                              <Text style={{ color: '#1f2937' }}>{child.first_name}</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-
-                                              <Text style={{
-                          fontSize: 11,
-                          color: '#6b7280',
-                          marginTop: 8,
-                          marginBottom: 2
-                        }}>
-                          Show Holidays
-                        </Text>
-            <TouchableOpacity
-                         style={{
-                          flexDirection: 'row',
-                           alignItems: 'center',
-                          paddingVertical: 4,
-                          gap: 8
-                        }}
-                        onPress={() => setShowHolidays(!showHolidays)}
-                      >
-                   <View style={{
-                          width: 16,
-                          height: 16,
-                          borderWidth: 2,
-                          borderColor: showHolidays ? '#3b82f6' : '#d1d5db',
-                          backgroundColor: showHolidays ? '#3b82f6' : 'transparent',
-                          borderRadius: 3,
-                     alignItems: 'center',
-                         justifyContent: 'center'
-                        }}>
-                          {showHolidays && (
-                            <Text style={{
-                              color: '#ffffff',
-                              fontSize: 10,
-                              fontWeight: 'bold'
-                            }}>
-                              ✓
-                            </Text>
-                          )}
-                        </View>
-                                                <Text style={{ color: '#1f2937' }}>US Holidays</Text>
-                      </TouchableOpacity>
-
-                      <Text style={{
-                        fontSize: 11,
-                        color: '#6b7280',
-                        marginTop: 8,
-                        marginBottom: 2
-                      }}>
-                        Show AI Suggestions
-                      </Text>
-              <TouchableOpacity
-                       style={{
-                          flexDirection: 'row',
-                         alignItems: 'center',
-                          paddingVertical: 4,
-                          gap: 8
-                        }}
-                        onPress={() => setShowComingSoonModal(true)}
-                      >
-                        <View style={{
-                          width: 16,
-                          height: 16,
-                          borderWidth: 2,
-                          borderColor: showAISuggestions ? '#3b82f6' : '#d1d5db',
-                          backgroundColor: showAISuggestions ? '#3b82f6' : 'transparent',
-                          borderRadius: 3,
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}>
-                          {showAISuggestions && (
-                            <Text style={{
-                              color: '#ffffff',
-                              fontSize: 10,
-                              fontWeight: 'bold'
-                            }}>
-                              ✓
-                            </Text>
-                          )}
-                        </View>
-                        <Text style={{ color: '#1f2937' }}>Doodle Suggestions</Text>
-              </TouchableOpacity>
-
-              {/* Quick Actions */}
-              <Text style={{
-                fontSize: 11,
-                color: '#6b7280',
-                marginTop: 16,
-                marginBottom: 8
-              }}>
-                Quick Actions
-              </Text>
-              
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  backgroundColor: colors.card,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  marginBottom: 8,
-                  gap: 8
-                }}
-                onPress={() => setScheduleRulesModalOpen(true)}
-                activeOpacity={0.7}
-              >
-                <Settings size={16} color={colors.accent} />
-                <Text style={{ color: colors.text, fontSize: 14 }}>Scheduling Rules</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  backgroundColor: colors.card,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  gap: 8
-                }}
-                onPress={() => setAIPlannerModalOpen(true)}
-                activeOpacity={0.7}
-              >
-                <Zap size={16} color={colors.accent} />
-                <Text style={{ color: colors.text, fontSize: 14 }}>AI Planner</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  backgroundColor: colors.card,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  marginTop: 8,
-                  gap: 8
-                }}
-                onPress={() => onTabChange('kanban')}
-                activeOpacity={0.7}
-              >
-                <Text style={{ color: colors.text, fontSize: 14 }}>📋 Kanban Board</Text>
-              </TouchableOpacity>
-          </View>
-               </View>
-
-                  {/* MiniMonth Calendar - Bottom */}
-                  <View style={{
-                    padding: 8,
-                    backgroundColor: '#ffffff',
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: '#e5e7eb',
-                    marginTop: 12
-                  }}>
-                    {/* Header */}
-                    <View style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      marginBottom: 8
-                    }}>
-                      <Text style={{
-                        fontSize: 14,
-                        fontWeight: '600',
-                        color: '#111827'
-                      }}>
-                        {miniCalendarMonth.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                      </Text>
-                      <View style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 4
-                    }}>
-              <TouchableOpacity
-                        onPress={() => {
-                            const newMonth = new Date(miniCalendarMonth);
-                            newMonth.setMonth(miniCalendarMonth.getMonth() - 1);
-                            setMiniCalendarMonth(newMonth);
-                        }}
-                        style={{
-                          paddingHorizontal: 8,
-                          paddingVertical: 4,
-                          borderRadius: 8
-                        }}
-                      >
-                        <Text style={{ fontSize: 20, color: '#374151' }}>‹</Text>
-              </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => {
-                            const newMonth = new Date(miniCalendarMonth);
-                            newMonth.setMonth(miniCalendarMonth.getMonth() + 1);
-                            setMiniCalendarMonth(newMonth);
-                        }}
-                        style={{
-                          paddingHorizontal: 8,
-                          paddingVertical: 4,
-                          borderRadius: 8
-                        }}
-                      >
-                        <Text style={{ fontSize: 20, color: '#374151' }}>›</Text>
-                  </TouchableOpacity>
-                      </View>
-                </View>
-
-                    {/* Week labels */}
-                    <View style={{
-                      flexDirection: 'row',
-                      justifyContent: 'center',
-                      marginBottom: 4,
-                      gap: 2
-                    }}>
-                      {['S','M','T','W','T','F','S'].map((d, index) => (
-                        <Text key={`day-header-${d}-${index}`} style={{
-                          width: 24,
-                          textAlign: 'center',
-                          fontSize: 10,
-                          color: '#6b7280'
-                        }}>
-                          {d}
-                        </Text>
-              ))}
-            </View>
-
-                    {/* Mini Calendar Grid */}
-                    <View style={{ gap: 2 }}>
-                      {!isCalendarDataLoaded || calendarDataLoading ? (
-                        <View style={{ 
-                          height: 100,
-                          justifyContent: 'center', 
-                          alignItems: 'center'
-                        }}>
-                          <Animated.View style={{ 
-                            width: 20,
-                            height: 20,
-                            borderRadius: 10,
-                            borderWidth: 2,
-                            borderColor: '#e5e7eb',
-                            borderTopColor: '#3b82f6',
-                            transform: [{ rotate: spin }]
-                          }} />
-                          <Text style={{
-                            marginTop: 8,
-                            fontSize: 10,
-                            color: '#9ca3af',
-                            textAlign: 'center'
-                          }}>
-                            Loading...
-                          </Text>
-                        </View>
-                      ) : (
-                        (() => {
-                        const year = miniCalendarMonth.getFullYear();
-                        const month = miniCalendarMonth.getMonth();
-                        const firstDayOfMonth = new Date(year, month, 1);
-                        const startDate = new Date(firstDayOfMonth);
-                        startDate.setDate(startDate.getDate() - firstDayOfMonth.getDay());
-                        
-                        const weeks = [];
-                        let currentDate = new Date(startDate);
-                        
-                        for (let week = 0; week < 6; week++) {
-                          const weekDays = [];
-                          for (let day = 0; day < 7; day++) {
-                            weekDays.push(new Date(currentDate));
-                            currentDate.setDate(currentDate.getDate() + 1);
-                          }
-                          weeks.push(weekDays);
-                        }
-                        
-                        return weeks.map((week, weekIndex) => (
-                          <View key={`mini-week-${weekIndex}`} style={{
-                            flexDirection: 'row',
-                              justifyContent: 'center',
-                              gap: 2
-                          }}>
-                            {week.map((date, dayIndex) => {
-                              const inMonth = date.getMonth() === month;
-                              const isToday = date.toDateString() === new Date().toDateString();
-                              const dayNumber = date.getDate();
-                              
-                              return (
-            <TouchableOpacity
-                                  key={`mini-day-${weekIndex}-${dayIndex}-${date.toISOString().split('T')[0]}`}
-                                  onPress={() => {
-                                    // Navigate main calendar to this month if day is clicked
-                                    if (inMonth) {
-                                      setCurrentMonth(new Date(year, month, 1));
-                                    }
-                                  }}
-              style={{
-                                      width: 24,
-                                      height: 24,
-                                      paddingHorizontal: 4,
-                                      paddingVertical: 2,
-                                      borderRadius: 4,
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    backgroundColor: '#ffffff',
-                                    borderWidth: isToday ? 1 : 0,
-                                    borderColor: isToday ? '#d1d5db' : 'transparent',
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  <Text style={{
-                                      fontSize: 12,
-                                    color: inMonth ? '#111827' : '#9ca3af'
-                                  }}>
-                                    {dayNumber}
-                                  </Text>
-                                  
-                                  {/* Mini Calendar - No Chips */}
-                                  {/* Chips removed for cleaner mini calendar view */}
-                                </TouchableOpacity>
-                              );
-                            })}
-        </View>
-                        ));
-                        })()
-                      )}
-                    </View>
-                  </View>
-
-
-                </View>
-              ) : (
-                /* Collapsed Sidebar Content */
-                <View style={{
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  height: '100%'
-                }}>
-                  {/* Show Sidebar Button */}
-                  <TouchableOpacity
-                    onPress={() => setSidebarCollapsed(false)}
-                    style={{
-                      width: 32,
-                      height: 32,
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    <Ionicons 
-                      name="chevron-forward-outline" 
-                      size={20} 
-                      color="#9ca3af" 
-                    />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-            
+                                
+                                return (
+          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, backgroundColor: '#ffffff', flexDirection: 'row', overflow: 'visible', minHeight: 0, height: Platform.OS === 'web' ? '100vh' : undefined, display: 'flex', width: '100%', margin: 0, padding: 0 }}>
                          {/* Center Column - Calendar */}
-             <View style={{ flex: 1, padding: 16, height: '100vh', overflow: 'hidden' }}>
+             <View style={{ flex: 1, paddingTop: 0, paddingBottom: 0, paddingHorizontal: 0, alignSelf: 'stretch', minHeight: 0, flexDirection: 'column', height: Platform.OS === 'web' ? '100vh' : undefined, overflow: 'visible', width: 'calc(100% + 32px)', marginLeft: -16, marginRight: -16, backgroundColor: '#ffffff' }}>
 
 
 
@@ -6136,53 +8195,161 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                  flexDirection: 'row', 
                  alignItems: 'center', 
                  justifyContent: 'space-between',
-                 marginBottom: 24
+                 marginBottom: 16,
+                 paddingHorizontal: 16,
+                 flexShrink: 0,
+                 width: '100%'
                }}>
                  {/* Month/Year Title - Left Aligned */}
                  <Text style={{ fontSize: 24, fontWeight: '600', color: '#111827' }}>
                    {formatMonthYear(currentMonth)}
                  </Text>
                  
+                 {/* Filters - Center */}
+                 <View style={{ 
+                   flexDirection: 'row', 
+                   alignItems: 'center',
+                   gap: 16,
+                   flexShrink: 0
+                 }}>
+                   {/* Child Filters */}
+                   <View style={{ 
+                     flexDirection: 'row', 
+                     alignItems: 'center',
+                     gap: 8
+                   }}>
+                     {children.map((child) => {
+                       const isSelected = selectedCalendarChildren === null || selectedCalendarChildren.includes(child.id);
+                       return (
+                                    <TouchableOpacity
+                           key={child.id}
+                                      style={{
+                             flexDirection: 'row',
+                     alignItems: 'center',
+                             paddingVertical: 4,
+                             paddingHorizontal: 8,
+                             borderRadius: 6,
+                             backgroundColor: isSelected ? '#eff6ff' : '#f9fafb',
+                     borderWidth: 1,
+                             borderColor: isSelected ? '#3b82f6' : '#e5e7eb',
+                             gap: 6
+                           }}
+                           onPress={() => {
+                             if (selectedCalendarChildren === null) {
+                               const otherChildren = children
+                                 .filter(c => c.id !== child.id)
+                                 .map(c => c.id);
+                               setSelectedCalendarChildren(otherChildren.length > 0 ? otherChildren : null);
+                             } else if (isSelected) {
+                               const newSelection = selectedCalendarChildren.filter(id => id !== child.id);
+                               setSelectedCalendarChildren(newSelection.length === 0 ? null : newSelection);
+                             } else {
+                               setSelectedCalendarChildren([...selectedCalendarChildren, child.id]);
+                             }
+                           }}
+                         >
+                           <View style={{
+                             width: 14,
+                             height: 14,
+                             borderWidth: 2,
+                             borderColor: isSelected ? '#3b82f6' : '#d1d5db',
+                             backgroundColor: isSelected ? '#3b82f6' : 'transparent',
+                             borderRadius: 3,
+                             alignItems: 'center',
+                             justifyContent: 'center'
+                           }}>
+                             {isSelected && (
+                                          <Text style={{
+                                 color: '#ffffff',
+                                 fontSize: 8,
+                                 fontWeight: 'bold'
+                               }}>
+                                 ✓
+                                          </Text>
+                             )}
+                                        </View>
+                                          <Text style={{
+                             color: isSelected ? '#1e40af' : '#6b7280', 
+                                            fontSize: 12,
+                             fontWeight: isSelected ? '500' : '400'
+                                          }}>
+                             {child.first_name}
+                                          </Text>
+                                    </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+
+                   {/* Holiday Filter */}
+                 <TouchableOpacity
+                   style={{
+                       flexDirection: 'row',
+                     alignItems: 'center',
+                       paddingVertical: 4,
+                       paddingHorizontal: 8,
+                       borderRadius: 6,
+                       backgroundColor: showHolidays ? '#eff6ff' : '#f9fafb',
+                     borderWidth: 1,
+                       borderColor: showHolidays ? '#3b82f6' : '#e5e7eb',
+                       gap: 6
+                     }}
+                     onPress={() => setShowHolidays(!showHolidays)}
+                   >
+                     <View style={{
+                       width: 14,
+                       height: 14,
+                       borderWidth: 2,
+                       borderColor: showHolidays ? '#3b82f6' : '#d1d5db',
+                       backgroundColor: showHolidays ? '#3b82f6' : 'transparent',
+                       borderRadius: 3,
+                       alignItems: 'center',
+                       justifyContent: 'center'
+                     }}>
+                       {showHolidays && (
+                      <Text style={{
+                           color: '#ffffff',
+                           fontSize: 8,
+                           fontWeight: 'bold'
+                         }}>
+                           ✓
+                      </Text>
+                        )}
+                    </View>
+                     <Text style={{ 
+                       color: showHolidays ? '#1e40af' : '#6b7280', 
+                       fontSize: 12,
+                       fontWeight: showHolidays ? '500' : '400'
+                     }}>
+                       Holidays
+                    </Text>
+                 </TouchableOpacity>
+                 </View>
+                 
                  {/* Navigation Buttons - Right Aligned */}
                  <View style={{ 
                    flexDirection: 'row', 
                    alignItems: 'center',
-                   gap: 8
+                   gap: 8,
+                   flexShrink: 0
                  }}>
-            {/* View Toggle */}
-            <View style={styles.viewToggle}>
-              <TouchableOpacity
-                style={[styles.viewToggleButton, styles.viewToggleButtonActive]}
-                onPress={() => setCalendarView('month')}
-              >
-                <Text style={[styles.viewToggleText, styles.viewToggleTextActive]}>Month</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.viewToggleButton}
-                onPress={() => setCalendarView('week')}
-              >
-                <Text style={styles.viewToggleText}>Week</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
+                    <TouchableOpacity
               onPress={goToPreviousMonth}
-              style={{
-                       borderRadius: 6, 
-                       borderWidth: 1,
-                       borderColor: '#e1e5e9', 
-                       paddingHorizontal: 6, 
-                       paddingVertical: 2,
+                      style={{
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: '#e1e5e9',
+                       paddingHorizontal: 8, 
+                       paddingVertical: 8,
                        minHeight: 24,
                        alignItems: 'center',
                        justifyContent: 'center'
                      }}
                    >
                      <Text style={{ color: '#374151', fontSize: 16 }}>‹</Text>
-                   </TouchableOpacity>
-                   
-                   <TouchableOpacity
-                     onPress={() => {
+                    </TouchableOpacity>
+               
+                 <TouchableOpacity
+                  onPress={() => {
                        const today = new Date();
                        const currentMonthYear = currentMonth.getFullYear() * 12 + currentMonth.getMonth();
                        const todayMonthYear = today.getFullYear() * 12 + today.getMonth();
@@ -6190,53 +8357,71 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                        if (currentMonthYear !== todayMonthYear) {
                          setCurrentMonth(today);
                        }
-                     }}
-                     style={{
+                  }}
+                   style={{
                        borderRadius: 6, 
-                borderWidth: 1,
-                  borderColor: '#e1e5e9', 
-                  paddingHorizontal: 8, 
-                       paddingVertical: 2,
+                       borderWidth: 1,
+                       borderColor: '#e1e5e9', 
+                       paddingHorizontal: 8, 
+                       paddingVertical: 8,
                        minHeight: 24,
-                       alignItems: 'center',
+                     alignItems: 'center',
                        justifyContent: 'center'
-                     }}
-                   >
+                   }}
+                 >
                      <Text style={{ color: '#374151', fontSize: 12, fontWeight: '500' }}>Today</Text>
-            </TouchableOpacity>
-                
-            <TouchableOpacity
+                 </TouchableOpacity>
+                 
+                 <TouchableOpacity
               onPress={goToNextMonth}
-              style={{
+                   style={{
                        borderRadius: 6, 
-                borderWidth: 1,
-                  borderColor: '#e1e5e9', 
-                       paddingHorizontal: 6, 
-                       paddingVertical: 2,
+                    borderWidth: 1,
+                       borderColor: '#e1e5e9', 
+                       paddingHorizontal: 8, 
+                       paddingVertical: 8,
                        minHeight: 24,
-                       alignItems: 'center',
+                     alignItems: 'center',
                        justifyContent: 'center'
-                     }}
-                   >
+                   }}
+                 >
                      <Text style={{ color: '#374151', fontSize: 16 }}>›</Text>
-            </TouchableOpacity>
-                
-            <TouchableOpacity
+                 </TouchableOpacity>
+                 
+                 <TouchableOpacity
                      onPress={openNewEventForm}
-              style={{
+                   style={{
                        borderRadius: 6, 
                        borderWidth: 1,
                        borderColor: '#e1e5e9', 
                        paddingHorizontal: 6, 
                        paddingVertical: 2,
                        minHeight: 24,
-                       alignItems: 'center',
+                     alignItems: 'center',
                        justifyContent: 'center'
-                     }}
-                   >
+                   }}
+                 >
                      <Text style={{ color: '#374151', fontSize: 16 }}>+</Text>
-            </TouchableOpacity>
-                   
+                 </TouchableOpacity>
+
+                 <TouchableOpacity
+                     onPress={() => {
+                       setTaskModalDate(new Date());
+                       setShowTaskModal(true);
+                     }}
+                   style={{
+                       backgroundColor: '#d4a256',
+                     borderRadius: 8,
+                       paddingHorizontal: 12,
+                     paddingVertical: 6,
+                       minHeight: 24,
+                     alignItems: 'center',
+                       justifyContent: 'center'
+                   }}
+                 >
+                     <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>Add Task</Text>
+                 </TouchableOpacity>
+
                    {calendarLoading && (
                      <Animated.View style={{ 
                        marginLeft: 8,
@@ -6244,7 +8429,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                        height: 12,
                        borderRadius: 6,
                        borderWidth: 1.5,
-                       borderColor: '#e5e7eb',
+                     borderColor: '#e5e7eb',
                        borderTopColor: '#3b82f6',
                        transform: [{ rotate: spin }]
                      }} />
@@ -6254,27 +8439,30 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             
             {/* Calendar Grid */}
             <View style={{ 
-              backgroundColor: '#ffffff', 
-              borderWidth: 1, 
-              borderColor: '#e1e5e9', 
-              borderRadius: 12,
+                     backgroundColor: '#ffffff',
               flex: 1,
-              overflow: 'hidden'
+              minHeight: 0,
+                     flexDirection: 'column',
+              overflow: 'visible',
+              marginHorizontal: 16,
+              width: 'calc(100% - 32px)'
             }}>
               {/* Day Headers */}
-              <View style={{ 
-                flexDirection: 'row', 
+                    <View style={{ 
+                      flexDirection: 'row', 
                 backgroundColor: '#f9fafb',
                 borderBottomWidth: 1,
-                borderBottomColor: '#e1e5e9'
+                borderBottomColor: '#e1e5e9',
+                flexShrink: 0
               }}>
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
                   <View key={`calendar-header-${day}-${index}`} style={{ 
                     flex: 1, 
                     borderRightWidth: index < 6 ? 1 : 0,
                     borderRightColor: '#e1e5e9',
-                    paddingVertical: 12,
-                    paddingHorizontal: 8
+                    paddingVertical: 8,
+                    paddingHorizontal: 8,
+                    minHeight: 0
                   }}>
                     <Text style={{ 
                       fontSize: 12, 
@@ -6286,15 +8474,21 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           ))}
       </View>
               
-              {/* Calendar Days Grid */}
-              <View style={{ backgroundColor: '#ffffff', flex: 1 }}>
+              {/* Calendar Days Grid - Scrollable */}
+              <ScrollView 
+                style={{ flex: 1, minHeight: 0 }}
+                contentContainerStyle={{ flexGrow: 1 }}
+                showsVerticalScrollIndicator={true}
+                nestedScrollEnabled={true}
+              >
                 {calendarLoading ? (
                   // Loading state for calendar grid (filtering)
-                  <View style={{ 
+                                    <View style={{
                     flex: 1, 
                     justifyContent: 'center', 
-                    alignItems: 'center',
-                    padding: 40
+                     alignItems: 'center',
+                    padding: 40,
+                    minHeight: 0
                   }}>
                     <Animated.View style={[styles.loadingSpinner, { transform: [{ rotate: spin }] }]} />
                     <Text style={{
@@ -6313,17 +8507,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                     }}>
                       Filtering from cached data
                     </Text>
-                  </View>
+                                    </View>
                 ) : (
                   (() => {
                     // Show loading state if no events have been loaded yet
                     if (Object.keys(calendarEvents).length === 0 && !isCalendarDataLoaded) {
-                      return (
-                        <View style={{ 
+                                    return (
+                                        <View style={{
                           flex: 1, 
-                          justifyContent: 'center', 
-                          alignItems: 'center',
-                          padding: 40
+                     justifyContent: 'center',
+                                          alignItems: 'center',
+                          padding: 40,
+                          minHeight: 0
                         }}>
                           <Animated.View style={[styles.loadingSpinner, { transform: [{ rotate: spin }] }]} />
                           <Text style={{
@@ -6334,7 +8529,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                           }}>
                             Loading calendar events...
                           </Text>
-                        </View>
+                                        </View>
                       );
                     }
 
@@ -6359,12 +8554,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                     weeks.push(weekDays);
                   }
                   
-                  return weeks.map((week, weekIndex) => (
-                    <View key={`calendar-week-${weekIndex}`} style={{ 
-                      flexDirection: 'row',
+                  return (
+                    <View style={{ flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                      {weeks.map((week, weekIndex) => (
+                        <View key={`calendar-week-${weekIndex}`} style={{ 
+                        flexDirection: 'row',
                       flex: 1,
                       borderBottomWidth: weekIndex < 5 ? 1 : 0,
-                      borderBottomColor: '#e1e5e9'
+                      borderBottomColor: '#e1e5e9',
+                      minHeight: 0
                     }}>
                       {week.map((date, dayIndex) => {
                         const isCurrentMonth = date.getMonth() === month;
@@ -6372,7 +8570,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                         const dayNumber = date.getDate();
                         
                         return (
-                          <TouchableOpacity
+                 <TouchableOpacity
                             key={`calendar-day-${weekIndex}-${dayIndex}-${date.toISOString().split('T')[0]}`}
                             onPress={() => {
                               closeContextMenuIfOpen();
@@ -6384,15 +8582,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                                   `Events for ${date.toLocaleDateString()}`,
                                   dayEvents.map(event => `${event.title || 'Untitled'} (${event.type})`).join('\n')
                                 );
+                              } else {
+                                // Open task modal when tapping an empty day
+                                setTaskModalDate(new Date(date));
+                                setShowTaskModal(true);
                               }
                             }}
-                            style={{ 
+                   style={{
                               flex: 1, 
                               borderRightWidth: dayIndex < 6 ? 1 : 0,
                               borderRightColor: '#e1e5e9',
                               padding: 8,
                               backgroundColor: isToday ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                              cursor: 'pointer'
+                              cursor: 'pointer',
+                              minHeight: 0
                             }}
                             // Web-specific click handler
                             {...(typeof window !== 'undefined' && {
@@ -6423,11 +8626,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                               }
                             })}
                           >
-                            <Text style={{ 
+                  <Text style={{
                               fontSize: 14, 
                               color: isCurrentMonth ? '#374151' : '#d1d5db',
                               fontWeight: isToday ? '600' : 'normal',
-                              marginBottom: 4
+                              marginBottom: 8
                             }}>
                               {dayNumber}
                             </Text>
@@ -6464,9 +8667,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                                   <>
                                     {/* Show up to 3 compact event chips */}
                                     {validEvents.map((event, eventIndex) => (
-                                      <TouchableOpacity
+                <TouchableOpacity
                                         key={`event-${eventIndex}`}
-                                        onPress={() => {
+                  onPress={() => {
                                           handleEventSelect(event);
                                         }}
                                         style={[
@@ -6557,7 +8760,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                                                   <Text>
                                                     <Text style={{ fontWeight: '400' }}>{startDisplay}-{endDisplay} </Text>
                                                     <Text style={{ fontWeight: '600' }}>{event.title}</Text>
-                                        </Text>
+                              </Text>
                                                 )
                                               } else {
                                                 // Single time (original logic)
@@ -6585,1965 +8788,73 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                                                 return <Text style={{ fontWeight: '600' }}>{event.title}</Text>
                                               }
                                             })() : <Text style={{ fontWeight: '600' }}>{event.title}</Text>}
-                                        </Text>
-                                      </TouchableOpacity>
+                  </Text>
+                </TouchableOpacity>
                                     ))}
                                     
                                     {/* Show remaining count if there are more events */}
                                     {remainingCount > 0 && (
-                                      <View style={{
+                                <View style={{
                                         backgroundColor: 'rgba(156, 163, 175, 0.2)',
-                                        borderRadius: 8,
+                    borderRadius: 8,
                                         paddingHorizontal: 6,
                                         paddingVertical: 4,
                                         minWidth: 24,
-                                        alignItems: 'center',
-                                        borderWidth: 1,
+                    alignItems: 'center',
+                    borderWidth: 1,
                                         borderColor: 'rgba(156, 163, 175, 0.3)',
                                         cursor: 'pointer'
                                       }}>
-                                        <Text style={{ 
+                  <Text style={{
                                           fontSize: 9, 
                                           color: '#6b7280',
                                           fontWeight: '600'
                                         }}>
                                           +{remainingCount}
-                                        </Text>
-                                      </View>
-                                    )}
+                  </Text>
+               </View>
+                          )}
                                   </>
                                 );
                               })()}
-                            </View>
-                          </TouchableOpacity>
+             </View>
+                </TouchableOpacity>
                         );
                       })}
-      </View>
-                  ));
+               </View>
+                  ))}
+             </View>
+                  );
                   })()
                 )}
-    </View>
-        </View>
-      </View>
-            
-            {/* Right Sidebar - Learning Tracks & Schedule */}
-            <View style={{
-              width: 320,
-              backgroundColor: '#f8fafc',
-              borderLeftWidth: 1,
-              borderLeftColor: '#e1e5e9',
-              padding: 12,
-              height: '100vh',
-              overflow: 'visible',
-              zIndex: 1
-            }}>
-              {showNewEventForm ? (
-                // New Event Form View
-                <ScrollView 
-                  style={{ flex: 1, zIndex: 1 }} 
-                  contentContainerStyle={{ 
-                    padding: 12,
-                    paddingBottom: 60
-                  }}
-                  showsVerticalScrollIndicator={true}
-                  bounces={false}
-                  nestedScrollEnabled={true}
-                >
-                  {/* Close Button - Top Right */}
-                  <TouchableOpacity 
-                    onPress={closeNewEventForm}
-                    style={{
-                      position: 'absolute',
-                      top: 12,
-                      right: 12,
-                      zIndex: 1000
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, color: '#6b7280' }}>✕</Text>
-                  </TouchableOpacity>
-
-                  {/* New Event Header */}
-                  <View style={{ 
-                    marginBottom: 16,
-                    marginTop: 40
-                  }}>
-                    <View style={{ position: 'relative', marginBottom: showEventTypeDropdown ? 120 : 0 }}>
-                      <TouchableOpacity
-                        onPress={() => setShowEventTypeDropdown(!showEventTypeDropdown)}
-                          style={{
-                    flexDirection: 'row', 
-                          alignItems: 'center',
-                    justifyContent: 'space-between', 
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                          padding: 8,
-                          minWidth: 120
-                        }}
-                      >
-                        <Text style={{ 
-                          fontSize: 12, 
-                            fontWeight: '600',
-                            color: '#111827',
-                          textTransform: 'capitalize'
-                        }}>
-                          {newEventType === 'holiday' ? 'Days Off' : newEventType}
-                    </Text>
-                        <Ionicons 
-                          name={showEventTypeDropdown ? "chevron-up" : "chevron-down"} 
-                          size={14} 
-                          color="#6b7280" 
-                        />
-                      </TouchableOpacity>
-                      
-                      {showEventTypeDropdown && (
-                          <View style={{
-                            position: 'absolute',
-                          top: '100%',
-                          left: 0,
-                          right: 0,
-                          backgroundColor: '#ffffff',
-                          borderWidth: 1,
-                          borderColor: '#e1e5e9',
-                          borderRadius: 6,
-                          marginTop: 4,
-                          zIndex: 9999,
-                          shadowColor: '#000',
-                          shadowOffset: { width: 0, height: 2 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 4,
-                          elevation: 5
-                        }}>
-                          {['lesson', 'activity', 'holiday'].map((type) => (
-                            <TouchableOpacity
-                              key={type}
-                              onPress={() => {
-                                setNewEventType(type);
-                                setShowEventTypeDropdown(false);
-                              }}
-                              style={{
-                                padding: 12,
-                                borderBottomWidth: type !== 'holiday' ? 1 : 0,
-                                borderBottomColor: '#f3f4f6',
-                                backgroundColor: newEventType === type ? '#f3f4f6' : 'transparent'
-                              }}
-                            >
-                              <Text style={{
-                                fontSize: 14,
-                                color: newEventType === type ? '#1e40af' : '#374151',
-                                fontWeight: newEventType === type ? '600' : '400',
-                                textTransform: 'capitalize'
-                              }}>
-                                {type === 'holiday' ? 'Days Off' : type}
-                    </Text>
-                            </TouchableOpacity>
-                          ))}
-                          </View>
-                      )}
-                        </View>
-                  </View>
-
-                  {/* Title Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                        <TextInput
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                            padding: 8,
-                          fontSize: 12,
-                          color: '#111827'
-                        }}
-                        placeholder="Title"
-                        value={newEventFormData.title}
-                        onChangeText={(text) => setNewEventFormData({...newEventFormData, title: text})}
-                      />
-                    </View>
-                    </View>
-                    
-                  {/* Description Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                      <TextInput
-                        style={{
-                          backgroundColor: '#ffffff',
-                          borderWidth: 1,
-                          borderColor: '#e1e5e9',
-                          borderRadius: 6,
-                          padding: 8,
-                          fontSize: 12,
-                            color: '#111827',
-                          minHeight: 60
-                        }}
-                        placeholder="Description"
-                        value={newEventFormData.description}
-                        onChangeText={(text) => setNewEventFormData({...newEventFormData, description: text})}
-                        multiline
-                        textAlignVertical="top"
-                      />
-                    </View>
-                  </View>
-
-                  {/* Track Selection Section - Only for lessons */}
-                  {newEventType === 'lesson' && (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ position: 'relative', padding: 4 }}>
-                        <TouchableOpacity
-                          ref={trackTriggerRef}
-                          onPress={() => {
-                            measureTriggerPosition(trackTriggerRef, setTrackTriggerDimensions);
-                            setShowTrackDropdown(!showTrackDropdown);
-                          }}
-                          style={{
-                            flexDirection: 'row', 
-                            alignItems: 'center',
-                            justifyContent: 'space-between', 
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                            padding: 8,
-                            fontSize: 12,
-                            color: '#111827',
-                            width: '100%'
-                          }}
-                        >
-                          <Text style={{ 
-                            fontSize: 12, 
-                            color: '#111827'
-                          }}>
-                            {newEventFormData.trackId ? 
-                              availableTracks.find(t => t.id === newEventFormData.trackId)?.name || 'Select Track' :
-                              'Select Track'
-                            }
-                    </Text>
-                          <Ionicons 
-                            name={showTrackDropdown ? "chevron-up" : "chevron-down"} 
-                            size={14} 
-                            color="#6b7280" 
-                          />
-                        </TouchableOpacity>
-                        
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Activity Selection Section - Only for lessons */}
-                  {newEventType === 'lesson' && (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ position: 'relative', padding: 4 }}>
-                        <TouchableOpacity 
-                          ref={activityTriggerRef}
-                          onPress={() => {
-                            measureTriggerPosition(activityTriggerRef, setActivityTriggerDimensions);
-                            setShowActivityDropdown(!showActivityDropdown);
-                          }}
-                          style={{
-                            flexDirection: 'row', 
-                            alignItems: 'center',
-                            justifyContent: 'space-between', 
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                            padding: 8,
-                            fontSize: 12,
-                            color: '#111827',
-                            width: '100%'
-                          }}
-                        >
-                          <Text style={{ 
-                            fontSize: 12, 
-                            color: '#111827'
-                          }}>
-                            {newEventFormData.activityId ? 
-                              availableActivities.find(a => a.id === newEventFormData.activityId)?.title || 'Select Activity' :
-                              'Select Activity'
-                            }
-                      </Text>
-                          <Ionicons 
-                            name={showActivityDropdown ? "chevron-up" : "chevron-down"} 
-                            size={14} 
-                            color="#6b7280" 
-                          />
-                        </TouchableOpacity>
-                        
-                    </View>
-                    </View>
-                  )}
-
-                  {/* Date Selection Section - Different for holidays */}
-                  {newEventType === 'holiday' ? (
-                    <>
-                      {/* Date Range Toggle */}
-                      <View style={{ marginBottom: 12 }}>
-                        <View style={{ padding: 4 }}>
-                          <View style={{
-                            flexDirection: 'row', 
-                            alignItems: 'center',
-                            gap: 8,
-                            marginBottom: 8
-                          }}>
-                            <TouchableOpacity
-                              onPress={() => setHolidayDateRange(prev => ({ ...prev, isRange: false }))}
-                              style={{
-                                paddingHorizontal: 8,
-                                paddingVertical: 4,
-                              borderRadius: 4,
-                                backgroundColor: !holidayDateRange.isRange ? '#3b82f6' : '#f3f4f6',
-                              borderWidth: 1,
-                                borderColor: !holidayDateRange.isRange ? '#3b82f6' : '#d1d5db'
-                              }}
-                            >
-                              <Text style={{ 
-                                fontSize: 11, 
-                                color: !holidayDateRange.isRange ? '#ffffff' : '#374151',
-                                fontWeight: '500'
-                              }}>
-                                Single Day
-                    </Text>
-                      </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => setHolidayDateRange(prev => ({ ...prev, isRange: true }))}
-                              style={{
-                                paddingHorizontal: 8,
-                                paddingVertical: 4,
-                                borderRadius: 4,
-                                backgroundColor: holidayDateRange.isRange ? '#3b82f6' : '#f3f4f6',
-                                borderWidth: 1,
-                                borderColor: holidayDateRange.isRange ? '#3b82f6' : '#d1d5db'
-                            }}
-                          >
-                            <Text style={{ 
-                                fontSize: 11, 
-                                color: holidayDateRange.isRange ? '#ffffff' : '#374151',
-                                fontWeight: '500'
-                              }}>
-                                Date Range
-                              </Text>
-                          </TouchableOpacity>
-                          </View>
-                        </View>
-                  </View>
-
-                      {/* Single Date Input */}
-                      {!holidayDateRange.isRange && (
-                        <View style={{ marginBottom: 12 }}>
-                          <View style={{ padding: 4 }}>
-                            <TextInput
-                      style={{
-                      backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                      borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                      padding: 8,
-                                fontSize: 12,
-                                color: '#111827'
-                              }}
-                              placeholder="Date (YYYY-MM-DD)"
-                              value={newEventFormData.scheduledDate}
-                              onChangeText={(text) => setNewEventFormData({...newEventFormData, scheduledDate: text})}
-                            />
-                          </View>
-                    </View>
-                  )}
-
-                      {/* Date Range Inputs */}
-                      {holidayDateRange.isRange && (
-                        <>
-                          <View style={{ marginBottom: 12 }}>
-                            <View style={{ padding: 4 }}>
-                              <TextInput
-                      style={{
-                                  backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                                  borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                                  padding: 8,
-                                  fontSize: 12,
-                                  color: '#111827'
-                                }}
-                                placeholder="Start Date (YYYY-MM-DD)"
-                                value={holidayDateRange.startDate}
-                                onChangeText={(text) => setHolidayDateRange(prev => ({ ...prev, startDate: text }))}
-                              />
-                    </View>
-                          </View>
-                          <View style={{ marginBottom: 12 }}>
-                            <View style={{ padding: 4 }}>
-                              <TextInput
-                                style={{
-                                  backgroundColor: '#ffffff',
-                                  borderWidth: 1,
-                                  borderColor: '#e1e5e9',
-                                  borderRadius: 6,
-                                  padding: 8,
-                                  fontSize: 12,
-                                  color: '#111827'
-                                }}
-                                placeholder="End Date (YYYY-MM-DD)"
-                                value={holidayDateRange.endDate}
-                                onChangeText={(text) => setHolidayDateRange(prev => ({ ...prev, endDate: text }))}
-                              />
-                            </View>
-                          </View>
-                        </>
-                      )}
-
-                      {/* Repeat Options */}
-                      <View style={{ marginBottom: 12 }}>
-                        <View style={{ padding: 4 }}>
-                          <View style={{
-                        flexDirection: 'row',
-                            alignItems: 'center', 
-                        justifyContent: 'space-between',
-                            marginBottom: 8
-                          }}>
-                            <Text style={{ fontSize: 11, color: '#6b7280', fontWeight: '500' }}>
-                              Repeat
-                            </Text>
-                            <TouchableOpacity
-                              onPress={() => setHolidayRepeat(prev => ({ ...prev, enabled: !prev.enabled }))}
-                              style={{
-                                width: 32,
-                            height: 16,
-                                backgroundColor: holidayRepeat.enabled ? '#3b82f6' : '#d1d5db',
-                                borderRadius: 8,
-                                padding: 2
-                              }}
-                            >
-                        <View style={{
-                                width: 12,
-                                height: 12,
-                                backgroundColor: '#ffffff',
-                                borderRadius: 6,
-                                transform: [{ translateX: holidayRepeat.enabled ? 16 : 0 }]
-                              }} />
-                      </TouchableOpacity>
-                          </View>
-                    
-                          {holidayRepeat.enabled && (
-                            <View style={{ gap: 8 }}>
-                      <View style={{
-                                flexDirection: 'row', 
-                            alignItems: 'center',
-                                gap: 8
-                              }}>
-                                <View style={{ 
-                                  flexDirection: 'row', 
-                                  gap: 4
-                                }}>
-                                  {['weekly', 'monthly', 'yearly'].map((freq) => (
-                          <TouchableOpacity 
-                                      key={freq}
-                                      onPress={() => setHolidayRepeat(prev => ({ ...prev, frequency: freq }))}
-                            style={{ 
-                                        paddingHorizontal: 6,
-                                        paddingVertical: 2,
-                                        borderRadius: 3,
-                                        backgroundColor: holidayRepeat.frequency === freq ? '#3b82f6' : '#f3f4f6',
-                              borderWidth: 1,
-                                        borderColor: holidayRepeat.frequency === freq ? '#3b82f6' : '#d1d5db'
-                            }}
-                          >
-                                      <Text style={{ 
-                                        fontSize: 10, 
-                                        color: holidayRepeat.frequency === freq ? '#ffffff' : '#374151'
-                                      }}>
-                                        {freq.charAt(0).toUpperCase() + freq.slice(1)}
-                                      </Text>
-                    </TouchableOpacity>
-                                  ))}
-                    </View>
-                  </View>
-                      </View>
-                    )}
-                  </View>
-                      </View>
-                    </>
-                  ) : (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ padding: 4 }}>
-                                                <TextInput
-                      style={{
-                      backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                      borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                      padding: 8,
-                            fontSize: 12,
-                            color: '#111827',
-                            textAlign: 'left',
-                            letterSpacing: 2
-                          }}
-                          placeholder="MM/DD/YY"
-                          placeholderTextColor="#9ca3af"
-                          value={newEventFormData.scheduledDate}
-                          onChangeText={(text) => {
-                            // Handle backspace - if user is deleting, allow clearing the entire field
-                            if (text.length < newEventFormData.scheduledDate.length) {
-                              // User is deleting - allow them to clear the field completely
-                              setNewEventFormData({...newEventFormData, scheduledDate: text})
-                              return
-                            }
-                            
-                            // Format as MM/DD/YY with automatic slashes
-                            let formatted = text.replace(/\D/g, '') // Remove non-digits
-                            
-                            if (formatted.length >= 2) {
-                              formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
-                            }
-                            if (formatted.length >= 5) {
-                              formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
-                            }
-                            
-                            setNewEventFormData({...newEventFormData, scheduledDate: formatted})
-                          }}
-                          maxLength={8}
-                          keyboardType="numeric"
-                        />
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Due Date Section - Only for lessons and activities */}
-                  {newEventType !== 'holiday' && (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ padding: 4 }}>
-                                                <TextInput
-                      style={{
-                      backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                      borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                      padding: 8,
-                            fontSize: 12,
-                            color: '#111827',
-                            textAlign: 'left',
-                            letterSpacing: 2
-                          }}
-                          placeholder="MM/DD/YY (optional)"
-                          placeholderTextColor="#9ca3af"
-                          value={newEventFormData.dueDate}
-                          onChangeText={(text) => {
-                            // Handle backspace - if user is deleting, allow clearing the entire field
-                            if (text.length < newEventFormData.dueDate.length) {
-                              // User is deleting - allow them to clear the field completely
-                              setNewEventFormData({...newEventFormData, dueDate: text})
-                              return
-                            }
-                            
-                            // Format as MM/DD/YY with automatic slashes
-                            let formatted = text.replace(/\D/g, '') // Remove non-digits
-                            
-                            if (formatted.length >= 2) {
-                              formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
-                            }
-                            if (formatted.length >= 5) {
-                              formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
-                            }
-                            
-                            setNewEventFormData({...newEventFormData, dueDate: formatted})
-                          }}
-                          maxLength={8}
-                          keyboardType="numeric"
-                        />
-                    </View>
-                  </View>
-                  )}
-
-                  {/* Scheduled Time Section - Only for lessons and activities */}
-                  {newEventType !== 'holiday' && (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ padding: 4 }}>
-                        {Platform.OS === 'web' ? (
-                    <View style={{
-                      backgroundColor: '#ffffff',
-                      borderWidth: 1,
-                      borderColor: '#e1e5e9',
-                      borderRadius: 6,
-                      padding: 8,
-                            minHeight: 32
-                          }}>
-                            <input
-                              type="time"
-                              value={newEventFormData.scheduledTime}
-                              onChange={(e) => setNewEventFormData({...newEventFormData, scheduledTime: e.target.value})}
-                              style={{ 
-                                border: 'none',
-                                outline: 'none',
-                                fontSize: 12,
-                                color: '#111827',
-                                backgroundColor: 'transparent',
-                                width: '100%',
-                                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
-                              }}
-                            />
-                          </View>
-                        ) : (
-                          <TextInput
-                            style={{
-                              backgroundColor: '#ffffff',
-                              borderWidth: 1,
-                              borderColor: '#e1e5e9',
-                              borderRadius: 6,
-                              padding: 8,
-                              fontSize: 12,
-                              color: '#111827',
-                              minHeight: 32
-                            }}
-                            value={newEventFormData.scheduledTime}
-                            onChangeText={(text) => setNewEventFormData({...newEventFormData, scheduledTime: text})}
-                            placeholder="9:00"
-                            placeholderTextColor="#9ca3af"
-                          />
-                        )}
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Finish Time Section - Only for lessons and activities */}
-                  {newEventType !== 'holiday' && (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ padding: 4 }}>
-                        {Platform.OS === 'web' ? (
-                          <View style={{
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                            padding: 8,
-                            minHeight: 32
-                          }}>
-                            <input
-                              type="time"
-                              value={newEventFormData.finishTime}
-                              onChange={(e) => setNewEventFormData({...newEventFormData, finishTime: e.target.value})}
-                      style={{
-                                border: 'none',
-                                outline: 'none',
-                                fontSize: 12,
-                                color: '#111827',
-                                backgroundColor: 'transparent',
-                                width: '100%',
-                                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
-                              }}
-                            />
-                          </View>
-                        ) : (
-                          <TextInput
-                            style={{
-                              backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                              borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                              padding: 8,
-                              fontSize: 12,
-                              color: '#111827',
-                              minHeight: 32
-                            }}
-                            value={newEventFormData.finishTime}
-                            onChangeText={(text) => setNewEventFormData({...newEventFormData, finishTime: text})}
-                            placeholder="10:30"
-                            placeholderTextColor="#9ca3af"
-                          />
-                        )}
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Student Section - Auto-populated from track */}
-                  {newEventType !== 'holiday' && newEventFormData.trackId && (
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ padding: 4 }}>
-                        <View style={{
-                          backgroundColor: '#f8fafc',
-                          borderWidth: 1,
-                          borderColor: '#e2e8f0',
-                          borderRadius: 6,
-                          padding: 8,
-                        flexDirection: 'row',
-                        alignItems: 'center'
-                        }}>
-                          <Text style={{ fontSize: 12, color: '#64748b', marginRight: 8 }}>Student:</Text>
-                          <Text style={{ fontSize: 12, color: '#1e293b', fontWeight: '500' }}>
-                            {(() => {
-                              const selectedTrack = availableTracks.find(t => t.id === newEventFormData.trackId);
-                              if (selectedTrack) {
-                                if (selectedTrack.name.includes("Max")) return "Max";
-                                if (selectedTrack.name.includes("Lilly")) return "Lilly";
-                              }
-                              return "Auto-selected from track";
-                            })()}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Status Section - Only for lessons and activities */}
-                  {newEventType !== 'holiday' && (
-                    <View style={{ marginBottom: 16 }}>
-                      <View style={{ position: 'relative', padding: 4 }}>
-                        <TouchableOpacity
-                          ref={statusTriggerRef}
-                          onPress={() => {
-                            measureTriggerPosition(statusTriggerRef, setStatusTriggerDimensions);
-                            setShowStatusDropdown(!showStatusDropdown);
-                          }}
-                          style={{
-                            flexDirection: 'row', 
-                            alignItems: 'center',
-                            justifyContent: 'space-between', 
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                            padding: 8,
-                            fontSize: 12,
-                            color: '#111827',
-                            width: '100%'
-                          }}
-                        >
-                          <Text style={{ 
-                            fontSize: 12, 
-                            color: '#111827',
-                            textTransform: 'capitalize'
-                          }}>
-                            {newEventFormData.status === 'planned' ? 'To Do' : newEventFormData.status.replace('_', ' ')}
-                        </Text>
-                          <Ionicons 
-                            name={showStatusDropdown ? "chevron-up" : "chevron-down"} 
-                            size={14} 
-                            color="#6b7280" 
-                          />
-                        </TouchableOpacity>
-                        
-                      </View>
-                    </View>
-                  )}
-
-
-                  {/* Save Button */}
-                            <TouchableOpacity 
-                    onPress={saveNewEventFromForm}
-                    disabled={
-                      !newEventFormData.title || 
-                      !newEventFormData.scheduledDate ||
-                      (newEventType === 'lesson' && (!newEventFormData.trackId || !newEventFormData.activityId || !newEventFormData.assignees || newEventFormData.assignees.length === 0 || !newEventFormData.timeEstimate || parseInt(newEventFormData.timeEstimate) <= 0)) ||
-                      (newEventType === 'holiday' ? 
-                        (holidayDateRange.isRange ? 
-                          (!holidayDateRange.startDate || !holidayDateRange.endDate) : 
-                          !newEventFormData.scheduledDate
-                        ) : 
-                        !newEventFormData.scheduledDate
-                      )
-                    }
-                              style={{ 
-                      backgroundColor: (
-                        !newEventFormData.title || 
-                        (newEventType === 'lesson' && (!newEventFormData.trackId || !newEventFormData.activityId)) ||
-                        (newEventType === 'holiday' ? 
-                          (holidayDateRange.isRange ? 
-                            (!holidayDateRange.startDate || !holidayDateRange.endDate) : 
-                            !newEventFormData.scheduledDate
-                          ) : 
-                          !newEventFormData.scheduledDate
-                        )
-                      ) ? '#d1d5db' : '#3b82f6',
-                      padding: 10,
-                      borderRadius: 8,
-                      alignItems: 'center',
-                      marginTop: 12
-                    }}
-                  >
-                              <Text style={{ 
-                        color: '#ffffff',
-                                fontSize: 14,
-                        fontWeight: '600'
-                      }}>
-                        Create {newEventType === 'holiday' ? 'Days Off' : newEventType.charAt(0).toUpperCase() + newEventType.slice(1)}
-                    </Text>
-                    </TouchableOpacity>
-                                  </ScrollView>
-                    
-              ) : selectedEvent ? (
-                selectedEvent.type === 'holiday' ? (
-                  // Holiday Details View - Simplified
-                  <ScrollView 
-                    style={{ flex: 1 }} 
-                    contentContainerStyle={{ 
-                      padding: 12,
-                      paddingBottom: 60
-                    }}
-                    showsVerticalScrollIndicator={true}
-                    bounces={false}
-                    nestedScrollEnabled={true}
-                  >
-                    {/* Close Button - Top Right */}
-                    <TouchableOpacity 
-                      onPress={handleCloseEvent}
-                      style={{
-                        position: 'absolute',
-                        top: 12,
-                        right: 12,
-                        zIndex: 1000
-                      }}
-                    >
-                      <Text style={{ fontSize: 16, color: '#6b7280' }}>✕</Text>
-                    </TouchableOpacity>
-
-                    {/* Holiday Header */}
-                          <View style={{ 
-                      marginBottom: 16,
-                      marginTop: 40
-                    }}>
-                      <Text style={{ fontSize: 18, fontWeight: '600', color: '#111827', marginBottom: 8 }}>
-                        {selectedEvent.title}
-                      </Text>
-                  </View>
-
-                    {/* Holiday Date */}
-                    <View style={{ marginBottom: 12 }}>
-                      <View style={{ padding: 4 }}>
-                        <Text style={{ color: '#111827', fontSize: 12 }}>
-                          {selectedEvent.data?.holiday_date ? new Date(selectedEvent.data.holiday_date).toLocaleDateString('en-US', { 
-                            weekday: 'long', 
-                            year: 'numeric', 
-                            month: 'long', 
-                            day: 'numeric' 
-                          }) : 'Date not available'}
-                    </Text>
-                      </View>
-                    </View>
-                  </ScrollView>
-                ) : (
-                  // Event Details View - Matching Add Event Form Structure
-                  <ScrollView 
-                    style={{ flex: 1 }} 
-                    contentContainerStyle={{ 
-                        padding: 12,
-                      paddingBottom: 60
-                    }}
-                    showsVerticalScrollIndicator={true}
-                    bounces={false}
-                    nestedScrollEnabled={true}
-                  >
-                    {/* Close Button - Top Right */}
-                    <TouchableOpacity 
-                      onPress={handleCloseEvent}
-                      style={{
-                        position: 'absolute',
-                        top: 12,
-                        right: 12,
-                        zIndex: 1000
-                      }}
-                    >
-                      <Text style={{ fontSize: 16, color: '#6b7280' }}>✕</Text>
-                    </TouchableOpacity>
-
-
-
-                  {/* Title Section */}
-                  <View style={{ marginBottom: 12, marginTop: 40 }}>
-                    <View style={{ padding: 4 }}>
-                      {editingTitle ? (
-                        <View>
-                          <TextInput
-                            style={{
-                              backgroundColor: '#ffffff',
-                                      borderWidth: 1,
-                              borderColor: '#e1e5e9',
-                              borderRadius: 6,
-                              padding: 8,
-                              fontSize: 12,
-                              color: '#111827',
-                              marginBottom: 8,
-                              minHeight: 32
-                            }}
-                            value={tempTitle}
-                            onChangeText={setTempTitle}
-                            placeholder="Title"
-                            placeholderTextColor="#9ca3af"
-                          />
-                          <View style={{ flexDirection: 'row', gap: 8 }}>
-                            <TouchableOpacity
-                              style={{
-                                backgroundColor: '#10b981',
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 4,
-                                flex: 1
-                              }}
-                              onPress={handleTitleSave}
-                            >
-                              <Text style={{ 
-                                color: 'white', 
-                                fontSize: 12, 
-                                textAlign: 'center', 
-                                fontWeight: '500'
-                              }}>
-                                Save
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity 
-                              style={{
-                                backgroundColor: '#f3f4f6',
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 4,
-                                flex: 1
-                              }}
-                              onPress={handleTitleCancel}
-                            >
-                                      <Text style={{ 
-                                color: '#374151', 
-                                        fontSize: 12, 
-                                textAlign: 'center', 
-                                        fontWeight: '500' 
-                                      }}>
-                                Cancel
-                                      </Text>
-                            </TouchableOpacity>
-                                    </View>
-                                </View>
-                      ) : (
-                        <TouchableOpacity 
-                          style={{
-                            padding: 8,
-                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
-                          }}
-                          onPress={handleTitleEdit}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={{ color: '#111827', fontSize: 12 }}>
-                            {selectedEvent.data?.title || selectedEvent.title || 'No title'}
-                                </Text>
-                        </TouchableOpacity>
-                      )}
-                              </View>
-                      </View>
-
-                  {/* Status Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                      {editingStatus ? (
-                      <View style={{
-                        backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                        borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                        padding: 8,
-                          marginBottom: 8
-                        }}>
-                          {['planned', 'in_progress', 'completed', 'skipped'].map((status) => (
-                            <TouchableOpacity 
-                              key={status}
-                              style={{ 
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                paddingVertical: 6,
-                                paddingHorizontal: 4
-                              }}
-                              onPress={() => setTempStatus(status)}
-                            >
-                              <View style={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: 3,
-                                backgroundColor: getStatusColor(status),
-                                marginRight: 8
-                              }} />
-                              <Text style={{ 
-                                color: tempStatus === status ? '#111827' : '#6b7280',
-                                fontSize: 12,
-                                fontWeight: tempStatus === status ? '500' : '400'
-                              }}>
-                                {(() => {
-                                  switch(status) {
-                                    case 'planned': return 'To Do'
-                                    case 'in_progress': return 'In Progress'
-                                    case 'completed': return 'Completed'
-                                    case 'skipped': return 'Skipped'
-                                    default: return status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
-                                  }
-                                })()}
-                    </Text>
-                            </TouchableOpacity>
-                          ))}
-                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                      <TouchableOpacity 
-                        style={{
-                                backgroundColor: '#10b981',
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
-                                borderRadius: 4,
-                                flex: 1
-                              }}
-                              onPress={handleStatusSave}
-                            >
-                              <Text style={{ 
-                                color: 'white', 
-                                fontSize: 12,
-                                textAlign: 'center', 
-                                fontWeight: '500' 
-                              }}>
-                                Save
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity 
-                              style={{ 
-                            backgroundColor: '#f3f4f6',
-                            paddingHorizontal: 12,
-                            paddingVertical: 6,
-                                borderRadius: 4,
-                                flex: 1
-                              }}
-                              onPress={handleStatusCancel}
-                            >
-                              <Text style={{ 
-                                color: '#374151', 
-                                fontSize: 12, 
-                                textAlign: 'center', 
-                                fontWeight: '500' 
-                              }}>
-                                Cancel
-                              </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                      ) : (
-                        <TouchableOpacity 
-                          style={{
-                            padding: 8,
-                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
-                          }}
-                          onPress={handleStatusEdit}
-                          activeOpacity={0.7}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              <View style={{
-                              width: 6,
-                              height: 6,
-                                borderRadius: 3,
-                              backgroundColor: getStatusColor((selectedEvent.data?.status || selectedEvent.status) || 'planned'),
-                              marginRight: 8
-                            }} />
-                            <Text style={{ color: '#111827', fontSize: 12 }}>
-                              {(() => {
-                                const currentStatus = (selectedEvent.data?.status || selectedEvent.status) || 'planned'
-                                switch(currentStatus) {
-                                  case 'planned': return 'To Do'
-                                  case 'in_progress': return 'In Progress'
-                                  case 'completed': return 'Completed'
-                                  case 'skipped': return 'Skipped'
-                                  default: return currentStatus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
-                                }
-                              })()}
-                    </Text>
-                              </View>
-                            </TouchableOpacity>
-                      )}
-                          </View>
-                  </View>
-
-                                    {/* Time Range Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                      {(editingScheduledTime || editingFinishTime) ? (
-                      <View>
-                          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                            {/* Start Time Input */}
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Start Time</Text>
-                              {Platform.OS === 'web' ? (
-                      <View style={{
-                        backgroundColor: '#ffffff',
-                        borderWidth: 1,
-                        borderColor: '#e1e5e9',
-                        borderRadius: 6,
-                        padding: 8,
-                                  minHeight: 32
-                                }}>
-                                  <input
-                                    type="time"
-                                    value={tempScheduledTime}
-                                    onChange={(e) => setTempScheduledTime(e.target.value)}
-                              style={{ 
-                                      border: 'none',
-                                      outline: 'none',
-                                      fontSize: 12,
-                                      color: '#111827',
-                                      backgroundColor: 'transparent',
-                                      width: '100%',
-                                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
-                                    }}
-                                  />
-                                </View>
-                              ) : (
-                        <TextInput
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                                    padding: 8,
-                                    fontSize: 12,
-                            color: '#111827',
-                                    minHeight: 32
-                                  }}
-                                  value={tempScheduledTime}
-                                  onChangeText={setTempScheduledTime}
-                                  placeholder={selectedEvent.data?.scheduled_time ? "9:00" : "Add start time"}
-                          placeholderTextColor="#9ca3af"
-                                />
-                        )}
-                      </View>
-                              
-                            {/* Finish Time Input */}
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Finish Time</Text>
-                              {Platform.OS === 'web' ? (
-                              <View style={{
-                                  backgroundColor: '#ffffff',
-                                  borderWidth: 1,
-                                  borderColor: '#e1e5e9',
-                                  borderRadius: 6,
-                                  padding: 8,
-                                  minHeight: 32
-                                }}>
-                                  <input
-                                    type="time"
-                                    value={tempFinishTime}
-                                    onChange={(e) => setTempFinishTime(e.target.value)}
-                                    style={{
-                                      border: 'none',
-                                      outline: 'none',
-                                      fontSize: 12,
-                                color: '#111827', 
-                                      backgroundColor: 'transparent',
-                                      width: '100%',
-                                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
-                                    }}
-                                  />
-                                </View>
-                              ) : (
-                                <TextInput
-                                  style={{
-                                    backgroundColor: '#ffffff',
-                                    borderWidth: 1,
-                                    borderColor: '#e1e5e9',
-                                    borderRadius: 6,
-                                    padding: 8,
-                                    fontSize: 12,
-                                    color: '#111827',
-                                    minHeight: 32
-                                  }}
-                                  value={tempFinishTime}
-                                  onChangeText={setTempFinishTime}
-                                  placeholder={selectedEvent.data?.finish_time ? "10:30" : "Add end time"}
-                                  placeholderTextColor="#9ca3af"
-                                />
-                              )}
-                            </View>
-                  </View>
-
-                        <View style={{ flexDirection: 'row', gap: 8 }}>
-                          <TouchableOpacity 
-                            style={{
-                              backgroundColor: '#10b981',
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 4,
-                              flex: 1
-                            }}
-                            onPress={() => {
-                                // Save both times together to avoid conflicts
-                                handleBothTimesSave()
-                            }}
-                          >
-                            <Text style={{ 
-                              color: 'white', 
-                                fontSize: 12, 
-                              textAlign: 'center', 
-                              fontWeight: '500' 
-                            }}>
-                              Save
-                    </Text>
-                          </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={{
-                            backgroundColor: '#f3f4f6',
-                            paddingHorizontal: 12,
-                            paddingVertical: 6,
-                                borderRadius: 4,
-                              flex: 1
-                            }}
-                            onPress={() => {
-                                handleScheduledTimeCancel()
-                                handleFinishTimeCancel()
-                              }}
-                            >
-                              <Text style={{ 
-                                color: '#374151', 
-                                fontSize: 12, 
-                                textAlign: 'center', 
-                                fontWeight: '500'
-                              }}>
-                                Cancel
-                              </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ) : (
-                        <TouchableOpacity
-                          style={{
-                            padding: 8,
-                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
-                          }}
-                          onPress={() => {
-                            handleScheduledTimeEdit()
-                            handleFinishTimeEdit()
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
-                            {/* Start Time Display */}
-                            <View style={{ flexShrink: 0 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 1 }}>Start</Text>
-                              <Text style={{ color: '#111827', fontSize: 12 }}>
-                                {selectedEvent.data?.scheduled_time ? (() => {
-                                  const time = selectedEvent.data.scheduled_time
-                                  const timeMatch = time.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i)
-                                  if (timeMatch) {
-                                    let hours = parseInt(timeMatch[1])
-                                    const minutes = timeMatch[2]
-                                    const period = timeMatch[3]?.toUpperCase()
-                                    
-                                    if (!period) {
-                                      if (hours >= 12) {
-                                        if (hours > 12) hours -= 12
-                                        return `${hours}:${minutes} PM`
-                                      } else {
-                                        if (hours === 0) hours = 12
-                                        return `${hours}:${minutes} AM`
-                                      }
-                                    } else {
-                                      return `${hours}:${minutes} ${period}`
-                                    }
-                                  }
-                                  return time
-                                })() : 'Set time'}
-                      </Text>
-                  </View>
-
-                            {/* Arrow */}
-                            <Text style={{ color: '#6b7280', fontSize: 12, marginHorizontal: 0 }}>→</Text>
-
-                            {/* Finish Time Display */}
-                            <View style={{ flexShrink: 0 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 1 }}>Finish</Text>
-                              <Text style={{ color: '#111827', fontSize: 12 }}>
-                                {(() => {
-                                  const finishTime = selectedEvent.data?.finish_time
-                                  if (finishTime) {
-                                    // Format finish time to AM/PM format
-                                    const timeMatch = finishTime.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i)
-                                    if (timeMatch) {
-                                      let hours = parseInt(timeMatch[1])
-                                      const minutes = timeMatch[2]
-                                      const period = timeMatch[3]?.toUpperCase()
-                                      
-                                      // If no period provided, determine AM/PM from 24-hour format
-                                      if (!period) {
-                                        if (hours >= 12) {
-                                          if (hours > 12) hours -= 12
-                                          return `${hours}:${minutes} PM`
-                                        } else {
-                                          if (hours === 0) hours = 12
-                                          return `${hours}:${minutes} AM`
-                                        }
-                                      } else {
-                                        // Period already provided, just format
-                                        return `${hours}:${minutes} ${period}`
-                                      }
-                                    }
-                                    return finishTime
-                                  } else {
-                                    const scheduledTime = selectedEvent.data?.scheduled_time || selectedEvent.scheduled_time
-                                    const timeEstimate = selectedEvent.data?.minutes || selectedEvent.estimateMinutes || 0
-                                    if (scheduledTime && timeEstimate > 0) {
-                                      const calculatedFinishTime = calculateFinishTime(scheduledTime, timeEstimate)
-                                      return calculatedFinishTime || 'Auto-calc'
-                                    } else {
-                                      return 'Set time'
-                                    }
-                                  }
-                                })()}
-                    </Text>
-                            </View>
-
-                            {/* Duration Display */}
-                            <View style={{ flexShrink: 0, alignSelf: 'flex-end' }}>
-                              <Text style={{ color: '#9ca3af', fontSize: 12 }}>
-                                {(() => {
-                                  const timeEstimate = selectedEvent.data?.minutes || selectedEvent.estimateMinutes || 0
-                                  if (timeEstimate > 0) {
-                                    if (timeEstimate >= 60) {
-                                      const hours = Math.floor(timeEstimate / 60)
-                                      const minutes = timeEstimate % 60
-                                      if (minutes === 0) {
-                                        return `${hours}h`
-                                      } else {
-                                        // Calculate decimal hours properly (e.g., 30 minutes = 0.5 hours)
-                                        const decimalHours = (timeEstimate / 60).toFixed(1)
-                                        return `${decimalHours}h`
-                                      }
-                                    } else {
-                                      return `${timeEstimate}m`
-                                    }
-                                  }
-                                  return ''
-                                })()}
-                              </Text>
-                            </View>
-
-                          </View>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-
-                                    {/* Date Range Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                      {(editingScheduledDate || editingDueDate) ? (
-                      <View>
-                          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                            {/* Start Date Input */}
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Start Date</Text>
-                        <TextInput
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                                  padding: 8,
-                                  fontSize: 12,
-                            color: '#111827',
-                                  minHeight: 32,
-                                  textAlign: 'left',
-                                  letterSpacing: 2
-                                }}
-                                value={tempScheduledDate}
-                                onChangeText={(text) => {
-                                  // Handle backspace - if user is deleting, allow clearing the entire field
-                                  if (text.length < tempScheduledDate.length) {
-                                    // User is deleting - allow them to clear the field completely
-                                    setTempScheduledDate(text)
-                                    return
-                                  }
-                                  
-                                  // Format as MM/DD/YY with automatic slashes
-                                  let formatted = text.replace(/\D/g, '') // Remove non-digits
-                                  
-                                  if (formatted.length >= 2) {
-                                    formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
-                                  }
-                                  if (formatted.length >= 5) {
-                                    formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
-                                  }
-                                  
-                                  setTempScheduledDate(formatted)
-                                }}
-                                placeholder="MM/DD/YY"
-                          placeholderTextColor="#9ca3af"
-                                maxLength={8}
-                                keyboardType="numeric"
-                              />
-                            </View>
-
-                            {/* Due Date Input */}
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>Due Date</Text>
-                              <TextInput
-                                style={{
-                                  backgroundColor: '#ffffff',
-                                  borderWidth: 1,
-                                  borderColor: '#e1e5e9',
-                                  borderRadius: 6,
-                                  padding: 8,
-                                  fontSize: 12,
-                                  color: '#111827',
-                                  minHeight: 32,
-                                  textAlign: 'left',
-                                  letterSpacing: 2
-                                }}
-                                value={tempDueDate}
-                                onChangeText={(text) => {
-                                  // Handle backspace - if user is deleting, allow clearing the entire field
-                                  if (text.length < tempDueDate.length) {
-                                    // User is deleting - allow them to clear the field completely
-                                    setTempDueDate(text)
-                                    return
-                                  }
-                                  
-                                  // Format as MM/DD/YY with automatic slashes
-                                  let formatted = text.replace(/\D/g, '') // Remove non-digits
-                                  
-                                  if (formatted.length >= 2) {
-                                    formatted = formatted.substring(0, 2) + '/' + formatted.substring(2)
-                                  }
-                                  if (formatted.length >= 5) {
-                                    formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 7)
-                                  }
-                                  
-                                  setTempDueDate(formatted)
-                                }}
-                                placeholder="MM/DD/YY"
-                                placeholderTextColor="#9ca3af"
-                                maxLength={8}
-                                keyboardType="numeric"
-                              />
-                            </View>
-                          </View>
-
-                        <View style={{ flexDirection: 'row', gap: 8 }}>
-                          <TouchableOpacity 
-                            style={{
-                              backgroundColor: '#10b981',
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 4,
-                              flex: 1
-                            }}
-                            onPress={() => {
-                                // Save both dates (optimistic updates - no await needed)
-                                handleScheduledDateSave()
-                                handleDueDateSave()
-                            }}
-                          >
-                            <Text style={{ 
-                              color: 'white', 
-                                fontSize: 12, 
-                              textAlign: 'center', 
-                              fontWeight: '500' 
-                            }}>
-                              Save
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity 
-                            style={{
-                              backgroundColor: '#f3f4f6',
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
-                                borderRadius: 4,
-                              flex: 1
-                            }}
-                            onPress={() => {
-                                handleScheduledDateCancel()
-                                handleDueDateCancel()
-                              }}
-                            >
-                              <Text style={{ 
-                                color: '#374151', 
-                                fontSize: 12, 
-                                textAlign: 'center', 
-                                fontWeight: '500' 
-                              }}>
-                                Cancel
-                              </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ) : (
-                        <TouchableOpacity
-                          style={{
-                            padding: 8,
-                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
-                          }}
-                          onPress={() => {
-                            handleScheduledDateEdit()
-                            handleDueDateEdit()
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
-                            {/* Start Date Display */}
-                            <View style={{ flexShrink: 0 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 1 }}>Start</Text>
-                              <Text style={{ color: '#111827', fontSize: 12 }}>
-                                {selectedEvent.data?.scheduled_date ? (() => {
-                                  const date = new Date(selectedEvent.data.scheduled_date)
-                                  const month = (date.getMonth() + 1).toString().padStart(2, '0')
-                                  const day = date.getDate().toString().padStart(2, '0')
-                                  const year = date.getFullYear().toString().slice(-2)
-                                  return `${month}/${day}/${year}`
-                                })() : 'Set date'}
-                      </Text>
-                  </View>
-
-                            {/* Arrow */}
-                            <Text style={{ color: '#6b7280', fontSize: 12, marginHorizontal: 0 }}>→</Text>
-
-                            {/* Due Date Display */}
-                            <View style={{ flexShrink: 0 }}>
-                              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 1 }}>Due</Text>
-                              <Text style={{ color: '#111827', fontSize: 12 }}>
-                                {selectedEvent.data?.due_date ? 
-                                  (() => {
-                                    // Parse the date string correctly to avoid timezone issues
-                                    const [year, month, day] = selectedEvent.data.due_date.split('-')
-                                    const dueDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
-                                    
-                                    // Format date consistently (M/D/YYYY)
-                                    const formattedDate = `${dueDate.getMonth() + 1}/${dueDate.getDate()}/${dueDate.getFullYear()}`
-                                    
-                                    return formattedDate
-                                  })() : 
-                                  'Set date'
-                                }
-                    </Text>
-                            </View>
-                          </View>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-
-                  {/* Assignee Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                      {editingAssignee ? (
-                    <View style={{
-                          backgroundColor: '#ffffff',
-                      borderWidth: 1,
-                          borderColor: '#e1e5e9',
-                      borderRadius: 6,
-                          padding: 8,
-                          marginBottom: 8
-                    }}>
-                          {/* Children options */}
-                          {children.map(child => (
-                      <TouchableOpacity 
-                              key={child.id}
-                        style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                          paddingVertical: 6,
-                                paddingHorizontal: 4
-                        }}
-                        onPress={() => {
-                                const assignee = child.first_name
-                                if (tempAssignee.includes(assignee)) {
-                                  setTempAssignee(tempAssignee.filter(a => a !== assignee))
-                                } else {
-                                  setTempAssignee([...tempAssignee, assignee])
-                                }
-                              }}
-                            >
-                    <View style={{
-                                width: 14,
-                                height: 14,
-                      borderWidth: 1,
-                      borderColor: '#d1d5db',
-                                borderRadius: 3,
-                                marginRight: 8,
-                                backgroundColor: tempAssignee.includes(child.first_name) ? '#3b82f6' : 'transparent',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}>
-                                {tempAssignee.includes(child.first_name) && (
-                                  <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
-                                )}
-                              </View>
-                              <Text style={{ 
-                                color: tempAssignee.includes(child.first_name) ? '#111827' : '#6b7280',
-                                fontSize: 12,
-                                fontWeight: tempAssignee.includes(child.first_name) ? '500' : '400'
-                              }}>
-                                {child.first_name}
-                      </Text>
-                            </TouchableOpacity>
-                          ))}
-                          
-                          {/* Parent option */}
-                      <TouchableOpacity 
-                        style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                          paddingVertical: 6,
-                              paddingHorizontal: 4
-                        }}
-                        onPress={() => {
-                              const assignee = 'Parent'
-                              if (tempAssignee.includes(assignee)) {
-                                setTempAssignee(tempAssignee.filter(a => a !== assignee))
-                              } else {
-                                setTempAssignee([...tempAssignee, assignee])
-                              }
-                            }}
-                          >
-                      <View style={{
-                              width: 14,
-                              height: 14,
-                        borderWidth: 1,
-                        borderColor: '#d1d5db',
-                              borderRadius: 3,
-                              marginRight: 8,
-                              backgroundColor: tempAssignee.includes('Parent') ? '#3b82f6' : 'transparent',
-                              alignItems: 'center',
-                              justifyContent: 'center'
-                            }}>
-                              {tempAssignee.includes('Parent') && (
-                                <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
-                              )}
-                            </View>
-                            <Text style={{ 
-                              color: tempAssignee.includes('Parent') ? '#111827' : '#6b7280',
-                              fontSize: 12,
-                              fontWeight: tempAssignee.includes('Parent') ? '500' : '400'
-                            }}>
-                              Parent
-                        </Text>
-                          </TouchableOpacity>
-                          
-                          {/* Clear All option */}
-                        <TouchableOpacity 
-                          style={{
-                      flexDirection: 'row',
-                              alignItems: 'center',
-                            paddingVertical: 6,
-                              paddingHorizontal: 4,
-                              borderTopWidth: 1,
-                              borderTopColor: '#e5e7eb',
-                              marginTop: 8,
-                              paddingTop: 8
-                            }}
-                            onPress={() => setTempAssignee([])}
-                          >
-                            <Text style={{ 
-                              color: '#dc2626', 
-                              fontSize: 12,
-                              fontWeight: '500'
-                            }}>
-                              Clear All Assignees
-                      </Text>
-                        </TouchableOpacity>
-
-                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                      <TouchableOpacity 
-                        style={{
-                            backgroundColor: '#10b981',
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
-                                borderRadius: 4,
-                            flex: 1
-                          }}
-                              onPress={handleAssigneeSave}
-                            >
-                              <Text style={{ 
-                                color: 'white', 
-                                fontSize: 12, 
-                                textAlign: 'center', 
-                                fontWeight: '500' 
-                              }}>
-                                Save
-                      </Text>
-                        </TouchableOpacity>
-                      <TouchableOpacity 
-                        style={{
-                                backgroundColor: '#f3f4f6',
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
-                                borderRadius: 4,
-                            flex: 1
-                          }}
-                              onPress={handleAssigneeCancel}
-                            >
-                              <Text style={{ 
-                                color: '#374151', 
-                                fontSize: 12, 
-                                textAlign: 'center', 
-                                fontWeight: '500' 
-                              }}>
-                            Cancel
-                          </Text>
-                      </TouchableOpacity>
-                          </View>
-                        </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={{
-                            padding: 8,
-                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
-                          }}
-                          onPress={handleAssigneeEdit}
-                          activeOpacity={0.7}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <UserCircle size={14} color="#6b7280" style={{ marginRight: 8 }} />
-                            <Text style={{ color: '#111827', fontSize: 12 }}>
-                              {(() => {
-                                const assignees = getCurrentAssignees()
-                                if (assignees.length === 0) return 'Not assigned'
-                                return assignees.join(', ')
-                              })()}
-                        </Text>
-                          </View>
-                      </TouchableOpacity>
-                    )}
-                    </View>
-                  </View>
-
-                  {/* Description Section */}
-                  <View style={{ marginBottom: 12 }}>
-                    <View style={{ padding: 4 }}>
-                    {isEditingEvent ? (
-                      <View>
-                        <TextInput
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9',
-                            borderRadius: 6,
-                              padding: 8,
-                              fontSize: 12,
-                            color: '#111827',
-                              minHeight: 60,
-                            textAlignVertical: 'top',
-                              marginBottom: 8
-                          }}
-                            value={editedEventData.description || selectedEvent.data?.description || selectedEvent.description || ''}
-                          onChangeText={(text) => setEditedEventData({...editedEventData, description: text})}
-                            placeholder="Description"
-                          placeholderTextColor="#9ca3af"
-                          multiline={true}
-                          numberOfLines={4}
-                        />
-                        <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <TouchableOpacity
-                          style={{
-                            backgroundColor: '#10b981',
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 4,
-                            flex: 1
-                          }}
-                            onPress={() => {
-                                const newDescription = editedEventData.description || selectedEvent.data?.description || selectedEvent.description || '';
-                              handleDescriptionChange(newDescription);
-                              setIsEditingEvent(false);
-                              setEditedEventData({});
-                            }}
-                          >
-                            <Text style={{ 
-                              color: 'white', 
-                                fontSize: 12, 
-                              textAlign: 'center', 
-                              fontWeight: '500' 
-                            }}>
-                              Save
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={{
-                              backgroundColor: '#f3f4f6',
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 4,
-                            flex: 1
-                          }}
-                            onPress={() => {
-                              setIsEditingEvent(false);
-                              setEditedEventData({});
-                            }}
-                        >
-                              <Text style={{ color: '#6b7280', fontSize: 12, textAlign: 'center' }}>Cancel</Text>
-                        </TouchableOpacity>
-                        </View>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={{
-                            padding: 8,
-                            cursor: Platform.OS === 'web' ? 'pointer' : 'default'
-                          }}
-                          onPress={() => setIsEditingEvent(true)}
-                          activeOpacity={0.7}
-                        >
-                      <Text style={{ 
-                            fontSize: 12, 
-                            color: (selectedEvent.data?.description || selectedEvent.description) ? '#111827' : '#9ca3af',
-                            fontStyle: (selectedEvent.data?.description || selectedEvent.description) ? 'normal' : 'italic',
-                            lineHeight: 16
-                          }}>
-                            {selectedEvent.data?.description || selectedEvent.description || 'Description'}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-
-                </ScrollView>
-                )
-              ) : (
-                // Default Right Pane Content
-                <ScrollView 
-                  showsVerticalScrollIndicator={true}
-                  contentContainerStyle={{ paddingBottom: 20 }}
-                  nestedScrollEnabled={true}
-                  style={{ flex: 1 }}
-                >
-                                {/* Search Section */}
-                <View style={{ marginTop: 20, marginBottom: 24 }}>
-                  <View 
-                    style={{
-                      backgroundColor: isSearchFocused ? '#ffffff' : '#f8fafc',
-                    borderRadius: 8,
-                    borderWidth: 1,
-                      borderColor: isSearchFocused ? '#e1e5e9' : 'transparent',
-                    paddingHorizontal: 16,
-                    paddingVertical: 8,
-                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-                      elevation: 1,
-                      transition: 'all 0.2s ease'
-                    }}
-                    {...(typeof window !== 'undefined' && {
-                      onMouseEnter: (e) => {
-                        if (!isSearchFocused) {
-                          e.target.style.borderColor = '#e1e5e9';
-                        }
-                      },
-                      onMouseLeave: (e) => {
-                        if (!isSearchFocused) {
-                          e.target.style.borderColor = 'transparent';
-                        }
-                      }
-                    })}
-                  >
-                    <TextInput
-                      style={{ 
-                        fontSize: 14, 
-                        color: '#374151',
-                        backgroundColor: 'transparent',
-                        borderWidth: 0,
-                        padding: 0,
-                        margin: 0,
-                        outline: 'none'
-                      }}
-                      placeholder="Search events"
-                      placeholderTextColor="#9ca3af"
-                      value={searchQuery}
-                      onChangeText={setSearchQuery}
-                      onSubmitEditing={handleSearch}
-                      onFocus={() => setIsSearchFocused(true)}
-                      onBlur={() => setIsSearchFocused(false)}
-                    />
-                  </View>
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity 
-                    onPress={() => setSearchQuery('')}
-                    style={{
-                      position: 'absolute',
-                      right: 16,
-                      top: 6,
-                      padding: 4
-                    }}
-                  >
-                    <Text style={{ color: '#9ca3af', fontSize: 16 }}>✕</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              
-              {/* Search Results Section - Fixed Height Container */}
-              {searchQuery.length > 0 && (
-                <View style={{ 
-                  height: 'calc(100vh - 120px)', // Fixed height minus padding and header
-                  overflow: 'hidden'
-                }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: '#111827',
-                    marginBottom: 12
-                  }}>
-                    Search Results
-                  </Text>
-                  {isSearching ? (
-                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={{ color: '#6b7280', textAlign: 'center' }}>Searching...</Text>
-                    </View>
-                  ) : searchResults.length > 0 ? (
-                    <ScrollView 
-                      style={{ height: 'calc(100vh - 180px)' }} // Fixed height for scrollable area
-                      showsVerticalScrollIndicator={true}
-                      contentContainerStyle={{ paddingBottom: 20 }}
-                    >
-                    <View style={{ gap: 8 }}>
-                      {searchResults.map((result, index) => (
-                        <TouchableOpacity
-                          key={`search-result-${index}`}
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderRadius: 6,
-                            padding: 12,
-                            borderWidth: 1,
-                            borderColor: '#e1e5e9'
-                          }}
-                          onPress={() => {
-                            handleEventSelect(result);
-                          }}
-                        >
-                          <Text style={{
-                            fontSize: 14,
-                            fontWeight: '500',
-                            color: '#111827',
-                            marginBottom: 4
-                          }}>
-                            {result.title}
-                          </Text>
-                          <Text style={{
-                            fontSize: 12,
-                            color: '#6b7280'
-                          }}>
-                            {result.type} • {result.childName} • {result.date}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                    </ScrollView>
-                  ) : (
-                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={{ color: '#6b7280', textAlign: 'center' }}>
-                      No results found
-                    </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-              
-
-              
-                                {/* Today's Schedule Section - Only show when no search is active */}
-                  {!searchQuery && (
-                    <View style={{ marginTop: 20 }}>
-                      <Text style={{
-                        fontSize: 14,
-                        color: '#6b7280',
-                        textAlign: 'left'
-                      }}>
-                        Nothing scheduled for today
-                      </Text>
-                    </View>
-                  )}
-                </ScrollView>
-              )}
+              </ScrollView>
             </View>
+            </View>
+          </View>
+          
+          {/* Task Create Modal */}
+          <TaskCreateModal
+            visible={showTaskModal}
+            onClose={() => setShowTaskModal(false)}
+            defaultDate={taskModalDate}
+            familyId={familyId}
+            familyMembers={children.map(child => ({
+              id: child.id,
+              name: child.first_name || child.name || 'Unknown',
+              role: 'child'
+            }))}
+            lists={[
+              { id: 'inbox', name: 'Inbox' },
+              ...children.map(child => ({
+                id: `child:${child.id}`,
+                name: child.first_name || child.name || 'Unknown'
+              }))
+            ]}
+            onCreated={async (task) => {
+              // Refresh calendar data after task creation
+              await refreshCalendarData();
+            }}
+          />
           </View>
         )
   }
@@ -8613,7 +8924,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       />
     )
   }
-      
   const renderAddOptionsContent = () => {
         return (
           <ScrollView style={styles.content} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 60 }}>
@@ -8665,535 +8975,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 </ScrollView>
           </View>
                 )}
-
-            {/* Children Overview Section */}
-            {children.length > 0 && (
-              <View style={styles.childrenSection}>
-                <Text style={styles.sectionTitle}>
-                  {selectedChildId ? 
-                    `${children.find(c => c.id === selectedChildId)?.first_name}'s Overview` : 
-                    'Your Children'
-                  }
-                </Text>
-                {!selectedChildId && (
-                  <Text style={styles.sectionSubtitle}>Click on a child card to view detailed information</Text>
-                )}
-                <View style={styles.childrenGrid}>
-                  {(selectedChildId ? 
-                    children.filter(child => child.id === selectedChildId) : 
-                    children
-                                ).map((child, index) => (
-                    <TouchableOpacity 
-                      key={child.id} 
-                      style={styles.childCard}
-                      onPress={() => {
-                        const studentData = {
-                          child: child,
-                          tracks: todaysLearning.find(item => item.child.id === child.id)?.tracks || []
-                        };
-                        handleStudentPress(studentData);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.childHeader}>
-                        <Image
-                          source={getAvatarSource(child.avatar)}
-                          style={styles.childAvatar}
-                          resizeMode="contain"
-                        />
-                        <View style={styles.childInfo}>
-                          <Text style={styles.childName}>{child.first_name}</Text>
-                          <Text style={styles.childDetails}>
-                            Age: {child.age} | Grade: {child.grade}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.childStats}>
-                        <View style={styles.statItem}>
-                          <Text style={styles.statValue}>{tasksData.todo.length}</Text>
-                          <Text style={styles.statLabel}>Tasks</Text>
-                        </View>
-                        <View style={styles.statItem}>
-                          <Text style={styles.statValue}>
-                            {child.first_name === 'Max' ? '90' : child.first_name === 'Lilly' ? '48' : '0'}%
-                          </Text>
-                          <Text style={styles.statLabel}>Progress</Text>
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-            </View>
-          )}
-
-            {/* Today's Learning Section */}
-            {children.length > 0 && (
-              <View style={styles.todaysLearningSection}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.sectionTitle}>Today's Learning</Text>
-                  {todaysEvents.length > 0 && (
-                    <TouchableOpacity 
-                      style={[styles.smallAddButton, { marginLeft: 8, marginTop: -2 }]}
-                      onPress={() => {
-                        setShowHomeEventModal(true);
-                        setHomeEventType('lesson');
-                        const today = new Date();
-                        const mm = String(today.getMonth() + 1).padStart(2, '0');
-                        const dd = String(today.getDate()).padStart(2, '0');
-                        const yy = String(today.getFullYear()).slice(-2);
-                        setHomeEventFormData(prev => ({
-                          ...prev,
-                          scheduledDate: `${mm}/${dd}/${yy}`
-                        }));
-                      }}
-                    >
-                      <Text style={styles.smallAddButtonText}>+</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={styles.sectionSubtitle}>Today's scheduled items</Text>
-                {loadingLearning ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="small" color="#38B6FF" />
-                    <Text style={styles.loadingText}>Loading today's schedule...</Text>
-            </View>
-                ) : todaysEvents.length > 0 ? (
-                  <View style={{ gap: 8 }}>
-                    {todaysEvents.map(evt => (
-                      <View key={evt.id} style={{
-                        backgroundColor: evt.type === 'holiday' ? '#fff7ed' : '#f8fafc',
-                        borderWidth: 1,
-                        borderColor: '#e5e7eb',
-                        borderRadius: 8,
-                        padding: 10,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between'
-                      }}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827' }}>{evt.title}</Text>
-                          {!!evt.description && <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{evt.description}</Text>}
-                          {evt.type !== 'holiday' && (
-                            <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                              {(evt.assignees || []).join(', ')}
-                              </Text>
-                          )}
-                            </View>
-                        <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                          <Text style={{ fontSize: 12, color: '#111827' }}>{evt.time ? String(evt.time).slice(0,5) : ''}</Text>
-                          {evt.type !== 'holiday' && (
-                            <Text style={{ fontSize: 11, color: '#1e40af', backgroundColor: '#eff6ff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                              {(evt.status || 'planned').replace('_',' ')}
-                            </Text>
-                          )}
-                          {evt.type === 'holiday' && (
-                            <Text style={{ fontSize: 11, color: '#92400e', backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                              Day Off
-                            </Text>
-                          )}
-                        </View>
-                        </View>
-                      ))}
-                  </View>
-                ) : (
-                  <View style={styles.noLearningContainer}>
-                    <Text style={styles.noLearningText}>No items scheduled for today</Text>
-                    <Text style={styles.noLearningSubtext}>Plan your day by adding lessons, activities, or days off</Text>
-                    <TouchableOpacity 
-                      style={styles.addEventButton}
-                      onPress={() => {
-                        setShowHomeEventModal(true);
-                        setHomeEventType('lesson');
-                        const today = new Date();
-                        const mm = String(today.getMonth() + 1).padStart(2, '0');
-                        const dd = String(today.getDate()).padStart(2, '0');
-                        const yy = String(today.getFullYear()).slice(-2);
-                        setHomeEventFormData(prev => ({
-                          ...prev,
-                          scheduledDate: `${mm}/${dd}/${yy}`
-                        }));
-                      }}
-                    >
-                      <Text style={styles.addEventButtonText}>Add Event</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Add Options */}
-        <AddOptions
-          onBack={() => onTabChange('home')}
-          onAddActivity={() => onTabChange('add-activity')}
-          onAddChild={() => onTabChange('add-child')}
-        />
           </ScrollView>
-        )
-  }
-      
-  const renderAddActivityContent = () => {
-    if (!familyId) {
-        return (
-          <View style={styles.content}>
-          <Text style={styles.title}>Add Activity</Text>
-          <Text style={styles.subtitle}>Loading family information...</Text>
-          </View>
-        )
-    }
-      
-        return (
-          <View style={styles.content}>
-        <AddActivityForm
-          familyId={familyId}
-          selectedChildId={selectedChildId}
-          onBack={() => onTabChange('home')}
-          onActivityAdded={(activity) => {
-            console.log('Activity added:', activity);
-            // Could refresh activities list here if needed
-          }}
-          onOpenGoals={() => {
-            // Open goals manager as a modal for the selected child
-            try {
-              setSubjectGoalsModalOpen(true)
-            } catch {}
-          }}
-          onOpenBacklog={() => {
-            // Switch to planner and open backlog drawer via custom event
-            onTabChange('planner')
-            setTimeout(() => {
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openBacklogDrawer'))
-              }
-            }, 50)
-          }}
-        />
-          </View>
         )
   }
 
   return (
     <View style={styles.container}>
       {renderContent()}
-      
-      {/* Syllabus Upload Modal */}
-      <SyllabusUpload
-        visible={showSyllabusModal}
-        onClose={handleCloseSyllabusUpload}
-        onSyllabusProcessed={handleSyllabusProcessed}
-      />
-
-      {/* Schedule Rules Modal */}
-      {scheduleRulesModalOpen && (
-        <Modal
-          visible={scheduleRulesModalOpen}
-          transparent={true}
-          animationType="none"
-          onRequestClose={() => setScheduleRulesModalOpen(false)}
-        >
-          <Animated.View style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.4)',
-            opacity: modalOpacity,
-          }}>
-            <TouchableOpacity 
-              style={{ flex: 1 }} 
-              activeOpacity={1} 
-              onPress={() => setScheduleRulesModalOpen(false)}
-            />
-            <Animated.View style={{
-              position: 'absolute',
-              top: '5%',
-              left: '5%',
-              right: '5%',
-              bottom: '5%',
-              backgroundColor: colors.card,
-              borderRadius: colors.radiusLg,
-              overflow: 'hidden',
-              opacity: modalOpacity,
-              transform: [{ scale: modalOpacity }],
-              ...shadows.md,
-            }}>
-              <ScheduleRulesView familyId={familyId} children={children} />
-              <TouchableOpacity
-                style={{
-                  position: 'absolute',
-                  top: 20,
-                  right: 20,
-                  padding: 8,
-                  backgroundColor: colors.card,
-                  borderRadius: colors.radiusMd,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  zIndex: 100,
-                }}
-                onPress={() => setScheduleRulesModalOpen(false)}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 18, color: colors.text }}>×</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          </Animated.View>
-        </Modal>
-      )}
-
-      {/* Subject Goals Modal */}
-      {subjectGoalsModalOpen && (
-        <Modal
-          visible={subjectGoalsModalOpen}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setSubjectGoalsModalOpen(false)}
-        >
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center' }}>
-            <View style={{ margin: 20, backgroundColor: colors.card, borderRadius: 12, overflow: 'hidden' }}>
-              <SubjectGoalsManager
-                visible={true}
-                onClose={() => setSubjectGoalsModalOpen(false)}
-                childId={selectedChildId}
-                familyId={familyId}
-              />
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* AI Planner Modal */}
-      {aiPlannerModalOpen && (
-        <Modal
-          visible={aiPlannerModalOpen}
-          transparent={true}
-          animationType="none"
-          onRequestClose={() => setAIPlannerModalOpen(false)}
-        >
-          <Animated.View style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.4)',
-            opacity: modalOpacity,
-          }}>
-            <TouchableOpacity 
-              style={{ flex: 1 }} 
-              activeOpacity={1} 
-              onPress={() => setAIPlannerModalOpen(false)}
-            />
-            <Animated.View style={{
-              position: 'absolute',
-              top: '5%',
-              left: '5%',
-              right: '5%',
-              bottom: '5%',
-              backgroundColor: colors.card,
-              borderRadius: colors.radiusLg,
-              overflow: 'hidden',
-              opacity: modalOpacity,
-              transform: [{ scale: modalOpacity }],
-              ...shadows.md,
-            }}>
-              <AIPlannerView familyId={familyId} children={children} urlParams={{}} />
-              <TouchableOpacity
-                style={{
-                  position: 'absolute',
-                  top: 20,
-                  right: 20,
-                  padding: 8,
-                  backgroundColor: colors.card,
-                  borderRadius: colors.radiusMd,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  zIndex: 100,
-                }}
-                onPress={() => setAIPlannerModalOpen(false)}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 18, color: colors.text }}>×</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          </Animated.View>
-        </Modal>
-      )}
-
-      {/* Add Child Modal */}
-      {showAddChildModal && (
-        <Modal
-          visible={showAddChildModal}
-          transparent={true}
-          animationType="none"
-          onRequestClose={onCloseAddChildModal}
-        >
-          <Animated.View style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.4)',
-            opacity: modalOpacity,
-          }}>
-            <TouchableOpacity 
-              style={{ flex: 1 }} 
-              activeOpacity={1} 
-              onPress={onCloseAddChildModal}
-            />
-            <Animated.View style={{
-              position: 'absolute',
-              top: '5%',
-              left: '10%',
-              right: '10%',
-              bottom: '5%',
-              backgroundColor: colors.card,
-              borderRadius: colors.radiusLg,
-              overflow: 'hidden',
-              opacity: modalOpacity,
-              transform: [{ scale: modalOpacity }],
-              ...shadows.md,
-            }}>
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-                <View style={{ padding: 24 }}>
-                  <Text style={{ fontSize: 24, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
-                    Add Child
-                  </Text>
-                  <Text style={{ fontSize: 14, color: colors.muted, marginBottom: 24 }}>
-                    Enter your child's information and learning preferences
-                  </Text>
-
-                  <AddChildForm
-                    submitting={isAddingChild}
-                    onSubmit={async (payload) => {
-                      setIsAddingChild(true)
-                      try {
-                        const { data: { user } } = await supabase.auth.getUser()
-                        if (!user) throw new Error('Not authenticated')
-                        const { data: profile } = await supabase
-                          .from('profiles')
-                          .select('family_id')
-                          .eq('id', user.id)
-                          .single()
-                        if (!profile?.family_id) throw new Error('Family not found')
-
-                        const insert = {
-                          name: payload.first_name,
-                          age: payload.age,
-                          grade: payload.grade,
-                          interests: payload.interests,
-                          standards: payload.standards,
-                          learning_style: payload.learning_style,
-                          college_bound: payload.college_bound,
-                          avatar: payload.avatar,
-                          family_id: profile.family_id,
-                        }
-
-                        const { data: inserted, error } = await supabase.from('children').insert(insert).select().single()
-                        if (error) throw error
-
-                        // refresh
-                        await fetchChildren()
-                        setShowSubjectSelectForChild(inserted)
-                        onCloseAddChildModal()
-                        Alert.alert('Success', `${payload.first_name} has been added! Now pick subjects…`)
-                      } catch (e) {
-                        console.error('Add child failed:', e)
-                        Alert.alert('Error', e.message || 'Failed to add child')
-                      } finally {
-                        setIsAddingChild(false)
-                      }
-                    }}
-                  />
-                </View>
-              </ScrollView>
-
-              <TouchableOpacity
-                style={{
-                  position: 'absolute',
-                  top: 20,
-                  right: 20,
-                  padding: 8,
-                  backgroundColor: colors.card,
-                  borderRadius: colors.radiusMd,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  zIndex: 100,
-                }}
-                onPress={onCloseAddChildModal}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 18, color: colors.text }}>×</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          </Animated.View>
-        </Modal>
-      )}
-
-      {/* Coming Soon Modal */}
-      <Modal
-        visible={showComingSoonModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowComingSoonModal(false)}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 20,
-        }}>
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 16,
-            padding: 24,
-            width: '100%',
-            maxWidth: 400,
-            shadowColor: '#000',
-            shadowOffset: {
-              width: 0,
-              height: 4,
-            },
-            shadowOpacity: 0.25,
-            shadowRadius: 8,
-            elevation: 8,
-          }}>
-            {/* Header */}
-            <View style={{
-              alignItems: 'center',
-              marginBottom: 20,
-            }}>
-              <Text style={{
-                fontSize: 24,
-                fontWeight: '700',
-                color: '#111827',
-                marginBottom: 8
-              }}>
-                Coming Soon!
-              </Text>
-              <Text style={{
-                fontSize: 16,
-                color: '#6b7280',
-                textAlign: 'center',
-                lineHeight: 22
-              }}>
-                Doodle Suggestions will be available soon. We're working hard to bring you AI-powered learning recommendations.
-              </Text>
-            </View>
-
-            {/* Close Button */}
-            <TouchableOpacity
-              onPress={() => setShowComingSoonModal(false)}
-              style={{
-                backgroundColor: '#3b82f6',
-                padding: 16,
-                borderRadius: 12,
-                alignItems: 'center',
-                marginTop: 8
-              }}
-            >
-              <Text style={{
-                color: '#ffffff',
-                fontSize: 16,
-                fontWeight: '600'
-              }}>
-                Got it!
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Home Page Add Event Modal */}
       <HomeEventModal
         showHomeEventModal={showHomeEventModal}
         setShowHomeEventModal={setShowHomeEventModal}
@@ -9204,204 +8992,56 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         saveHomeEvent={saveHomeEvent}
         students={children}
       />
-
-      {/* Portal-based Dropdowns */}
-      {/* Track Dropdown Portal */}
-      {showTrackDropdown && trackTriggerDimensions.width > 0 && (
-        <View style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 999999,
-          pointerEvents: 'none'
-        }}>
-          <View style={{
-            position: 'fixed',
-            top: trackTriggerDimensions.y + trackTriggerDimensions.height + 4,
-            left: trackTriggerDimensions.x,
-            width: trackTriggerDimensions.width,
-            backgroundColor: '#ffffff',
-            borderWidth: 1,
-            borderColor: '#e1e5e9',
-            borderRadius: 6,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.25,
-            shadowRadius: 8,
-            elevation: 50,
-            maxHeight: 200,
-            overflow: 'hidden',
-            pointerEvents: 'auto',
-            zIndex: 999999
-          }}>
-            {availableTracks.map((track) => (
-              <TouchableOpacity
-                key={track.id}
-                onPress={() => {
-                  setNewEventFormData(prev => ({ ...prev, trackId: track.id }));
-                  setShowTrackDropdown(false);
-                }}
-                style={{
-                  padding: 12,
-                  borderBottomWidth: track.id !== availableTracks[availableTracks.length - 1]?.id ? 1 : 0,
-                  borderBottomColor: '#f3f4f6',
-                  backgroundColor: newEventFormData.trackId === track.id ? '#f3f4f6' : 'transparent'
-                }}
-              >
-                <Text style={{
-                  fontSize: 14,
-                  color: newEventFormData.trackId === track.id ? '#1e40af' : '#374151',
-                  fontWeight: newEventFormData.trackId === track.id ? '600' : '400'
-                }}>
-                  {track.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Activity Dropdown Portal */}
-      {showActivityDropdown && activityTriggerDimensions.width > 0 && (
-        <View style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 999999,
-          pointerEvents: 'none'
-        }}>
-          <View style={{
-            position: 'fixed',
-            top: activityTriggerDimensions.y + activityTriggerDimensions.height + 4,
-            left: activityTriggerDimensions.x,
-            width: activityTriggerDimensions.width,
-            backgroundColor: '#ffffff',
-            borderWidth: 1,
-            borderColor: '#e1e5e9',
-            borderRadius: 6,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.25,
-            shadowRadius: 8,
-            elevation: 50,
-            maxHeight: 200,
-            overflow: 'hidden',
-            pointerEvents: 'auto',
-            zIndex: 999999
-          }}>
-            {availableActivities.map((activity) => (
-              <TouchableOpacity
-                key={activity.id}
-                onPress={() => {
-                  setNewEventFormData(prev => ({ ...prev, activityId: activity.id }));
-                  setShowActivityDropdown(false);
-                }}
-                style={{
-                  padding: 12,
-                  borderBottomWidth: activity.id !== availableActivities[availableActivities.length - 1]?.id ? 1 : 0,
-                  borderBottomColor: '#f3f4f6',
-                  backgroundColor: newEventFormData.activityId === activity.id ? '#f3f4f6' : 'transparent'
-                }}
-              >
-                <Text style={{
-                  fontSize: 14,
-                  color: newEventFormData.activityId === activity.id ? '#1e40af' : '#374151',
-                  fontWeight: newEventFormData.activityId === activity.id ? '600' : '400'
-                }}>
-                  {activity.title}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Status Dropdown Portal */}
-      {showStatusDropdown && statusTriggerDimensions.width > 0 && (
-        <View style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 999999,
-          pointerEvents: 'none'
-        }}>
-          <View style={{
-            position: 'fixed',
-            top: statusTriggerDimensions.y + statusTriggerDimensions.height + 4,
-            left: statusTriggerDimensions.x,
-            width: statusTriggerDimensions.width,
-            backgroundColor: '#ffffff',
-            borderWidth: 1,
-            borderColor: '#e1e5e9',
-            borderRadius: 6,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.25,
-            shadowRadius: 8,
-            elevation: 50,
-            maxHeight: 200,
-            overflow: 'hidden',
-            pointerEvents: 'auto',
-            zIndex: 999999
-          }}>
-            {['planned', 'in_progress', 'completed'].map((status) => (
-              <TouchableOpacity
-                key={status}
-                onPress={() => {
-                  setNewEventFormData(prev => ({ ...prev, status: status }));
-                  setShowStatusDropdown(false);
-                }}
-                style={{
-                  padding: 12,
-                  borderBottomWidth: status !== 'completed' ? 1 : 0,
-                  borderBottomColor: '#f3f4f6',
-                  backgroundColor: newEventFormData.status === status ? '#f3f4f6' : 'transparent'
-                }}
-              >
-                <Text style={{
-                  fontSize: 14,
-                  color: newEventFormData.status === status ? '#1e40af' : '#374151',
-                  fontWeight: newEventFormData.status === status ? '600' : '400',
-                  textTransform: 'capitalize'
-                }}>
-                  {status === 'planned' ? 'To Do' : status.replace('_', ' ')}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Click Outside Handler for Portals */}
-      {(showTrackDropdown || showActivityDropdown || showStatusDropdown) && (
-        <TouchableOpacity 
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'transparent',
-            zIndex: 999998
+      <AddChildModal
+        visible={showAddChildModal}
+        onClose={onCloseAddChildModal}
+        onChildAdded={(child) => {
+          if (onChildAdded) {
+            onChildAdded();
+          }
+          // Refresh children list
+          fetchChildren();
+        }}
+        familyId={familyId}
+      />
+      <EventOutcomeModal
+        visible={showOutcomeModal}
+        event={outcomeEvent}
+        onClose={() => {
+          setShowOutcomeModal(false);
+          setOutcomeEvent(null);
+        }}
+        onSaved={() => {
+          // Refresh calendar after saving outcome
+          if (refreshCalendarDataRef.current) {
+            refreshCalendarDataRef.current().catch(err => console.error('Calendar refresh failed:', err));
+          }
+        }}
+      />
+      
+      {showRebalanceModal && rebalanceEvent && rebalanceYearPlanId && familyId && (
+        <RebalanceModal
+          visible={showRebalanceModal}
+          event={rebalanceEvent}
+          yearPlanId={rebalanceYearPlanId}
+          familyId={familyId}
+          onClose={() => {
+            setShowRebalanceModal(false);
+            setRebalanceEvent(null);
+            setRebalanceYearPlanId(null);
           }}
-          onPress={() => {
-            setShowTrackDropdown(false);
-            setShowActivityDropdown(false);
-            setShowStatusDropdown(false);
+          onSuccess={async () => {
+            // Refresh calendar data after rebalance
+            if (refreshCalendarDataRef.current) {
+              await refreshCalendarDataRef.current();
+            }
           }}
-          activeOpacity={1}
         />
       )}
-
-          </View>
-  )
-}
+      
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -9410,11 +9050,11 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 32,
     backgroundColor: '#fbfbfc',
     overflow: 'auto',
   },
   greetingSection: {
+    marginTop: 32,
     marginBottom: 24,
   },
   greetingTitle: {
@@ -9425,7 +9065,7 @@ const styles = StyleSheet.create({
   },
   quickActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 16,
     flexWrap: 'wrap',
   },
   quickActionButton: {
@@ -9500,11 +9140,11 @@ const styles = StyleSheet.create({
   },
   homeMainColumn: {
     flex: 2,
-    gap: 12,
+    gap: 16,
   },
   homeSideColumn: {
     flex: 1,
-    gap: 12,
+    gap: 16,
   },
   greetingSubtitle: {
     fontSize: 16,
@@ -9718,7 +9358,7 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     backgroundColor: '#ffffff',
-    margin: 1,
+    margin: 0,
     borderRadius: 1,
   },
   homeIcon: {
@@ -9809,7 +9449,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   connectButtonsContainer: {
-    gap: 12,
+    gap: 16,
   },
   connectButton: {
     flexDirection: 'row',
@@ -9932,8 +9572,8 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 18, fontWeight: '700', color: '#333', marginBottom: 8 },
   taskColumns: { flexDirection: 'row', gap: 12 },
   taskColumn: { flex: 1 },
-  taskColumnTitle: { fontWeight: '600', color: '#555', marginBottom: 6 },
-  taskItem: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#eaeaea', marginBottom: 6 },
+  taskColumnTitle: { fontWeight: '600', color: '#555', marginBottom: 8 },
+  taskItem: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#eaeaea', marginBottom: 8 },
   checkbox: { width: 16, height: 16, borderRadius: 4, borderWidth: 1, borderColor: '#bbb', backgroundColor: '#fff' },
   taskText: { color: '#333' },
   primaryBtn: { backgroundColor: '#38B6FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, alignSelf: 'flex-start', marginBottom: 8 },
@@ -10349,7 +9989,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     flex: 1,
-    marginHorizontal: 5,
+    marginHorizontal: 8,
   },
   actionButtonText: {
     color: '#fff',
@@ -10676,8 +10316,8 @@ const styles = StyleSheet.create({
   childLearningCard: {
     backgroundColor: '#f8fafc',
     borderRadius: 10,
-    padding: 15,
-    marginBottom: 15,
+    padding: 16,
+    marginBottom: 16,
     borderLeftWidth: 4,
     borderLeftColor: '#38B6FF',
   },
@@ -10724,7 +10364,7 @@ const styles = StyleSheet.create({
   noLearningText: {
     fontSize: 16,
     color: '#666',
-    marginBottom: 5,
+    marginBottom: 8,
   },
   noLearningSubtext: {
     fontSize: 14,
@@ -11199,9 +10839,9 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     justifyContent: 'flex-start',
     gap: 1,
-    marginTop: 2,
     maxHeight: 90,
     overflow: 'hidden',
+    minHeight: 0,
   },
   eventChip: {
     borderRadius: 6,
@@ -11213,7 +10853,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    marginBottom: 1,
+    flexShrink: 0,
   },
   chipToday: {
     backgroundColor: 'rgba(16, 185, 129, 0.2)',
@@ -11363,21 +11003,21 @@ const styles = StyleSheet.create({
   modalScroll: {
     maxHeight: '70vh',
   },
-  modalSectionTitle: { fontSize: 12, fontWeight: '600', color: '#111827', marginBottom: 12 },
+  modalSectionTitle: { fontSize: 12, fontWeight: '600', color: '#111827', marginBottom: 16 },
   eventTypeButtons: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  eventTypeButton: { flex: 1, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: '#e1e5e9', backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center' },
+  eventTypeButton: { flex: 1, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, borderColor: '#e1e5e9', backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center' },
   eventTypeButtonActive: { backgroundColor: '#eff6ff', borderColor: '#3b82f6' },
   eventTypeButtonText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
   eventTypeButtonTextActive: { color: '#1e40af' },
-  quickForm: { gap: 12 },
-  formField: { gap: 6 },
+  quickForm: { gap: 16 },
+  formField: { gap: 8 },
   formLabel: { fontSize: 12, fontWeight: '600', color: '#374151', marginBottom: 2 },
   formInput: { borderWidth: 1, borderColor: '#e1e5e9', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 8, fontSize: 12, color: '#111827', backgroundColor: '#ffffff', minHeight: 36 },
   formTextArea: { minHeight: 80, textAlignVertical: 'top', paddingTop: 8 },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e1e5e9' },
-  modalCancelButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: '#e1e5e9', backgroundColor: '#ffffff', minWidth: 80, alignItems: 'center' },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#e1e5e9' },
+  modalCancelButton: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6, borderWidth: 1, borderColor: '#e1e5e9', backgroundColor: '#ffffff', minWidth: 80, alignItems: 'center' },
   modalCancelText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
-  modalSaveButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#3b82f6', minWidth: 96, alignItems: 'center' },
+  modalSaveButton: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6, backgroundColor: '#3b82f6', minWidth: 96, alignItems: 'center' },
   modalSaveText: { fontSize: 12, fontWeight: '600', color: 'white' },
 
 });

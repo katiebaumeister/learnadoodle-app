@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Platform, View, Text, StyleSheet } from 'react-native';
+import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import WebAuthScreen from './WebAuthScreen';
 import PasswordResetPage from './PasswordResetPage';
 import WebLayout from './WebLayout';
+import InviteAcceptancePage from './InviteAcceptancePage';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function WebRouter() {
@@ -168,6 +169,23 @@ export default function WebRouter() {
     }} />;
   }
 
+  // Check if we're on an invite page
+  const inviteMatch = currentPath.match(/^\/invite\/(.+)$/);
+  const inviteToken = inviteMatch ? inviteMatch[1] : null;
+
+  if (inviteToken) {
+    return (
+      <InviteAcceptancePage
+        token={inviteToken}
+        onAcceptComplete={(data) => {
+          // After accepting, redirect based on role
+          // The component handles the redirect, but we can also handle it here
+          console.log('Invite accepted:', data);
+        }}
+      />
+    );
+  }
+
   // If no user, show appropriate auth screen based on route
   if (!user) {
     if (currentPath === '/reset-password') {
@@ -177,6 +195,7 @@ export default function WebRouter() {
   }
 
   // User is authenticated, show main app
+  // Role-based routing will be handled by WebLayout based on /api/me response
   return <WebLayout user={user} />;
 }
 

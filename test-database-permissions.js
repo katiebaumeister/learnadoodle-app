@@ -84,20 +84,20 @@ async function testDatabasePermissions() {
       console.log('   Found', activities.length, 'activities');
     }
 
-    // 5. Test class_days table access
-    console.log('\n5. Testing class_days table access...');
-    const { data: classDays, error: classDaysError } = await supabase
-      .from('class_days')
+    // 5. Test calendar_days table access
+    console.log('\n5. Testing calendar_days table access...');
+    const { data: calendarDays, error: calendarDaysError } = await supabase
+      .from('calendar_days')
       .select('*')
       .limit(5);
 
-    if (classDaysError) {
-      console.log('Class_days table access failed:', classDaysError.message);
-      console.log('   Code:', classDaysError.code);
-      console.log('   Details:', classDaysError.details);
+    if (calendarDaysError) {
+      console.log('Calendar_days table access failed:', calendarDaysError.message);
+      console.log('   Code:', calendarDaysError.code);
+      console.log('   Details:', calendarDaysError.details);
     } else {
-      console.log('Class_days table access successful');
-      console.log('   Found', classDays.length, 'class days');
+      console.log('Calendar_days table access successful');
+      console.log('   Found', calendarDays.length, 'calendar days');
     }
 
     // 6. Test holidays table access
@@ -116,19 +116,19 @@ async function testDatabasePermissions() {
       console.log('   Found', holidays.length, 'holidays');
     }
 
-    // 7. Test academic_years table access
-    console.log('\n7. Testing academic_years table access...');
-    const { data: academicYears, error: academicYearsError } = await supabase
-      .from('academic_years')
+    // 7. Test family_years table access
+    console.log('\n7. Testing family_years table access...');
+    const { data: familyYears, error: familyYearsError } = await supabase
+      .from('family_years')
       .select('*')
       .limit(5);
 
-    if (academicYearsError) {
-      console.log('Academic_years table access failed:', academicYearsError.message);
-      console.log('   Code:', academicYearsError.code);
+    if (familyYearsError) {
+      console.log('Family_years table access failed:', familyYearsError.message);
+      console.log('   Code:', familyYearsError.code);
     } else {
-      console.log('Academic_years table access successful');
-      console.log('   Found', academicYears.length, 'academic years');
+      console.log('Family_years table access successful');
+      console.log('   Found', familyYears.length, 'family years');
     }
 
     // 8. Test children table access

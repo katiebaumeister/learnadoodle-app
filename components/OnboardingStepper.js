@@ -631,7 +631,7 @@ export default function OnboardingStepper({ onComplete }) {
           .from('children')
           .insert({
           family_id: family.id,
-            name: child.name,
+            first_name: child.first_name,
           age: child.age,
             grade: child.grade,
             standards: child.standards,
@@ -645,86 +645,35 @@ export default function OnboardingStepper({ onComplete }) {
         childIds.push(childData.id);
       }
 
-    // 4. Insert global academic years and get current year
-    const currentYear = new Date().getFullYear();
-    const academicYears = [`${currentYear}-${currentYear + 1}`, `${currentYear + 1}-${currentYear + 2}`, `${currentYear + 2}-${currentYear + 3}`];
-    for (const yearLabel of academicYears) {
-      const { error: upsertError } = await supabase.from('global_academic_years').upsert({ label: yearLabel }, { onConflict: 'label' });
-      if (upsertError) throw upsertError;
-    }
-
-    // 5. Get or create current academic year
-    const academicYearLabel = `${currentYear}-${currentYear + 1}`;
-    let { data: globalYear, error: globalYearError } = await supabase.from('global_academic_years').select('id').eq('label', academicYearLabel).single();
-    if (globalYearError) {
-      // Create if not found
-      const { data: newGlobalYear, error: createError } = await supabase.from('global_academic_years').insert({ label: academicYearLabel }).select('id').single();
-      if (createError) throw createError;
-      globalYear = newGlobalYear;
-    }
-
-    // 6. Calculate end date
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + parseInt(totalDays) - 1);
+    // 4. Calculate end date
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + parseInt(totalDays) - 1);
       
-    // 7. Insert family_years
-      const { data: familyYear, error: familyYearError } = await supabase
-        .from('family_years')
-        .insert({
+    // 5. Insert family_years
+    const { data: familyYear, error: familyYearError } = await supabase
+      .from('family_years')
+      .insert({
         family_id: family.id,
-        global_year_id: globalYear.id,
-          start_date: startDate,
-          end_date: endDate.toISOString().split('T')[0],
-          total_days: parseInt(totalDays),
-          total_hours: parseInt(totalHours),
-          hours_per_day: parseFloat(hoursPerDay),
-          is_current: true
-        })
-        .select('id')
-        .single();
-      if (familyYearError) throw familyYearError;
+        start_date: startDate,
+        end_date: endDate.toISOString().split('T')[0],
+        total_days: parseInt(totalDays),
+        total_hours: parseInt(totalHours),
+        hours_per_day: parseFloat(hoursPerDay),
+        is_current: true
+      })
+      .select('id')
+      .single();
+    if (familyYearError) throw familyYearError;
 
-    // 8. Insert family_teaching_days
-      for (let day = 0; day < 7; day++) {
-        const { error: teachingDayError } = await supabase
-          .from('family_teaching_days')
-          .insert({
-          family_id: family.id,
-            family_year_id: familyYear.id,
-            day_of_week: day,
-            label: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][day],
-          is_teaching: teachingDays.includes(day)
-          });
-        if (teachingDayError) throw teachingDayError;
-      }
+    // 8. Define teaching pattern via rules (handled later) – skip legacy family_teaching_days
 
-    // 9. Generate calendar_days
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dayOfWeek = d.getDay();
-      const isTeaching = teachingDays.includes(dayOfWeek);
-        
-        // Check if it's a holiday
-        const { data: holiday } = await supabase
-          .from('global_official_holidays')
-          .select('id')
-          .eq('holiday_date', d.toISOString().split('T')[0])
-          .single();
-        
-      const isVacation = !!holiday || !isTeaching;
-        
-        const { error: calendarDayError } = await supabase
-          .from('calendar_days')
-          .insert({
-          family_id: family.id,
-            family_year_id: familyYear.id,
-            calendar_date: d.toISOString().split('T')[0],
-            is_vacation: isVacation,
-            is_teaching: isTeaching && !isVacation
-          });
-        if (calendarDayError) throw calendarDayError;
-      }
+    // 9. Refresh availability cache for initial window (no bulk calendar_days inserts)
+      const { error: refreshErr } = await supabase.rpc('refresh_calendar_days_cache', {
+        p_family_id: family.id,
+        p_from_date: startDate,
+        p_to_date: endDate.toISOString().split('T')[0],
+      });
+      if (refreshErr) console.warn('refresh_calendar_days_cache error:', refreshErr.message);
 
     // 10. Insert subjects
       for (const subject of subjects) {
@@ -740,7 +689,7 @@ export default function OnboardingStepper({ onComplete }) {
           .from('subject')
           .insert({
           family_id: family.id,
-          children_id: childIds[childIndex],
+          student_id: childIds[childIndex],
             name: subject.name,
             grade: subject.grade,
             notes: subject.notes,
@@ -913,7 +862,7 @@ export default function OnboardingStepper({ onComplete }) {
               {children.map((child, idx) => (
                 <View key={idx} style={styles.listItem}>
                   <Text style={styles.listItemText}>
-                    {child.name} (Age: {child.age}) - {child.collegeBound ? 'College Bound' : 'Not College Bound'}
+                    {child.first_name} (Age: {child.age}) - {child.collegeBound ? 'College Bound' : 'Not College Bound'}
                 </Text>
                   <TouchableOpacity
                     style={styles.removeButton}
@@ -1047,7 +996,7 @@ export default function OnboardingStepper({ onComplete }) {
                         styles.childOptionText,
                         selectedChildForSubject === index.toString() && styles.selectedChildOptionText
                       ]}>
-                        {child.name}
+                        {child.first_name}
                       </Text>
               </TouchableOpacity>
                   ))}
@@ -1066,7 +1015,7 @@ export default function OnboardingStepper({ onComplete }) {
               {subjects.map((subject, idx) => (
                 <View key={idx} style={styles.listItem}>
                   <Text style={styles.listItemText}>
-                    {subject.name} - {children[parseInt(subject.childId)]?.name || 'Unknown Child'}
+                    {subject.name} - {children[parseInt(subject.childId)]?.first_name || 'Unknown Child'}
                 </Text>
           <TouchableOpacity
                     style={styles.removeButton}

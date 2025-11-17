@@ -39,7 +39,7 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
   const [markedDates, setMarkedDates] = useState({});
   const [vacationDates, setVacationDates] = useState({});
   const [holidayDates, setHolidayDates] = useState({});
-  const [classDayRecords, setClassDayRecords] = useState([]);
+  const [calendarDayRecords, setCalendarDayRecords] = useState([]);
   
   // UI state
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -102,7 +102,7 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
       console.log('📧 User email:', session.user.email);
       
       const { data, error } = await supabase
-        .from('academic_years')
+        .from('family_years')
         .select('*')
         .eq('family_id', familyId)
         .eq('is_current', true)
@@ -210,29 +210,9 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
     }
   };
 
-  const fetchClassDays = async (academicYearId) => {
-    try {
-      // Check if user is authenticated first
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session) {
-        console.log('⚠️ User not authenticated, skipping class days fetch');
-        return;
-      }
-      
-      const { data, error } = await supabase
-        .from('class_day_mappings')
-        .select('*')
-        .eq('academic_year_id', academicYearId);
-
-      if (error) {
-        console.error('Error fetching class days:', error);
-        return;
-      }
-
-      setClassDayRecords(data || []);
-    } catch (error) {
-      console.error('Error fetching class days:', error);
-    }
+  const fetchCalendarDays = async (academicYearId) => {
+    // Deprecated: calendar_days is removed. Availability now comes from cache and rules.
+    setCalendarDayRecords([]);
   };
 
   const fetchHolidays = async (academicYearId) => {
@@ -247,7 +227,7 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
       const { data, error } = await supabase
         .from('holidays')
         .select('*')
-        .eq('academic_year_id', academicYearId);
+        .eq('family_year_id', academicYearId);
 
       if (error) {
         console.error('Error fetching holidays:', error);
@@ -435,10 +415,9 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
         console.log('🆕 Creating new academic year');
         // Create new academic year
         const { data, error } = await supabase
-          .from('academic_years')
+          .from('family_years')
           .insert({
             family_id: familyId,
-            year_name: yearName,
             start_date: startDate,
             end_date: endDate,
             total_days: totalDays ? parseInt(totalDays) : null,
@@ -462,9 +441,8 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
         console.log('🔄 Updating existing academic year:', academicYearId);
         // Update existing academic year
         const { error } = await supabase
-          .from('academic_years')
+          .from('family_years')
           .update({
-            year_name: yearName,
             start_date: startDate,
             end_date: endDate,
             total_days: totalDays ? parseInt(totalDays) : null,
@@ -482,9 +460,13 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
         setShowBanner(false);
       }
 
-      // Save class days
-      console.log('📅 Saving class days...');
-      await saveClassDays(academicYearId);
+      // Skip saving calendar_days; refresh availability cache instead
+      console.log('🔄 Refreshing calendar availability cache...');
+      await supabase.rpc('refresh_calendar_days_cache', {
+        p_family_id: familyId,
+        p_from_date: startDate,
+        p_to_date: endDate,
+      });
       
       // Save holidays
       console.log('🎉 Saving holidays...');
@@ -500,76 +482,27 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
     }
   };
 
-  const saveClassDays = async (academicYearId) => {
-    // Clear existing class days
-    await supabase
-      .from('class_day_mappings')
-      .delete()
-      .eq('academic_year_id', academicYearId);
-
-    // Generate new class day mappings
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const current = new Date(start);
-    let classDayNumber = 0;
-    const classDayRecords = [];
-
-    while (current <= end) {
-      const dateString = current.toISOString().split('T')[0];
-      const dayOfWeek = current.getDay();
-      const isTeachingDay = selectedDays[dayOfWeek];
-      const isVacation = vacationDates[dateString];
-      const isHoliday = holidayDates[dateString];
-
-      if (isTeachingDay && !isVacation && !isHoliday) {
-        classDayNumber++;
-        classDayRecords.push({
-          academic_year_id: academicYearId,
-          class_date: dateString,
-          class_day_number: classDayNumber,
-          is_vacation: false
-        });
-      } else if (isTeachingDay && (isVacation || isHoliday)) {
-        classDayRecords.push({
-          academic_year_id: academicYearId,
-          class_date: dateString,
-          class_day_number: null,
-          is_vacation: true
-        });
-      }
-
-      current.setDate(current.getDate() + 1);
-    }
-
-    if (classDayRecords.length > 0) {
-      const { error } = await supabase
-        .from('class_day_mappings')
-        .insert(classDayRecords);
-
-      if (error) throw error;
-    }
+  const saveCalendarDays = async (academicYearId) => {
+    // Deprecated: calendar_days writes removed; cache is refreshed above.
+    return;
   };
 
   const saveHolidays = async (academicYearId) => {
-    // Clear existing holidays
-    await supabase
-      .from('holidays')
-      .delete()
-      .eq('academic_year_id', academicYearId);
-
-    // Save new holidays
-    const holidayRecords = Object.entries(holidayDates).map(([date, name]) => ({
-      academic_year_id: academicYearId,
-      holiday_name: name,
-      holiday_date: date,
-      is_proposed: false
-    }));
-
-    if (holidayRecords.length > 0) {
+    // Write selected holidays as overrides only (no holidays table)
+    const entries = Object.entries(holidayDates);
+    for (const [date, name] of entries) {
       const { error } = await supabase
-        .from('holidays')
-        .insert(holidayRecords);
-
+        .from('schedule_overrides')
+        .upsert({
+          scope_type: 'family',
+          scope_id: familyId,
+          date,
+          override_kind: 'off',
+          start_time: '00:00',
+          end_time: '23:59',
+          notes: name || 'Holiday',
+          is_active: true,
+        }, { onConflict: 'scope_type,scope_id,date' });
       if (error) throw error;
     }
   };

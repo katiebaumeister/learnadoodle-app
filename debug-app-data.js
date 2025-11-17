@@ -56,60 +56,61 @@ export const debugAppData = async () => {
       name: family.name
     });
     
-    // 4. Check academic years
-    const { data: academicYears, error: yearsError } = await supabase
-      .from('academic_years')
+    // 4. Check family years
+    const { data: familyYears, error: yearsError } = await supabase
+      .from('family_years')
       .select('*')
       .eq('family_id', profile.family_id)
       .order('start_date', { ascending: false });
       
     if (yearsError) {
-      console.error('❌ Academic years fetch error:', yearsError);
+      console.error('❌ Family years fetch error:', yearsError);
       return;
     }
     
-    console.log('✅ Academic years found:', academicYears.length);
-    if (academicYears.length > 0) {
+    console.log('✅ Family years found:', familyYears.length);
+    if (familyYears.length > 0) {
       console.log('📅 First year:', {
-        id: academicYears[0].id,
-        year_name: academicYears[0].year_name,
-        family_id: academicYears[0].family_id,
-        start_date: academicYears[0].start_date
+        id: familyYears[0].id,
+        start_date: familyYears[0].start_date,
+        end_date: familyYears[0].end_date,
+        family_id: familyYears[0].family_id,
+        start_date: familyYears[0].start_date
       });
     }
     
-    // 5. Check subject tracks
-    const { data: tracks, error: tracksError } = await supabase
-      .from('subject_track')
+    // 5. Check activities
+    const { data: activities, error: activitiesError } = await supabase
+      .from('activities')
       .select('*')
       .eq('family_id', profile.family_id)
-      .order('name', { ascending: true });
+      .order('created_at', { ascending: false });
       
-    if (tracksError) {
-      console.error('❌ Subject tracks fetch error:', tracksError);
+    if (activitiesError) {
+      console.error('❌ Activities fetch error:', activitiesError);
       return;
     }
     
-    console.log('✅ Subject tracks found:', tracks.length);
-    if (tracks.length > 0) {
-      console.log('📚 Track names:', tracks.map(t => t.name));
+    console.log('✅ Activities found:', activities.length);
+    if (activities.length > 0) {
+      console.log('📚 Activity names:', activities.map(a => a.name));
     }
     
-    // 6. Check class day mappings (if we have an academic year)
-    if (academicYears.length > 0) {
-      const { data: mappings, error: mappingsError } = await supabase
-        .from('class_day_mappings')
+    // 6. Check activity instances (if we have family years)
+    if (familyYears && familyYears.length > 0) {
+      const { data: instances, error: instancesError } = await supabase
+        .from('activity_instances')
         .select('*')
-        .eq('academic_year_id', academicYears[0].id)
-        .order('class_date', { ascending: true })
+        .eq('family_id', familyYears[0].family_id)
+        .order('scheduled_date', { ascending: true })
         .limit(5);
         
-      if (mappingsError) {
-        console.error('❌ Class day mappings fetch error:', mappingsError);
+      if (instancesError) {
+        console.error('❌ Activity instances fetch error:', instancesError);
       } else {
-        console.log('✅ Class day mappings found:', mappings.length);
-        if (mappings.length > 0) {
-          console.log('📅 Sample dates:', mappings.map(m => m.class_date));
+        console.log('✅ Activity instances found:', instances.length);
+        if (instances.length > 0) {
+          console.log('📅 Sample dates:', instances.map(i => i.scheduled_date));
         }
       }
     }

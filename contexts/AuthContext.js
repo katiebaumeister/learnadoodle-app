@@ -11,11 +11,50 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
+  const [autoLoginAttempted, setAutoLoginAttempted] = useState(false)
 
   useEffect(() => {
     let mounted = true;
     let retryCount = 0;
     const maxRetries = 3;
+
+    // Check for auto-login parameter
+    const checkAutoLogin = async () => {
+      if (typeof window === 'undefined' || autoLoginAttempted) return;
+      
+      const urlParams = new URLSearchParams(window.location.search);
+      const shouldAutoLogin = urlParams.get('autoLogin') === 'true' || urlParams.get('demo') === 'true';
+      
+      if (!shouldAutoLogin) return;
+      
+      // Get credentials from environment variables or use defaults
+      const autoLoginEmail = process.env.REACT_APP_AUTO_LOGIN_EMAIL || process.env.EXPO_PUBLIC_AUTO_LOGIN_EMAIL || 'katiebaumeister@icloud.com';
+      const autoLoginPassword = process.env.REACT_APP_AUTO_LOGIN_PASSWORD || process.env.EXPO_PUBLIC_AUTO_LOGIN_PASSWORD;
+      
+      if (!autoLoginPassword) {
+        console.log('Auto-login requested but no password configured in environment variables');
+        return;
+      }
+      
+      console.log('Auto-login detected, attempting to sign in...');
+      setAutoLoginAttempted(true);
+      
+      try {
+        const { data, error } = await auth.signIn(autoLoginEmail, autoLoginPassword);
+        if (error) {
+          console.error('Auto-login failed:', error.message);
+        } else {
+          console.log('Auto-login successful');
+          // Remove the autoLogin parameter from URL for security
+          const newUrl = new URL(window.location.href);
+          newUrl.searchParams.delete('autoLogin');
+          newUrl.searchParams.delete('demo');
+          window.history.replaceState({}, '', newUrl.toString());
+        }
+      } catch (error) {
+        console.error('Auto-login error:', error);
+      }
+    };
 
     // Get initial session with retry logic
     const getInitialSession = async () => {
@@ -34,6 +73,11 @@ export const AuthProvider = ({ children }) => {
           setSession(session);
           setUser(session?.user ?? null);
           setLoading(false);
+          
+          // If no session, try auto-login
+          if (!session) {
+            checkAutoLogin();
+          }
         }
       } catch (error) {
         console.error('AuthContext: Session retrieval failed:', error);
@@ -45,6 +89,9 @@ export const AuthProvider = ({ children }) => {
         } else if (mounted) {
           console.log('AuthContext: Max retries reached, setting loading to false');
           setLoading(false);
+          
+          // If no session after retries, try auto-login
+          checkAutoLogin();
         }
       }
     };

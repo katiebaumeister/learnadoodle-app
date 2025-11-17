@@ -58,43 +58,29 @@ export default function HomeScreen({ navigation, route }) {
       // Get children in the family
       const { data: childrenData, error: childrenError } = await supabase
         .from('children')
-        .select('id, name, age, grade')
+        .select('id, first_name, age, grade')
         .eq('family_id', profile.family_id)
       
       if (childrenError) throw childrenError
       setChildren(childrenData || [])
 
-      // Get today's date and day of week
+      // Get today's date
       const today = new Date()
-      const dayOfWeek = today.getDay() // 0 = Sunday, 1 = Monday, etc.
-      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-      const todayName = dayNames[dayOfWeek]
+      const todayStr = today.toISOString().split('T')[0] // YYYY-MM-DD format
 
-      // Get learning tracks for today
-      const { data: tracks, error: tracksError } = await supabase
-        .from('subject_track')
-        .select('id, name, class_schedule, study_days, roadmap, course_outline, status')
-        .eq('family_id', profile.family_id)
-        .eq('status', 'active')
-      
-      if (tracksError) throw tracksError
+      // Fetch today's actual calendar events
+      const todaysEvents = await fetchTodaysCalendarEvents(profile.family_id, todayStr, childrenData)
 
-      // Filter tracks that are active today
-      const todaysTracks = tracks?.filter(track => {
-        if (!track.study_days) return false
-        return track.study_days.includes(todayName)
-      }) || []
-
-      // Group tracks by child
+      // Group events by child
       const learningByChild = childrenData?.map(child => {
-        const childTracks = todaysTracks.filter(track => 
-          track.name.includes(child.name)
+        const childEvents = todaysEvents.filter(event => 
+          event.child_name && JSON.parse(event.child_name).includes(child.first_name)
         )
         return {
           child,
-          tracks: childTracks
+          events: childEvents
         }
-      }).filter(item => item.tracks.length > 0)
+      }).filter(item => item.events.length > 0)
 
       setTodaysLearning(learningByChild || [])
     } catch (error) {
@@ -103,6 +89,59 @@ export default function HomeScreen({ navigation, route }) {
       setLoadingLearning(false)
     }
   }
+
+  const fetchTodaysCalendarEvents = async (familyId, todayStr, childrenData) => {
+    const events = []
+
+    try {
+      // Fetch today's activity instances (lessons and activities)
+      const { data: activityInstances, error: aiError } = await supabase
+        .from('activity_instances')
+        .select(`
+          *,
+          activities:activity_id(name, description, minutes)
+        `)
+        .eq('family_id', familyId)
+        .eq('scheduled_date', todayStr)
+        .order('scheduled_time', { ascending: true })
+
+      if (!aiError && activityInstances) {
+        activityInstances.forEach(instance => {
+          events.push({
+            ...instance,
+            type: 'lesson',
+            eventType: instance.activities?.name ? 'activity' : 'lesson'
+          })
+        })
+      }
+
+      // Fetch today's holidays
+      const { data: holidays, error: holidayError } = await supabase
+        .from('holidays')
+        .select('*')
+        .eq('family_id', familyId)
+        .eq('holiday_date', todayStr)
+
+      if (!holidayError && holidays) {
+        holidays.forEach(holiday => {
+          events.push({
+            ...holiday,
+            type: 'holiday',
+            eventType: 'holiday',
+            title: holiday.holiday_name,
+            description: holiday.description
+          })
+        })
+      }
+
+    } catch (error) {
+      console.error('Error fetching calendar events:', error)
+    }
+
+    return events
+  }
+
+
 
   const handleSignOut = async () => {
     setSigningOut(true)
@@ -151,44 +190,132 @@ export default function HomeScreen({ navigation, route }) {
           </View>
         </View>
 
-        {/* Today's Learning Section */}
+
+
+        {/* Today's Events Section */}
         <View style={styles.todaysLearningSection}>
-          <Text style={styles.todaysLearningTitle}>Today's Learning</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.todaysLearningTitle}>Today's Schedule</Text>
+            <TouchableOpacity 
+              style={styles.viewCalendarButton}
+              onPress={() => navigation.navigate('WebLayout', { activeTab: 'calendar' })}
+            >
+              <Text style={styles.viewCalendarText}>View Calendar</Text>
+            </TouchableOpacity>
+          </View>
           {loadingLearning ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="small" color="#38B6FF" />
-              <Text style={styles.loadingText}>Loading today's schedule...</Text>
+              <Text style={styles.loadingText}>Loading today's events...</Text>
             </View>
           ) : todaysLearning.length > 0 ? (
             todaysLearning.map((item, index) => (
               <View key={index} style={styles.childLearningCard}>
                 <View style={styles.childHeader}>
-                  <Text style={styles.childName}>{item.child.name}</Text>
+                  <Text style={styles.childName}>{item.child.first_name}</Text>
                   <Text style={styles.childGrade}>Grade {item.child.grade}</Text>
                 </View>
-                {item.tracks.map((track, trackIndex) => (
-                  <View key={trackIndex} style={styles.trackItem}>
-                    <Text style={styles.trackName}>{track.name}</Text>
-                    <Text style={styles.trackSchedule}>{track.class_schedule}</Text>
-                    {track.roadmap && (
-                      <View style={styles.roadmapPreview}>
-                        <Text style={styles.roadmapLabel}>Current Unit:</Text>
-                        <Text style={styles.roadmapContent}>
-                          {typeof track.roadmap === 'string' 
-                            ? track.roadmap 
-                            : track.roadmap.units?.[0]?.name || 'Unit in progress'
-                          }
+                {item.events.map((event, eventIndex) => (
+                  <TouchableOpacity 
+                    key={eventIndex} 
+                    style={[
+                      styles.eventItem,
+                      event.eventType === 'holiday' && styles.holidayEvent,
+                      event.eventType === 'activity' && styles.activityEvent
+                    ]}
+                    onPress={() => navigation.navigate('WebLayout', { 
+                      activeTab: 'calendar',
+                      selectedEventId: event.id,
+                      selectedDate: event.scheduled_date || event.holiday_date
+                    })}
+                  >
+                    <View style={styles.eventHeader}>
+                      <Text style={[
+                        styles.eventTitle,
+                        event.eventType === 'holiday' && styles.holidayTitle
+                      ]}>
+                        {event.title}
+                      </Text>
+                      <View style={[
+                        styles.eventTypeBadge,
+                        event.eventType === 'holiday' && styles.holidayBadge,
+                        event.eventType === 'activity' && styles.activityBadge
+                      ]}>
+                        <Text style={styles.eventTypeText}>
+                          {event.eventType === 'holiday' ? 'Holiday' : 
+                           event.eventType === 'activity' ? 'Activity' : 'Lesson'}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    {event.scheduled_time && (
+                      <Text style={styles.eventTime}>
+                        {String(event.scheduled_time).slice(0,5)}
+                        {event.minutes && ` (${event.minutes} min)`}
+                      </Text>
+                    )}
+                    
+                    {event.description && (
+                      <Text style={styles.eventDescription} numberOfLines={2}>
+                        {event.description}
+                      </Text>
+                    )}
+                    
+                    {event.status && event.eventType !== 'holiday' && (
+                      <View style={[
+                        styles.statusBadge,
+                        event.status === 'completed' && styles.completedStatus,
+                        event.status === 'in_progress' && styles.inProgressStatus,
+                        event.status === 'planned' && styles.plannedStatus
+                      ]}>
+                        <Text style={styles.statusText}>
+                          {event.status.replace('_', ' ').toUpperCase()}
                         </Text>
                       </View>
                     )}
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             ))
           ) : (
             <View style={styles.noLearningContainer}>
-              <Text style={styles.noLearningText}>No learning activities scheduled for today</Text>
-              <Text style={styles.noLearningSubtext}>Check the calendar for upcoming lessons</Text>
+              <Text style={styles.noLearningText}>No events scheduled for today</Text>
+              <Text style={styles.noLearningSubtext}>Plan your day by adding lessons, activities, or days off</Text>
+              
+              <View style={styles.addButtonsContainer}>
+                <TouchableOpacity 
+                  style={[styles.addButton, styles.addLessonButton]}
+                  onPress={() => navigation.navigate('WebLayout', { 
+                    activeTab: 'calendar', 
+                    showNewEventForm: true,
+                    defaultEventType: 'lesson'
+                  })}
+                >
+                  <Text style={styles.addButtonText}>Add Lesson</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.addButton, styles.addActivityButton]}
+                  onPress={() => navigation.navigate('WebLayout', { 
+                    activeTab: 'calendar', 
+                    showNewEventForm: true,
+                    defaultEventType: 'activity'
+                  })}
+                >
+                  <Text style={styles.addButtonText}>Add Activity</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.addButton, styles.addHolidayButton]}
+                  onPress={() => navigation.navigate('WebLayout', { 
+                    activeTab: 'calendar', 
+                    showNewEventForm: true,
+                    defaultEventType: 'holiday'
+                  })}
+                >
+                  <Text style={styles.addButtonText}>Add Day Off</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         </View>
@@ -385,5 +512,147 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     fontStyle: 'italic',
+  },
+  // New styles for improved event display
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  viewCalendarButton: {
+    backgroundColor: '#38B6FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+  },
+  viewCalendarText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  eventItem: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  holidayEvent: {
+    borderLeftColor: '#f59e0b',
+    borderLeftWidth: 4,
+    backgroundColor: '#fffbeb',
+  },
+  activityEvent: {
+    borderLeftColor: '#10b981',
+    borderLeftWidth: 4,
+  },
+  eventHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  eventTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2d3748',
+    flex: 1,
+    marginRight: 8,
+  },
+  holidayTitle: {
+    color: '#92400e',
+  },
+  eventTypeBadge: {
+    backgroundColor: '#e2e8f0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  holidayBadge: {
+    backgroundColor: '#fbbf24',
+  },
+  activityBadge: {
+    backgroundColor: '#a7f3d0',
+  },
+  eventTypeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#4a5568',
+    textTransform: 'uppercase',
+  },
+  eventTime: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  eventDescription: {
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 16,
+    marginBottom: 6,
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  completedStatus: {
+    backgroundColor: '#d1fae5',
+  },
+  inProgressStatus: {
+    backgroundColor: '#fef3c7',
+  },
+  plannedStatus: {
+    backgroundColor: '#e0e7ff',
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  addEventButton: {
+    backgroundColor: '#38B6FF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: 10,
+  },
+  addEventText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // New styles for multiple add buttons
+  addButtonsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 15,
+  },
+  addButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  addLessonButton: {
+    backgroundColor: '#38B6FF',
+  },
+  addActivityButton: {
+    backgroundColor: '#10b981',
+  },
+  addHolidayButton: {
+    backgroundColor: '#f59e0b',
+  },
+  addButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
   },
 }) 

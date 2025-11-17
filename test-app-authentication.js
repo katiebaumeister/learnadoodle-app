@@ -61,19 +61,19 @@ async function testAppAuthentication() {
       console.log('   Found', activities?.length || 0, 'rows');
     }
 
-    // Test class_days
-    const { data: classDays, error: classDaysError } = await supabase
-      .from('class_days')
+    // Test calendar_days
+    const { data: calendarDays, error: calendarDaysError } = await supabase
+      .from('calendar_days')
       .select('*')
       .limit(1);
     
-    if (classDaysError) {
-      console.log('❌ Class_days access failed:', classDaysError.message);
-      console.log('   Code:', classDaysError.code);
-      console.log('   Details:', classDaysError.details);
+    if (calendarDaysError) {
+      console.log('❌ Calendar_days access failed:', calendarDaysError.message);
+      console.log('   Code:', calendarDaysError.code);
+      console.log('   Details:', calendarDaysError.details);
     } else {
-      console.log('✅ Class_days access successful');
-      console.log('   Found', classDays?.length || 0, 'rows');
+      console.log('✅ Calendar_days access successful');
+      console.log('   Found', calendarDays?.length || 0, 'rows');
     }
 
     // Test holidays
@@ -118,7 +118,7 @@ async function testAppAuthentication() {
     
     console.log('   ✅ Connection to Supabase works');
     
-    if (!activitiesError && !classDaysError && !holidaysError) {
+    if (!activitiesError && !calendarDaysError && !holidaysError) {
       console.log('   ✅ All tables accessible');
       console.log('   🎉 The issue is resolved!');
     } else {

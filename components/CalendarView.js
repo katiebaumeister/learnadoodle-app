@@ -9,7 +9,7 @@ import {
   Alert,
   Modal,
 } from 'react-native';
-import { Calendar } from 'react-native-calendars';
+
 import { supabase } from '../lib/supabase';
 
 
@@ -21,10 +21,12 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
   const [markedDates, setMarkedDates] = useState({});
   const [classDayMappings, setClassDayMappings] = useState([]);
   const [holidays, setHolidays] = useState([]);
+  const [lessons, setLessons] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [learningTracks, setLearningTracks] = useState([]);
   const [children, setChildren] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [showYearSelector, setShowYearSelector] = useState(false);
+
   const [showDayDetails, setShowDayDetails] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [dayDetails, setDayDetails] = useState(null);
@@ -49,21 +51,29 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('family_id')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (profile?.family_id) {
-        const { data: childrenData } = await supabase
-          .from('children')
-          .select('*')
-          .eq('family_id', profile.family_id);
+      if (profileError) {
+        console.error('Error fetching profile:', profileError);
+        return;
+      }
 
-        if (childrenData) {
-          setChildren(childrenData);
-        }
+      if (!profile || !profile.family_id) {
+        console.log('No profile or family_id found for user');
+        return;
+      }
+
+      const { data: childrenData } = await supabase
+        .from('children')
+        .select('*')
+        .eq('family_id', profile.family_id);
+
+      if (childrenData) {
+        setChildren(childrenData);
       }
     } catch (error) {
       console.error('Error fetching children:', error);
@@ -76,36 +86,42 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('family_id')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (profile?.family_id) {
-        console.log('Profile family_id:', profile.family_id);
-        
-        const { data: years, error } = await supabase
-          .from('academic_years')
-          .select('*')
-          .eq('family_id', profile.family_id)
-          .order('start_date', { ascending: false });
+      if (profileError) {
+        console.error('Error fetching profile:', profileError);
+        return;
+      }
 
-        if (error) {
-          console.error('Error fetching academic years:', error);
-          return;
-        }
+      if (!profile || !profile.family_id) {
+        console.log('No profile or family_id found for user');
+        return;
+      }
 
-        if (years && years.length > 0) {
-          console.log('Academic years found:', years.length);
-          console.log('First year details:', years[0]);
-          setAcademicYears(years);
-          setSelectedYear(years[0]); // Select the most recent year
-        } else {
-          console.log('No academic years found for family_id:', profile.family_id);
-        }
+      console.log('Profile family_id:', profile.family_id);
+      
+      const { data: years, error } = await supabase
+        .from('family_years')
+        .select('*')
+        .eq('family_id', profile.family_id)
+        .order('start_date', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching academic years:', error);
+        return;
+      }
+
+      if (years && years.length > 0) {
+        console.log('Academic years found:', years.length);
+        console.log('First year details:', years[0]);
+        setAcademicYears(years);
+        setSelectedYear(years[0]); // Select the most recent year
       } else {
-        console.log('No family_id in profile');
+        console.log('No academic years found for family_id:', profile.family_id);
       }
     } catch (error) {
       console.error('Error fetching academic years:', error);
@@ -120,74 +136,82 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     try {
       setIsLoading(true);
       
-      // Fetch class day mappings (actual calendar dates)
-      const { data: mappingsData } = await supabase
-        .from('class_day_mappings')
-        .select('*')
-        .eq('academic_year_id', selectedYear.id)
-        .order('class_date', { ascending: true });
-
-      if (mappingsData) {
-        setClassDayMappings(mappingsData);
-        console.log('Class day mappings loaded:', mappingsData.length);
+      // Build marked dates for the current month using get_calendar_day_status RPC
+      const year = new Date(selectedYear.start_date).getFullYear();
+      const month = new Date(selectedYear.start_date).getMonth();
+      const firstOfMonth = new Date(year, month, 1);
+      const lastOfMonth = new Date(year, month + 1, 0);
+      const days = [];
+      for (let d = new Date(firstOfMonth); d <= lastOfMonth; d.setDate(d.getDate() + 1)) {
+        days.push(new Date(d));
       }
-
-      // Initialize holidays data
-      let holidaysData = [];
-
-      // Fetch holidays using family_year_id
-      // First get the family_year record
-      console.log('Looking for family_year with family_id:', selectedYear.family_id, 'global_year_id:', selectedYear.global_year_id);
-      
-      const { data: familyYear, error: familyYearError } = await supabase
-        .from('family_years')
-        .select('id')
-        .eq('family_id', selectedYear.family_id)
-        .eq('global_year_id', selectedYear.global_year_id)
-        .single();
-
-      if (familyYearError) {
-        console.error('Error fetching family_year:', familyYearError);
-        // Try alternative approach - look for any family_year for this family
-        const { data: altFamilyYear } = await supabase
-          .from('family_years')
-          .select('id')
-          .eq('family_id', selectedYear.family_id)
-          .limit(1)
-          .single();
-        
-        if (altFamilyYear) {
-          console.log('Found alternative family_year:', altFamilyYear.id);
-          const { data: holidaysResult } = await supabase
-            .from('holidays')
-            .select('*')
-            .eq('family_year_id', altFamilyYear.id)
-            .order('holiday_date', { ascending: true });
-
-          if (holidaysResult) {
-            holidaysData = holidaysResult;
-            setHolidays(holidaysResult);
-            console.log('Holidays loaded (alternative):', holidaysResult.length);
+      const dayStatusResults = await Promise.all(
+        days.map(async (d) => {
+          const dateStr = d.toISOString().split('T')[0];
+          const { data, error } = await supabase.rpc('get_calendar_day_status', {
+            p_family_id: selectedYear.family_id,
+            p_date: dateStr,
+          });
+          if (error) {
+            console.warn('get_calendar_day_status error for', dateStr, error.message);
+            return { dateStr, is_teaching: null, is_vacation: null, notes: null };
           }
-        }
-      } else if (familyYear) {
-        const { data: holidaysResult } = await supabase
-          .from('holidays')
-          .select('*')
-          .eq('family_year_id', familyYear.id)
-          .order('holiday_date', { ascending: true });
+          const row = Array.isArray(data) ? data[0] : data; // rpc returns setof
+          return { dateStr, is_teaching: row?.is_teaching, is_vacation: row?.is_vacation, notes: row?.notes };
+        })
+      );
+      const calendarDayMarks = dayStatusResults.map(({ dateStr, is_vacation }) => ({
+        calendar_date: dateStr,
+        is_vacation: !!is_vacation,
+        is_teaching: !is_vacation,
+      }));
+      setClassDayMappings(calendarDayMarks);
 
-        if (holidaysResult) {
-          holidaysData = holidaysResult;
-          setHolidays(holidaysResult);
-          console.log('Holidays loaded:', holidaysResult.length);
-        }
-      } else {
-        console.log('No family_year found for holidays');
+      // No longer reading per-family holidays table; overrides drive day status
+      const holidaysData = [];
+
+      // Fetch lessons for this academic year
+      const { data: lessonsData } = await supabase
+        .from('lessons')
+        .select(`
+          *,
+          subject_track:subject_track_id(id, name),
+          track:track!subject_track_id(id, subject_id)
+        `)
+        .eq('family_year_id', selectedYear.id)
+        .gte('lesson_date', selectedYear.start_date)
+        .lte('lesson_date', selectedYear.end_date)
+        .order('lesson_date', { ascending: true });
+
+      if (lessonsData) {
+        console.log('Lessons loaded:', lessonsData.length);
+        // Store lessons for calendar display
+        setLessons(lessonsData);
       }
 
-      // Update marked dates
-      updateMarkedDates(mappingsData || [], holidaysData);
+      // Fetch activities for this family
+      const { data: activitiesData } = await supabase
+        .from('activities')
+        .select('*')
+        .eq('family_id', selectedYear.family_id)
+        .order('created_at', { ascending: true });
+
+      if (activitiesData) {
+        console.log('Activities loaded:', activitiesData.length);
+        // Store activities for calendar display
+        setActivities(activitiesData);
+      }
+
+      // Update marked dates with all the data
+      updateMarkedDates(calendarDayMarks || [], holidaysData || [], lessonsData || [], activitiesData || []);
+      
+      // Debug logging
+      console.log('Calendar data loaded:');
+      console.log('- Calendar days:', calendarDayMarks?.length || 0);
+      console.log('- Holidays:', holidaysData?.length || 0);
+      console.log('- Lessons:', lessonsData?.length || 0);
+      console.log('- Activities:', activitiesData?.length || 0);
+      
     } catch (error) {
       console.error('Error fetching calendar data:', error);
     } finally {
@@ -224,13 +248,13 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     }
   };
 
-  const updateMarkedDates = (mappingsData, holidaysData) => {
+  const updateMarkedDates = (mappingsData, holidaysData, lessonsData, activitiesData) => {
     const newMarkedDates = {};
 
-    // Mark class days from class_day_mappings
+    // Mark calendar days from calendar_days
     mappingsData.forEach(mapping => {
-      if (mapping.class_date) {
-        const dateStr = mapping.class_date;
+      if (mapping.calendar_date) {
+        const dateStr = mapping.calendar_date;
         newMarkedDates[dateStr] = {
           marked: true,
           dotColor: mapping.is_vacation ? '#FF6B6B' : '#38B6FF',
@@ -240,7 +264,18 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
             container: {
               backgroundColor: mapping.is_vacation ? '#FFE5E5' : '#E5F3FF',
             }
-          }
+          },
+          // Add data for calendar chips
+          calendarDay: mapping,
+          lessons: lessonsData?.filter(l => l.lesson_date === dateStr) || [],
+          activities: activitiesData?.filter(a => {
+            try {
+              const scheduleData = JSON.parse(a.schedule_data);
+              return scheduleData.date === dateStr;
+            } catch {
+              return false;
+            }
+          }) || []
         };
       }
     });
@@ -258,37 +293,61 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
             container: {
               backgroundColor: '#FFE5E5',
             }
-          }
+          },
+          holiday: holiday
         };
       }
     });
 
+    // Mark days with lessons (even if not class days)
+    lessonsData.forEach(lesson => {
+      if (lesson.lesson_date) {
+        const dateStr = lesson.lesson_date;
+        if (!newMarkedDates[dateStr]) {
+          newMarkedDates[dateStr] = {
+            marked: true,
+            dotColor: '#4CAF50',
+            textColor: '#333',
+            selected: false,
+            customStyles: {
+              container: {
+                backgroundColor: '#E8F5E8',
+              }
+            }
+          };
+        }
+        
+        // Add lesson data
+        if (!newMarkedDates[dateStr].lessons) {
+          newMarkedDates[dateStr].lessons = [];
+        }
+        newMarkedDates[dateStr].lessons.push(lesson);
+      }
+    });
+
     setMarkedDates(newMarkedDates);
-    console.log('Marked dates updated:', Object.keys(newMarkedDates).length);
+    console.log('Marked dates updated with rich data:', Object.keys(newMarkedDates).length);
   };
 
   const handleDayPress = (day) => {
     const date = day.dateString;
-    const classDayMapping = classDayMappings.find(m => m.class_date === date);
-    const holiday = holidays.find(h => h.holiday_date === date);
-
-    if (classDayMapping || holiday) {
+    const dayData = markedDates[date];
+    
+    if (dayData) {
       setSelectedDate(date);
       setDayDetails({
         date,
-        classDayMapping,
-        holiday,
+        calendarDay: dayData.calendarDay,
+        holiday: dayData.holiday,
+        lessons: dayData.lessons || [],
+        activities: dayData.activities || [],
         children: children.filter(c => !selectedChildId || c.id === selectedChildId)
       });
       setShowDayDetails(true);
     }
   };
 
-  const handleClickOutside = () => {
-    if (showYearSelector) {
-      setShowYearSelector(false);
-    }
-  };
+
 
   const handleChildSelect = (childId) => {
     setLocalSelectedChildId(childId);
@@ -299,7 +358,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
 
   const getFilteredLearningTracks = () => {
     console.log('Filtering tracks. Selected child ID:', localSelectedChildId);
-    console.log('Available children:', children.map(c => ({ id: c.id, name: c.name })));
+            console.log('Available children:', children.map(c => ({ id: c.id, name: c.first_name })));
     console.log('All learning tracks:', learningTracks.map(t => t.name));
     
     if (!localSelectedChildId) {
@@ -309,7 +368,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     
     // Filter tracks based on child name in track name
     const filtered = learningTracks.filter(track => {
-      const childName = children.find(c => c.id === localSelectedChildId)?.name;
+              const childName = children.find(c => c.id === localSelectedChildId)?.first_name;
       console.log('Looking for child name:', childName, 'in track:', track.name);
       if (childName) {
         const includes = track.name.includes(childName);
@@ -323,124 +382,35 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     return filtered;
   };
 
-  const renderYearSelector = () => (
-    <Pressable onPress={handleClickOutside} style={styles.yearSelector}>
-        <TouchableOpacity 
-          style={[
-            styles.yearButton,
-            academicYears.length > 1 && styles.yearButtonClickable
-          ]}
-          onPress={() => {
-            // Only show dropdown if there are multiple years
-            if (academicYears.length > 1) {
-              setShowYearSelector(!showYearSelector);
-            }
-          }}
-        >
-          <Text style={styles.yearButtonText}>
-            {selectedYear ? `${selectedYear.year_name || selectedYear.start_date}` : 'Loading...'}
-          </Text>
-          {academicYears.length > 1 && (
-            <Text style={styles.yearButtonArrow}>▼</Text>
-          )}
-        </TouchableOpacity>
 
-        {academicYears.length === 1 && (
-          <Text style={styles.singleYearNote}>Only one academic year available</Text>
-        )}
 
-        {showYearSelector && academicYears.length > 1 && (
-          <View style={styles.yearDropdown}>
-            {academicYears.map((year) => (
-              <TouchableOpacity
-                key={year.id}
-                style={[
-                  styles.yearOption,
-                  selectedYear?.id === year.id && styles.yearOptionSelected
-                ]}
-                onPress={() => {
-                  setSelectedYear(year);
-                  setShowYearSelector(false);
-                }}
-              >
-                <Text style={[
-                  styles.yearOptionText,
-                  selectedYear?.id === year.id && styles.yearOptionTextSelected
-                ]}>
-                  {year.year_name || `${year.start_date} - ${year.end_date}`}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </Pressable>
-    );
 
-  const renderChildFilter = () => (
-    <View style={styles.childFilter}>
-      <Text style={styles.filterLabel}>Filter by child:</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <TouchableOpacity
-          style={[
-            styles.filterChip,
-            !localSelectedChildId && styles.filterChipActive
-          ]}
-          onPress={() => handleChildSelect(null)}
-        >
-          <Text style={[
-            styles.filterChipText,
-            !localSelectedChildId && styles.filterChipTextActive
-          ]}>
-            All Children
-          </Text>
-        </TouchableOpacity>
-        {children.map((child) => (
-          <TouchableOpacity
-            key={child.id}
-            style={[
-              styles.filterChip,
-              localSelectedChildId === child.id && styles.filterChipActive
-            ]}
-            onPress={() => handleChildSelect(child.id)}
-          >
-            <Text style={[
-              styles.filterChipText,
-              localSelectedChildId === child.id && styles.filterChipTextActive
-            ]}>
-              {child.name}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
-  );
 
   const renderCalendar = () => (
     <View style={styles.calendarContainer}>
-      <Calendar
-        onDayPress={handleDayPress}
-        markedDates={markedDates}
-        theme={{
-          calendarBackground: '#ffffff',
-          textSectionTitleColor: '#333',
-          selectedDayBackgroundColor: '#38B6FF',
-          selectedDayTextColor: '#ffffff',
-          todayTextColor: '#38B6FF',
-          dayTextColor: '#333',
-          textDisabledColor: '#d9e1e8',
-          dotColor: '#38B6FF',
-          selectedDotColor: '#ffffff',
-          arrowColor: '#38B6FF',
-          monthTextColor: '#333',
-          indicatorColor: '#38B6FF',
-          textDayFontWeight: '300',
-          textMonthFontWeight: 'bold',
-          textDayHeaderFontWeight: '500',
-          textDayFontSize: 16,
-          textMonthFontSize: 16,
-          textDayHeaderFontSize: 13
-        }}
-      />
+      {/* Custom Calendar Header */}
+      <View style={styles.calendarHeader}>
+        <Text style={styles.calendarMonthTitle}>
+          {selectedYear ? new Date(selectedYear.start_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Loading...'}
+        </Text>
+      </View>
+      
+      {/* Custom Grid Calendar */}
+      <View style={styles.calendarGrid}>
+        {/* Day Headers */}
+        <View style={styles.dayHeaders}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
+            <View key={`day-header-${day}`} style={styles.dayHeader}>
+              <Text style={styles.dayHeaderText}>{day}</Text>
+            </View>
+          ))}
+        </View>
+        
+        {/* Calendar Days Grid */}
+        <View style={styles.daysGrid}>
+          {renderCalendarDays()}
+        </View>
+      </View>
     </View>
   );
 
@@ -454,7 +424,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         return (
           <View style={styles.roadmapUnits}>
             {roadmap.units.slice(0, 3).map((unit, index) => (
-              <View key={index} style={styles.roadmapUnit}>
+              <View key={`unit-${unit.name}-${index}`} style={styles.roadmapUnit}>
                 <Text style={styles.unitName}>{unit.name}</Text>
                 <Text style={styles.unitDetails}>
                   {unit.lessons} lessons • {unit.duration}
@@ -498,7 +468,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
                 <Text style={styles.outlineSectionTitle}>Topics:</Text>
                 <View style={styles.tagsContainer}>
                   {outline.topics.slice(0, 4).map((topic, index) => (
-                    <View key={index} style={styles.tag}>
+                    <View key={`topic-${topic}-${index}`} style={styles.tag}>
                       <Text style={styles.tagText}>{topic}</Text>
                     </View>
                   ))}
@@ -514,7 +484,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
                 <Text style={styles.outlineSectionTitle}>Skills:</Text>
                 <View style={styles.tagsContainer}>
                   {outline.skills.slice(0, 3).map((skill, index) => (
-                    <View key={index} style={styles.tag}>
+                    <View key={`skill-${skill}-${index}`} style={styles.tag}>
                       <Text style={styles.tagText}>{skill}</Text>
                     </View>
                   ))}
@@ -542,6 +512,121 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     }
   };
 
+  const renderCalendarDays = () => {
+    if (!selectedYear) return null;
+    
+    const startDate = new Date(selectedYear.start_date);
+    const endDate = new Date(selectedYear.end_date);
+    const currentDate = new Date(startDate);
+    
+    // Get the first day of the month to start the grid
+    const firstDayOfMonth = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const startGridDate = new Date(firstDayOfMonth);
+    startGridDate.setDate(startGridDate.getDate() - firstDayOfMonth.getDay());
+    
+    const weeks = [];
+    let currentWeek = [];
+    let currentGridDate = new Date(startGridDate);
+    
+    // Generate 6 weeks of dates (42 days total)
+    for (let i = 0; i < 42; i++) {
+      if (currentWeek.length === 7) {
+        weeks.push(currentWeek);
+        currentWeek = [];
+      }
+      
+      const isCurrentMonth = currentGridDate.getMonth() === startDate.getMonth();
+      const isToday = currentGridDate.toDateString() === new Date().toDateString();
+      const isSelected = currentGridDate.toDateString() === selectedDate?.toDateString();
+      
+      // Get the date string for this day
+      const dateString = currentGridDate.toISOString().split('T')[0];
+      const dayData = markedDates[dateString];
+      
+      currentWeek.push({
+        date: new Date(currentGridDate),
+        isCurrentMonth,
+        isToday,
+        isSelected,
+        dayNumber: currentGridDate.getDate(),
+        dateString,
+        dayData
+      });
+      
+      currentGridDate.setDate(currentGridDate.getDate() + 1);
+    }
+    
+    if (currentWeek.length > 0) {
+      weeks.push(currentWeek);
+    }
+    
+    return weeks.map((week, weekIndex) => (
+      <View key={`week-${weekIndex}`} style={styles.weekRow}>
+        {week.map((day, dayIndex) => (
+          <TouchableOpacity
+            key={`day-${weekIndex}-${dayIndex}-${day.dateString}`}
+            style={[
+              styles.dayCell,
+              !day.isCurrentMonth && styles.dayCellOtherMonth,
+              day.isToday && styles.dayCellToday,
+              day.isSelected && styles.dayCellSelected,
+              day.dayData?.customStyles?.container
+            ]}
+            onPress={() => handleDayPress({ dateString: day.dateString })}
+          >
+            <Text style={[
+              styles.dayText,
+              !day.isCurrentMonth && styles.dayTextOtherMonth,
+              day.isToday && styles.dayTextToday,
+              day.isSelected && styles.dayTextSelected
+            ]}>
+              {day.dayNumber}
+            </Text>
+            
+            {/* Render calendar chips based on day data */}
+            {day.dayData && (
+              <View style={styles.dayChips}>
+                {/* Holiday chip */}
+                {day.dayData.holiday && (
+                  <View style={styles.chipHoliday}>
+                    <Text style={styles.chipText}>🎉</Text>
+                  </View>
+                )}
+                
+                {/* Lesson chips */}
+                {day.dayData.lessons && day.dayData.lessons.length > 0 && (
+                  <View style={styles.chipLessons}>
+                    <Text style={styles.chipText}>📚</Text>
+                    {day.dayData.lessons.length > 1 && (
+                      <Text style={styles.chipCount}>{day.dayData.lessons.length}</Text>
+                    )}
+                  </View>
+                )}
+                
+                {/* Activity chips */}
+                {day.dayData.activities && day.dayData.activities.length > 0 && (
+                  <View style={styles.chipActivities}>
+                    <Text style={styles.chipText}>🎯</Text>
+                    {day.dayData.activities.length > 1 && (
+                      <Text style={styles.chipCount}>{day.dayData.activities.length}</Text>
+                    )}
+                  </View>
+                )}
+                
+                {/* Class day indicator */}
+                {day.dayData.classDay && (
+                  <View style={styles.chipClassDay}>
+                    <Text style={styles.chipText}>🏫</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+    ));
+  };
+
   const renderLearningTracks = () => {
     const filteredTracks = getFilteredLearningTracks();
     const activeChild = children.find(c => c.id === localSelectedChildId);
@@ -549,67 +634,31 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     return (
       <View style={styles.learningTracksSection}>
         <Text style={styles.sectionTitle}>Learning Tracks & Schedule</Text>
-        <Text style={styles.sectionSubtitle}>
-          {localSelectedChildId 
-            ? `${filteredTracks.length} active learning tracks for ${activeChild?.name || 'selected child'}`
-            : `${filteredTracks.length} active learning tracks for ${children.length} children`
-          }
-        </Text>
         
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tracksContainer}>
+        <ScrollView showsVerticalScrollIndicator={false} style={[styles.tracksContainer, styles.rightColumnTracksContainer]}>
           {filteredTracks.map((track) => (
-          <View key={track.id} style={styles.trackCard}>
-            <Text style={styles.trackName}>{track.name}</Text>
-            <Text style={styles.trackSchedule}>{track.class_schedule}</Text>
-            <Text style={styles.trackDays}>{track.study_days}</Text>
-            <View style={styles.trackStatus}>
-              <Text style={[styles.statusBadge, { backgroundColor: track.status === 'active' ? '#4CAF50' : '#FF9800' }]}>
-                {track.status}
-              </Text>
-            </View>
-            {track.roadmap && (
-              <View style={styles.roadmapPreview}>
-                <Text style={styles.roadmapTitle}>Learning Roadmap:</Text>
-                {renderRoadmapUnits(track.roadmap)}
+            <TouchableOpacity 
+              key={track.id} 
+              style={[styles.trackCard, styles.rightColumnTrackCard]}
+              onPress={() => {
+                // TODO: Show track details modal
+                console.log('Track clicked:', track.name);
+              }}
+            >
+              <View style={styles.trackCardContent}>
+                <Text style={styles.trackNameCompact}>{track.name}</Text>
+                <Text style={styles.trackScheduleCompact}>
+                  {track.class_schedule} • {track.study_days}
+                </Text>
               </View>
-            )}
-            
-            {track.course_outline && (
-              <View style={styles.courseOutlinePreview}>
-                <Text style={styles.outlineTitle}>Course Focus:</Text>
-                {renderCourseOutline(track.course_outline)}
+              <View style={styles.trackStatusCompact}>
+                <View style={[styles.statusDot, { backgroundColor: track.status === 'active' ? '#4CAF50' : '#FF9800' }]} />
               </View>
-            )}
-          </View>
-        ))}
-      </ScrollView>
-
-      {/* Schedule Optimization Summary */}
-      <View style={styles.optimizationSection}>
-        <Text style={styles.optimizationTitle}>Schedule Optimization</Text>
-        <View style={styles.optimizationStats}>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{classDayMappings.filter(m => !m.is_vacation).length}</Text>
-            <Text style={styles.statLabel}>School Days</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{holidays.length}</Text>
-            <Text style={styles.statLabel}>Holidays</Text>
-          </View>
-                      <View style={styles.statItem}>
-              <Text style={styles.statNumber}>{filteredTracks.length}</Text>
-              <Text style={styles.statLabel}>Learning Tracks</Text>
-            </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>
-              {Math.round((classDayMappings.filter(m => !m.is_vacation).length / 180) * 100)}%
-            </Text>
-            <Text style={styles.statLabel}>Year Progress</Text>
-          </View>
-        </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
-    </View>
-  );
+    );
   };
 
   const renderDayDetailsModal = () => (
@@ -642,7 +691,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
             {dayDetails?.holiday && (
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Holiday</Text>
-                <Text style={styles.holidayName}>{dayDetails.holiday.name}</Text>
+                <Text style={styles.holidayName}>{dayDetails.holiday.holiday_name}</Text>
                 {dayDetails.holiday.description && (
                   <Text style={styles.holidayDescription}>{dayDetails.holiday.description}</Text>
                 )}
@@ -653,11 +702,53 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Class Day</Text>
                 <Text style={styles.classDayInfo}>
-                  {dayDetails.classDayMapping.hours_per_day || '6'} hours scheduled
+                  Class day scheduled
                 </Text>
-                {dayDetails.classDayMapping.notes && (
-                  <Text style={styles.classDayNotes}>{dayDetails.classDayMapping.notes}</Text>
-                )}
+              </View>
+            )}
+
+            {dayDetails?.lessons && dayDetails.lessons.length > 0 && (
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Lessons ({dayDetails.lessons.length})</Text>
+                {dayDetails.lessons.map((lesson, index) => (
+                  <View key={`lesson-${lesson.id}-${index}`} style={styles.lessonItem}>
+                    <Text style={styles.lessonTitle}>
+                      {lesson.subject_track?.name || 'Lesson'} #{lesson.sequence_no}
+                    </Text>
+                    {lesson.summary && (
+                      <Text style={styles.lessonSummary}>{lesson.summary}</Text>
+                    )}
+                    {lesson.content_summary && (
+                      <Text style={styles.lessonContent}>{lesson.content_summary}</Text>
+                    )}
+                    {lesson.progress && (
+                      <View style={styles.progressContainer}>
+                        <Text style={styles.progressLabel}>Progress:</Text>
+                        <Text style={styles.progressValue}>
+                          {typeof lesson.progress === 'object' ? 
+                            `${lesson.progress.completed || 0}/${lesson.progress.total || 1}` :
+                            lesson.progress
+                          }
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {dayDetails?.activities && dayDetails.activities.length > 0 && (
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Activities ({dayDetails.activities.length})</Text>
+                {dayDetails.activities.map((activity, index) => (
+                  <View key={`activity-${activity.id}-${index}`} style={styles.activityItem}>
+                    <Text style={styles.activityName}>{activity.name}</Text>
+                    <Text style={styles.activityType}>{activity.activity_type}</Text>
+                            {activity.description && (
+          <Text style={styles.activityAnalysis}>{activity.description}</Text>
+        )}
+                  </View>
+                ))}
               </View>
             )}
 
@@ -666,7 +757,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
                 <Text style={styles.detailSectionTitle}>Children</Text>
                 {dayDetails.children.map((child) => (
                   <View key={child.id} style={styles.childItem}>
-                    <Text style={styles.childName}>{child.name}</Text>
+                                          <Text style={styles.childName}>{child.first_name}</Text>
                     <Text style={styles.childDetails}>
                       Age: {child.age} | Grade: {child.grade}
                     </Text>
@@ -713,45 +804,81 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     );
   }
 
+  // Add error boundary for missing data
+  if (!selectedYear) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyTitle}>Calendar Setup Required</Text>
+        <Text style={styles.emptySubtitle}>
+          Your calendar needs some basic setup. Please create an academic year and calendar data to get started.
+        </Text>
+        <TouchableOpacity 
+          style={styles.planButton}
+          onPress={() => {
+            Alert.alert(
+              'Calendar Setup',
+              'Please use the Calendar Planning tab to set up your academic year and calendar.',
+              [{ text: 'OK' }]
+            );
+          }}
+        >
+          <Text style={styles.planButtonText}>Set Up Calendar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.title}>Calendar View</Text>
-            <Text style={styles.subtitle}>View and interact with your saved calendars</Text>
-          </View>
-          <TouchableOpacity 
-            style={styles.planNewButton}
-            onPress={() => {
-              if (onPlanNew) {
-                onPlanNew();
-              } else {
-                Alert.alert(
-                  'Calendar Planning',
-                  'To create a new calendar, please use the Calendar Planning tab in the main navigation.',
-                  [{ text: 'OK' }]
-                );
-              }
-            }}
-          >
-            <Text style={styles.planNewButtonText}>Plan New</Text>
+      {/* Top Navigation Bar */}
+      <View style={styles.topNav}>
+        <View style={styles.navLeft}>
+          <Text style={styles.navTitle}>Learnadoodle Calendar</Text>
+        </View>
+        <View style={styles.navCenter}>
+          <Text style={styles.currentView}>Month</Text>
+          <TouchableOpacity style={styles.todayButton}>
+            <Text style={styles.todayButtonText}>Today</Text>
           </TouchableOpacity>
-          
-
+        </View>
+        <View style={styles.navRight}>
+          <Text style={styles.currentMonth}>
+            {selectedYear ? new Date(selectedYear.start_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Loading...'}
+          </Text>
         </View>
       </View>
 
-      <ScrollView 
-        style={styles.scrollContainer}
-        showsVerticalScrollIndicator={true}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {renderChildFilter()}
-        {renderYearSelector()}
-        {renderCalendar()}
-        {renderLearningTracks()}
-      </ScrollView>
+      {/* Main Layout */}
+      <View style={styles.mainLayout}>
+        {/* Left Sidebar - Mini Calendar & Account */}
+        <View style={styles.leftSidebar}>
+          <View style={styles.miniCalendar}>
+            <Text style={styles.miniCalendarTitle}>
+              {selectedYear ? new Date(selectedYear.start_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Loading...'}
+            </Text>
+            {/* Mini calendar grid would go here */}
+            <Text style={styles.miniCalendarNote}>Mini calendar view</Text>
+          </View>
+          
+          <View style={styles.accountSection}>
+            <Text style={styles.accountTitle}>Account</Text>
+            <Text style={styles.accountEmail}>katiebaumeister@icloud.com</Text>
+            <TouchableOpacity style={styles.addAccountButton}>
+              <Text style={styles.addAccountButtonText}>+ Add calendar account</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Main Calendar Area */}
+        <View style={styles.mainCalendarArea}>
+          {renderCalendar()}
+        </View>
+
+        {/* Right Sidebar - Learning Tracks */}
+        <View style={styles.rightSidebar}>
+          {renderLearningTracks()}
+        </View>
+      </View>
       
       {renderDayDetailsModal()}
     </View>
@@ -763,138 +890,520 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
-  scrollContainer: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 40,
-  },
-  header: {
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e1e1e1',
-  },
-  headerTop: {
+
+  // Top Navigation Bar
+  topNav: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 16,
-  },
-  childFilter: {
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
+    backgroundColor: '#ffffff',
   },
-  filterLabel: {
+  navLeft: {
+    flex: 1,
+  },
+  navTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a1a1a',
+  },
+  navCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  currentView: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+  },
+  todayButton: {
+    backgroundColor: '#38B6FF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  todayButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  navRight: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  currentMonth: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1a1a1a',
+  },
+
+  // Main Layout
+  mainLayout: {
+    flex: 1,
+    flexDirection: 'row',
+    height: '100%',
+  },
+  leftSidebar: {
+    width: 280,
+    backgroundColor: '#f8f9fa',
+    borderRightWidth: 1,
+    borderRightColor: '#f0f0f0',
+    padding: 20,
+    height: '100%',
+  },
+  mainCalendarArea: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    padding: 0,
+  },
+  rightSidebar: {
+    width: 320,
+    backgroundColor: '#f8f9fa',
+    borderLeftWidth: 1,
+    borderLeftColor: '#f0f0f0',
+    padding: 20,
+    height: '100%',
+  },
+
+  // Left Sidebar Components
+  miniCalendar: {
+    marginBottom: 32,
+  },
+  miniCalendarTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 16,
+  },
+  miniCalendarNote: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  accountSection: {
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    paddingTop: 20,
+  },
+  accountTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: '#1a1a1a',
     marginBottom: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  filterChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    backgroundColor: '#fff',
-    marginRight: 8,
-  },
-  filterChipActive: {
-    borderColor: '#38B6FF',
-    backgroundColor: '#E9F6FF',
-  },
-  filterChipText: {
+  accountEmail: {
     fontSize: 14,
     color: '#666',
+    marginBottom: 16,
   },
-  filterChipTextActive: {
-    color: '#38B6FF',
-    fontWeight: '600',
+  addAccountButton: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
   },
-  yearSelector: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    position: 'relative',
+  addAccountButtonText: {
+    fontSize: 14,
+    color: '#1a1a1a',
+    fontWeight: '500',
   },
-  yearButton: {
+  // Override styles for right column layout
+  rightColumnTracksContainer: {
+    maxHeight: 400,
+  },
+  rightColumnTrackCard: {
+    marginBottom: 16,
+    padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    borderRadius: 8,
-    backgroundColor: '#fff',
   },
-  yearButtonClickable: {
-    cursor: 'pointer',
-    borderColor: '#38B6FF',
+  // Compact track card styles
+  trackCardContent: {
+    flex: 1,
   },
-  singleYearNote: {
+  trackNameCompact: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  trackScheduleCompact: {
     fontSize: 12,
     color: '#666',
-    fontStyle: 'italic',
-    marginTop: 8,
+    lineHeight: 16,
+  },
+  trackStatusCompact: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+
+
+
+  calendarContainer: {
+    backgroundColor: '#ffffff',
+    height: '100%',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  fullCalendar: {
+    height: '100%',
+    width: '100%',
+    flex: 1,
+  },
+  calendarHeader: {
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    backgroundColor: '#ffffff',
+  },
+  calendarMonthTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1a1a',
     textAlign: 'center',
   },
-  yearButtonText: {
+
+  // Custom Grid Calendar Styles
+  calendarGrid: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  dayHeaders: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    backgroundColor: '#fafbfc',
+  },
+  dayHeader: {
+    flex: 1,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  daysGrid: {
+    flex: 1,
+  },
+  weekRow: {
+    flexDirection: 'row',
+    flex: 1,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  dayCell: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    borderRightWidth: 1,
+    borderRightColor: '#f0f0f0',
+    minHeight: 80,
+    paddingTop: 8,
+    paddingHorizontal: 4,
+  },
+  dayCellOtherMonth: {
+    backgroundColor: '#fafbfc',
+  },
+  dayCellToday: {
+    backgroundColor: '#E9F6FF',
+  },
+  dayCellSelected: {
+    backgroundColor: '#38B6FF',
+  },
+  dayText: {
     fontSize: 16,
     fontWeight: '500',
     color: '#333',
   },
-  yearButtonArrow: {
-    fontSize: 12,
-    color: '#666',
+  dayTextOtherMonth: {
+    color: '#ccc',
   },
-  yearDropdown: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    borderRadius: 8,
-    marginTop: 4,
-    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
-    zIndex: 1000,
-  },
-  yearOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  yearOptionSelected: {
-    backgroundColor: '#E9F6FF',
-  },
-  yearOptionText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  yearOptionTextSelected: {
+  dayTextToday: {
     color: '#38B6FF',
     fontWeight: '600',
   },
-  calendarContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
+  dayTextSelected: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
+
+  calendarTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 8,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  calendarSubtitle: {
+    fontSize: 14,
+    color: '#666666',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  calendarGrid: {
+    padding: 24,
+  },
+  calendarRow: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  calendarCell: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
+  },
+  calendarCellHover: {
+    backgroundColor: '#f8f9fa',
+  },
+  calendarCellToday: {
+    backgroundColor: '#1a1a1a',
+  },
+  calendarCellText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1a1a1a',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  calendarCellTextToday: {
+    color: '#ffffff',
+  },
+  calendarCellTextOther: {
+    color: '#cccccc',
+  },
+  calendarLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 24,
+    marginTop: 24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f3f4',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  legendText: {
+    fontSize: 12,
+    color: '#666666',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 16,
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#666666',
+    marginBottom: 32,
+    textAlign: 'center',
+    maxWidth: 400,
+    lineHeight: 24,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  planButton: {
+    backgroundColor: '#38B6FF',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignSelf: 'center',
+  },
+  planButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Learning Tracks Styles
+  learningTracksSection: {
+    backgroundColor: 'transparent',
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 20,
+  },
+  tracksContainer: {
+    marginBottom: 20,
+  },
+  trackCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginRight: 16,
+    minWidth: 280,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  trackName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  trackSchedule: {
+    fontSize: 14,
+    color: '#38B6FF',
+    marginBottom: 4,
+  },
+  trackDays: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 12,
+  },
+  trackStatus: {
+    marginBottom: 12,
+  },
+  statusBadge: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
+  roadmapPreview: {
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+    paddingTop: 12,
+  },
+  roadmapTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  roadmapContent: {
+    fontSize: 11,
+    color: '#666',
+    lineHeight: 16,
+  },
+  roadmapUnits: {
+    marginTop: 8,
+  },
+  roadmapUnit: {
+    backgroundColor: '#f8f9fa',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  unitName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  unitDetails: {
+    fontSize: 10,
+    color: '#666',
+    lineHeight: 14,
+  },
+  moreUnits: {
+    fontSize: 10,
+    color: '#38B6FF',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  // Course Outline Styles
+  courseOutlinePreview: {
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+    paddingTop: 12,
+    marginTop: 8,
+  },
+  outlineTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 8,
+  },
+  outlineContent: {
+    gap: 8,
+  },
+  outlineSection: {
+    marginBottom: 8,
+  },
+  outlineSectionTitle: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  tag: {
+    backgroundColor: '#E5F3FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  tagText: {
+    fontSize: 9,
+    color: '#38B6FF',
+    fontWeight: '500',
+  },
+  moreTags: {
+    fontSize: 9,
+    color: '#666',
+    fontStyle: 'italic',
+    alignSelf: 'center',
+    marginLeft: 4,
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -986,33 +1495,37 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
   },
   loadingText: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 14,
+    color: '#666666',
+    marginTop: 16,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
+    justifyContent: 'center',
+    paddingVertical: 80,
   },
   emptyTitle: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#333',
+    color: '#1a1a1a',
     marginBottom: 16,
     textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   emptySubtitle: {
     fontSize: 16,
-    color: '#666',
+    color: '#666666',
+    marginBottom: 32,
     textAlign: 'center',
+    maxWidth: 400,
     lineHeight: 24,
-    marginBottom: 24,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   planButton: {
     backgroundColor: '#38B6FF',
@@ -1027,16 +1540,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   planNewButton: {
-    backgroundColor: '#38B6FF',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 32,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
+  },
+  planNewButtonHover: {
+    backgroundColor: '#000000',
+    transform: 'translateY(-1px)',
+    boxShadow: '0 4px 12px rgba(26, 26, 26, 0.2)',
   },
   planNewButtonText: {
-    color: '#fff',
-    fontSize: 14,
+    color: '#ffffff',
+    fontSize: 16,
     fontWeight: '600',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   // Learning Tracks Styles
   learningTracksSection: {
@@ -1224,5 +1747,468 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    width: '90%',
+    maxHeight: '80%',
+    boxShadow: '0 10px 20px rgba(0, 0, 0, 0.25)',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e1e1e1',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 20,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  modalBody: {
+    padding: 20,
+  },
+  detailSection: {
+    marginBottom: 24,
+  },
+  detailSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  holidayName: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#FF6B6B',
+    marginBottom: 4,
+  },
+  holidayDescription: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  classDayInfo: {
+    fontSize: 16,
+    color: '#38B6FF',
+    marginBottom: 8,
+  },
+  classDayNotes: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  childItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  childName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  childDetails: {
+    fontSize: 14,
+    color: '#666',
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#666666',
+    marginTop: 16,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 16,
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#666666',
+    marginBottom: 32,
+    textAlign: 'center',
+    maxWidth: 400,
+    lineHeight: 24,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  planButton: {
+    backgroundColor: '#38B6FF',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignSelf: 'center',
+  },
+  planButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  planNewButton: {
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 32,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
+  },
+  planNewButtonHover: {
+    backgroundColor: '#000000',
+    transform: 'translateY(-1px)',
+    boxShadow: '0 4px 12px rgba(26, 26, 26, 0.2)',
+  },
+  planNewButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  // Learning Tracks Styles
+  learningTracksSection: {
+    padding: 20,
+    backgroundColor: '#f8f9fa',
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 20,
+  },
+  tracksContainer: {
+    marginBottom: 20,
+  },
+  trackCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginRight: 16,
+    minWidth: 280,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  trackName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  trackSchedule: {
+    fontSize: 14,
+    color: '#38B6FF',
+    marginBottom: 4,
+  },
+  trackDays: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 12,
+  },
+  trackStatus: {
+    marginBottom: 12,
+  },
+  statusBadge: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
+  roadmapPreview: {
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+    paddingTop: 12,
+  },
+  roadmapTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  roadmapContent: {
+    fontSize: 11,
+    color: '#666',
+    lineHeight: 16,
+  },
+  roadmapUnits: {
+    marginTop: 8,
+  },
+  roadmapUnit: {
+    backgroundColor: '#f8f9fa',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  unitName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  unitDetails: {
+    fontSize: 10,
+    color: '#666',
+    lineHeight: 14,
+  },
+  moreUnits: {
+    fontSize: 10,
+    color: '#38B6FF',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  // Course Outline Styles
+  courseOutlinePreview: {
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+    paddingTop: 12,
+    marginTop: 8,
+  },
+  outlineTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 8,
+  },
+  outlineContent: {
+    gap: 8,
+  },
+  outlineSection: {
+    marginBottom: 8,
+  },
+  outlineSectionTitle: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  tag: {
+    backgroundColor: '#E5F3FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  tagText: {
+    fontSize: 9,
+    color: '#38B6FF',
+    fontWeight: '500',
+  },
+  moreTags: {
+    fontSize: 9,
+    color: '#666',
+    fontStyle: 'italic',
+    alignSelf: 'center',
+    marginLeft: 4,
+  },
+  // Schedule Optimization Styles
+  optimizationSection: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  optimizationTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 16,
+  },
+  optimizationStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#38B6FF',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+  },
+  
+  // Calendar Chip Styles
+  dayChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 2,
+    marginTop: 4,
+  },
+  chipHoliday: {
+    backgroundColor: '#FF6B6B',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    minWidth: 16,
+    alignItems: 'center',
+  },
+  chipLessons: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    minWidth: 16,
+    alignItems: 'center',
+  },
+  chipActivities: {
+    backgroundColor: '#FF9800',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    minWidth: 16,
+    alignItems: 'center',
+  },
+  chipClassDay: {
+    backgroundColor: '#38B6FF',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    minWidth: 16,
+    alignItems: 'center',
+  },
+  chipText: {
+    fontSize: 10,
+    color: 'white',
+    fontWeight: '600',
+  },
+  chipCount: {
+    fontSize: 8,
+    color: 'white',
+    fontWeight: 'bold',
+    marginLeft: 2,
+  },
+  
+  // Lesson and Activity Styles
+  lessonItem: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+  },
+  lessonTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  lessonSummary: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+    fontStyle: 'italic',
+  },
+  lessonContent: {
+    fontSize: 12,
+    color: '#333',
+    marginBottom: 6,
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  progressLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '500',
+  },
+  progressValue: {
+    fontSize: 11,
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
+  activityItem: {
+    backgroundColor: '#fff3e0',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF9800',
+  },
+  activityName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  activityType: {
+    fontSize: 12,
+    color: '#FF9800',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  activityAnalysis: {
+    fontSize: 11,
+    color: '#666',
+    fontStyle: 'italic',
   },
 });

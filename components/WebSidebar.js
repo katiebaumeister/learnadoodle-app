@@ -15,6 +15,7 @@ import {
   FileText,
   User,
   Upload,
+  Sparkles,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useFocusEffect } from '@react-navigation/native'
@@ -30,6 +31,7 @@ const Icon = ({ name, size = 16, color = '#37352f' }) => {
     templates: FileText,
     person: User,
     upload: Upload,
+    sparkles: Sparkles,
   }
   
   const IconComponent = icons[name] || Home
@@ -160,13 +162,20 @@ export default function WebSidebar({ activeTab, activeSubtab, onTabChange, onSub
         icon: 'baby',
         type: 'family',
         subtabs: []
+      },
+      {
+        id: 'inspire-learning',
+        label: 'Inspire Learning',
+        icon: 'sparkles',
+        type: 'top-level',
+        subtabs: []
       }
     ]
 
     // Add dynamic children
     const childrenData = children.map((child, index) => ({
       id: `child-${child.id}`,
-      label: child.name,
+                  label: child.first_name,
       icon: 'person',
       type: 'child',
       subtabs: [
@@ -327,176 +336,218 @@ export default function WebSidebar({ activeTab, activeSubtab, onTabChange, onSub
 
 const styles = StyleSheet.create({
   sidebar: {
-    width: 240,
+    width: 280,
     backgroundColor: '#ffffff',
     borderRightWidth: 1,
-    borderRightColor: '#e1e1e1',
-    height: '100vh',
+    borderRightColor: '#f1f3f4',
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
   },
-  header: {
-    padding: 20,
+  logoSection: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    marginBottom: 24,
     borderBottomWidth: 1,
-    borderBottomColor: '#e1e1e1',
-    backgroundColor: '#ffffff',
+    borderBottomColor: '#f1f3f4',
   },
   logo: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#37352f',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    letterSpacing: '-0.02em',
   },
-  navigation: {
-    flex: 1,
-    paddingTop: 10,
+  navSection: {
+    marginBottom: 32,
   },
-  tabGroup: {
-    marginBottom: 4,
+  navTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666666',
+    marginBottom: 16,
+    paddingHorizontal: 20,
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  tabButton: {
+  navItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginHorizontal: 8,
-    borderRadius: 6,
-    position: 'relative',
-    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginBottom: 4,
+    borderRadius: 12,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
   },
-  topLevelButton: {
-    backgroundColor: 'transparent',
+  navItemHover: {
+    backgroundColor: '#f8f9fa',
   },
-  sectionButton: {
-    backgroundColor: '#f1f3f4',
-    marginTop: 8,
+  navItemActive: {
+    backgroundColor: '#1a1a1a',
   },
-  childButton: {
-    backgroundColor: 'transparent',
-    marginTop: 4,
+  navItemActiveHover: {
+    backgroundColor: '#000000',
   },
-  familyButton: {
-    backgroundColor: 'transparent',
-    marginTop: 4,
+  navIcon: {
+    marginRight: 16,
+    width: 20,
+    height: 20,
   },
-  managementButton: {
-    backgroundColor: 'transparent',
-    marginTop: 4,
-  },
-  activeTabButton: {
-    backgroundColor: '#f1f3f4',
-  },
-  tabLabel: {
-    flex: 1,
+  navText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#37352f',
+    color: '#666666',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    transition: 'all 0.2s ease',
   },
-  topLevelLabel: {
-    fontSize: 14,
+  navTextActive: {
+    color: '#ffffff',
     fontWeight: '600',
-    color: '#37352f',
   },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#37352f',
-  },
-  childLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#37352f',
-  },
-  familyLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#37352f',
-  },
-  managementLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#37352f',
-  },
-  activeTabLabel: {
-    fontWeight: '600',
-    color: '#37352f',
-  },
-  expandButton: {
-    padding: 4,
+  navTextHover: {
+    color: '#1a1a1a',
   },
   expandIcon: {
-    fontSize: 10,
-    color: '#787774',
+    marginLeft: 'auto',
+    transition: 'all 0.2s ease',
   },
-  expandedIcon: {
-    transform: [{ rotate: '0deg' }],
+  expandIconExpanded: {
+    transform: 'rotate(180deg)',
   },
-  subtabs: {
-    marginLeft: 16,
-    marginTop: 4,
+  subtabContainer: {
+    marginLeft: 36,
+    marginTop: 8,
+    marginBottom: 16,
   },
-  subtabButton: {
+  subtabItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    marginVertical: 1,
-    borderRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginBottom: 2,
+    borderRadius: 8,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
   },
-  activeSubtabButton: {
+  subtabItemHover: {
+    backgroundColor: '#f8f9fa',
+  },
+  subtabItemActive: {
     backgroundColor: '#f1f3f4',
   },
-  subtabLabel: {
-    flex: 1,
-    fontSize: 14,
+  subtabIcon: {
+    marginRight: 12,
+    width: 16,
+    height: 16,
+    opacity: 0.7,
+  },
+  subtabText: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#666666',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    transition: 'all 0.2s ease',
+  },
+  subtabTextHover: {
+    color: '#1a1a1a',
+  },
+  subtabTextActive: {
+    color: '#1a1a1a',
     fontWeight: '500',
-    color: '#37352f',
   },
-  activeSubtabLabel: {
-    color: '#37352f',
-    fontWeight: '500',
-  },
-  subSubtabs: {
-    marginLeft: 16,
-    marginTop: 2,
-  },
-  subSubtabButton: {
-    paddingVertical: 4,
+  specialSubtab: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+    borderRadius: 8,
+    paddingVertical: 8,
     paddingHorizontal: 16,
-    marginVertical: 1,
-    borderRadius: 4,
+    marginTop: 8,
+    marginBottom: 12,
   },
-  activeSubSubtabButton: {
-    backgroundColor: '#f1f3f4',
-  },
-  subSubtabLabel: {
+  specialSubtabText: {
     fontSize: 12,
-    color: '#787774',
-  },
-  activeSubSubtabLabel: {
-    color: '#37352f',
     fontWeight: '500',
+    color: '#1a1a1a',
+    textAlign: 'center',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  headerTab: {
-    flexDirection: 'row',
+  addButton: {
+    backgroundColor: '#1a1a1a',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
     alignItems: 'center',
-    padding: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e1e1e1',
-    gap: 8,
+    justifyContent: 'center',
+    marginHorizontal: 20,
+    marginTop: 16,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
   },
-  headerLabel: {
+  addButtonHover: {
+    backgroundColor: '#000000',
+    transform: 'translateY(-1px)',
+    boxShadow: '0 4px 12px rgba(26, 26, 26, 0.2)',
+  },
+  addButtonText: {
+    color: '#ffffff',
     fontSize: 14,
     fontWeight: '600',
-    color: '#37352f',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  bullet: {
-    fontSize: 12,
-    color: '#787774',
+  addButtonIcon: {
     marginRight: 8,
-    fontWeight: 'bold',
+    width: 16,
+    height: 16,
   },
-  hoveredTabButton: {
-    backgroundColor: '#f1f3f4',
+  bottomSection: {
+    marginTop: 'auto',
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f3f4',
   },
-  hoveredSubtabButton: {
-    backgroundColor: '#f1f3f4',
+  userInfo: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  userName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 4,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  userEmail: {
+    fontSize: 12,
+    color: '#666666',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  signOutButton: {
+    backgroundColor: '#f8f9fa',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
+  },
+  signOutButtonHover: {
+    backgroundColor: '#e9ecef',
+    borderColor: '#dc2626',
+  },
+  signOutButtonText: {
+    color: '#666666',
+    fontSize: 13,
+    fontWeight: '500',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  signOutButtonTextHover: {
+    color: '#dc2626',
   },
 }) 

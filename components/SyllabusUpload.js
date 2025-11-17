@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Upload, FileText, X, CheckCircle, AlertCircle } from 'lucide-react';
 import { processAndSaveSyllabus } from '../lib/syllabusProcessor';
+import { supabase } from '../lib/supabase';
 
 // Icon component for consistency
 const Icon = ({ name, size = 16, color = '#37352f' }) => {
@@ -34,6 +35,64 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedOutline, setProcessedOutline] = useState(null);
   const [uploadMethod, setUploadMethod] = useState('text'); // 'text' or 'file'
+  const [existingSubjects, setExistingSubjects] = useState([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  
+  // Advanced options for auto-pacing and calendar integration
+  const [autoPace, setAutoPace] = useState(false);
+  const [startDate, setStartDate] = useState('2025-08-01');
+  const [endDate, setEndDate] = useState('2026-06-30');
+  const [teachingDays, setTeachingDays] = useState([1, 2, 3, 4, 5]); // Mon-Fri
+  const [addToCalendar, setAddToCalendar] = useState(false);
+
+  // Fetch existing subjects when component mounts
+  useEffect(() => {
+    if (visible) {
+      fetchExistingSubjects();
+    }
+  }, [visible]);
+
+  // Debug logging for render state changes
+  useEffect(() => {
+    console.log('Course title section state changed:', { 
+      loadingSubjects, 
+      existingSubjects: existingSubjects?.length, 
+      courseTitle 
+    });
+  }, [loadingSubjects, existingSubjects, courseTitle]);
+
+  const fetchExistingSubjects = async () => {
+    try {
+      setLoadingSubjects(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.family_id) return;
+
+      const { data: subjects, error } = await supabase
+        .from('subject')
+        .select('id, name, grade_band, subject_category')
+        .eq('family_id', profile.family_id);
+
+      if (error) {
+        console.error('Error fetching subjects:', error);
+        return;
+      }
+
+      console.log('Fetched subjects:', subjects);
+      setExistingSubjects(subjects || []);
+    } catch (error) {
+      console.error('Error fetching subjects:', error);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  };
 
   // Sanitize syllabus text (similar to your Python sanitize_syllabus function)
   const sanitizeSyllabus = (text) => {
@@ -70,9 +129,19 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
   };
 
   // Process syllabus with AI using the service
-  const processSyllabusWithAI = async (courseTitle, providerName, rawText, unitStart) => {
+  const processSyllabusWithAI = async (courseTitle, providerName, rawText) => {
     try {
-      const result = await processAndSaveSyllabus(courseTitle, providerName, rawText, parseInt(unitStart) || 1);
+      const options = {
+        autoPace,
+        startDate: startDate ? new Date(startDate).toISOString().split('T')[0] : null,
+        endDate: endDate ? new Date(endDate).toISOString().split('T')[0] : null,
+        teachingDays,
+        addToCalendar: autoPace && addToCalendar,
+      };
+
+      console.log('Upload options being sent:', options);
+      
+      const result = await processAndSaveSyllabus(courseTitle, providerName, rawText, options);
       return result;
     } catch (error) {
       console.error('Error processing syllabus:', error);
@@ -85,11 +154,16 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
       Alert.alert('Missing Information', 'Please fill in all required fields.');
       return;
     }
+    
+    if (existingSubjects.length === 0) {
+      Alert.alert('No Subjects Available', 'Please add subjects to your family before uploading a syllabus.');
+      return;
+    }
 
     setIsProcessing(true);
     
     try {
-      const result = await processSyllabusWithAI(courseTitle, providerName, courseOutlineRaw, unitStart);
+      const result = await processSyllabusWithAI(courseTitle, providerName, courseOutlineRaw);
       
       setProcessedOutline(result);
       
@@ -167,12 +241,43 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
       
       <View style={styles.inputGroup}>
         <Text style={styles.inputLabel}>Course Title *</Text>
-        <TextInput
-          style={styles.textInput}
-          value={courseTitle}
-          onChangeText={setCourseTitle}
-          placeholder="e.g., Algebra 1, World History, Biology"
-        />
+        {(() => {
+          if (loadingSubjects) {
+            return <ActivityIndicator size="small" color="#007AFF" />;
+          }
+          
+          if (existingSubjects && existingSubjects.length > 0) {
+            return (
+              <View style={styles.chipContainer}>
+                {existingSubjects.map((subject) => (
+                  <TouchableOpacity
+                    key={subject.id}
+                    style={[
+                      styles.chip,
+                      courseTitle === subject.name && styles.chipSelected
+                    ]}
+                    onPress={() => setCourseTitle(subject.name)}
+                  >
+                                    <Text style={[
+                  styles.chipText,
+                  courseTitle === subject.name && styles.chipTextSelected
+                ]}>
+                  {subject.name} {subject.grade_band ? '(' + subject.grade_band + ')' : ''}
+                </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            );
+          }
+          
+          return <Text style={styles.noSubjectsText}>No subjects found. Please add subjects first.</Text>;
+        })()}
+        
+        {courseTitle ? (
+          <Text style={styles.selectedSubjectText}>
+            Selected: {courseTitle}
+          </Text>
+        ) : null}
       </View>
       
       <View style={styles.inputGroup}>
@@ -214,8 +319,93 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
           Paste the raw text from your course provider. We'll clean and format it automatically.
         </Text>
       </View>
-    </View>
-  );
+
+      {/* Advanced Options - Always Visible */}
+      <View style={styles.advancedSection}>
+        <Text style={styles.advancedSectionTitle}>Auto-Pacing & Calendar</Text>
+        
+        {/* Auto-pacing toggle */}
+        <View style={styles.optionRow}>
+          <TouchableOpacity
+            style={[styles.checkbox, autoPace && styles.checkboxChecked]}
+            onPress={() => setAutoPace(!autoPace)}
+          >
+            {autoPace && <Text style={styles.checkmark}>✓</Text>}
+          </TouchableOpacity>
+          <Text style={styles.optionLabel}>Enable auto-pacing</Text>
+        </View>
+
+        {autoPace && (
+          <>
+            {/* Date selection */}
+            <View style={styles.dateRow}>
+              <View style={styles.dateInput}>
+                <Text style={styles.dateLabel}>Start Date</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={startDate}
+                  onChangeText={setStartDate}
+                  placeholder="YYYY-MM-DD"
+                />
+              </View>
+              <View style={styles.dateInput}>
+                <Text style={styles.dateLabel}>End Date</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={endDate}
+                  onChangeText={setEndDate}
+                  placeholder="YYYY-MM-DD"
+                />
+              </View>
+            </View>
+
+            {/* Teaching days */}
+            <Text style={styles.dateLabel}>Teaching Days</Text>
+            <View style={styles.teachingDaysContainer}>
+                {[0, 1, 2, 3, 4, 5, 6].map(day => (
+                  <TouchableOpacity
+                    key={day}
+                    style={[
+                      styles.dayButton,
+                      teachingDays.includes(day) && styles.dayButtonActive
+                    ]}
+                    onPress={() => {
+                      setTeachingDays(prev => 
+                        prev.includes(day) 
+                          ? prev.filter(d => d !== day)
+                          : [...prev, day].sort()
+                      );
+                    }}
+                  >
+                    <Text style={[
+                      styles.dayButtonText,
+                      teachingDays.includes(day) && styles.dayButtonTextActive
+                    ]}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Calendar integration */}
+              <View style={styles.optionRow}>
+                <TouchableOpacity
+                  style={[styles.checkbox, addToCalendar && styles.checkboxChecked]}
+                  onPress={() => setAddToCalendar(!addToCalendar)}
+                >
+                  {addToCalendar && <Text style={styles.checkmark}>✓</Text>}
+                </TouchableOpacity>
+                <Text style={styles.optionLabel}>Add lessons to calendar</Text>
+              </View>
+
+              <Text style={styles.helpText}>
+                When enabled, lessons will be automatically scheduled on your teaching days and added to your calendar.
+              </Text>
+            </>
+          )}
+        </View>
+      </View>
+    );
 
   const renderFileUpload = () => (
     <View style={styles.inputSection}>
@@ -583,5 +773,155 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#ffffff',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  
+  // Advanced options styles
+  advancedToggleContainer: {
+    marginBottom: 15,
+  },
+  advancedToggle: {
+    padding: 15,
+    backgroundColor: '#e8f4fd',
+    borderRadius: 10,
+    marginBottom: 5,
+  },
+  advancedToggleText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0066cc',
+    textAlign: 'center',
+  },
+  advancedToggleHint: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  advancedSection: {
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 15,
+  },
+  advancedSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 15,
+  },
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    borderRadius: 4,
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+  },
+  checkboxChecked: {
+    backgroundColor: '#0066cc',
+    borderColor: '#0066cc',
+  },
+  checkmark: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  optionLabel: {
+    fontSize: 16,
+    color: '#333',
+  },
+  dateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 15,
+  },
+  dateInput: {
+    flex: 1,
+    marginRight: 10,
+  },
+  dateLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 8,
+  },
+  teachingDaysContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 15,
+  },
+  dayButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    marginBottom: 8,
+    backgroundColor: 'white',
+  },
+  dayButtonActive: {
+    backgroundColor: '#0066cc',
+    borderColor: '#0066cc',
+  },
+  dayButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  dayButtonTextActive: {
+    color: 'white',
+  },
+  
+  // Chip selection styles
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  chipSelected: {
+    backgroundColor: '#38B6FF',
+    borderColor: '#38B6FF',
+  },
+  chipText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  chipTextSelected: {
+    color: '#ffffff',
+  },
+  noSubjectsText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: 20,
+  },
+  selectedSubjectText: {
+    fontSize: 14,
+    color: '#38B6FF',
+    fontWeight: '600',
+    marginTop: 8,
+    textAlign: 'center',
   },
 }); 

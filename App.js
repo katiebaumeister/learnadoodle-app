@@ -1,8 +1,10 @@
 import React from 'react';
+
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { View, StyleSheet, Platform } from 'react-native';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { GlobalSearchProvider } from './contexts/GlobalSearchContext';
 import AuthScreen from './screens/AuthScreen';
 import HomeScreen from './screens/HomeScreen';
 import EditChildScreen from './screens/EditChildScreen';
@@ -103,7 +105,9 @@ export default function App() {
     <WebInitializer>
       <SupabaseReady>
         <AuthProvider>
-          <AppContent />
+          <GlobalSearchProvider>
+            <AppContent />
+          </GlobalSearchProvider>
         </AuthProvider>
       </SupabaseReady>
     </WebInitializer>

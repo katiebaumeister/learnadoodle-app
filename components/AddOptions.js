@@ -15,7 +15,7 @@ import {
   ArrowLeft 
 } from 'lucide-react';
 
-export default function AddOptions({ onBack, onAddSyllabus, onAddActivity, onAddAttendance, onAddChild }) {
+export default function AddOptions({ onBack, onAddActivity, onAddAttendance, onAddChild }) {
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
   const [comingSoonMessage, setComingSoonMessage] = useState('');
 
@@ -43,17 +43,6 @@ export default function AddOptions({ onBack, onAddSyllabus, onAddActivity, onAdd
 
         {/* Add Options Grid */}
         <View style={styles.optionsGrid}>
-          {/* Add Syllabus */}
-          <TouchableOpacity style={styles.optionCard} onPress={onAddSyllabus}>
-            <View style={styles.iconContainer}>
-              <FileText size={32} color="#38B6FF" />
-            </View>
-            <Text style={styles.optionTitle}>Add Syllabus</Text>
-            <Text style={styles.optionDescription}>
-              Upload and process course syllabi to create learning tracks
-            </Text>
-          </TouchableOpacity>
-
           {/* Add Activity */}
           <TouchableOpacity style={styles.optionCard} onPress={onAddActivity}>
             <View style={styles.iconContainer}>
@@ -146,6 +135,7 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     paddingTop: 40,
+    paddingBottom: 100,
   },
   header: {
     flexDirection: 'row',

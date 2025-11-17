@@ -1,54 +1,69 @@
 import React from 'react'
-import { View, TouchableOpacity, StyleSheet, Text } from 'react-native'
-import { Home, Plus, Calendar, Settings } from 'lucide-react'
+import { View, TouchableOpacity, StyleSheet } from 'react-native'
+import { Home, Plus, Calendar } from 'lucide-react'
 
-export default function LeftToolbar({ onHome, onAdd, onCalendar, onSettings, onAdmin }) {
+export default function LeftToolbar({ onHome, onAdd, onCalendar }) {
   return (
-    <View style={styles.container}>
-      <View style={styles.topButtons}>
-        <TouchableOpacity style={styles.iconBtn} onPress={onHome}>
-          <Home size={24} color="#37352f" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.iconBtn} onPress={onAdd}>
-          <Plus size={24} color="#37352f" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.iconBtn} onPress={onCalendar}>
-          <Calendar size={24} color="#37352f" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.bottomButtons}>
-        <TouchableOpacity style={styles.iconBtn} onPress={onAdmin}>
-          <Text style={styles.adminText}>🔐</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.iconBtn} onPress={onSettings}>
-          <Settings size={24} color="#37352f" />
-        </TouchableOpacity>
-      </View>
+    <View style={styles.toolbar}>
+      <TouchableOpacity style={styles.toolbarItem} onPress={onHome}>
+        <Home size={24} color="#666666" />
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.toolbarItem} onPress={onAdd}>
+        <Plus size={24} color="#666666" />
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.toolbarItem} onPress={onCalendar}>
+        <Calendar size={24} color="#666666" />
+      </TouchableOpacity>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    width: 56,
-    alignItems: 'center',
-    borderRightWidth: 1,
-    borderRightColor: '#e1e1e1',
+  toolbar: {
+    width: 80,
     backgroundColor: '#ffffff',
-    height: '100vh',
-    paddingVertical: 8,
+    borderRightWidth: 1,
+    borderRightColor: '#f1f3f4',
+    paddingVertical: 16,
+    paddingTop: 64,
+    alignItems: 'center',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
   },
-  topButtons: { gap: 8, alignItems: 'center' },
-  iconBtn: {
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#f0f0f0'
+  toolbarItem: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    transition: 'all 0.2s ease',
+    cursor: 'pointer',
   },
-  bottomButtons: { marginTop: 'auto', marginBottom: 8 },
-  adminText: { fontSize: 20, textAlign: 'center' },
+  toolbarItemHover: {
+    backgroundColor: '#f8f9fa',
+    transform: 'scale(1.05)',
+  },
+  toolbarItemActive: {
+    backgroundColor: '#1a1a1a',
+  },
+  toolbarItemActiveHover: {
+    backgroundColor: '#000000',
+    boxShadow: '0 4px 12px rgba(26, 26, 26, 0.15)',
+  },
+  toolbarIcon: {
+    width: 24,
+    height: 24,
+    transition: 'all 0.2s ease',
+  },
+  toolbarIconActive: {
+    color: '#ffffff',
+  },
+  toolbarIconInactive: {
+    color: '#666666',
+  },
+  toolbarIconHover: {
+    color: '#1a1a1a',
+  },
 })
 
 

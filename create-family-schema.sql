@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS calendar_days (
 CREATE TABLE IF NOT EXISTS subject (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-    children_id UUID REFERENCES children(id) ON DELETE CASCADE,
+    student_id UUID REFERENCES children(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     grade TEXT,
     notes TEXT,

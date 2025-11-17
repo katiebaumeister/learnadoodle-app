@@ -125,7 +125,7 @@ export default function SubjectSelectForm({ child, onClose, onSaved }) {
 
       const baseRows = selected.map(label => ({
         family_id: profile.family_id,
-        student_id: child.id,
+        child_id: child.id,
         subject_name: normalizeSubjectName(label),
         grade: child.grade,
         notes: null,
@@ -163,8 +163,8 @@ export default function SubjectSelectForm({ child, onClose, onSaved }) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Subjects for {child.name}</Text>
-      <Text style={styles.subtitle}>Pick what {child.name} will study this year.</Text>
+                  <Text style={styles.title}>Subjects for {child.first_name}</Text>
+            <Text style={styles.subtitle}>Pick what {child.first_name} will study this year.</Text>
 
       <View style={styles.actionsTop}>
         <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={handleAiPick} disabled={aiLoading}>

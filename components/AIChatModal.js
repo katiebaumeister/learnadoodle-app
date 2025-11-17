@@ -5,11 +5,30 @@ import {
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  ScrollView,
   Modal,
   ActivityIndicator,
 } from 'react-native';
 import { X, Send, MessageCircle } from 'lucide-react';
+
+// Simple web scroll container
+const ScrollContainer = ({ children, ...props }) => (
+  <div 
+    style={{
+      flex: 1,
+      overflowY: 'auto',
+      padding: 16,
+      minHeight: 0,
+      height: '300px',
+      maxHeight: '300px',
+      border: '2px solid red',
+      borderRadius: 8,
+      backgroundColor: '#f9f9f9',
+    }}
+    {...props}
+  >
+    {children}
+  </div>
+);
 
 // Icon component for consistency
 const Icon = ({ name, size = 16, color = '#37352f' }) => {
@@ -109,10 +128,13 @@ export default function AIChatModal({
           </View>
 
           {/* Messages */}
-          <ScrollView 
+          <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>
+            Messages: {messages.length} | Container height: 300px
+          </div>
+          <ScrollContainer 
             ref={scrollViewRef}
             style={styles.messagesContainer}
-            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.messagesContent}
           >
             {messages.length === 0 ? (
               <View style={styles.emptyState}>
@@ -122,7 +144,22 @@ export default function AIChatModal({
                 </Text>
               </View>
             ) : (
-              messages.map(renderMessage)
+              <>
+                {messages.map(renderMessage)}
+                {/* Force scrolling with test content */}
+                {Array.from({ length: 10 }, (_, i) => (
+                  <div key={`test-${i}`} style={{ 
+                    padding: 8, 
+                    margin: 4, 
+                    backgroundColor: '#f0f0f0', 
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: '#666'
+                  }}>
+                    Test message {i + 1} to force scrolling
+                  </div>
+                ))}
+              </>
             )}
             
             {isLoading && (
@@ -131,7 +168,7 @@ export default function AIChatModal({
                 <Text style={styles.loadingText}>AI is thinking...</Text>
               </View>
             )}
-          </ScrollView>
+          </ScrollContainer>
 
           {/* Input */}
           <View style={styles.inputContainer}>
@@ -176,8 +213,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    height: '80%',
-    maxHeight: 600,
+    height: '90%',
+    maxHeight: '90vh',
+    display: 'flex',
+    flexDirection: 'column',
   },
   header: {
     flexDirection: 'row',
@@ -214,6 +253,12 @@ const styles = StyleSheet.create({
   messagesContainer: {
     flex: 1,
     padding: 16,
+    overflow: 'auto',
+    minHeight: 0,
+  },
+  messagesContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
   },
   emptyState: {
     flex: 1,

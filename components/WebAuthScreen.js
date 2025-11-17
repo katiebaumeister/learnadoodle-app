@@ -8,7 +8,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
-import { changeUserPassword } from '../lib/supabaseAdmin';
 
 export default function WebAuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -22,11 +21,7 @@ export default function WebAuthScreen() {
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   
-  // Admin password change state
-  const [showAdminSection, setShowAdminSection] = useState(false);
-  const [adminUserId, setAdminUserId] = useState('ea02acc9-bbc2-4757-a1b5-965be95bfe88'); // Your user ID
-  const [adminNewPassword, setAdminNewPassword] = useState('');
-  const [adminLoading, setAdminLoading] = useState(false);
+
   
   const { signIn, signUp, resetPassword } = useAuth();
 
@@ -35,31 +30,7 @@ export default function WebAuthScreen() {
     setSuccessMessage('');
   };
 
-  const handleAdminPasswordChange = async () => {
-    if (!adminNewPassword || adminNewPassword.length < 6) {
-      setErrorMessage('Admin: Password must be at least 6 characters long');
-      return;
-    }
 
-    setAdminLoading(true);
-    clearMessages();
-    
-    try {
-      const { data, error } = await changeUserPassword(adminUserId, adminNewPassword);
-      
-      if (error) {
-        setErrorMessage(`Admin: Failed to change password: ${error.message}`);
-      } else {
-        setSuccessMessage('Admin: Password changed successfully! You can now sign in with your new password.');
-        setAdminNewPassword('');
-        setShowAdminSection(false);
-      }
-    } catch (error) {
-      setErrorMessage(`Admin: Unexpected error: ${error.message}`);
-    } finally {
-      setAdminLoading(false);
-    }
-  };
 
   const validatePassword = (password) => {
     const hasUpperCase = /[A-Z]/.test(password);
@@ -337,53 +308,7 @@ export default function WebAuthScreen() {
           )}
         </View>
 
-        {/* Admin Section Divider */}
-        <View style={styles.adminDivider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>Admin Tools</Text>
-          <View style={styles.dividerLine} />
-        </View>
 
-        {/* Admin Password Change Section */}
-        <View style={styles.adminSection}>
-          <TouchableOpacity
-            style={styles.adminToggleButton}
-            onPress={() => setShowAdminSection(!showAdminSection)}
-          >
-            <Text style={styles.adminToggleText}>
-              {showAdminSection ? '🔒 Hide Admin Tools' : '🔐 Show Admin Tools'}
-            </Text>
-          </TouchableOpacity>
-
-          {showAdminSection && (
-            <View style={styles.adminForm}>
-              <Text style={styles.adminTitle}>Admin Password Change</Text>
-              <Text style={styles.adminSubtitle}>Change password for user: {adminUserId}</Text>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>New Password</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={adminNewPassword}
-                  onChangeText={setAdminNewPassword}
-                  placeholder="Enter new password"
-                  secureTextEntry
-                  autoCapitalize="none"
-                />
-              </View>
-              
-              <TouchableOpacity
-                style={[styles.adminButton, adminLoading && styles.disabledButton]}
-                onPress={handleAdminPasswordChange}
-                disabled={adminLoading}
-              >
-                <Text style={styles.adminButtonText}>
-                  {adminLoading ? 'Changing Password...' : 'Change Password'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
       </View>
     </ScrollView>
   );
@@ -499,69 +424,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  // Admin section styles
-  adminDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 24,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e5e7eb',
-  },
-  dividerText: {
-    marginHorizontal: 16,
-    fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '500',
-  },
-  adminSection: {
-    marginTop: 16,
-  },
-  adminToggleButton: {
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    alignItems: 'center',
-  },
-  adminToggleText: {
-    color: '#374151',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  adminForm: {
-    marginTop: 16,
-    padding: 16,
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  adminTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  adminSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  adminButton: {
-    backgroundColor: '#dc2626',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  adminButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+
 });

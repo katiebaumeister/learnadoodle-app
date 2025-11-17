@@ -31,10 +31,9 @@ export default function LoadingScreen({ message = 'Loading...', timeout = 10000 
     <View style={styles.container}>
       <View style={styles.content}>
         <View style={styles.logoContainer}>
-          <Text style={styles.logo}>🎓</Text>
         </View>
         
-        <Text style={styles.title}>Learnadoodle</Text>
+        <Text style={styles.title}>Welcome to Learnadoodle</Text>
         <Text style={styles.subtitle}>Loading your learning environment</Text>
         
         <View style={styles.loadingContainer}>
@@ -63,7 +62,7 @@ export default function LoadingScreen({ message = 'Loading...', timeout = 10000 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#667eea',
+    backgroundColor: '#80C1E1',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -75,7 +74,9 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   logo: {
-    fontSize: 64,
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: 'white',
   },
   title: {
     fontSize: 32,
