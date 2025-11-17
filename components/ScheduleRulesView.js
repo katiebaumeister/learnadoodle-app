@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -30,15 +30,25 @@ const ScheduleRulesView = ({ familyId, children, hideHeader = false }) => {
   const [previewData, setPreviewData] = useState(null);
   const [conflicts, setConflicts] = useState([]);
   const [specificityCascade, setSpecificityCascade] = useState(false);
+  
+  // Use ref to track cache key without triggering re-renders
+  const dataCacheKeyRef = useRef(null);
 
-  // Load data when component mounts or scope changes
+  // Load data when component mounts or scope changes (only if scope actually changed)
   useEffect(() => {
-    if (familyId) {
+    if (!familyId) return;
+    
+    const currentCacheKey = `${familyId}-${selectedScope}-${selectedChildId || 'family'}`;
+    
+    // Only reload if the scope actually changed
+    if (currentCacheKey !== dataCacheKeyRef.current) {
+      dataCacheKeyRef.current = currentCacheKey;
       loadCascadeSetting();
       loadRules();
       loadOverrides();
       loadPreviewData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId, selectedScope, selectedChildId]);
 
   const loadCascadeSetting = async () => {
@@ -183,12 +193,14 @@ const ScheduleRulesView = ({ familyId, children, hideHeader = false }) => {
   };
 
   const handleRuleSaved = () => {
+    // Reload data after saving (cache will prevent unnecessary reloads on tab switch)
     loadRules();
     loadPreviewData();
     showAlert('Success', 'Schedule rule saved successfully');
   };
 
   const handleOverrideSaved = () => {
+    // Reload data after saving (cache will prevent unnecessary reloads on tab switch)
     loadOverrides();
     loadPreviewData();
     showAlert('Success', 'Override saved successfully');

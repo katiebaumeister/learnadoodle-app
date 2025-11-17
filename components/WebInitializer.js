@@ -33,18 +33,14 @@ export default function WebInitializer({ children }) {
     const initializeWeb = () => {
       // Wait for DOM to be fully ready
       if (document.readyState === 'complete') {
-        // Add a small delay to ensure all JavaScript bundles are loaded
-        setTimeout(() => {
+        // Apply design tokens immediately - no delay needed
+        applyDesignTokens();
+        setIsWebReady(true);
+      } else {
+        // Wait for DOM to be ready, then apply immediately
+        window.addEventListener('load', () => {
           applyDesignTokens();
           setIsWebReady(true);
-        }, 1000);
-      } else {
-        // Wait for DOM to be ready
-        window.addEventListener('load', () => {
-          setTimeout(() => {
-            applyDesignTokens();
-            setIsWebReady(true);
-          }, 1000);
         });
       }
     };
