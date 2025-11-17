@@ -1,0 +1,729 @@
+{
+  "AL": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually to local superintendent",
+      "type": "required"
+    }
+  ],
+  "AK": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "AZ": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "File with county school superintendent",
+      "type": "required"
+    }
+  ],
+  "AR": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required in grades 3, 5, 7, 9, and 11",
+      "type": "required"
+    }
+  ],
+  "CA": [
+    {
+      "id": "hours",
+      "label": "Minimum hours per year",
+      "detail": "900 hours",
+      "type": "info"
+    },
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio of student work",
+      "detail": "Maintain samples of work",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Optional but recommended",
+      "type": "optional"
+    }
+  ],
+  "CO": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required every other year starting at age 7",
+      "type": "required"
+    }
+  ],
+  "CT": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually to local superintendent",
+      "type": "required"
+    }
+  ],
+  "DE": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio review",
+      "detail": "Annual portfolio review required",
+      "type": "required"
+    }
+  ],
+  "FL": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually to county superintendent",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio of student work",
+      "detail": "Maintain educational records",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Annual evaluation",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "GA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required every 3 years starting at grade 3",
+      "type": "required"
+    }
+  ],
+  "HI": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "ID": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "IL": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "IN": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "IA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "KS": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "KY": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "LA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "ME": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "MD": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio review",
+      "detail": "Annual portfolio review required",
+      "type": "required"
+    }
+  ],
+  "MA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually to local school district",
+      "type": "required"
+    }
+  ],
+  "MI": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "MN": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "MS": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "MO": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "hours",
+      "label": "Minimum hours per year",
+      "detail": "1000 hours",
+      "type": "info"
+    }
+  ],
+  "MT": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "NE": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "NV": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "NH": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "NJ": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "NM": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "NY": [
+    {
+      "id": "hours",
+      "label": "Minimum hours per year",
+      "detail": "900 hours",
+      "type": "info"
+    },
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "quarterly_reports",
+      "label": "Quarterly reports",
+      "detail": "Submit 4 times per year",
+      "type": "required"
+    },
+    {
+      "id": "annual_assessment",
+      "label": "Annual assessment",
+      "type": "required"
+    }
+  ],
+  "NC": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "ND": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "OH": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "OK": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ],
+  "OR": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required in grades 3, 5, 8, and 10",
+      "type": "required"
+    }
+  ],
+  "PA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio review",
+      "detail": "Annual portfolio review required",
+      "type": "required"
+    }
+  ],
+  "RI": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "SC": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "SD": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "TN": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "TX": [
+    {
+      "id": "hours",
+      "label": "Minimum hours per year",
+      "detail": "180 days",
+      "type": "info"
+    },
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "curriculum",
+      "label": "Curriculum plan",
+      "detail": "Submit at beginning of year",
+      "type": "required"
+    }
+  ],
+  "UT": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "VT": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio review",
+      "detail": "Annual portfolio review required",
+      "type": "required"
+    }
+  ],
+  "VA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually or portfolio review",
+      "type": "required"
+    }
+  ],
+  "WA": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "WV": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    },
+    {
+      "id": "testing",
+      "label": "Standardized testing",
+      "detail": "Required annually",
+      "type": "required"
+    }
+  ],
+  "WI": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit annually",
+      "type": "required"
+    }
+  ],
+  "WY": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "type": "required"
+    }
+  ]
+}

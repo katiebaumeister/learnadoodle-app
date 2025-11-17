@@ -1,0 +1,45 @@
+{
+  "course": {
+    "provider": "Khan Academy",
+    "source_slug": "math/algebra/intro-algebra",
+    "public_url": "https://www.khanacademy.org/math/algebra",
+    "subject": "Mathematics",
+    "grade_band": "High School",
+    "subject_key": "math",
+    "stage_key": "hs",
+    "units": [
+      {
+        "ordinal": 1,
+        "title_raw": "Unit 1: Linear relationships",
+        "public_url": "https://www.khanacademy.org/math/algebra/linear-relationships",
+        "lessons": [
+          {
+            "ordinal": 1,
+            "title_raw": "Intro to slope",
+            "resource_type": "video",
+            "public_url": "https://www.khanacademy.org/math/algebra/linear-relationships/slope-intro"
+          },
+          {
+            "ordinal": 2,
+            "title_raw": "Slope from equation",
+            "resource_type": "exercise",
+            "public_url": "https://www.khanacademy.org/math/algebra/linear-relationships/slope-equation"
+          }
+        ]
+      },
+      {
+        "ordinal": 2,
+        "title_raw": "Unit 2: Functions and graphs",
+        "public_url": "https://www.khanacademy.org/math/algebra/functions-graphs",
+        "lessons": [
+          {
+            "ordinal": 1,
+            "title_raw": "Interpreting function notation",
+            "resource_type": "article",
+            "public_url": "https://www.khanacademy.org/math/algebra/functions-graphs/function-notation"
+          }
+        ]
+      }
+    ]
+  }
+}

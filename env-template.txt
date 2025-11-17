@@ -1,0 +1,29 @@
+# Supabase Configuration
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# Server Configuration
+PORT=3001
+NODE_ENV=development
+
+# API Security
+API_SECRET_KEY=your_secret_api_key_here
+
+# API Configuration
+API_BASE_URL=http://localhost:3001
+ALLOWED_ORIGINS=http://localhost:19006,http://localhost:3000
+
+# Notification Configuration
+PUSH_NOTIFICATION_ENABLED=true
+QUIET_HOURS_DEFAULT_START=22:00
+QUIET_HOURS_DEFAULT_END=08:00
+
+# AI Planner Configuration
+PLANNER_MAX_EVENTS_PER_DAY=8
+PLANNER_DEFAULT_BLOCK_DURATION=45
+PLANNER_PREVIEW_CACHE_TTL=300
+
+# Monitoring Configuration
+ENABLE_METRICS=true
+LOG_LEVEL=info
