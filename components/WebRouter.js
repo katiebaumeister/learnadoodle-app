@@ -4,6 +4,8 @@ import WebAuthScreen from './WebAuthScreen';
 import PasswordResetPage from './PasswordResetPage';
 import WebLayout from './WebLayout';
 import InviteAcceptancePage from './InviteAcceptancePage';
+import ChildInvitePage from './auth/ChildInvitePage';
+import ContinueLearningPage from './ContinueLearningPage';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function WebRouter() {
@@ -169,7 +171,23 @@ export default function WebRouter() {
     }} />;
   }
 
-  // Check if we're on an invite page
+  // Check if we're on a child invite page
+  const childInviteMatch = currentPath.match(/^\/child\/invite\/(.+)$/);
+  const childInviteToken = childInviteMatch ? childInviteMatch[1] : null;
+
+  if (childInviteToken) {
+    return (
+      <ChildInvitePage
+        token={childInviteToken}
+        onComplete={(data) => {
+          console.log('Child invite accepted:', data);
+          // Redirect handled by component
+        }}
+      />
+    );
+  }
+
+  // Check if we're on a regular invite page
   const inviteMatch = currentPath.match(/^\/invite\/(.+)$/);
   const inviteToken = inviteMatch ? inviteMatch[1] : null;
 
@@ -182,6 +200,33 @@ export default function WebRouter() {
           // The component handles the redirect, but we can also handle it here
           console.log('Invite accepted:', data);
         }}
+      />
+    );
+  }
+
+  // Check if we're on a continue learning deep link
+  // Route: /continue/{courseId}?child={childId}&lesson={lessonId}&t={timestamp}
+  const continueMatch = currentPath.match(/^\/continue\/([^/?]+)/);
+  const continueCourseId = continueMatch ? continueMatch[1] : null;
+
+  if (continueCourseId) {
+    // Extract query parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const childId = urlParams.get('child');
+    const lessonId = urlParams.get('lesson');
+    const timestamp = urlParams.get('t') ? parseInt(urlParams.get('t'), 10) : null;
+
+    // If no user, redirect to login (they need to be authenticated)
+    if (!user) {
+      return <WebAuthScreen />;
+    }
+
+    return (
+      <ContinueLearningPage
+        courseId={continueCourseId}
+        childId={childId}
+        lessonId={lessonId}
+        timestamp={timestamp}
       />
     );
   }

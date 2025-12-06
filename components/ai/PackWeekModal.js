@@ -25,6 +25,7 @@ export default function PackWeekModal({
   familyId,
   children = [],
   onClose,
+  onComplete, // Optional callback with proposedChanges
 }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -56,7 +57,10 @@ export default function PackWeekModal({
   };
 
   const handlePack = async () => {
+    console.log('[PackWeekModal] handlePack called', { weekStart, selectedChildIds, familyId });
+    
     if (!weekStart) {
+      console.log('[PackWeekModal] No weekStart, returning');
       if (Platform.OS === 'web') {
         alert('Please select a week start date');
       }
@@ -64,11 +68,17 @@ export default function PackWeekModal({
     }
 
     setLoading(true);
+    const startTime = Date.now();
+    
     try {
+      console.log('[PackWeekModal] Calling packWeek API...');
       const { data, error } = await packWeek(
         weekStart,
         selectedChildIds.length > 0 ? selectedChildIds : null
       );
+      
+      const duration = Date.now() - startTime;
+      console.log('[PackWeekModal] packWeek completed in', duration, 'ms');
       
       if (error) {
         console.error('[PackWeekModal] Error:', error);
@@ -79,19 +89,42 @@ export default function PackWeekModal({
       }
 
       if (data) {
+        console.log('[PackWeekModal] Setting result:', data);
         setResult(data);
+        
+        // Extract proposedChanges from response
+        // Backend may return: { events: [...], proposed_changes: [...] } or { changes: [...] }
+        const proposedChanges = data.proposed_changes || data.changes || 
+          (data.events ? data.events.map((evt, idx) => ({
+            id: `pack-${idx}`,
+            kind: 'add',
+            label: evt.title || 'New Event',
+            when: evt.start ? new Date(evt.start).toLocaleString() : undefined,
+            child: children.find(c => c.id === evt.child_id)?.first_name || evt.child_id,
+            subject: evt.subject_id,
+          })) : []);
+        
+        // Call onComplete with proposedChanges if provided
+        if (onComplete && proposedChanges.length > 0) {
+          onComplete({ proposedChanges, result: data });
+        }
+        
         // Refresh calendar after successful pack
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }
+      } else {
+        console.log('[PackWeekModal] No data returned');
       }
     } catch (err) {
-      console.error('[PackWeekModal] Exception:', err);
+      const duration = Date.now() - startTime;
+      console.error('[PackWeekModal] Exception after', duration, 'ms:', err);
       if (Platform.OS === 'web') {
         alert(`Error: ${err.message || 'Unknown error'}`);
       }
     } finally {
       setLoading(false);
+      console.log('[PackWeekModal] handlePack finished');
     }
   };
 

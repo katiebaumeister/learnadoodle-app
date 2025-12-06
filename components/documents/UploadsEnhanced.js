@@ -2,7 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, TextInput, StyleSheet, Alert, Image, Platform, Modal } from 'react-native';
 import { Upload, Search, X, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { shouldSuppressError } from '../../lib/apiClient';
 import { colors, shadows } from '../../theme/colors';
+import { autoCaptionOnUpload } from '../../lib/services/autoCaptionService';
+import PDFViewer from '../content/PDFViewer';
+import MagicExtract from '../content/MagicExtract';
 
 const TYPE_FILTERS = [
   { key: 'image', label: 'Images' },
@@ -93,7 +97,7 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
   const loadData = async () => {
     setLoading(true);
     try {
-      const { data } = await supabase.rpc('get_uploads', {
+      const { data, error: rpcError } = await supabase.rpc('get_uploads', {
         _family: familyId,
         _q: q || null,
         _child_ids: childIds,
@@ -103,10 +107,18 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
         _include_unassigned_subject: includeUnassignedSubject,
         _sort_unassigned_first: sortUnassignedFirst
       });
+      
+      if (rpcError && !shouldSuppressError(rpcError)) {
+        console.error('Error loading uploads:', rpcError);
+        Alert.alert('Error', 'Failed to load uploads');
+      }
+      
       setItems(data || []);
     } catch (error) {
-      console.error('Error loading uploads:', error);
-      Alert.alert('Error', 'Failed to load uploads');
+      if (!shouldSuppressError(error)) {
+        console.error('Error loading uploads:', error);
+        Alert.alert('Error', 'Failed to load uploads');
+      }
     } finally {
       setLoading(false);
     }
@@ -139,7 +151,7 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
       const defaultChild = childIds?.[0] || null;
       const defaultSubject = subjectIds?.[0] || null;
 
-      await supabase.rpc('create_upload_record', {
+      const { data: uploadRecord, error: recordError } = await supabase.rpc('create_upload_record', {
         _family: familyId,
         _child: defaultChild,
         _subject: defaultSubject,
@@ -151,6 +163,22 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
         _tags: [],
         _notes: null
       });
+
+      if (recordError) throw recordError;
+
+      // Get upload ID from response
+      const uploadId = uploadRecord?.id || uploadRecord?.ok ? uploadRecord.id : null;
+      
+      // Get file URL for auto-captioning
+      const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(path);
+      const fileUrl = urlData?.publicUrl;
+
+      // Trigger auto-captioning (non-blocking)
+      if (uploadId && fileUrl) {
+        autoCaptionOnUpload(uploadId, file.type, fileUrl, file.name).catch(err => {
+          console.log('Auto-captioning failed (non-critical):', err);
+        });
+      }
 
       await loadData();
       Alert.alert('Success', 'File uploaded successfully');
@@ -635,6 +663,19 @@ function UploadCard({ item, index, selected, onToggleSelect, onAssign, familyId 
           {item.child_id && <View style={styles.tagChild}><Text style={styles.tagText}>Child assigned</Text></View>}
           {item.subject_id && <View style={styles.tagSubject}><Text style={styles.tagText}>Subject assigned</Text></View>}
         </View>
+
+        {/* PDF Actions */}
+        {item.kind === 'pdf' && (
+          <View style={styles.pdfActions}>
+            <PDFViewer uploadId={item.id} familyId={familyId} />
+            <MagicExtract
+              uploadId={item.id}
+              onExtracted={(extractedItem, type) => {
+                Alert.alert('Extracted', `${type} extracted. Create event from extracted item?`);
+              }}
+            />
+          </View>
+        )}
 
         {/* Actions */}
         <TouchableOpacity

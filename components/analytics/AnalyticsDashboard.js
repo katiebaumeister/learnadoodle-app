@@ -12,15 +12,17 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, BarChart3, FileText } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, BarChart3, FileText, Calendar } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getAnalyticsOverview } from '../../lib/services/analyticsClient';
+import SkillHeatmap from './SkillHeatmap';
+import ActivityHeatmap from './ActivityHeatmap';
 
 export default function AnalyticsDashboard({ familyId, childId, children = [], onClose, onShowReport }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('performance'); // performance, trends, recommendations
+  const [activeTab, setActiveTab] = useState('performance'); // performance, trends, recommendations, heatmaps
 
   useEffect(() => {
     if (familyId) {
@@ -157,6 +159,15 @@ export default function AnalyticsDashboard({ familyId, childId, children = [], o
           <AlertCircle size={16} color={activeTab === 'recommendations' ? colors.accent : colors.muted} />
           <Text style={[styles.tabText, activeTab === 'recommendations' && styles.tabTextActive]}>
             Recommendations
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'heatmaps' && styles.tabActive]}
+          onPress={() => setActiveTab('heatmaps')}
+        >
+          <Calendar size={16} color={activeTab === 'heatmaps' ? colors.accent : colors.muted} />
+          <Text style={[styles.tabText, activeTab === 'heatmaps' && styles.tabTextActive]}>
+            Heatmaps
           </Text>
         </TouchableOpacity>
       </View>
@@ -321,6 +332,26 @@ export default function AnalyticsDashboard({ familyId, childId, children = [], o
               ))
             ) : (
               <Text style={styles.emptyText}>No recommendations at this time.</Text>
+            )}
+          </View>
+        )}
+
+        {activeTab === 'heatmaps' && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Visual Analytics</Text>
+            {childId ? (
+              <View style={styles.heatmapSection}>
+                <View style={styles.heatmapCard}>
+                  <Text style={styles.heatmapCardTitle}>Skill Mastery Over Time</Text>
+                  <SkillHeatmap childId={childId} daysBack={90} groupBy="week" />
+                </View>
+                <View style={styles.heatmapCard}>
+                  <Text style={styles.heatmapCardTitle}>Activity Heatmap</Text>
+                  <ActivityHeatmap childId={childId} familyId={familyId} daysBack={90} />
+                </View>
+              </View>
+            ) : (
+              <Text style={styles.emptyText}>Select a child to view heatmaps.</Text>
             )}
           </View>
         )}
@@ -659,6 +690,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.accent || '#3b82f6',
     fontWeight: '500',
+  },
+  heatmapSection: {
+    gap: 24,
+  },
+  heatmapCard: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border || '#e5e7eb',
+  },
+  heatmapCardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text || '#111827',
+    marginBottom: 16,
   },
 });
 

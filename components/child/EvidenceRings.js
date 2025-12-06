@@ -15,7 +15,8 @@ const WebProgressRing = ({ size, radius, strokeWidth, percentage, color }) => {
         width: size,
         height: size,
         borderRadius: size / 2,
-        background: `conic-gradient(from -90deg, ${color} 0deg ${percentage * 3.6}deg, transparent ${percentage * 3.6}deg)`,
+        // Use backgroundImage so React Native Web doesn't warn about "background"
+        backgroundImage: `conic-gradient(from -90deg, ${color} 0deg ${percentage * 3.6}deg, transparent ${percentage * 3.6}deg)`,
         maskImage: `radial-gradient(circle, transparent ${radius - strokeWidth}px, black ${radius}px)`,
         WebkitMaskImage: `radial-gradient(circle, transparent ${radius - strokeWidth}px, black ${radius}px)`,
         position: 'absolute',

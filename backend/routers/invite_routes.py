@@ -304,6 +304,16 @@ async def preview_invite(
             except Exception:
                 pass
         
+        # Get child name for child invites
+        child_name = None
+        if invite.get("role") == "child" and invite.get("child_id"):
+            try:
+                child_res = supabase.table("children").select("first_name").eq("id", invite["child_id"]).single().execute()
+                if child_res.data:
+                    child_name = child_res.data.get("first_name")
+            except Exception:
+                pass
+        
         return {
             "token": token,
             "family_name": family_name,
@@ -311,6 +321,8 @@ async def preview_invite(
             "role": invite.get("role"),
             "child_scope": invite.get("child_scope") or [],
             "child_names": child_names,
+            "child_id": invite.get("child_id"),
+            "child_name": child_name,
             "expires_at": invite.get("expires_at")
         }
         

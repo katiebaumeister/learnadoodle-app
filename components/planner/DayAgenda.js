@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { startOfWeek, addDays, format, isToday } from './utils/date';
 import { CheckCircle2, Circle } from 'lucide-react';
+import InlineNotesIndicator from '../events/InlineNotesIndicator';
 
 // Pastel color palette matching reference design
 const PASTEL_COLORS = {
@@ -142,6 +143,13 @@ function DayEventBlock({ event, onPress, onRightClick, onComplete, showCheckmark
         }}>
           {event.title || 'Untitled Event'}
         </Text>
+        {event.id && event.family_id && (
+          <InlineNotesIndicator
+            eventId={event.id}
+            familyId={event.family_id}
+            size="small"
+          />
+        )}
       </View>
     </TouchableOpacity>
   );

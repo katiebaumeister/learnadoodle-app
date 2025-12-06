@@ -84,8 +84,9 @@ async def get_me(
                 role = member_res.data.get("member_role", role)
                 family_id = member_res.data.get("family_id", family_id)
         except Exception as e:
-            # If query fails (e.g., RLS issue), fall back to profile data
-            log_event("dashboard.get_me.family_members_query_failed", user_id=user["id"], error=str(e))
+            # If query fails (e.g., RLS issue), fall back to profile data (non-critical, suppress log)
+            # log_event("dashboard.get_me.family_members_query_failed", user_id=user["id"], error=str(e), level="debug")
+            pass
         
         # Get accessible children using RPC
         accessible_children = []

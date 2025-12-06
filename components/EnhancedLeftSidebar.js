@@ -200,10 +200,10 @@ function ExpandableItem({
         <View style={styles.subItemsContainer}>
           {subItems.map(subItem => {
             // Determine if this item is active
-            // For records items (attendance/reports), check activeSubtab
+            // For records items (attendance/reports/templates), check activeSubtab
             // For child items (child-{id}), check if activeTab is children-list and activeSubtab matches child ID
             let isActive;
-            if (subItem.id === 'attendance' || subItem.id === 'reports') {
+            if (subItem.id === 'attendance' || subItem.id === 'reports' || subItem.id === 'templates') {
               isActive = activeTab === 'records' && activeSubtab === subItem.id;
             } else if (subItem.id.startsWith('child-')) {
               const childId = subItem.id.replace('child-', '');
@@ -222,8 +222,8 @@ function ExpandableItem({
                   if (subItem.onClick) {
                     subItem.onClick();
                   } else {
-                    // For attendance/reports, set records tab with subtab
-                    if (subItem.id === 'attendance' || subItem.id === 'reports') {
+                    // For attendance/reports/templates, set records tab with subtab
+                    if (subItem.id === 'attendance' || subItem.id === 'reports' || subItem.id === 'templates') {
                       onTabChange('records', subItem.id, subItem.data);
                     } else {
                       // For child items or other items, pass the item ID
@@ -399,6 +399,7 @@ export default function EnhancedLeftSidebar({
   const recordsItems = [
     { id: 'attendance', label: 'Attendance', icon: null },
     { id: 'reports', label: 'Reports', icon: null },
+    { id: 'templates', label: 'Templates', icon: BookTemplate },
   ];
 
   return (
@@ -533,7 +534,7 @@ export default function EnhancedLeftSidebar({
           {/* Records - Expandable */}
           <ExpandableItem
             id="records"
-            label="Records"
+            label="Records & Compliance"
             icon={ClipboardCheck}
             active={activeTab === 'records' && !activeSubtab}
             onClick={() => onTabChange('records', null)}

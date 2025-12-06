@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { CheckSquare, Square, Plus } from 'lucide-react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { CheckSquare, Square, Plus, ClipboardList, List } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 
-export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGenerateTasks }) {
+export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGenerateTasks, backlogCount = 0, onAddFromBacklog, onViewPlanner }) {
   const [completedTasks, setCompletedTasks] = useState(new Set());
 
   const handleToggle = (taskId) => {
@@ -26,15 +26,29 @@ export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGene
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          {onViewPlanner ? (
+            <TouchableOpacity
+              onPress={onViewPlanner}
+              activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+            >
+              <CheckSquare size={16} color={colors.text} />
+              <Text style={styles.title}>Tasks for today</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
           <CheckSquare size={16} color={colors.text} />
           <Text style={styles.title}>Tasks for today</Text>
+            </>
+          )}
         </View>
         {tasks.length === 0 && (
           <TouchableOpacity 
             style={styles.addButton}
             onPress={onAddTask}
           >
-            <Plus size={14} color={colors.accent} />
+            <Plus size={14} color={colors.text} />
             <Text style={styles.addButtonText}>Log a task</Text>
           </TouchableOpacity>
         )}
@@ -42,13 +56,35 @@ export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGene
 
       {tasks.length === 0 ? (
         <View style={styles.emptyState}>
+          <View style={styles.emptyIconContainer}>
+            <ClipboardList size={24} color={colors.muted} strokeWidth={1.5} />
+          </View>
           <Text style={styles.emptyText}>No tasks scheduled</Text>
+          <Text style={styles.emptyHelperText}>
+            You can quickly seed today with suggestions based on your subjects.
+          </Text>
+          <View style={styles.emptyActions}>
+            {backlogCount > 0 && onAddFromBacklog && (
+              <TouchableOpacity 
+                style={styles.addFromBacklogButton}
+                onPress={onAddFromBacklog}
+                activeOpacity={0.7}
+              >
+                <List size={14} color={colors.text} />
+                <Text style={styles.addFromBacklogText}>
+                  Add from backlog ({backlogCount} available)
+                </Text>
+              </TouchableOpacity>
+            )}
           <TouchableOpacity 
             style={styles.generateTasksButton}
             onPress={onGenerateTasks}
+              activeOpacity={0.7}
           >
-            <Text style={styles.generateTasksText}>Create 3 quick tasks from subjects</Text>
+              <Plus size={14} color={colors.text} />
+              <Text style={styles.generateTasksText}>Generate suggested tasks</Text>
           </TouchableOpacity>
+          </View>
         </View>
       ) : (
         <View style={styles.tasksList}>
@@ -122,6 +158,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flex: 0,
   },
   title: {
     fontSize: 15,
@@ -135,35 +172,89 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
-    backgroundColor: colors.accent,
-  },
-  addButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.accentContrast,
-  },
-  emptyState: {
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 13,
-    color: colors.muted,
-    fontStyle: 'italic',
-    marginBottom: 12,
-  },
-  generateTasksButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
     backgroundColor: colors.bgSubtle,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  generateTasksText: {
+  addButtonText: {
     fontSize: 12,
-    color: colors.accent,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: colors.text,
+  },
+  emptyState: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.bgSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  emptyText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  emptyHelperText: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 20,
+    lineHeight: 18,
+  },
+  emptyActions: {
+    gap: 8,
+    width: '100%',
+    alignItems: 'center',
+  },
+  addFromBacklogButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: colors.radiusMd,
+    backgroundColor: colors.bgSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  addFromBacklogText: {
+    fontSize: 13,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  generateTasksButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: colors.radiusMd,
+    backgroundColor: colors.bgSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  generateTasksText: {
+    fontSize: 13,
+    color: colors.text,
+    fontWeight: '600',
   },
   tasksList: {
     gap: 8,

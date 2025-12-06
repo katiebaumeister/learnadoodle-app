@@ -1,87 +1,165 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Plus } from 'lucide-react';
+import { getAssignments } from '../../../lib/services/assignmentsClient';
 import { colors } from '../../../theme/colors';
+import AssignmentCard from '../../assignments/AssignmentCard';
+import AssignmentDetailModal from '../../assignments/AssignmentDetailModal';
+import AssignmentReviewModal from '../../assignments/AssignmentReviewModal';
+import QuickSubmitModal from '../../assignments/QuickSubmitModal';
+import { submitAssignment, toggleNeedHelp, reviewAssignment } from '../../../lib/services/assignmentsClient';
 
-export default function AssignmentsTab({ child }) {
-  // TODO: replace with real assignments from Supabase (type='assignment')
-  const assignments = [
-    {
-      id: "a1",
-      title: "Book report draft",
-      subject: "Reading",
-      due: "Thu, Nov 20",
-      status: "Upcoming",
-    },
-    {
-      id: "a2",
-      title: "Fractions worksheet",
-      subject: "Math",
-      due: "Mon, Nov 24",
-      status: "Completed",
-    },
-  ];
+export default function AssignmentsTab({ child, familyId }) {
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedAssignment, setSelectedAssignment] = useState(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showQuickSubmit, setShowQuickSubmit] = useState(false);
+  const [quickSubmitAssignment, setQuickSubmitAssignment] = useState(null);
+
+  useEffect(() => {
+    fetchAssignments();
+  }, [child?.id]);
+
+  const fetchAssignments = async () => {
+    if (!child?.id) return;
+    
+    try {
+      setLoading(true);
+      const { data, error } = await getAssignments(child.id);
+
+      if (error) {
+        console.error('Error fetching assignments:', error);
+        setAssignments([]);
+        return;
+      }
+
+      setAssignments(data || []);
+    } catch (error) {
+      console.error('Error fetching assignments:', error);
+      setAssignments([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAssignmentPress = (assignment) => {
+    setSelectedAssignment(assignment);
+    setShowDetailModal(true);
+  };
+
+  const handleSubmit = async (assignmentId, evidenceId) => {
+    const { error } = await submitAssignment(assignmentId, evidenceId);
+    if (!error) {
+      await fetchAssignments();
+      setShowDetailModal(false);
+    }
+  };
+
+  const handleToggleHelp = async (assignmentId) => {
+    const { error } = await toggleNeedHelp(assignmentId);
+    if (!error) {
+      await fetchAssignments();
+      if (selectedAssignment?.id === assignmentId) {
+        setSelectedAssignment({ ...selectedAssignment, need_help: !selectedAssignment.need_help });
+      }
+    }
+  };
+
+  const handleReview = (assignment) => {
+    setSelectedAssignment(assignment);
+    setShowReviewModal(true);
+  };
+
+  const handleReviewed = async () => {
+    await fetchAssignments();
+    setShowReviewModal(false);
+    setShowDetailModal(false);
+  };
+
+  const handleQuickSubmit = (assignment) => {
+    setQuickSubmitAssignment(assignment);
+    setShowQuickSubmit(true);
+  };
+
+  const handleQuickSubmitted = async () => {
+    await fetchAssignments();
+    setShowQuickSubmit(false);
+    setQuickSubmitAssignment(null);
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.text} />
+      </View>
+    );
+  }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Assignments for {child.first_name}</Text>
-        <TouchableOpacity style={styles.addButton}>
-          <Plus size={14} color={colors.card} />
-          <Text style={styles.addButtonText}>Add assignment</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.table}>
-        <View style={styles.tableHeader}>
-          <Text style={styles.headerText}>Assignment</Text>
-          <Text style={styles.headerText}>Subject</Text>
-          <Text style={styles.headerText}>Due</Text>
-          <Text style={styles.headerText}>Status</Text>
+    <>
+      <ScrollView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Assignments for {child?.first_name || child?.name}</Text>
         </View>
 
         {assignments.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>
-              No assignments yet. When you add tasks with due dates, they'll show up here.
+              No assignments yet. Assignments will appear here when created.
             </Text>
           </View>
         ) : (
-          <View>
-            {assignments.map((a, idx) => (
-              <View
-                key={a.id}
-                style={[
-                  styles.tableRow,
-                  idx !== assignments.length - 1 && styles.tableRowBorder
-                ]}
-              >
-                <View style={styles.assignmentCell}>
-                  <Text style={styles.assignmentTitle}>{a.title}</Text>
-                </View>
-                <Text style={styles.cellText}>{a.subject}</Text>
-                <Text style={styles.cellText}>{a.due}</Text>
-                <View style={[
-                  styles.statusBadge,
-                  a.status === "Completed" ? styles.statusCompleted :
-                  a.status === "Overdue" ? styles.statusOverdue :
-                  styles.statusUpcoming
-                ]}>
-                  <Text style={[
-                    styles.statusText,
-                    a.status === "Completed" ? styles.statusCompletedText :
-                    a.status === "Overdue" ? styles.statusOverdueText :
-                    styles.statusUpcomingText
-                  ]}>
-                    {a.status}
-                  </Text>
-                </View>
-              </View>
+          <View style={styles.cardsContainer}>
+            {assignments.map((assignment) => (
+              <AssignmentCard
+                key={assignment.id}
+                assignment={assignment}
+                onPress={() => handleAssignmentPress(assignment)}
+                onQuickSubmit={handleQuickSubmit}
+              />
             ))}
           </View>
         )}
-      </View>
-    </ScrollView>
+      </ScrollView>
+
+      <AssignmentDetailModal
+        visible={showDetailModal}
+        assignment={selectedAssignment}
+        childId={child?.id}
+        familyId={familyId}
+        onClose={() => {
+          setShowDetailModal(false);
+          setSelectedAssignment(null);
+        }}
+        onSubmit={handleSubmit}
+        onToggleHelp={handleToggleHelp}
+        onReview={handleReview}
+      />
+
+      <AssignmentReviewModal
+        visible={showReviewModal}
+        assignment={selectedAssignment}
+        onClose={() => {
+          setShowReviewModal(false);
+          setSelectedAssignment(null);
+        }}
+        onReviewed={handleReviewed}
+      />
+
+      <QuickSubmitModal
+        visible={showQuickSubmit}
+        assignment={quickSubmitAssignment}
+        childId={child?.id}
+        familyId={familyId}
+        onClose={() => {
+          setShowQuickSubmit(false);
+          setQuickSubmitAssignment(null);
+        }}
+        onSubmitted={handleQuickSubmitted}
+      />
+    </>
   );
 }
 
@@ -121,80 +199,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: colors.card,
   },
-  table: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    margin: 16,
-    overflow: 'hidden',
-  },
-  tableHeader: {
-    flexDirection: 'row',
-    gap: 16,
+  cardsContainer: {
     padding: 16,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  headerText: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: colors.muted,
-    flex: 1,
-  },
-  tableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    padding: 16,
-  },
-  tableRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  assignmentCell: {
-    flex: 2,
-  },
-  assignmentTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.text,
-  },
-  cellText: {
-    fontSize: 12,
-    color: colors.muted,
-    flex: 1,
-  },
-  statusBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    alignSelf: 'flex-start',
-  },
-  statusCompleted: {
-    backgroundColor: '#D1FAE5',
-  },
-  statusOverdue: {
-    backgroundColor: '#FEE2E2',
-  },
-  statusUpcoming: {
-    backgroundColor: colors.bgSubtle,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  statusCompletedText: {
-    color: '#065F46',
-  },
-  statusOverdueText: {
-    color: '#991B1B',
-  },
-  statusUpcomingText: {
-    color: colors.muted,
   },
   emptyState: {
     padding: 24,

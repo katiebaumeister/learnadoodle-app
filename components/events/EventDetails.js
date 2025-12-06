@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch } from 'react-native';
-import { Clock, UserCircle, BookOpen, Trash2, Edit2, Calendar } from 'lucide-react';
-import { colors } from '../../theme/colors';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform } from 'react-native';
+import { Clock, UserCircle, BookOpen, Trash2, Edit2, Calendar, Plus, ChevronDown, X, Save } from 'lucide-react';
+import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
-import { formatDate } from '../../lib/apiClient';
+import { formatDate, apiRequest } from '../../lib/apiClient';
+import { getMaterials } from '../../lib/services/materialsClient';
+import AddMaterialModal from '../materials/AddMaterialModal';
+import { logDeleteEvent } from '../../app/services/plannerInstrumentation';
+import StandardsSearchModal from '../standards/StandardsSearchModal';
+import MasteryPicker from '../standards/MasteryPicker';
+import TemplatePicker from '../templates/TemplatePicker';
 
 const STATUS_BASE = ['scheduled', 'in_progress', 'done', 'skipped', 'canceled'];
 const STATUS_NORMALIZE = {
@@ -22,7 +28,14 @@ const formatStatusLabel = (value) => value.replace('_', ' ').toUpperCase();
 
 const getTimestamp = (event, keys = []) => {
   for (const key of keys) {
-    if (event[key]) return event[key];
+    const value = event[key];
+    if (value) {
+      // If it's a time string like "09:00", return null (not a valid timestamp)
+      if (typeof value === 'string' && /^\d{2}:\d{2}$/.test(value)) {
+        continue; // Skip time strings, look for actual timestamps
+      }
+      return value;
+    }
   }
   return null;
 };
@@ -265,7 +278,7 @@ const formatTime = (timestamp) => {
 
 const SUGGESTED_TAGS = ['math', 'reading', 'science', 'writing', 'review', 'test', 'project', 'practice'];
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId }) {
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -280,6 +293,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftStatus, setDraftStatus] = useState('scheduled');
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
+  const [draftMaterialId, setDraftMaterialId] = useState(null);
+  const [materials, setMaterials] = useState([]);
+  const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
+  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  
+  // Standards state
+  const [attachedStandards, setAttachedStandards] = useState([]);
+  const [showStandardsModal, setShowStandardsModal] = useState(false);
+  const [loadingStandards, setLoadingStandards] = useState(false);
+  const [standardsMastery, setStandardsMastery] = useState({}); // Map of standard_id -> mastery_level
+  
+  // Templates state
+  const [savingAsTemplate, setSavingAsTemplate] = useState(false);
+  const [showTemplateNameInput, setShowTemplateNameInput] = useState(false);
+  const [templateName, setTemplateName] = useState('');
 
   const startPeriod = useMemo(() => {
     if (!draftStartTime) return null;
@@ -312,6 +341,190 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const current = normalizeStatus(event?.status);
     return Array.from(new Set([...STATUS_BASE, current].filter(Boolean)));
   }, [event?.status]);
+
+  // Load standards when event loads
+  useEffect(() => {
+    if (event?.id) {
+      loadAttachedStandards();
+    }
+  }, [event?.id]);
+
+  const loadAttachedStandards = async () => {
+    if (!event?.id) return;
+    setLoadingStandards(true);
+    try {
+      const { data, error } = await supabase
+        .from('lesson_standards')
+        .select('standard_id, standards(*)')
+        .eq('lesson_id', event.id);
+      
+      if (error) throw error;
+      
+      const standards = (data || []).map(item => ({
+        id: item.standard_id,
+        ...item.standards,
+      }));
+      setAttachedStandards(standards);
+      
+      // Load mastery levels if event is done and has a student
+      if (event.status === 'done' && event.child_id) {
+        const standardIds = standards.map(s => s.id);
+        if (standardIds.length > 0) {
+          const { data: masteryData, error: masteryError } = await supabase
+            .from('student_standard_mastery')
+            .select('standard_id, mastery_level')
+            .eq('student_id', event.child_id)
+            .in('standard_id', standardIds);
+          
+          if (!masteryError && masteryData) {
+            const masteryMap = {};
+            masteryData.forEach(m => {
+              masteryMap[m.standard_id] = m.mastery_level;
+            });
+            setStandardsMastery(masteryMap);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading standards:', error);
+    } finally {
+      setLoadingStandards(false);
+    }
+  };
+
+  const handleAttachStandards = async (standards) => {
+    if (!event?.id) return;
+    
+    try {
+      const { error } = await apiRequest('/api/standards/attach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lesson_id: event.id,
+          standards: standards.map(s => s.id),
+        }),
+      });
+      
+      if (error) throw error;
+      
+      setAttachedStandards(standards);
+      onEventUpdated?.();
+    } catch (error) {
+      console.error('Error attaching standards:', error);
+      Alert.alert('Error', 'Failed to attach standards');
+    }
+  };
+
+  const handleRemoveStandard = async (standardId) => {
+    if (!event?.id) return;
+    
+    try {
+      const { error } = await supabase
+        .from('lesson_standards')
+        .delete()
+        .eq('lesson_id', event.id)
+        .eq('standard_id', standardId);
+      
+      if (error) throw error;
+      
+      setAttachedStandards(prev => prev.filter(s => s.id !== standardId));
+      setStandardsMastery(prev => {
+        const next = { ...prev };
+        delete next[standardId];
+        return next;
+      });
+      onEventUpdated?.();
+    } catch (error) {
+      console.error('Error removing standard:', error);
+      Alert.alert('Error', 'Failed to remove standard');
+    }
+  };
+
+  const handleMasteryUpdate = async (data) => {
+    if (!event?.child_id) return;
+    
+    try {
+      const { error } = await apiRequest('/api/standards/grade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      
+      if (error) throw error;
+      
+      setStandardsMastery(prev => ({
+        ...prev,
+        [data.standard_id]: data.mastery_level,
+      }));
+      onEventUpdated?.();
+    } catch (error) {
+      console.error('Error updating mastery:', error);
+      Alert.alert('Error', 'Failed to update mastery level');
+    }
+  };
+
+  const handleApplyTemplate = async (template) => {
+    if (!event?.id) return;
+    
+    try {
+      const { data, error } = await apiRequest(`/api/lesson-templates/${template.id}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lesson_id: event.id }),
+      });
+      
+      if (error) throw error;
+      
+      // Update local state with template data
+      if (data.template) {
+        setDraftNotes(data.template.default_objectives || draftNotes);
+        // Could update other fields too
+      }
+      
+      // Reload event to get updated data
+      onEventUpdated?.();
+      Alert.alert('Success', 'Template applied successfully');
+    } catch (error) {
+      console.error('Error applying template:', error);
+      Alert.alert('Error', 'Failed to apply template');
+    }
+  };
+
+  const handleSaveAsTemplate = () => {
+    if (!event?.id) return;
+    setShowTemplateNameInput(true);
+    setTemplateName(event.title || '');
+  };
+
+  const confirmSaveTemplate = async () => {
+    if (!event?.id || !templateName.trim()) {
+      Alert.alert('Error', 'Template name is required');
+      return;
+    }
+    
+    setSavingAsTemplate(true);
+    try {
+      const { data, error } = await apiRequest('/api/lesson-templates/from-lesson', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lesson_id: event.id,
+          title: templateName.trim(),
+        }),
+      });
+      
+      if (error) throw error;
+      
+      setShowTemplateNameInput(false);
+      setTemplateName('');
+      Alert.alert('Success', 'Template saved successfully');
+    } catch (error) {
+      console.error('Error saving template:', error);
+      Alert.alert('Error', 'Failed to save template');
+    } finally {
+      setSavingAsTemplate(false);
+    }
+  };
 
   useEffect(() => {
     if (!event) return;
@@ -355,8 +568,29 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDraftStatus(normalizeStatus(event.status));
     setDraftTags(Array.isArray(event.tags) ? event.tags : []);
     setTagInput('');
+    setDraftMaterialId(event.material_id || null);
     setEditing(false);
   }, [event]);
+
+  // Load materials when editing starts
+  useEffect(() => {
+    if (editing && familyId) {
+      loadMaterials();
+    }
+  }, [editing, familyId]);
+
+  const loadMaterials = async () => {
+    if (!familyId) return;
+    setLoadingMaterials(true);
+    try {
+      const data = await getMaterials(familyId);
+      setMaterials(data);
+    } catch (error) {
+      console.error('Error loading materials:', error);
+    } finally {
+      setLoadingMaterials(false);
+    }
+  };
 
   const childName =
     event?.child?.first_name ||
@@ -367,31 +601,127 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name;
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
+    console.log('[EventDetails] handleDelete called');
+    console.log('[EventDetails] Event object:', event);
+    console.log('[EventDetails] Event ID:', event?.id);
+    
+    if (!event?.id) {
+      console.error('[EventDetails] Event ID is missing, cannot delete');
+      if (Platform.OS === 'web') {
+        window.alert('Error: Event ID is missing');
+      } else {
+        Alert.alert('Error', 'Event ID is missing');
+      }
+      return;
+    }
+    
+    console.log('[EventDetails] Showing delete confirmation');
+    
+    // Use window.confirm on web, Alert.alert on native
+    let confirmed = false;
+    if (Platform.OS === 'web') {
+      confirmed = window.confirm('Are you sure you want to delete this event?');
+      console.log('[EventDetails] User confirmed delete:', confirmed);
+    } else {
+      // For native, use Alert.alert with Promise wrapper
+      confirmed = await new Promise((resolve) => {
     Alert.alert(
       'Delete Event',
       'Are you sure you want to delete this event?',
       [
-        { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Cancel', 
+              style: 'cancel',
+              onPress: () => {
+                console.log('[EventDetails] Delete cancelled by user');
+                resolve(false);
+              }
+            },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: async () => {
+              onPress: () => {
+                console.log('[EventDetails] Delete confirmed by user');
+                resolve(true);
+              },
+            },
+          ]
+        );
+      });
+    }
+    
+    if (!confirmed) {
+      console.log('[EventDetails] Delete cancelled, aborting');
+      return;
+    }
+    
+    console.log('[EventDetails] Delete confirmed, starting deletion process');
             setDeleting(true);
             try {
-              const { error } = await supabase.from('events').delete().eq('id', event.id);
-              if (error) throw error;
-              onEventDeleted?.();
+      console.log('[EventDetails] Attempting to delete event with ID:', event.id);
+      console.log('[EventDetails] Supabase client:', supabase ? 'available' : 'missing');
+      
+      const deleteQuery = supabase
+        .from('events')
+        .delete()
+        .eq('id', event.id)
+        .select();
+      
+      console.log('[EventDetails] Delete query constructed, executing...');
+      const { data, error } = await deleteQuery;
+      
+      console.log('[EventDetails] Delete response received');
+      console.log('[EventDetails] Delete response data:', data);
+      console.log('[EventDetails] Delete response error:', error);
+      
+      if (error) {
+        console.error('[EventDetails] Delete error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+        throw error;
+      }
+      
+      console.log('[EventDetails] Event deleted successfully, calling onEventDeleted callback');
+      console.log('[EventDetails] onEventDeleted function:', onEventDeleted ? 'exists' : 'missing');
+      
+              if (onEventDeleted) {
+                onEventDeleted(event.id);
+                console.log('[EventDetails] onEventDeleted callback executed with event ID:', event.id);
+              } else {
+                console.warn('[EventDetails] onEventDeleted callback is not provided');
+              }
+              
+              // Log delete event action (will be logged in PlannerWeek.handleEventDeleted if called from there)
+              // EventDetails is used in multiple contexts, so we log here as fallback
+              try {
+                const eventDate = event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+                logDeleteEvent(
+                  event.id,
+                  eventDate,
+                  event.child_id
+                );
+              } catch (logError) {
+                console.warn('Failed to log event deletion:', logError);
+              }
             } catch (err) {
-              console.error('Error deleting event:', err);
-              Alert.alert('Error', 'Failed to delete event');
+      console.error('[EventDetails] Exception during delete:', err);
+      console.error('[EventDetails] Error stack:', err?.stack);
+      const errorMessage = err?.message || err?.details || 'Failed to delete event';
+      console.error('[EventDetails] Showing error alert:', errorMessage);
+      
+      if (Platform.OS === 'web') {
+        window.alert(`Failed to delete event: ${errorMessage}`);
+      } else {
+        Alert.alert('Error', `Failed to delete event: ${errorMessage}`);
+      }
             } finally {
+      console.log('[EventDetails] Setting deleting state to false');
               setDeleting(false);
             }
-          },
-        },
-      ]
-    );
   };
 
   const toggleTag = (tag) => {
@@ -461,6 +791,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         child_id: draftChildId || null,
         status: normalizeStatus(draftStatus),
         tags: draftTags.length ? draftTags : null,
+        material_id: draftMaterialId || null,
       };
 
       if (startDateObj) {
@@ -712,6 +1043,80 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       </View>
 
+      {/* Material Selector */}
+      <Text style={styles.fieldLabel}>Material (optional)</Text>
+      <View style={styles.materialSelectorContainer}>
+        <TouchableOpacity
+          style={styles.materialSelector}
+          onPress={() => setShowMaterialDropdown(!showMaterialDropdown)}
+        >
+          <Text style={[styles.materialSelectorText, !draftMaterialId && styles.materialSelectorPlaceholder]}>
+            {draftMaterialId 
+              ? materials.find(m => m.id === draftMaterialId)?.title || 'Select material...'
+              : 'Select material...'}
+          </Text>
+          <ChevronDown size={16} color={colors.muted} />
+        </TouchableOpacity>
+        {draftMaterialId && (
+          <TouchableOpacity
+            style={styles.clearMaterialButton}
+            onPress={() => setDraftMaterialId(null)}
+          >
+            <Text style={styles.clearMaterialText}>Clear</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={styles.addMaterialButton}
+          onPress={() => setShowAddMaterialModal(true)}
+        >
+          <Plus size={14} color={colors.accent} />
+          <Text style={styles.addMaterialText}>Add New</Text>
+        </TouchableOpacity>
+      </View>
+      {showMaterialDropdown && (
+        <View style={styles.materialDropdown}>
+          <ScrollView style={styles.materialDropdownList} nestedScrollEnabled>
+            {loadingMaterials ? (
+              <Text style={styles.materialDropdownItem}>Loading...</Text>
+            ) : materials.length === 0 ? (
+              <Text style={styles.materialDropdownItem}>No materials yet</Text>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.materialDropdownItem}
+                  onPress={() => {
+                    setDraftMaterialId(null);
+                    setShowMaterialDropdown(false);
+                  }}
+                >
+                  <Text style={styles.materialDropdownItemText}>None</Text>
+                </TouchableOpacity>
+                {materials.map((material) => (
+                  <TouchableOpacity
+                    key={material.id}
+                    style={[
+                      styles.materialDropdownItem,
+                      draftMaterialId === material.id && styles.materialDropdownItemActive
+                    ]}
+                    onPress={() => {
+                      setDraftMaterialId(material.id);
+                      setShowMaterialDropdown(false);
+                    }}
+                  >
+                    <Text style={[
+                      styles.materialDropdownItemText,
+                      draftMaterialId === material.id && styles.materialDropdownItemTextActive
+                    ]}>
+                      {material.title} ({material.type})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+          </ScrollView>
+        </View>
+      )}
+
       <Text style={styles.fieldLabel}>Child</Text>
       <View style={styles.tagsRow}>
         {familyMembers.map((member) => {
@@ -759,6 +1164,32 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         placeholder="Add notes"
         multiline
       />
+
+      {/* Template Section */}
+      <View style={styles.templateSection}>
+        <Text style={styles.fieldLabel}>Template</Text>
+        <TemplatePicker
+          subjectId={event?.subject_id}
+          familyId={familyId}
+          onSelect={handleApplyTemplate}
+        />
+        {!familyId && (
+          <Text style={{ fontSize: 10, color: colors.muted, marginTop: 4 }}>
+            Warning: Family ID missing - templates may not load
+          </Text>
+        )}
+        {event?.id && (
+          <TouchableOpacity
+            style={styles.saveTemplateButton}
+            onPress={handleSaveAsTemplate}
+            disabled={savingAsTemplate}
+          >
+            <Text style={styles.saveTemplateButtonText}>
+              {savingAsTemplate ? 'Saving...' : 'Save as Template'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       <Text style={styles.fieldLabel}>Tags</Text>
       <View style={styles.tagsRow}>
@@ -809,18 +1240,36 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <View style={styles.detailRow}>
             <Calendar size={16} color={colors.muted} />
             <Text style={styles.detailLabel}>Date:</Text>
-            <Text style={styles.detailValue}>{formatDate(getTimestamp(event, ['start_ts', 'start', 'start_local']))}</Text>
+            <Text style={styles.detailValue}>
+              {(() => {
+                const timestamp = getTimestamp(event, ['start_ts', 'start', 'start_local']);
+                if (!timestamp) return '—';
+                // If it's a time string like "09:00", skip it and try other fields
+                if (typeof timestamp === 'string' && /^\d{2}:\d{2}$/.test(timestamp)) {
+                  const fallback = getTimestamp(event, ['start_ts']);
+                  return fallback ? formatDate(fallback) : '—';
+                }
+                return formatDate(timestamp);
+              })()}
+            </Text>
           </View>
 
           <View style={styles.detailRow}>
             <Clock size={16} color={colors.muted} />
             <Text style={styles.detailLabel}>Time:</Text>
             <Text style={styles.detailValue}>
-              {formatTime(getTimestamp(event, ['start_ts', 'start', 'start_local']))}
-              {' '}
-              -
-              {' '}
-              {formatTime(getTimestamp(event, ['end_ts', 'end', 'end_local']))}
+              {(() => {
+                const startTs = getTimestamp(event, ['start_ts', 'start', 'start_local']);
+                const endTs = getTimestamp(event, ['end_ts', 'end', 'end_local']);
+                // If timestamps are time strings, try to get proper timestamps
+                const start = (typeof startTs === 'string' && /^\d{2}:\d{2}$/.test(startTs))
+                  ? getTimestamp(event, ['start_ts']) || startTs
+                  : startTs;
+                const end = (typeof endTs === 'string' && /^\d{2}:\d{2}$/.test(endTs))
+                  ? getTimestamp(event, ['end_ts']) || endTs
+                  : endTs;
+                return `${formatTime(start)} - ${formatTime(end)}`;
+              })()}
             </Text>
           </View>
 
@@ -864,14 +1313,136 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         )}
 
         {renderTagsView(event.tags)}
+
+        {/* Standards Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Standards</Text>
+            <TouchableOpacity 
+              style={styles.attachButton}
+              onPress={() => setShowStandardsModal(true)}
+            >
+              <Plus size={16} color={colors.primary} />
+              <Text style={styles.attachButtonText}>Attach Standard</Text>
+            </TouchableOpacity>
+          </View>
+          
+          {loadingStandards ? (
+            <Text style={styles.loadingText}>Loading standards...</Text>
+          ) : attachedStandards.length === 0 ? (
+            <Text style={styles.emptyText}>No standards attached</Text>
+          ) : (
+            <View style={styles.standardsList}>
+              {attachedStandards.map(standard => (
+                <View key={standard.id} style={styles.standardItem}>
+                  <View style={styles.standardContent}>
+                    <Text style={styles.standardCode}>
+                      {standard.standard_code || standard.code || 'N/A'}
+                    </Text>
+                    <Text style={styles.standardDescription} numberOfLines={2}>
+                      {standard.standard_text || standard.description || ''}
+                    </Text>
+                    {event && (event.status === 'done' || event.status === 'completed') && event.child_id && (
+                      <MasteryPicker
+                        studentId={event.child_id}
+                        standardId={standard.id}
+                        lessonId={event.id}
+                        currentMastery={standardsMastery[standard.id] || 'not_attempted'}
+                        onUpdate={handleMasteryUpdate}
+                      />
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    style={styles.removeButton}
+                    onPress={() => handleRemoveStandard(standard.id)}
+                  >
+                    <X size={16} color={colors.muted} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Save as Template Button */}
+        {event?.id && (
+          <View style={styles.section}>
+            <TouchableOpacity
+              style={styles.saveTemplateButtonView}
+              onPress={handleSaveAsTemplate}
+              disabled={savingAsTemplate}
+            >
+              <Save size={18} color={colors.accent} />
+              <Text style={styles.saveTemplateButtonText}>
+                {savingAsTemplate ? 'Saving as Template...' : 'Save as Template'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </>
     );
   };
 
+  const selectedMaterial = materials.find(m => m.id === draftMaterialId);
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        {editing ? renderEditForm() : renderViewMode()}
+    <>
+      <ScrollView style={styles.container}>
+        <View style={styles.content}>
+          {editing ? renderEditForm() : renderViewMode()}
+          
+          {/* Standards Search Modal */}
+          <StandardsSearchModal
+            visible={showStandardsModal}
+            onClose={() => setShowStandardsModal(false)}
+            onSelect={handleAttachStandards}
+            subjectId={event?.subject_id}
+            initialSelected={attachedStandards}
+          />
+          
+          {/* Template Name Input Modal */}
+          {showTemplateNameInput && (
+            <Modal
+              visible={showTemplateNameInput}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setShowTemplateNameInput(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalContainer}>
+                  <Text style={styles.modalTitle}>Save as Template</Text>
+                  <Text style={styles.modalSubtitle}>Enter a name for this template:</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={templateName}
+                    onChangeText={setTemplateName}
+                    placeholder="Template name"
+                    autoFocus
+                  />
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalButtonCancel]}
+                      onPress={() => {
+                        setShowTemplateNameInput(false);
+                        setTemplateName('');
+                      }}
+                    >
+                      <Text style={[styles.modalButtonText, styles.modalButtonCancelText]}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalButtonSave]}
+                      onPress={confirmSaveTemplate}
+                      disabled={savingAsTemplate || !templateName.trim()}
+                    >
+                      <Text style={[styles.modalButtonText, styles.modalButtonSaveText]}>
+                        {savingAsTemplate ? 'Saving...' : 'Save'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+          )}
 
         <View style={styles.actions}>
           {editing ? (
@@ -902,7 +1473,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.deleteButton]}
-                onPress={handleDelete}
+                onPress={() => {
+                  console.log('[EventDetails] Delete button pressed');
+                  handleDelete();
+                }}
                 disabled={deleting}
               >
                 <Trash2 size={16} color="#111827" />
@@ -913,6 +1487,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       </View>
     </ScrollView>
+
+    {/* Add Material Modal */}
+    <AddMaterialModal
+      visible={showAddMaterialModal}
+      onClose={() => setShowAddMaterialModal(false)}
+      onSaved={async () => {
+        setShowAddMaterialModal(false);
+        await loadMaterials();
+      }}
+      familyId={familyId}
+    />
+    </>
   );
 }
 
@@ -965,6 +1551,12 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 24,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   sectionTitle: {
     fontSize: 16,
@@ -1127,6 +1719,153 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
+  attachButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 4,
+  },
+  attachButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.primary,
+  },
+  standardsList: {
+    marginTop: 8,
+  },
+  standardItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    padding: 12,
+    marginBottom: 8,
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  standardContent: {
+    flex: 1,
+  },
+  standardCode: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  standardDescription: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 8,
+  },
+  removeButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: 'italic',
+  },
+  emptyText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: 'italic',
+  },
+  templateSection: {
+    marginBottom: 16,
+  },
+  saveTemplateButton: {
+    marginTop: 8,
+    padding: 10,
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  saveTemplateButtonView: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+    backgroundColor: colors.blueSoft,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  saveTemplateButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    width: '90%',
+    maxWidth: 400,
+    padding: 20,
+    ...shadows.large,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  modalInput: {
+    padding: 12,
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    fontSize: 16,
+    color: colors.text,
+    marginBottom: 16,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  modalButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  modalButtonCancel: {
+    backgroundColor: colors.bgSubtle,
+  },
+  modalButtonSave: {
+    backgroundColor: colors.primary,
+  },
+  modalButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalButtonCancelText: {
+    color: colors.text,
+  },
+  modalButtonSaveText: {
+    color: colors.accentContrast,
+  },
   tagChipText: {
     color: colors.muted,
     fontSize: 12,
@@ -1205,6 +1944,101 @@ const styles = StyleSheet.create({
   },
   statusChipTextActive: {
     fontWeight: '600',
+  },
+  materialSelectorContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  materialSelector: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: colors.card,
+    minHeight: 40,
+  },
+  materialSelectorText: {
+    fontSize: 14,
+    color: colors.text,
+    flex: 1,
+  },
+  materialSelectorPlaceholder: {
+    color: colors.muted,
+  },
+  clearMaterialButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  clearMaterialText: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  addMaterialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentLight,
+  },
+  addMaterialText: {
+    fontSize: 12,
+    color: colors.accent,
+    fontWeight: '500',
+  },
+  materialDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxHeight: 200,
+    zIndex: 1000,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 5,
+      },
+    }),
+  },
+  materialDropdownList: {
+    maxHeight: 200,
+  },
+  materialDropdownItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  materialDropdownItemActive: {
+    backgroundColor: colors.accentLight,
+  },
+  materialDropdownItemText: {
+    fontSize: 14,
+    color: colors.text,
+  },
+  materialDropdownItemTextActive: {
+    color: colors.accent,
+    fontWeight: '500',
   },
 });
 

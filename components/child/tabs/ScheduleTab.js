@@ -1,60 +1,140 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { supabase } from '../../../lib/supabase';
 import { colors } from '../../../theme/colors';
+import { getWeekStart } from '../../../lib/apiClient';
 
 export default function ScheduleTab({ child }) {
-  // TODO: replace with real fetch (Supabase / API)
-  const mockWeek = [
-    {
-      dayLabel: "Monday",
-      dateLabel: "Nov 17",
-      sessions: [
-        {
-          id: "1",
-          title: "Reading – Chapter 2",
-          subject: "Reading",
-          time: "9:00–9:30 AM",
-          status: "scheduled",
-        },
-      ],
-    },
-    {
-      dayLabel: "Tuesday",
-      dateLabel: "Nov 18",
-      sessions: [],
-    },
-    {
-      dayLabel: "Wednesday",
-      dateLabel: "Nov 19",
-      sessions: [
-        {
-          id: "2",
-          title: "Math practice",
-          subject: "Math",
-          time: "10:00–10:45 AM",
-          status: "done",
-        },
-      ],
-    },
-  ];
+  const [weekData, setWeekData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(new Date()));
+
+  useEffect(() => {
+    fetchWeekSchedule();
+  }, [child.id, currentWeekStart]);
+
+  const fetchWeekSchedule = async () => {
+    if (!child?.id) return;
+    
+    try {
+      setLoading(true);
+      const weekEnd = new Date(currentWeekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+
+      const { data: events, error } = await supabase
+        .from('events')
+        .select('id, title, start_ts, end_ts, status, subject_id')
+        .eq('child_id', child.id)
+        .gte('start_ts', currentWeekStart.toISOString())
+        .lt('start_ts', weekEnd.toISOString())
+        .order('start_ts', { ascending: true });
+
+      if (error) throw error;
+
+      // Fetch subject names separately
+      const subjectIds = [...new Set((events || []).map(e => e.subject_id).filter(Boolean))];
+      const subjectLookup = {};
+      
+      if (subjectIds.length > 0) {
+        const { data: subjects } = await supabase
+          .from('subject')
+          .select('id, name')
+          .in('id', subjectIds);
+        
+        (subjects || []).forEach(s => {
+          subjectLookup[s.id] = s.name;
+        });
+      }
+
+      // Group events by day
+      const daysMap = new Map();
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(currentWeekStart);
+        date.setDate(date.getDate() + i);
+        const dateKey = date.toISOString().split('T')[0];
+        const dayLabel = dayNames[date.getDay()];
+        const dateLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        
+        daysMap.set(dateKey, {
+          dayLabel,
+          dateLabel,
+          dateKey,
+          sessions: []
+        });
+      }
+
+      // Add events to their respective days
+      (events || []).forEach(event => {
+        const eventDate = new Date(event.start_ts);
+        const dateKey = eventDate.toISOString().split('T')[0];
+        const dayData = daysMap.get(dateKey);
+        
+        if (dayData) {
+          const startTime = eventDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          const endTime = new Date(event.end_ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          
+          dayData.sessions.push({
+            id: event.id,
+            title: event.title,
+            subject: event.subject_id ? (subjectLookup[event.subject_id] || 'Unassigned') : 'Unassigned',
+            time: `${startTime}–${endTime}`,
+            status: event.status === 'done' ? 'done' : 'scheduled',
+          });
+        }
+      });
+
+      setWeekData(Array.from(daysMap.values()));
+    } catch (error) {
+      console.error('Error fetching schedule:', error);
+      setWeekData([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleWeekToggle = (isNextWeek) => {
+    const newWeekStart = new Date(currentWeekStart);
+    if (isNextWeek) {
+      newWeekStart.setDate(newWeekStart.getDate() + 7);
+    } else {
+      newWeekStart.setDate(newWeekStart.getDate() - 7);
+    }
+    setCurrentWeekStart(getWeekStart(newWeekStart));
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.text} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Schedule for {child.first_name}</Text>
         <View style={styles.weekToggle}>
-          <TouchableOpacity style={styles.weekToggleActive}>
+          <TouchableOpacity 
+            style={styles.weekToggleActive}
+            onPress={() => handleWeekToggle(false)}
+          >
             <Text style={styles.weekToggleActiveText}>This week</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.weekToggleButton}>
+          <TouchableOpacity 
+            style={styles.weekToggleButton}
+            onPress={() => handleWeekToggle(true)}
+          >
             <Text style={styles.weekToggleText}>Next week</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       <View style={styles.daysGrid}>
-        {mockWeek.map((day) => (
-          <View key={day.dayLabel} style={styles.dayCard}>
+        {weekData.map((day) => (
+          <View key={day.dateKey} style={styles.dayCard}>
             <View style={styles.dayHeader}>
               <View>
                 <Text style={styles.dayLabel}>{day.dayLabel}</Text>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Plus, Users, Activity, BookOpen, FileText, ClipboardCheck, Copy, Upload, Sparkles, Target } from 'lucide-react';
-import { checkFeatureFlags } from '../lib/services/yearClient';
+import { Plus, Users, Activity, FileText, Sparkles, GraduationCap } from 'lucide-react';
 
 /**
  * Global "+ New" menu that appears in top bar and sidebar footer
@@ -15,31 +14,58 @@ export default function GlobalNewMenu({
   currentContext = 'home',
   onAddChild,
   onAddActivity,
-  onAddLessonPlan,
   onAddSyllabus,
-  onAddAttendance,
-  onCopyFromTemplate,
-  onImportFromFile,
+  onAddSubject,
   onAIGenerate,
-  onPlanYear,
 }) {
-  const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
-  
-  // Debug: Log if onPlanYear is provided
-  useEffect(() => {
-    console.log('[GlobalNewMenu] onPlanYear provided:', !!onPlanYear, typeof onPlanYear);
-  }, [onPlanYear]);
+  const [adjustedPosition, setAdjustedPosition] = React.useState(position);
 
+  // Calculate menu height and adjust position to prevent overflow
   useEffect(() => {
-    checkFeatureFlags().then(flags => {
-      console.log('[GlobalNewMenu] Year plans enabled:', flags.yearPlans);
-      setYearPlansEnabled(flags.yearPlans);
-    }).catch(err => {
-      console.error('[GlobalNewMenu] Error checking feature flags:', err);
-      // Default to false if check fails (safer)
-      setYearPlansEnabled(false);
-    });
-  }, []);
+    if (visible && Platform.OS === 'web') {
+      // Approximate menu height: 
+      // - 4 primary actions * 48px (12px padding * 2 + 24px content) = 192px
+      // - 1 divider = 9px (4px margin * 2 + 1px height)
+      // - 1 secondary action = 48px
+      // Total: ~249px, add some buffer = ~280px
+      const estimatedMenuHeight = 280;
+      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth;
+      
+      let adjustedY = position.y;
+      let adjustedX = position.x;
+      
+      // Check if menu would overflow bottom of screen
+      if (position.y + estimatedMenuHeight > viewportHeight) {
+        // Position above the trigger button instead
+        // The position.y is already below the button, so we need to go back up
+        // by the menu height plus the gap we added (1px) plus button height
+        const buttonHeight = 40; // Approximate button height
+        const gap = 1; // Gap we added in WebLayout
+        adjustedY = position.y - estimatedMenuHeight - buttonHeight - gap; // Position above with same gap
+        
+        // Ensure it doesn't go above viewport
+        if (adjustedY < 16) {
+          adjustedY = 16; // 16px margin from top
+        }
+      }
+      
+      // Check if menu would overflow right edge
+      const menuWidth = 240; // minWidth from styles
+      if (position.x + menuWidth > viewportWidth) {
+        adjustedX = viewportWidth - menuWidth - 16; // 16px margin from edge
+      }
+      
+      // Check if menu would overflow left edge
+      if (adjustedX < 16) {
+        adjustedX = 16;
+      }
+      
+      setAdjustedPosition({ x: adjustedX, y: adjustedY });
+    } else {
+      setAdjustedPosition(position);
+    }
+  }, [visible, position]);
 
   useEffect(() => {
     if (visible && Platform.OS === 'web') {
@@ -78,18 +104,18 @@ export default function GlobalNewMenu({
       onPress: () => { onClose(); onAddChild?.(); }
     },
     { 
+      id: 'add-subject',
+      label: 'Add Subject', 
+      icon: GraduationCap,
+      context: 'settings',
+      onPress: () => { onClose(); onAddSubject?.(); }
+    },
+    { 
       id: 'add-activity',
       label: 'Add to Plan', 
       icon: Activity,
       context: 'calendar',
       onPress: () => { onClose(); onAddActivity?.(); }
-    },
-    { 
-      id: 'add-lesson-plan',
-      label: 'Add Lesson Plan', 
-      icon: BookOpen,
-      context: 'lesson-plans',
-      onPress: () => { onClose(); onAddLessonPlan?.(); }
     },
     { 
       id: 'add-syllabus',
@@ -98,36 +124,12 @@ export default function GlobalNewMenu({
       context: 'documents',
       onPress: () => { onClose(); onAddSyllabus?.(); }
     },
-    { 
-      id: 'add-attendance',
-      label: 'Add Attendance', 
-      icon: ClipboardCheck,
-      context: 'attendance',
-      onPress: () => { onClose(); onAddAttendance?.(); }
-    },
-    ...(onPlanYear && yearPlansEnabled ? [{
-      id: 'plan-year',
-      label: 'Year Plan',
-      icon: Target,
-      context: 'calendar',
-      onPress: () => { onClose(); onPlanYear?.(); }
-    }] : []),
   ];
 
   // Secondary actions
   const secondaryActions = [
     { 
-      label: 'Copy from Template…', 
-      icon: Copy,
-      onPress: () => { onClose(); onCopyFromTemplate?.(); }
-    },
-    { 
-      label: 'Import from File…', 
-      icon: Upload,
-      onPress: () => { onClose(); onImportFromFile?.(); }
-    },
-    { 
-      label: 'AI-Generate…', 
+      label: 'AI Tools', 
       icon: Sparkles,
       onPress: () => { onClose(); onAIGenerate?.(); }
     },
@@ -146,8 +148,8 @@ export default function GlobalNewMenu({
         styles.container,
         Platform.OS === 'web' ? {
           position: 'fixed',
-          left: position.x,
-          top: position.y,
+          left: adjustedPosition.x,
+          top: adjustedPosition.y,
         } : {}
       ]}
       onClick={(e) => e.stopPropagation()}

@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
+import AddSubjectModal from './AddSubjectModal';
+import MaterialsAttachment from './events/MaterialsAttachment';
+import VideoEmbed from './content/VideoEmbed';
+import { logAddEvent } from '../app/services/plannerInstrumentation';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -119,15 +123,18 @@ export default function TaskCreateModal({
   visible,
   onClose,
   defaultDate,
+  defaultChildId,
   familyMembers = [],
   familyId,
   onCreated,
 }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
-  const [assigneeId, setAssigneeId] = useState(null);
+  const [assigneeId, setAssigneeId] = useState(defaultChildId || null);
   const [priority, setPriority] = useState('normal');
   const [notes, setNotes] = useState('');
+  const [showVideoEmbed, setShowVideoEmbed] = useState(false);
+  const [embeddedVideos, setEmbeddedVideos] = useState([]);
   const [labelDraft, setLabelDraft] = useState('');
   const [labels, setLabels] = useState([]);
   const suggestedTags = ['homework', 'lesson', 'project', 'appointment', 'sport'];
@@ -151,6 +158,8 @@ export default function TaskCreateModal({
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
   const [showGoalDropdown, setShowGoalDropdown] = useState(false);
+  const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
   
   const toast = useToast();
 
@@ -172,7 +181,7 @@ export default function TaskCreateModal({
     if (visible) {
       setTitle('');
       setDueDate(defaultDate ?? new Date());
-      setAssigneeId(null);
+      setAssigneeId(defaultChildId || null);
       setPriority('normal');
       setNotes('');
       setLabels([]);
@@ -357,8 +366,8 @@ export default function TaskCreateModal({
           _family_id: userFamilyId,
           _child_id: childId,
           _title: title.trim(),
-          _description: notes.trim() || null,
           _start_ts: farFutureDate.toISOString(),
+          _description: notes.trim() || null,
           _end_ts: farFutureEndDate.toISOString(),
           _status: 'scheduled',
           _source: 'task_create',
@@ -433,8 +442,8 @@ export default function TaskCreateModal({
           _family_id: userFamilyId,
           _child_id: childId,
           _title: title.trim(),
-          _description: notes.trim() || null,
           _start_ts: startDate.toISOString(),
+          _description: notes.trim() || null,
           _end_ts: endDate?.toISOString(),
           _status: 'scheduled',
           _source: 'task_create',
@@ -449,6 +458,7 @@ export default function TaskCreateModal({
           _instructor: instructor.trim() || null,
           _goal_link: goalLink || null,
           _minutes: minutes,
+          _materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
         });
 
         if (rpcError || !rpcData?.ok) {
@@ -474,6 +484,21 @@ export default function TaskCreateModal({
         console.error('Error hint:', error.hint);
         toast.push(`Failed to create task: ${error.message || 'Unknown error'}`, 'error');
         return;
+      }
+
+      // Log event creation action
+      if (data?.id && placement !== 'backlog') {
+        try {
+          const eventDate = data.start_ts ? new Date(data.start_ts).toISOString().split('T')[0] : dueDate?.toISOString().split('T')[0];
+          logAddEvent(
+            data.id,
+            eventDate || new Date().toISOString().split('T')[0],
+            assigneeId,
+            subjectId
+          );
+        } catch (logError) {
+          console.warn('Failed to log event creation:', logError);
+        }
       }
 
       toast.push(placement === 'backlog' ? 'Backlog task created' : 'Task created successfully', 'success');
@@ -835,6 +860,31 @@ export default function TaskCreateModal({
                                   </Text>
                                 </TouchableOpacity>
                               ))}
+                              <View style={styles.selectDivider} />
+                              <TouchableOpacity
+                                onPress={() => {
+                                  setShowSubjectDropdown(false);
+                                  setShowAddSubjectModal(true);
+                                }}
+                                style={styles.selectOptionAdd}
+                              >
+                                <Plus size={14} color={ACCENT} />
+                                <Text style={styles.selectOptionAddText}>Add New Subject</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                          {showSubjectDropdown && subjects.length === 0 && (
+                            <View style={styles.selectOptions}>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  setShowSubjectDropdown(false);
+                                  setShowAddSubjectModal(true);
+                                }}
+                                style={styles.selectOptionAdd}
+                              >
+                                <Plus size={14} color={ACCENT} />
+                                <Text style={styles.selectOptionAddText}>Add Your First Subject</Text>
+                              </TouchableOpacity>
                             </View>
                           )}
                         </View>
@@ -969,6 +1019,21 @@ export default function TaskCreateModal({
                         />
                       </View>
                     </SafeFieldRow>
+                    
+                    {/* Materials Attachment */}
+                    {familyId && assigneeId && (
+                      <SafeFieldRow style={styles.fieldRow}>
+                        <View style={styles.field}>
+                          <MaterialsAttachment
+                            familyId={familyId}
+                            childId={assigneeId}
+                            subjectId={subjectId}
+                            selectedMaterialIds={attachedMaterialIds}
+                            onSelectionChange={setAttachedMaterialIds}
+                          />
+                        </View>
+                      </SafeFieldRow>
+                    )}
                   </>
                 )}
               </SafeView>
@@ -1013,6 +1078,38 @@ export default function TaskCreateModal({
               style={[styles.input, styles.notesInput]}
               multiline
             />
+
+            {/* Video Embed */}
+            <View style={{ marginTop: 16 }}>
+              <TouchableOpacity
+                onPress={() => setShowVideoEmbed(!showVideoEmbed)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  padding: 12,
+                  backgroundColor: '#f3f4f6',
+                  borderRadius: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: FG, marginRight: 8 }}>
+                  {showVideoEmbed ? 'Hide' : 'Add'} Video
+                </Text>
+                <Plus size={16} color={FG} />
+              </TouchableOpacity>
+              {showVideoEmbed && (
+                <View style={{ marginTop: 8 }}>
+                  <VideoEmbed
+                    eventId={null}
+                    familyId={familyId}
+                    existingVideos={embeddedVideos}
+                    onVideoAdded={(videos) => {
+                      setEmbeddedVideos(videos);
+                    }}
+                  />
+                </View>
+              )}
+            </View>
           </SafeView>
 
           {/* Footer */}
@@ -1035,6 +1132,22 @@ export default function TaskCreateModal({
           </View>
         </Animated.View>
       </Animated.View>
+      
+      {/* Add Subject Modal */}
+      <AddSubjectModal
+        visible={showAddSubjectModal}
+        onClose={() => setShowAddSubjectModal(false)}
+        onSubjectAdded={(newSubject) => {
+          // Refresh subjects list
+          fetchSubjects();
+          // Select the newly added subject
+          if (newSubject?.id) {
+            setSubjectId(newSubject.id);
+          }
+        }}
+        familyId={familyId}
+        defaultChildId={assigneeId}
+      />
     </Modal>
   );
 }
@@ -1413,6 +1526,24 @@ const styles = StyleSheet.create({
   },
   selectOptionTextActive: {
     fontWeight: '600',
+  },
+  selectDivider: {
+    height: 1,
+    backgroundColor: BORDER,
+    marginVertical: 4,
+  },
+  selectOptionAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#f9fafb',
+  },
+  selectOptionAddText: {
+    color: ACCENT,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });
 

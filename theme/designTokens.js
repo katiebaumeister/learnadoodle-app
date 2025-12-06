@@ -5,33 +5,40 @@
 
 export const designTokens = {
   colors: {
-    ink: '#111827',
-    paper: '#ffffff',
-    rail: '#f8f9ff',
-    surface: '#ffffff',
-    border: '#E5E7EB',
-    muted: '#6B7280',
-    primary: '#6D6AFD',
-    primaryInk: '#ffffff',
+    ink: '#2E2E2E',
+    paper: '#FFFFFF',
+    rail: '#FAFAFA',
+    surface: '#FFFFFF',
+    border: '#E8E8E8',
+    muted: '#8B8B8B',
+    primary: '#8B7CF6',
+    primaryInk: '#FFFFFF',
+    // Pastel backgrounds
+    pastelLavender: '#F5F3FF',
+    pastelMint: '#F0FDF4',
+    pastelPeach: '#FFF5F5',
+    pastelSky: '#F0F9FF',
+    pastelRose: '#FFF1F2',
+    pastelYellow: '#FEFCE8',
   },
   accents: {
-    core: '#6366f1',
-    math: '#4f46e5',
-    reading: '#7c3aed',
-    science: '#059669',
-    creative: '#db2777',
-    physical: '#0ea5e9',
+    core: '#8B7CF6',
+    math: '#A78BFA',
+    reading: '#C084FC',
+    science: '#86EFAC',
+    creative: '#F9A8D4',
+    physical: '#7DD3FC',
   },
   softAccents: {
-    core: '#eef2ff',
-    math: '#eef2ff',
-    reading: '#f3e8ff',
-    science: '#ecfdf3',
-    creative: '#fde2f4',
-    physical: '#e0f2fe',
+    core: '#F5F3FF',
+    math: '#F5F3FF',
+    reading: '#FAE8FF',
+    science: '#F0FDF4',
+    creative: '#FDF2F8',
+    physical: '#F0F9FF',
   },
-  radius: 16,
-  ring: '0 0 0 3px rgba(109,106,253,0.25)',
+  radius: 12,
+  ring: '0 0 0 3px rgba(139,124,246,0.15)',
   fonts: {
     display: '"Outfit", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     sans: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -74,17 +81,23 @@ const rainbowGradient = `linear-gradient(90deg, ${gradientStops.join(', ')})`;
 
 export const baseCssLayer = `
 :root {
-  --ld-bg: #ffffff;
-  --ld-surface: #ffffff;
-  --ld-border: #E5E7EB;
-  --ld-text: #111827;
-  --ld-muted: #6B7280;
-  --ld-primary: #6D6AFD;
-  --ld-primary-ink: #ffffff;
-  --ld-ring: 0 0 0 3px rgba(109,106,253,.25);
+  --ld-bg: #FFFFFF;
+  --ld-surface: #FFFFFF;
+  --ld-border: #E8E8E8;
+  --ld-text: #2E2E2E;
+  --ld-muted: #8B8B8B;
+  --ld-primary: #8B7CF6;
+  --ld-primary-ink: #FFFFFF;
+  --ld-ring: 0 0 0 3px rgba(139,124,246,0.15);
   --ld-ink: var(--ld-text);
   --ld-paper: var(--ld-bg);
-  --ld-rail: #f8f9ff;
+  --ld-rail: #FAFAFA;
+  --ld-pastel-lavender: #F5F3FF;
+  --ld-pastel-mint: #F0FDF4;
+  --ld-pastel-peach: #FFF5F5;
+  --ld-pastel-sky: #F0F9FF;
+  --ld-pastel-rose: #FFF1F2;
+  --ld-pastel-yellow: #FEFCE8;
   font-family: var(--ld-font-sans);
 }
 
@@ -141,19 +154,22 @@ body {
   justify-content: center;
   gap: 0.5rem;
   padding: 0.5rem 0.9rem;
-  border-radius: calc(var(--ld-radius) - 6px);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: calc(var(--ld-radius) - 2px);
+  border: 1px solid rgba(46, 46, 46, 0.06);
   background: var(--ld-paper);
   color: var(--ld-ink);
   font-size: 0.95rem;
   font-weight: 500;
   line-height: 1.2;
   cursor: pointer;
-  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .btn:hover {
-  background: rgba(15, 23, 42, 0.04);
+  background: var(--ld-rail);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+  transform: translateY(-1px);
 }
 
 .btn:focus-visible {
@@ -162,13 +178,16 @@ body {
 }
 
 .btn-primary {
-  background: var(--ld-accent-core);
-  border-color: var(--ld-accent-core);
+  background: var(--ld-primary);
+  border-color: var(--ld-primary);
   color: #ffffff;
+  box-shadow: 0 2px 4px rgba(139, 124, 246, 0.2);
 }
 
 .btn-primary:hover {
-  background: rgba(99, 102, 241, 0.92);
+  background: #7C6AE8;
+  box-shadow: 0 4px 8px rgba(139, 124, 246, 0.3);
+  transform: translateY(-1px);
 }
 
 .btn-primary:focus-visible {
@@ -188,7 +207,7 @@ body {
 }
 
 .nav-icon:hover {
-  background: rgba(99, 102, 241, 0.1);
+  background: var(--ld-pastel-lavender);
 }
 
 .nav-icon:focus-visible {

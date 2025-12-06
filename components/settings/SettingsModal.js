@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
 import { LogOut, Users, Settings, User, Link2, Info, X } from 'lucide-react';
@@ -16,10 +16,17 @@ const sections = [
   { id: 'about', label: 'About', icon: Info },
 ];
 
-export default function SettingsModal({ visible, onClose, user }) {
+export default function SettingsModal({ visible, onClose, user, initialSection = 'profile' }) {
   const { signOut } = useAuth();
-  const [activeSection, setActiveSection] = useState('profile');
+  const [activeSection, setActiveSection] = useState(initialSection);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  // Update activeSection when modal becomes visible and initialSection changes
+  useEffect(() => {
+    if (visible) {
+      setActiveSection(initialSection);
+    }
+  }, [visible, initialSection]);
 
   const handleLogout = async () => {
     setLoggingOut(true);

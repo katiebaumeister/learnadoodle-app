@@ -1,7 +1,31 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Image } from 'react-native';
 import { Flame, Clock, BookOpen, Award } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
+
+const avatarSources = {
+  prof1: require('../../assets/prof1.png'),
+  prof2: require('../../assets/prof2.png'),
+  prof3: require('../../assets/prof3.png'),
+  prof4: require('../../assets/prof4.png'),
+  prof5: require('../../assets/prof5.png'),
+  prof6: require('../../assets/prof6.png'),
+  prof7: require('../../assets/prof7.png'),
+  prof8: require('../../assets/prof8.png'),
+  prof9: require('../../assets/prof9.png'),
+  prof10: require('../../assets/prof10.png'),
+};
+
+const resolveAvatarSource = (avatarKey) => {
+  if (!avatarKey) {
+    return avatarSources.prof1;
+  }
+  const normalized = String(avatarKey)
+    .toLowerCase()
+    .replace(/.*\//, '')
+    .replace(/\.(png|jpg|jpeg|webp|gif)$/i, '');
+  return avatarSources[normalized] || avatarSources.prof1;
+};
 
 export default function IdentityPanel({ child, summary, goals, weekStart, weekEnd }) {
   const childName = child?.name || child?.first_name || 'Child';
@@ -31,11 +55,11 @@ export default function IdentityPanel({ child, summary, goals, weekStart, weekEn
     <View style={styles.container}>
       {/* Avatar and Basic Info */}
       <View style={styles.mainRow}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {childName.charAt(0).toUpperCase()}
-          </Text>
-        </View>
+        <Image
+          source={resolveAvatarSource(child?.avatar)}
+          style={styles.avatar}
+          resizeMode="contain"
+        />
         <View style={styles.info}>
           <View style={styles.nameRow}>
             <Text style={styles.name}>{childName}</Text>
@@ -105,15 +129,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.blueSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginRight: 16,
-  },
-  avatarText: {
-    fontSize: 28,
-    fontWeight: '600',
-    color: colors.blueBold,
   },
   info: {
     flex: 1,

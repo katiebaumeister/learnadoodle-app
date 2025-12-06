@@ -8,10 +8,13 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Modal,
+  Platform,
 } from 'react-native';
-import { Upload, FileText, X, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, FileText, X, CheckCircle, AlertCircle, Link as LinkIcon } from 'lucide-react';
 import { processAndSaveSyllabus } from '../lib/syllabusProcessor';
 import { supabase } from '../lib/supabase';
+import { colors } from '../theme/colors';
 
 // Icon component for consistency
 const Icon = ({ name, size = 16, color = '#37352f' }) => {
@@ -21,49 +24,82 @@ const Icon = ({ name, size = 16, color = '#37352f' }) => {
     x: X,
     checkCircle: CheckCircle,
     alertCircle: AlertCircle,
+    link: LinkIcon,
   };
   
   const IconComponent = icons[name] || Upload;
   return <IconComponent size={size} color={color} />;
 };
 
-export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }) {
+export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, child, familyId }) {
+  // Upload method: 'link', 'file', or 'text' (AI processing)
+  const [uploadMethod, setUploadMethod] = useState('link');
+  
+  // Common fields
+  const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  const [syllabusTitle, setSyllabusTitle] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [expectedWeeklyMinutes, setExpectedWeeklyMinutes] = useState('');
+  
+  // Link method fields
+  const [fileUrl, setFileUrl] = useState('');
+  
+  // File upload fields
+  const [uploadedFileId, setUploadedFileId] = useState(null);
+  
+  // Text/AI processing fields
   const [courseTitle, setCourseTitle] = useState('');
   const [providerName, setProviderName] = useState('');
   const [courseOutlineRaw, setCourseOutlineRaw] = useState('');
-  const [unitStart, setUnitStart] = useState('1'); // Unit to start from
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processedOutline, setProcessedOutline] = useState(null);
-  const [uploadMethod, setUploadMethod] = useState('text'); // 'text' or 'file'
-  const [existingSubjects, setExistingSubjects] = useState([]);
-  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [unitStart, setUnitStart] = useState('1');
   
-  // Advanced options for auto-pacing and calendar integration
+  // Advanced options for AI processing
   const [autoPace, setAutoPace] = useState(false);
-  const [startDate, setStartDate] = useState('2025-08-01');
-  const [endDate, setEndDate] = useState('2026-06-30');
   const [teachingDays, setTeachingDays] = useState([1, 2, 3, 4, 5]); // Mon-Fri
   const [addToCalendar, setAddToCalendar] = useState(false);
+  
+  // State management
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [processedOutline, setProcessedOutline] = useState(null);
+  const [subjects, setSubjects] = useState([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [existingSubjects, setExistingSubjects] = useState([]); // For AI processing subject chips
 
-  // Fetch existing subjects when component mounts
+  // Fetch subjects when modal opens
   useEffect(() => {
-    if (visible) {
-      fetchExistingSubjects();
+    if (visible && familyId) {
+      fetchSubjects();
+      if (uploadMethod === 'text') {
+        fetchExistingSubjects();
+      }
     }
-  }, [visible]);
+  }, [visible, familyId, uploadMethod]);
 
-  // Debug logging for render state changes
-  useEffect(() => {
-    console.log('Course title section state changed:', { 
-      loadingSubjects, 
-      existingSubjects: existingSubjects?.length, 
-      courseTitle 
-    });
-  }, [loadingSubjects, existingSubjects, courseTitle]);
+  const fetchSubjects = async () => {
+    if (!familyId) return;
+    
+    try {
+      setLoadingSubjects(true);
+      const { data, error } = await supabase
+        .from('subject')
+        .select('id, name')
+        .eq('family_id', familyId)
+        .order('name', { ascending: true });
+      
+      if (error) throw error;
+      setSubjects(data || []);
+    } catch (error) {
+      console.error('Error fetching subjects:', error);
+      Alert.alert('Error', 'Failed to load subjects');
+    } finally {
+      setLoadingSubjects(false);
+    }
+  };
 
   const fetchExistingSubjects = async () => {
     try {
-      setLoadingSubjects(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -85,71 +121,143 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
         return;
       }
 
-      console.log('Fetched subjects:', subjects);
       setExistingSubjects(subjects || []);
     } catch (error) {
       console.error('Error fetching subjects:', error);
-    } finally {
-      setLoadingSubjects(false);
     }
   };
 
-  // Sanitize syllabus text (similar to your Python sanitize_syllabus function)
-  const sanitizeSyllabus = (text) => {
-    // Step 1: Split into lines and strip leading/trailing whitespace
-    let lines = text.split('\n').map(line => line.trim());
-    
-    // Step 2: Replace tabs with spaces
-    lines = lines.map(line => line.replace(/\t/g, ' '));
-    
-    // Step 3: Filter out empty lines and platform tags
-    lines = lines.filter(line => {
-      // Remove empty lines
-      if (!line || line.trim() === '') return false;
-      
-      // Remove common platform tags
-      const platformTags = [
-        /unit mastery:\s*\d+%/i,
-        /progress:\s*\d+%/i,
-        /completion:\s*\d+%/i,
-        /score:\s*\d+%/i,
-        /grade:\s*[a-f]/i,
-      ];
-      
-      return !platformTags.some(tag => tag.test(line));
-    });
-    
-    // Step 4: Join lines with \n
-    let singleLine = lines.join('\n');
-    
-    // Step 5: Escape double quotes
-    singleLine = singleLine.replace(/"/g, '\\"');
-    
-    return singleLine;
-  };
-
-  // Process syllabus with AI using the service
-  const processSyllabusWithAI = async (courseTitle, providerName, rawText) => {
-    try {
-      const options = {
-        autoPace,
-        startDate: startDate ? new Date(startDate).toISOString().split('T')[0] : null,
-        endDate: endDate ? new Date(endDate).toISOString().split('T')[0] : null,
-        teachingDays,
-        addToCalendar: autoPace && addToCalendar,
+  const handleFileUpload = () => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf,.doc,.docx,.txt';
+      input.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        try {
+          setSaving(true);
+          const fileName = `${familyId}/${Date.now()}_${file.name}`;
+          
+          // Upload to Supabase storage
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('evidence')
+            .upload(fileName, file, {
+              contentType: file.type,
+              metadata: { family_id: familyId, child_id: child?.id }
+            });
+          
+          if (uploadError) throw uploadError;
+          
+          // Get public URL
+          const { data: urlData } = supabase.storage
+            .from('evidence')
+            .getPublicUrl(fileName);
+          
+          // Create upload record
+          const { data: uploadRecord, error: recordError } = await supabase
+            .from('uploads')
+            .insert({
+              family_id: familyId,
+              child_id: child?.id || null,
+              subject_id: selectedSubjectId || null,
+              filename: file.name,
+              url: urlData.publicUrl,
+              kind: 'syllabus',
+              bytes: file.size,
+              mime: file.type
+            })
+            .select()
+            .single();
+          
+          if (recordError) throw recordError;
+          
+          setUploadedFileId(uploadRecord.id);
+          Alert.alert('File Uploaded', 'File uploaded successfully! Fill in the form and click Save.');
+        } catch (error) {
+          console.error('Error uploading file:', error);
+          Alert.alert('Error', 'Failed to upload file: ' + error.message);
+        } finally {
+          setSaving(false);
+        }
       };
-
-      console.log('Upload options being sent:', options);
-      
-      const result = await processAndSaveSyllabus(courseTitle, providerName, rawText, options);
-      return result;
-    } catch (error) {
-      console.error('Error processing syllabus:', error);
-      throw error;
+      input.click();
+    } else {
+      Alert.alert('File Upload', 'File upload is currently only supported on web. Please use a link instead.');
     }
   };
 
-  const handleUpload = async () => {
+  const createSyllabusRecord = async () => {
+    if (!selectedSubjectId || !syllabusTitle.trim()) {
+      Alert.alert('Missing Information', 'Please select a subject and enter a title.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      
+      let finalUploadId = uploadedFileId;
+      
+      // If using link method and no upload yet, create a minimal upload record
+      if (!finalUploadId && uploadMethod === 'link' && fileUrl.trim()) {
+        const { data: linkUpload, error: linkError } = await supabase
+          .from('uploads')
+          .insert({
+            family_id: familyId,
+            child_id: child?.id || null,
+            subject_id: selectedSubjectId,
+            filename: fileUrl,
+            url: fileUrl,
+            kind: 'syllabus',
+            bytes: 0,
+            mime: 'text/uri-list'
+          })
+          .select()
+          .single();
+        
+        if (linkError) throw linkError;
+        finalUploadId = linkUpload.id;
+      }
+      
+      if (!finalUploadId && uploadMethod !== 'text') {
+        Alert.alert('Error', 'Please upload a file or provide a link.');
+        return;
+      }
+
+      // Create syllabus record
+      const { error: syllabusError } = await supabase
+        .from('syllabi')
+        .insert({
+          family_id: familyId,
+          child_id: child?.id || null,
+          subject_id: selectedSubjectId,
+          upload_id: finalUploadId || null,
+          title: syllabusTitle.trim(),
+          start_date: startDate || null,
+          end_date: endDate || null,
+          expected_weekly_minutes: expectedWeeklyMinutes ? parseInt(expectedWeeklyMinutes) : null
+        });
+      
+      if (syllabusError) throw syllabusError;
+      
+      Alert.alert('Success', 'Syllabus added successfully!');
+      
+      if (onSyllabusProcessed) {
+        onSyllabusProcessed({ success: true });
+      }
+      
+      resetForm();
+      onClose();
+    } catch (error) {
+      console.error('Error creating syllabus:', error);
+      Alert.alert('Error', 'Failed to create syllabus: ' + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const processSyllabusWithAI = async () => {
     if (!courseTitle.trim() || !providerName.trim() || !courseOutlineRaw.trim()) {
       Alert.alert('Missing Information', 'Please fill in all required fields.');
       return;
@@ -163,16 +271,27 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
     setIsProcessing(true);
     
     try {
-      const result = await processSyllabusWithAI(courseTitle, providerName, courseOutlineRaw);
+      const options = {
+        autoPace,
+        startDate: startDate ? new Date(startDate).toISOString().split('T')[0] : null,
+        endDate: endDate ? new Date(endDate).toISOString().split('T')[0] : null,
+        teachingDays,
+        addToCalendar: autoPace && addToCalendar,
+      };
+
+      const result = await processAndSaveSyllabus(courseTitle, providerName, courseOutlineRaw, options);
       
       setProcessedOutline(result);
       
-      // Call the callback to save the processed syllabus
       if (onSyllabusProcessed) {
         onSyllabusProcessed(result);
       }
       
       Alert.alert('Success', 'Syllabus processed successfully!');
+      resetForm();
+      setTimeout(() => {
+        onClose();
+      }, 1000);
       
     } catch (error) {
       console.error('Error processing syllabus:', error);
@@ -182,37 +301,50 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
     }
   };
 
-  const handleFileUpload = () => {
-    // In a real implementation, this would handle file picker
-    Alert.alert('File Upload', 'File upload functionality would be implemented here.');
+  const handleSave = async () => {
+    if (uploadMethod === 'text') {
+      await processSyllabusWithAI();
+    } else {
+      await createSyllabusRecord();
+    }
   };
 
   const resetForm = () => {
+    setUploadMethod('link');
+    setSelectedSubjectId('');
+    setSyllabusTitle('');
+    setStartDate('');
+    setEndDate('');
+    setExpectedWeeklyMinutes('');
+    setFileUrl('');
+    setUploadedFileId(null);
     setCourseTitle('');
     setProviderName('');
     setCourseOutlineRaw('');
     setUnitStart('1');
+    setAutoPace(false);
+    setTeachingDays([1, 2, 3, 4, 5]);
+    setAddToCalendar(false);
     setProcessedOutline(null);
-    setUploadMethod('text');
   };
 
   const renderUploadMethod = () => (
     <View style={styles.uploadMethodContainer}>
-      <Text style={styles.sectionTitle}>Upload Method</Text>
+      <Text style={styles.sectionTitle}>Source</Text>
       <View style={styles.methodButtons}>
         <TouchableOpacity
           style={[
             styles.methodButton,
-            uploadMethod === 'text' && styles.activeMethodButton
+            uploadMethod === 'link' && styles.activeMethodButton
           ]}
-          onPress={() => setUploadMethod('text')}
+          onPress={() => setUploadMethod('link')}
         >
-          <Icon name="fileText" size={16} />
+          <Icon name="link" size={16} />
           <Text style={[
             styles.methodButtonText,
-            uploadMethod === 'text' && styles.activeMethodButtonText
+            uploadMethod === 'link' && styles.activeMethodButtonText
           ]}>
-            Paste Text
+            Link
           </Text>
         </TouchableOpacity>
         
@@ -231,53 +363,232 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
             Upload File
           </Text>
         </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[
+            styles.methodButton,
+            uploadMethod === 'text' && styles.activeMethodButton
+          ]}
+          onPress={() => setUploadMethod('text')}
+        >
+          <Icon name="fileText" size={16} />
+          <Text style={[
+            styles.methodButtonText,
+            uploadMethod === 'text' && styles.activeMethodButtonText
+          ]}>
+            Paste Text
+          </Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
 
-  const renderTextInput = () => (
-    <View style={styles.inputSection}>
-      <Text style={styles.sectionTitle}>Course Information</Text>
+  const renderSubjectSelection = () => {
+    if (uploadMethod === 'text') {
+      // For AI processing, show subject chips
+      if (loadingSubjects) {
+        return <ActivityIndicator size="small" color={colors.accent} />;
+      }
       
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Course Title *</Text>
-        {(() => {
-          if (loadingSubjects) {
-            return <ActivityIndicator size="small" color="#007AFF" />;
-          }
-          
-          if (existingSubjects && existingSubjects.length > 0) {
-            return (
-              <View style={styles.chipContainer}>
-                {existingSubjects.map((subject) => (
-                  <TouchableOpacity
-                    key={subject.id}
-                    style={[
-                      styles.chip,
-                      courseTitle === subject.name && styles.chipSelected
-                    ]}
-                    onPress={() => setCourseTitle(subject.name)}
-                  >
-                                    <Text style={[
+      if (existingSubjects && existingSubjects.length > 0) {
+        return (
+          <View style={styles.chipContainer}>
+            {existingSubjects.map((subject) => (
+              <TouchableOpacity
+                key={subject.id}
+                style={[
+                  styles.chip,
+                  courseTitle === subject.name && styles.chipSelected
+                ]}
+                onPress={() => {
+                  setCourseTitle(subject.name);
+                  // Also set selectedSubjectId for consistency
+                  const matchingSubject = subjects.find(s => s.name === subject.name);
+                  if (matchingSubject) {
+                    setSelectedSubjectId(matchingSubject.id);
+                  }
+                }}
+              >
+                <Text style={[
                   styles.chipText,
                   courseTitle === subject.name && styles.chipTextSelected
                 ]}>
                   {subject.name} {subject.grade_band ? '(' + subject.grade_band + ')' : ''}
                 </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            );
-          }
-          
-          return <Text style={styles.noSubjectsText}>No subjects found. Please add subjects first.</Text>;
-        })()}
-        
-        {courseTitle ? (
+              </TouchableOpacity>
+            ))}
+          </View>
+        );
+      }
+      
+      return <Text style={styles.noSubjectsText}>No subjects found. Please add subjects first.</Text>;
+    } else {
+      // For link/file, show dropdown list
+      if (loadingSubjects) {
+        return <ActivityIndicator size="small" color={colors.text} />;
+      }
+      
+      return (
+        <ScrollView style={styles.subjectList} nestedScrollEnabled>
+          {subjects.map((subject) => (
+            <TouchableOpacity
+              key={subject.id}
+              style={[
+                styles.subjectOption,
+                selectedSubjectId === subject.id && styles.subjectOptionSelected
+              ]}
+              onPress={() => setSelectedSubjectId(subject.id)}
+            >
+              <Text style={[
+                styles.subjectOptionText,
+                selectedSubjectId === subject.id && styles.subjectOptionTextSelected
+              ]}>
+                {subject.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      );
+    }
+  };
+
+  const renderLinkMethod = () => (
+    <View style={styles.inputSection}>
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Subject *</Text>
+        {renderSubjectSelection()}
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Title *</Text>
+        <TextInput
+          style={styles.textInput}
+          value={syllabusTitle}
+          onChangeText={setSyllabusTitle}
+          placeholder="e.g., Algebra I Syllabus"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>URL *</Text>
+        <TextInput
+          style={styles.textInput}
+          value={fileUrl}
+          onChangeText={setFileUrl}
+          placeholder="https://example.com/syllabus.pdf"
+          keyboardType="url"
+          autoCapitalize="none"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Start Date (optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={startDate}
+          onChangeText={setStartDate}
+          placeholder="YYYY-MM-DD"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>End Date (optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={endDate}
+          onChangeText={setEndDate}
+          placeholder="YYYY-MM-DD"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Expected Weekly Minutes (optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={expectedWeeklyMinutes}
+          onChangeText={setExpectedWeeklyMinutes}
+          placeholder="e.g., 300"
+          keyboardType="numeric"
+        />
+      </View>
+    </View>
+  );
+
+  const renderFileMethod = () => (
+    <View style={styles.inputSection}>
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Subject *</Text>
+        {renderSubjectSelection()}
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Title *</Text>
+        <TextInput
+          style={styles.textInput}
+          value={syllabusTitle}
+          onChangeText={setSyllabusTitle}
+          placeholder="e.g., Algebra I Syllabus"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>File</Text>
+        <TouchableOpacity 
+          style={styles.fileUploadButton} 
+          onPress={handleFileUpload}
+          disabled={saving}
+        >
+          <Icon name="upload" size={24} />
+          <Text style={styles.fileUploadText}>
+            {uploadedFileId ? 'File Uploaded ✓' : 'Choose File'}
+          </Text>
+          <Text style={styles.fileUploadSubtext}>PDF, TXT, or DOC files supported</Text>
+        </TouchableOpacity>
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Start Date (optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={startDate}
+          onChangeText={setStartDate}
+          placeholder="YYYY-MM-DD"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>End Date (optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={endDate}
+          onChangeText={setEndDate}
+          placeholder="YYYY-MM-DD"
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Expected Weekly Minutes (optional)</Text>
+        <TextInput
+          style={styles.textInput}
+          value={expectedWeeklyMinutes}
+          onChangeText={setExpectedWeeklyMinutes}
+          placeholder="e.g., 300"
+          keyboardType="numeric"
+        />
+      </View>
+    </View>
+  );
+
+  const renderTextMethod = () => (
+    <View style={styles.inputSection}>
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Course Title *</Text>
+        {renderSubjectSelection()}
+        {courseTitle && (
           <Text style={styles.selectedSubjectText}>
             Selected: {courseTitle}
           </Text>
-        ) : null}
+        )}
       </View>
       
       <View style={styles.inputGroup}>
@@ -324,7 +635,6 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
       <View style={styles.advancedSection}>
         <Text style={styles.advancedSectionTitle}>Auto-Pacing & Calendar</Text>
         
-        {/* Auto-pacing toggle */}
         <View style={styles.optionRow}>
           <TouchableOpacity
             style={[styles.checkbox, autoPace && styles.checkboxChecked]}
@@ -337,7 +647,6 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
 
         {autoPace && (
           <>
-            {/* Date selection */}
             <View style={styles.dateRow}>
               <View style={styles.dateInput}>
                 <Text style={styles.dateLabel}>Start Date</Text>
@@ -359,98 +668,48 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
               </View>
             </View>
 
-            {/* Teaching days */}
             <Text style={styles.dateLabel}>Teaching Days</Text>
             <View style={styles.teachingDaysContainer}>
-                {[0, 1, 2, 3, 4, 5, 6].map(day => (
-                  <TouchableOpacity
-                    key={day}
-                    style={[
-                      styles.dayButton,
-                      teachingDays.includes(day) && styles.dayButtonActive
-                    ]}
-                    onPress={() => {
-                      setTeachingDays(prev => 
-                        prev.includes(day) 
-                          ? prev.filter(d => d !== day)
-                          : [...prev, day].sort()
-                      );
-                    }}
-                  >
-                    <Text style={[
-                      styles.dayButtonText,
-                      teachingDays.includes(day) && styles.dayButtonTextActive
-                    ]}>
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day]}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Calendar integration */}
-              <View style={styles.optionRow}>
+              {[0, 1, 2, 3, 4, 5, 6].map(day => (
                 <TouchableOpacity
-                  style={[styles.checkbox, addToCalendar && styles.checkboxChecked]}
-                  onPress={() => setAddToCalendar(!addToCalendar)}
+                  key={day}
+                  style={[
+                    styles.dayButton,
+                    teachingDays.includes(day) && styles.dayButtonActive
+                  ]}
+                  onPress={() => {
+                    setTeachingDays(prev => 
+                      prev.includes(day) 
+                        ? prev.filter(d => d !== day)
+                        : [...prev, day].sort()
+                    );
+                  }}
                 >
-                  {addToCalendar && <Text style={styles.checkmark}>✓</Text>}
+                  <Text style={[
+                    styles.dayButtonText,
+                    teachingDays.includes(day) && styles.dayButtonTextActive
+                  ]}>
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day]}
+                  </Text>
                 </TouchableOpacity>
-                <Text style={styles.optionLabel}>Add lessons to calendar</Text>
-              </View>
+              ))}
+            </View>
 
-              <Text style={styles.helpText}>
-                When enabled, lessons will be automatically scheduled on your teaching days and added to your calendar.
-              </Text>
-            </>
-          )}
-        </View>
-      </View>
-    );
+            <View style={styles.optionRow}>
+              <TouchableOpacity
+                style={[styles.checkbox, addToCalendar && styles.checkboxChecked]}
+                onPress={() => setAddToCalendar(!addToCalendar)}
+              >
+                {addToCalendar && <Text style={styles.checkmark}>✓</Text>}
+              </TouchableOpacity>
+              <Text style={styles.optionLabel}>Add lessons to calendar</Text>
+            </View>
 
-  const renderFileUpload = () => (
-    <View style={styles.inputSection}>
-      <Text style={styles.sectionTitle}>Upload File</Text>
-      
-      <View style={styles.fileUploadArea}>
-        <TouchableOpacity style={styles.fileUploadButton} onPress={handleFileUpload}>
-          <Icon name="upload" size={24} />
-          <Text style={styles.fileUploadText}>Choose File</Text>
-          <Text style={styles.fileUploadSubtext}>PDF, TXT, or DOC files supported</Text>
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Course Title *</Text>
-        <TextInput
-          style={styles.textInput}
-          value={courseTitle}
-          onChangeText={setCourseTitle}
-          placeholder="e.g., Algebra 1, World History, Biology"
-        />
-      </View>
-      
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Provider Name *</Text>
-        <TextInput
-          style={styles.textInput}
-          value={providerName}
-          onChangeText={setProviderName}
-          placeholder="e.g., Khan Academy, Outschool, Local School"
-        />
-      </View>
-      
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Unit to Start From</Text>
-        <TextInput
-          style={styles.textInput}
-          value={unitStart}
-          onChangeText={setUnitStart}
-          placeholder="1"
-          keyboardType="numeric"
-        />
-        <Text style={styles.helpText}>
-          If your child is starting mid-course, specify which unit to begin with (default: 1)
-        </Text>
+            <Text style={styles.helpText}>
+              When enabled, lessons will be automatically scheduled on your teaching days and added to your calendar.
+            </Text>
+          </>
+        )}
       </View>
     </View>
   );
@@ -468,15 +727,6 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
           </View>
           <Text style={styles.resultText}>{processedOutline.course_title}</Text>
           <Text style={styles.resultSubtext}>{processedOutline.provider_name}</Text>
-          {processedOutline.unit_start && (
-            <Text style={styles.resultSubtext}>Starting from Unit {processedOutline.unit_start}</Text>
-          )}
-          <View style={styles.previewSection}>
-            <Text style={styles.previewTitle}>Preview:</Text>
-            <Text style={styles.previewText} numberOfLines={5}>
-              {processedOutline.course_outline}
-            </Text>
-          </View>
         </View>
       </View>
     );
@@ -484,71 +734,83 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed }
 
   if (!visible) return null;
 
+  const canSave = uploadMethod === 'text' 
+    ? (courseTitle.trim() && providerName.trim() && courseOutlineRaw.trim())
+    : (selectedSubjectId && syllabusTitle.trim() && (uploadMethod === 'link' ? fileUrl.trim() : uploadedFileId));
+
   return (
-    <View style={styles.modalOverlay}>
-      <View style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Upload Course Syllabus</Text>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Icon name="x" size={20} />
-          </TouchableOpacity>
-        </View>
-        
-        <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-          {renderUploadMethod()}
-          
-          {uploadMethod === 'text' ? renderTextInput() : renderFileUpload()}
-          
-          {renderProcessedResult()}
-          
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity style={styles.resetButton} onPress={resetForm}>
-              <Text style={styles.resetButtonText}>Reset</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.processButton, isProcessing && styles.disabledButton]}
-              onPress={handleUpload}
-              disabled={isProcessing}
-            >
-              {isProcessing ? (
-                <>
-                  <ActivityIndicator size="small" color="#ffffff" />
-                  <Text style={styles.processButtonText}>Processing with AI...</Text>
-                </>
-              ) : (
-                <>
-                  <Icon name="fileText" size={16} color="#ffffff" />
-                  <Text style={styles.processButtonText}>Process Syllabus</Text>
-                </>
-              )}
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Syllabus</Text>
+            <TouchableOpacity style={styles.closeButton} onPress={() => { resetForm(); onClose(); }}>
+              <Icon name="x" size={20} />
             </TouchableOpacity>
           </View>
-        </ScrollView>
+          
+          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+            {renderUploadMethod()}
+            
+            {uploadMethod === 'link' && renderLinkMethod()}
+            {uploadMethod === 'file' && renderFileMethod()}
+            {uploadMethod === 'text' && renderTextMethod()}
+            
+            {renderProcessedResult()}
+            
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity 
+                style={styles.cancelButton} 
+                onPress={() => { resetForm(); onClose(); }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.saveButton, (!canSave || isProcessing || saving) && styles.saveButtonDisabled]}
+                onPress={handleSave}
+                disabled={!canSave || isProcessing || saving}
+              >
+                {isProcessing || saving ? (
+                  <>
+                    <ActivityIndicator size="small" color="#ffffff" />
+                    <Text style={styles.saveButtonText}>
+                      {uploadMethod === 'text' ? 'Processing with AI...' : 'Saving...'}
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={styles.saveButtonText}>
+                    {uploadMethod === 'text' ? 'Process Syllabus' : 'Save'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
       </View>
-    </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 1000,
+    padding: 20,
   },
   modalContainer: {
-    width: '90%',
-    maxWidth: 800,
-    maxHeight: '85%',
-    minHeight: 400,
+    width: '100%',
+    maxWidth: 600,
+    maxHeight: '90%',
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -568,7 +830,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     color: '#37352f',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   closeButton: {
     padding: 4,
@@ -576,7 +837,6 @@ const styles = StyleSheet.create({
   modalContent: {
     flex: 1,
     padding: 20,
-    paddingBottom: 24,
   },
   uploadMethodContainer: {
     marginBottom: 24,
@@ -586,7 +846,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#37352f',
     marginBottom: 16,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   methodButtons: {
     flexDirection: 'row',
@@ -612,7 +871,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#37352f',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   activeMethodButtonText: {
     color: '#38B6FF',
@@ -628,17 +886,16 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#37352f',
     marginBottom: 8,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   textInput: {
     borderWidth: 1,
     borderColor: '#e1e1e1',
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 14,
     color: '#37352f',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    backgroundColor: '#ffffff',
   },
   textArea: {
     height: 120,
@@ -648,10 +905,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#787774',
     marginTop: 4,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  fileUploadArea: {
-    marginBottom: 20,
+  subjectList: {
+    maxHeight: 150,
+  },
+  subjectOption: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+  },
+  subjectOptionSelected: {
+    backgroundColor: '#38B6FF',
+    borderColor: '#38B6FF',
+  },
+  subjectOptionText: {
+    fontSize: 14,
+    color: '#37352f',
+  },
+  subjectOptionTextSelected: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
   fileUploadButton: {
     borderWidth: 2,
@@ -667,135 +943,51 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#37352f',
     marginTop: 8,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
   fileUploadSubtext: {
     fontSize: 12,
     color: '#787774',
     marginTop: 4,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  resultSection: {
-    marginBottom: 24,
-  },
-  resultCard: {
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    borderRadius: 8,
-    padding: 16,
-    backgroundColor: '#f8f9fa',
-  },
-  resultHeader: {
+  chipContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
     marginBottom: 8,
   },
-  resultTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#10b981',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  },
-  resultText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#37352f',
-    marginBottom: 4,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  },
-  resultSubtext: {
-    fontSize: 14,
-    color: '#787774',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  },
-  previewSection: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e1e1e1',
-  },
-  previewTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#37352f',
-    marginBottom: 8,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  },
-  previewText: {
-    fontSize: 12,
-    color: '#787774',
-    lineHeight: 16,
-    fontFamily: 'monospace',
-    backgroundColor: '#ffffff',
-    padding: 8,
-    borderRadius: 4,
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#e1e1e1',
+    borderColor: '#ddd',
   },
-  buttonContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
-  resetButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    borderRadius: 6,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-  },
-  resetButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#37352f',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  },
-  processButton: {
-    flex: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+  chipSelected: {
     backgroundColor: '#38B6FF',
-    borderRadius: 6,
+    borderColor: '#38B6FF',
   },
-  disabledButton: {
-    backgroundColor: '#a0a0a0',
-  },
-  processButtonText: {
+  chipText: {
     fontSize: 14,
+    color: '#333',
     fontWeight: '500',
+  },
+  chipTextSelected: {
     color: '#ffffff',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  
-  // Advanced options styles
-  advancedToggleContainer: {
-    marginBottom: 15,
-  },
-  advancedToggle: {
-    padding: 15,
-    backgroundColor: '#e8f4fd',
-    borderRadius: 10,
-    marginBottom: 5,
-  },
-  advancedToggleText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#0066cc',
-    textAlign: 'center',
-  },
-  advancedToggleHint: {
-    fontSize: 12,
+  noSubjectsText: {
+    fontSize: 14,
     color: '#666',
-    textAlign: 'center',
     fontStyle: 'italic',
+    textAlign: 'center',
+    padding: 20,
+  },
+  selectedSubjectText: {
+    fontSize: 14,
+    color: '#38B6FF',
+    fontWeight: '600',
+    marginTop: 8,
+    textAlign: 'center',
   },
   advancedSection: {
     backgroundColor: '#f8f9fa',
@@ -826,8 +1018,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
   },
   checkboxChecked: {
-    backgroundColor: '#0066cc',
-    borderColor: '#0066cc',
+    backgroundColor: '#38B6FF',
+    borderColor: '#38B6FF',
   },
   checkmark: {
     color: 'white',
@@ -871,8 +1063,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
   },
   dayButtonActive: {
-    backgroundColor: '#0066cc',
-    borderColor: '#0066cc',
+    backgroundColor: '#38B6FF',
+    borderColor: '#38B6FF',
   },
   dayButtonText: {
     fontSize: 12,
@@ -882,46 +1074,77 @@ const styles = StyleSheet.create({
   dayButtonTextActive: {
     color: 'white',
   },
-  
-  // Chip selection styles
-  chipContainer: {
+  resultSection: {
+    marginBottom: 24,
+  },
+  resultCard: {
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    borderRadius: 8,
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+  },
+  resultHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 8,
     marginBottom: 8,
   },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  chipSelected: {
-    backgroundColor: '#38B6FF',
-    borderColor: '#38B6FF',
-  },
-  chipText: {
+  resultTitle: {
     fontSize: 14,
-    color: '#333',
     fontWeight: '500',
+    color: '#10b981',
   },
-  chipTextSelected: {
+  resultText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#37352f',
+    marginBottom: 4,
+  },
+  resultSubtext: {
+    fontSize: 14,
+    color: '#787774',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e1e1e1',
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#37352f',
+  },
+  saveButton: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#38B6FF',
+    borderRadius: 8,
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#a0a0a0',
+  },
+  saveButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
     color: '#ffffff',
   },
-  noSubjectsText: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    padding: 20,
-  },
-  selectedSubjectText: {
-    fontSize: 14,
-    color: '#38B6FF',
-    fontWeight: '600',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-}); 
+});

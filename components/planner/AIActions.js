@@ -9,6 +9,7 @@ export default function AIActions({
   onRebalance4Weeks,
   onWhatIf,
   onPlanYear,
+  onWeeklyReshuffle,
   disabled = false
 }) {
   const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
@@ -252,6 +253,20 @@ export default function AIActions({
               <Text style={styles.menuItemDesc}>Optimize across next month</Text>
             </View>
           </TouchableOpacity>
+
+          {onWeeklyReshuffle && (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => handleAction(onWeeklyReshuffle)}
+              activeOpacity={0.7}
+            >
+              <Sparkles size={16} color="#374151" />
+              <View style={styles.menuItemContent}>
+                <Text style={styles.menuItemTitle}>Weekly Reshuffle</Text>
+                <Text style={styles.menuItemDesc}>AI-suggested weekly optimizations</Text>
+              </View>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.menuItem}

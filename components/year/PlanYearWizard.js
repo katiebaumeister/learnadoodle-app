@@ -21,6 +21,8 @@ import { X, ChevronRight, ChevronLeft, Check, Calendar, UserCircle, BookOpen, Ta
 import { colors, shadows } from '../../theme/colors';
 import { createYearPlan, getPrefillData, checkFeatureFlags, seedYearPlanEvents, syncBlackouts } from '../../lib/services/yearClient';
 import { supabase } from '../../lib/supabase';
+import TermBuilder from './TermBuilder';
+import MultiYearPlanningWizard from './MultiYearPlanningWizard';
 
 const STEPS = [
   { id: 1, label: 'Students & Scope', icon: UserCircle },
@@ -151,6 +153,10 @@ export default function PlanYearWizard({
   const [newBreakLabel, setNewBreakLabel] = useState('');
   const [syncingBlackouts, setSyncingBlackouts] = useState(false);
   const [stateCode, setStateCode] = useState('CA'); // Default to CA, user can change
+  
+  // Term Builder
+  const [termType, setTermType] = useState('none');
+  const [customTerms, setCustomTerms] = useState([]);
   
   // Step 2: Subjects & Targets
   const [childSubjects, setChildSubjects] = useState({});
@@ -492,13 +498,58 @@ export default function PlanYearWizard({
       }
       
       if (data) {
+        const yearPlanId = data.id || data; // Handle both object and UUID response
+        
+        // Generate terms if configured
+        if (termType !== 'none') {
+          try {
+            console.log('[PlanYearWizard] Generating terms for year plan:', yearPlanId);
+            
+            if (termType === 'custom') {
+              // Insert custom terms
+              for (const term of customTerms) {
+                const { error: termError } = await supabase
+                  .from('year_plan_terms')
+                  .insert({
+                    year_plan_id: yearPlanId,
+                    term_name: term.name,
+                    term_type: 'custom',
+                    start_date: term.startDate,
+                    end_date: term.endDate,
+                  });
+                
+                if (termError) {
+                  console.error('[PlanYearWizard] Error creating custom term:', termError);
+                }
+              }
+            } else {
+              // Auto-generate terms using the function
+              const { error: termGenError } = await supabase.rpc('generate_terms_for_year_plan', {
+                p_year_plan_id: yearPlanId,
+                p_term_type: termType,
+                p_start_date: startDate,
+                p_end_date: endDate,
+              });
+              
+              if (termGenError) {
+                console.error('[PlanYearWizard] Error generating terms:', termGenError);
+              } else {
+                console.log('[PlanYearWizard] Terms generated successfully');
+              }
+            }
+          } catch (termErr) {
+            console.error('[PlanYearWizard] Exception generating terms:', termErr);
+            // Continue - terms are optional
+          }
+        }
+        
         // Seed events for the year plan
         setSeeding(true);
         setError(null);
         
         try {
-          console.log('[PlanYearWizard] Seeding events for year plan:', data.id);
-          const { data: seedData, error: seedError } = await seedYearPlanEvents(data.id);
+          console.log('[PlanYearWizard] Seeding events for year plan:', yearPlanId);
+          const { data: seedData, error: seedError } = await seedYearPlanEvents(yearPlanId);
           
           if (seedError) {
             console.error('[PlanYearWizard] Seed error:', seedError);
@@ -629,6 +680,22 @@ export default function PlanYearWizard({
             </TouchableOpacity>
           ))}
         </View>
+
+        <View style={{ marginTop: 24, paddingTop: 24, borderTopWidth: 1, borderTopColor: colors.border || '#e5e7eb' }}>
+          <Text style={styles.stepDescription}>
+            Need to plan multiple years at once?
+          </Text>
+          <TouchableOpacity
+            style={[styles.scopePill, { marginTop: 12, backgroundColor: colors.blueSoft || '#eef2ff', borderColor: colors.accent || '#3b82f6' }]}
+            onPress={() => setShowMultiYearWizard(true)}
+            activeOpacity={0.7}
+          >
+            <Sparkles size={16} color={colors.accent || '#3b82f6'} />
+            <Text style={[styles.scopePillText, { color: colors.accent || '#3b82f6', marginLeft: 8 }]}>
+              Plan Multiple Years
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -741,6 +808,15 @@ export default function PlanYearWizard({
           </TouchableOpacity>
         </View>
       </View>
+      
+      <TermBuilder
+        startDate={startDate}
+        endDate={endDate}
+        termType={termType}
+        onTermTypeChange={setTermType}
+        customTerms={customTerms}
+        onCustomTermsChange={setCustomTerms}
+      />
     </View>
   );
   
@@ -947,6 +1023,7 @@ export default function PlanYearWizard({
   if (!visible) return null;
   
   return (
+    <>
     <Modal
       visible={visible}
       transparent
@@ -1045,6 +1122,21 @@ export default function PlanYearWizard({
         </View>
       </View>
     </Modal>
+
+    {/* Multi-Year Planning Wizard */}
+    <MultiYearPlanningWizard
+      visible={showMultiYearWizard}
+      onClose={() => setShowMultiYearWizard(false)}
+      familyId={familyId}
+      children={children}
+      onComplete={({ plans }) => {
+        if (onComplete) {
+          onComplete({ multiYear: true, plans });
+        }
+        setShowMultiYearWizard(false);
+      }}
+    />
+    </>
   );
 }
 

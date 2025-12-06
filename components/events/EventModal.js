@@ -4,13 +4,17 @@ import { X } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import EventSyllabusTab from './EventSyllabusTab';
+import EventNotesTab from './EventNotesTab';
+import VideoEmbed from '../content/VideoEmbed';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
+import { supabase } from '../../lib/supabase';
 
-export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched }) {
+export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched, familyId, children = [] }) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
   const [activeTab, setActiveTab] = useState('details');
   const [loading, setLoading] = useState(!initialEvent);
+  const [embeddedVideos, setEmbeddedVideos] = useState([]);
 
   useEffect(() => {
     if (visible && eventId) {
@@ -24,8 +28,47 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
       setSyllabus(null);
       setActiveTab('details');
       setLoading(!initialEvent);
+      setEmbeddedVideos([]);
     }
   }, [visible, eventId, initialEvent]);
+
+  useEffect(() => {
+    if (visible && eventId && event) {
+      loadEmbeddedVideos();
+    }
+  }, [visible, eventId, event]);
+
+  const loadEmbeddedVideos = async () => {
+    if (!eventId) return;
+    try {
+      // Try loading from video_embeds table first
+      const { data: videoEmbeds } = await supabase
+        .from('video_embeds')
+        .select('*')
+        .eq('event_id', eventId)
+        .order('created_at', { ascending: false });
+      
+      if (videoEmbeds && videoEmbeds.length > 0) {
+        setEmbeddedVideos(videoEmbeds.map(v => ({
+          id: v.id,
+          provider: v.provider,
+          videoId: v.video_id,
+          embedUrl: v.embed_code
+        })));
+      } else {
+        // Fallback: check event.embedded_videos JSONB column
+        if (event?.embedded_videos && Array.isArray(event.embedded_videos)) {
+          setEmbeddedVideos(event.embedded_videos);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading embedded videos:', error);
+      // Fallback: check event.embedded_videos JSONB column
+      if (event?.embedded_videos && Array.isArray(event.embedded_videos)) {
+        setEmbeddedVideos(event.embedded_videos);
+      }
+    }
+  };
 
   const loadEvent = async () => {
     if (!eventId) return;
@@ -42,7 +85,17 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
         return;
       }
       
-      setEvent(prev => ({ ...(prev || {}), ...data }));
+      setEvent(prev => {
+        // Merge data, prioritizing loaded event data over initialEvent
+        // If loaded event has subject_id, remove any string subject from initialEvent
+        // to prevent showing wrong subject name
+        const merged = { ...(prev || {}), ...data };
+        if (data.subject_id && prev?.subject && typeof prev.subject === 'string') {
+          // Remove the string subject from initialEvent - the loaded event will resolve it correctly
+          delete merged.subject;
+        }
+        return merged;
+      });
       
       // If event has syllabus link, load syllabus
       if (data?.source_syllabus_id) {
@@ -63,8 +116,12 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
     onEventUpdated?.();
   };
 
-  const handleEventDeleted = () => {
-    onEventDeleted?.();
+  const handleEventDeleted = (deletedEventId) => {
+    console.log('[EventModal] handleEventDeleted called with event ID:', deletedEventId);
+    console.log('[EventModal] onEventDeleted callback:', onEventDeleted ? 'exists' : 'missing');
+    console.log('[EventModal] Calling onEventDeleted callback');
+    onEventDeleted?.(deletedEventId);
+    console.log('[EventModal] Closing modal');
     onClose();
   };
 
@@ -152,6 +209,22 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
                 Syllabus
               </Text>
             </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === 'notes' && styles.tabActive]}
+                onPress={() => setActiveTab('notes')}
+              >
+                <Text style={[styles.tabText, activeTab === 'notes' && styles.tabTextActive]}>
+                  Notes
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === 'videos' && styles.tabActive]}
+                onPress={() => setActiveTab('videos')}
+              >
+                <Text style={[styles.tabText, activeTab === 'videos' && styles.tabTextActive]}>
+                  Videos
+                </Text>
+              </TouchableOpacity>
           </View>
 
           {/* Content */}
@@ -165,9 +238,13 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
                 <EventDetails
                   event={event}
                   onEventUpdated={handleEventUpdated}
-                  onEventDeleted={handleEventDeleted}
+                  onEventDeleted={(deletedEventId) => {
+                    console.log('[EventModal] EventDetails onEventDeleted callback triggered with ID:', deletedEventId);
+                    handleEventDeleted(deletedEventId);
+                  }}
                   onEventPatched={handleEventPatched}
                   familyMembers={familyMembers}
+                  familyId={familyId}
                 />
               )}
               {activeTab === 'details' && !event && (
@@ -190,6 +267,18 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
               {activeTab === 'syllabus' && !event && (
                 <View style={styles.loadingContainer}>
                   <Text style={{ color: colors.muted }}>No syllabus linked to this event.</Text>
+                </View>
+              )}
+              {activeTab === 'notes' && event && (
+                <EventNotesTab
+                  event={event}
+                  familyId={familyId}
+                  children={children.length > 0 ? children : familyMembers}
+                />
+              )}
+              {activeTab === 'notes' && !event && (
+                <View style={styles.loadingContainer}>
+                  <Text style={{ color: colors.muted }}>Event not available.</Text>
                 </View>
               )}
             </View>

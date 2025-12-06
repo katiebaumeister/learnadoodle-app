@@ -10,7 +10,7 @@ BEGIN
   ) THEN
     ALTER TABLE profiles 
       ADD COLUMN role text
-        CHECK (role IN ('parent','child','tutor'))
+        CHECK (role IN ('parent','child','student','tutor'))
         DEFAULT 'parent';
     
     -- Add index for role queries
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS family_members (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   family_id uuid NOT NULL REFERENCES family(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  member_role text NOT NULL CHECK (member_role IN ('parent','child','tutor')),
+  member_role text NOT NULL CHECK (member_role IN ('parent','child','student','tutor')),
   child_scope uuid[] DEFAULT '{}', -- which children this member can see (for tutors)
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now(),

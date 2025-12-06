@@ -24,6 +24,7 @@ export default function CatchUpModal({
   visible,
   familyId,
   onClose,
+  onComplete, // Optional callback with proposedChanges
 }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -96,6 +97,24 @@ export default function CatchUpModal({
 
       if (data) {
         setResult(data);
+        
+        // Extract proposedChanges from response
+        // Backend may return: { rescheduled: [...], proposed_changes: [...] } or { changes: [...] }
+        const proposedChanges = data.proposed_changes || data.changes ||
+          (data.rescheduled ? data.rescheduled.map((evt, idx) => ({
+            id: `catchup-${idx}`,
+            kind: 'move',
+            label: evt.title || 'Rescheduled Event',
+            before: evt.original_start ? new Date(evt.original_start).toLocaleString() : 'Missed',
+            after: evt.new_start ? new Date(evt.new_start).toLocaleString() : undefined,
+            when: evt.new_start ? new Date(evt.new_start).toLocaleString() : undefined,
+            child: evt.child_id,
+          })) : []);
+        
+        // Call onComplete with proposedChanges if provided
+        if (onComplete && proposedChanges.length > 0) {
+          onComplete({ proposedChanges, result: data });
+        }
       }
     } catch (err) {
       console.error('[CatchUpModal] Exception:', err);

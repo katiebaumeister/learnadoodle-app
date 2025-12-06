@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { startOfWeek, addDays, isSameDay, format, isSameMonth, isToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 
@@ -10,23 +10,20 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
   
   // Full 24-hour range (0-23, midnight to 11 PM)
   const hours = Array.from({ length: 24 }, (_, i) => i);
-  const hourHeight = 60; // Height per hour in pixels
+  const hourHeight = 48; // Reduced from 60px for Google Calendar density
   
-  // Auto-scroll to 7 AM on mount (default view shows 7 AM-7 PM)
+  // Auto-scroll to 7 AM on mount
   useEffect(() => {
     if (scrollViewRef.current) {
-      // Always start at 7 AM (index 7 in hours array)
       const targetHour = 7;
       const scrollPosition = targetHour * hourHeight;
       
-      // Use requestAnimationFrame to ensure DOM is ready
       const scrollToPosition = () => {
         if (scrollViewRef.current) {
           scrollViewRef.current.scrollTo({ y: scrollPosition, animated: false });
         }
       };
       
-      // Try immediately, then with delays to ensure it works
       requestAnimationFrame(() => {
         scrollToPosition();
         setTimeout(scrollToPosition, 50);
@@ -61,7 +58,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
     return Math.max(15, Math.round((end.getTime() - start.getTime()) / 60000)); // Minimum 15 minutes
   };
   
-  // Bucket events by day and calculate positions
+  // Bucket events by day and calculate positions with overlap detection
   const eventsByDay = useMemo(() => {
     const map = new Map();
     
@@ -97,8 +94,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
               ...e,
               startMinutes,
               duration,
-              top: startMinutes - (hours[0] * 60), // Offset from first hour
-              height: duration
+              endMinutes: startMinutes + duration,
             });
           }
           break; // Only add to one day
@@ -112,7 +108,98 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
     }
     
     return map;
-  }, [events, anchorDate, hours]);
+  }, [events, anchorDate, days]);
+  
+  // Calculate overlap groups and positions for events in a day
+  // Uses a more sophisticated algorithm that handles transitive overlaps
+  const calculateEventPositions = (dayEvents) => {
+    if (dayEvents.length === 0) return [];
+    
+    // Build overlap graph - events that directly overlap
+    const overlapGraph = new Map();
+    dayEvents.forEach(event => {
+      overlapGraph.set(event.id, []);
+    });
+    
+    dayEvents.forEach(event => {
+      dayEvents.forEach(otherEvent => {
+        if (event.id === otherEvent.id) return;
+        
+        // Check if events overlap
+        const overlaps = !(
+          event.endMinutes <= otherEvent.startMinutes ||
+          otherEvent.endMinutes <= event.startMinutes
+        );
+        
+        if (overlaps) {
+          overlapGraph.get(event.id).push(otherEvent.id);
+        }
+      });
+    });
+    
+    // Find connected components (events that overlap directly or transitively)
+    const groups = [];
+    const processed = new Set();
+    
+    const findConnectedComponent = (startId) => {
+      const component = new Set([startId]);
+      const queue = [startId];
+      processed.add(startId);
+      
+      while (queue.length > 0) {
+        const currentId = queue.shift();
+        const neighbors = overlapGraph.get(currentId) || [];
+        
+        neighbors.forEach(neighborId => {
+          if (!processed.has(neighborId)) {
+            component.add(neighborId);
+            processed.add(neighborId);
+            queue.push(neighborId);
+          }
+        });
+      }
+      
+      return Array.from(component);
+    };
+    
+    dayEvents.forEach(event => {
+      if (!processed.has(event.id)) {
+        const componentIds = findConnectedComponent(event.id);
+        const component = dayEvents.filter(e => componentIds.includes(e.id));
+        if (component.length > 0) {
+          groups.push(component);
+        }
+      }
+    });
+    
+    // Calculate positions for each group
+    const positionedEvents = [];
+    
+    groups.forEach(group => {
+      // Sort group by start time, then by duration (shorter first for better packing)
+      group.sort((a, b) => {
+        if (a.startMinutes !== b.startMinutes) {
+          return a.startMinutes - b.startMinutes;
+        }
+        return a.duration - b.duration;
+      });
+      
+      // For each event in the group, calculate its horizontal position
+      // Events are split evenly: 50/50 for 2, 33/33/33 for 3, etc.
+      group.forEach((event, index) => {
+        const widthPercent = 100 / group.length;
+        const leftPercent = (index / group.length) * 100;
+        
+        positionedEvents.push({
+          ...event,
+          widthPercent,
+          leftPercent,
+        });
+      });
+    });
+    
+    return positionedEvents;
+  };
   
   // Format hour for display (12-hour format)
   const formatHour = (hour) => {
@@ -123,262 +210,245 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
   };
   
   return (
-    <View style={{ flex: 1, backgroundColor: 'white' }}>
-      {/* Header row */}
-      <View style={{
-        flexDirection: 'row',
-        borderBottomWidth: 1,
-        borderColor: '#eef2f7',
-        backgroundColor: '#fafbfc',
-        paddingLeft: 60 // Space for time column
-      }}>
+    <View style={styles.container}>
+      {/* Fixed Header Row */}
+      {Platform.OS === 'web' && typeof window !== 'undefined' ? (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'row',
+          borderBottomWidth: 1,
+          borderBottomColor: '#e5e7eb',
+          borderBottomStyle: 'solid',
+          backgroundColor: '#ffffff',
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}>
+          {/* Time column spacer */}
+          <div style={{ width: 60, borderRightWidth: 1, borderRightColor: '#e5e7eb', borderRightStyle: 'solid' }} />
+          
+          {/* Day headers */}
+          {days.map(d => (
+            <div key={d.toISOString()} style={{ flex: 1, paddingTop: 8, paddingBottom: 8, paddingLeft: 4, paddingRight: 4, alignItems: 'center', borderRightWidth: 1, borderRightColor: '#e5e7eb', borderRightStyle: 'solid', display: 'flex', flexDirection: 'column' }}>
+              <Text style={styles.dayName}>
+                {format(d, 'EEE').toUpperCase()}
+              </Text>
+              <Text style={[
+                styles.dayNumber,
+                isToday(d) && styles.dayNumberToday,
+                !isSameMonth(d, anchorDate) && styles.dayNumberOtherMonth
+              ]}>
+                {format(d, 'd')}
+              </Text>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <View style={styles.headerRow}>
+        {/* Time column spacer */}
+        <View style={styles.timeColumnSpacer} />
+        
+        {/* Day headers */}
         {days.map(d => (
-          <View key={d.toISOString()} style={{ flex: 1, padding: 12 }}>
-            <Text style={{ fontSize: 12, color: '#6b7280', fontWeight: '600', marginBottom: 4 }}>
+          <View key={d.toISOString()} style={styles.dayHeader}>
+            <Text style={styles.dayName}>
               {format(d, 'EEE').toUpperCase()}
             </Text>
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '700',
-              color: isSameMonth(d, anchorDate) ? '#0f141a' : '#94a3b8'
-            }}>
+            <Text style={[
+              styles.dayNumber,
+              isToday(d) && styles.dayNumberToday,
+              !isSameMonth(d, anchorDate) && styles.dayNumberOtherMonth
+            ]}>
               {format(d, 'd')}
             </Text>
           </View>
         ))}
       </View>
+      )}
 
-      {/* Scrollable time grid */}
+      {/* Scrollable Time Grid */}
       <ScrollView
         ref={scrollViewRef}
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={true}
         onContentSizeChange={() => {
-          // Scroll to 7 AM when content size changes
           if (scrollViewRef.current) {
-            const scrollPosition = 7 * hourHeight; // 7 AM = index 7
+            const scrollPosition = 7 * hourHeight;
             scrollViewRef.current.scrollTo({ y: scrollPosition, animated: false });
           }
         }}
       >
-        <View style={{ flexDirection: 'row' }}>
-          {/* Time column */}
-          <View style={{ width: 60, borderRightWidth: 1, borderRightColor: '#eef2f7' }}>
+        <View style={styles.gridContainer}>
+          {/* Time Column */}
+          {Platform.OS === 'web' && typeof window !== 'undefined' ? (
+            <div style={{
+              width: 60,
+              borderRightWidth: 1,
+              borderRightColor: '#e5e7eb',
+              borderRightStyle: 'solid',
+              backgroundColor: '#ffffff',
+              position: 'sticky',
+              left: 0,
+              zIndex: 5,
+            }}>
+              {hours.map(hour => (
+                <div
+                  key={hour}
+                  style={{
+                    height: 48,
+                    paddingRight: 8,
+                    paddingTop: 2,
+                    display: 'flex',
+                    alignItems: 'flex-end',
+                    justifyContent: 'flex-start',
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#f3f4f6',
+                    borderBottomStyle: 'solid',
+                  }}
+                >
+                  <Text style={styles.timeText}>
+                    {formatHour(hour)}
+                  </Text>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <View style={styles.timeColumn}>
             {hours.map(hour => (
               <View
                 key={hour}
-                style={{
-                  height: hourHeight,
-                  paddingRight: 8,
-                  paddingTop: 4,
-                  alignItems: 'flex-end',
-                  borderBottomWidth: 1,
-                  borderBottomColor: '#f3f4f6'
-                }}
+                style={styles.timeCell}
               >
-                <Text style={{ fontSize: 11, color: '#9ca3af', fontWeight: '500' }}>
+                <Text style={styles.timeText}>
                   {formatHour(hour)}
                 </Text>
               </View>
             ))}
           </View>
+          )}
           
-          {/* Day columns */}
-          <View style={{ flex: 1, flexDirection: 'row' }}>
+          {/* Day Columns */}
+          <View style={styles.dayColumnsContainer}>
             {days.map(d => {
               const key = d.toDateString();
               const dayEvents = eventsByDay.get(key) ?? [];
+              const positionedEvents = calculateEventPositions(dayEvents);
               
               return (
                 <View
                   key={key}
-                  style={{
-                    flex: 1,
-                    borderRightWidth: d !== days[days.length - 1] ? 1 : 0,
-                    borderRightColor: '#eef2f7',
-                    position: 'relative',
-                    minHeight: hours.length * hourHeight
-                  }}
+                  style={styles.dayColumn}
                 >
-                  {/* Hour lines */}
+                  {/* Hour grid lines */}
                   {hours.map(hour => (
                     <View
                       key={hour}
-                      style={{
-                        position: 'absolute',
-                        top: (hour - hours[0]) * hourHeight,
-                        left: 0,
-                        right: 0,
-                        height: 1,
-                        backgroundColor: '#f3f4f6',
-                        zIndex: 0
-                      }}
+                      style={[
+                        styles.hourLine,
+                        { top: hour * hourHeight }
+                      ]}
                     />
                   ))}
                   
-                  {/* Events positioned by time with lane-based overlap handling */}
-                  {(() => {
-                    // Lane-based algorithm for overlapping events
-                    // Assign each event to a lane based on overlaps
-                    const lanes = [];
+                  {/* Half-hour grid lines (subtle) */}
+                  {hours.map(hour => (
+                    <View
+                      key={`half-${hour}`}
+                      style={[
+                        styles.halfHourLine,
+                        { top: (hour * hourHeight) + (hourHeight / 2) }
+                      ]}
+                    />
+                  ))}
+                  
+                  {/* Events positioned absolutely */}
+                  {positionedEvents.map(ev => {
+                    const startOffsetMinutes = ev.startMinutes - (hours[0] * 60);
+                    const topPx = (startOffsetMinutes / 60) * hourHeight;
+                    const heightPx = (ev.duration / 60) * hourHeight;
                     
-                    // Sort events by start time, then by duration (shorter first for better packing)
-                    const sortedEvents = [...dayEvents].sort((a, b) => {
-                      if (a.startMinutes !== b.startMinutes) {
-                        return a.startMinutes - b.startMinutes;
-                      }
-                      return a.duration - b.duration;
-                    });
+                    // Only show if within visible hours
+                    const eventStartHour = Math.floor(ev.startMinutes / 60);
+                    const eventEndHour = Math.ceil(ev.endMinutes / 60);
                     
-                    // Assign events to lanes
-                    sortedEvents.forEach(ev => {
-                      const evEnd = ev.startMinutes + ev.duration;
-                      let assignedLane = -1;
-                      
-                      // Find the first lane where this event doesn't overlap with existing events
-                      for (let laneIndex = 0; laneIndex < lanes.length; laneIndex++) {
-                        const laneEvents = lanes[laneIndex];
-                        const hasOverlap = laneEvents.some(laneEv => {
-                          const laneEvEnd = laneEv.startMinutes + laneEv.duration;
-                          return ev.startMinutes < laneEvEnd && evEnd > laneEv.startMinutes;
-                        });
-                        
-                        if (!hasOverlap) {
-                          assignedLane = laneIndex;
-                          break;
-                        }
-                      }
-                      
-                      // If no suitable lane found, create a new one
-                      if (assignedLane === -1) {
-                        assignedLane = lanes.length;
-                        lanes.push([]);
-                      }
-                      
-                      lanes[assignedLane].push(ev);
-                    });
+                    if (eventEndHour < hours[0] || eventStartHour > hours[hours.length - 1] + 1) {
+                      return null;
+                    }
                     
-                    // Calculate max lanes needed at any point (for width calculation)
-                    const getMaxLanesAtTime = (time) => {
-                      let maxLanes = 0;
-                      lanes.forEach(lane => {
-                        const activeInLane = lane.some(ev => {
-                          const evEnd = ev.startMinutes + ev.duration;
-                          return ev.startMinutes <= time && evEnd > time;
-                        });
-                        if (activeInLane) maxLanes++;
-                      });
-                      return maxLanes;
-                    };
-                    
-                    // Render events with calculated positions
-                    return sortedEvents.map(ev => {
-                      const startOffsetMinutes = ev.startMinutes - (hours[0] * 60);
-                      const topPx = startOffsetMinutes * (hourHeight / 60);
-                      const heightPx = ev.duration * (hourHeight / 60);
-                      
-                      // Only show if within visible hours
-                      const eventStartHour = Math.floor(ev.startMinutes / 60);
-                      const eventEndHour = Math.ceil((ev.startMinutes + ev.duration) / 60);
-                      
-                      if (eventEndHour < hours[0] || eventStartHour > hours[hours.length - 1] + 1) {
-                        return null;
-                      }
-                      
-                      // Find which lane this event is in
-                      let laneIndex = -1;
-                      for (let i = 0; i < lanes.length; i++) {
-                        if (lanes[i].includes(ev)) {
-                          laneIndex = i;
-                          break;
-                        }
-                      }
-                      
-                      // Calculate max concurrent lanes during this event's entire duration
-                      // Check multiple points to find the true maximum
-                      const checkPoints = [
-                        ev.startMinutes,
-                        ev.startMinutes + (ev.duration / 3),
-                        ev.startMinutes + (ev.duration * 2 / 3),
-                        ev.startMinutes + ev.duration - 1
-                      ];
-                      const maxLanes = Math.max(...checkPoints.map(t => getMaxLanesAtTime(t)));
-                      
-                      // Calculate width and position based on lane
-                      // Each event takes up 1/maxLanes of the width
-                      const widthPercent = maxLanes > 0 ? (100 / maxLanes) : 100;
-                      const leftOffset = laneIndex >= 0 ? (laneIndex * widthPercent) : 0;
-                      
-                      // Estimate minimum width needed for text (roughly 80px for title + time)
-                      // If event is too narrow, use compact mode or hide text
-                      const estimatedMinWidth = 80; // pixels
-                      const isTooNarrow = widthPercent < 15; // Less than 15% width (roughly < 80px on typical screens)
-                      const isVeryNarrow = widthPercent < 8; // Less than 8% width - hide text entirely
-                      
+                    // Use div for web with inline styles, View for native
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
                       return (
-                        <View
+                        <div
                           key={ev.id}
                           style={{
                             position: 'absolute',
-                            top: Math.max(0, topPx),
-                            left: `${leftOffset}%`,
-                            width: `${widthPercent}%`,
                             paddingLeft: 2,
                             paddingRight: 2,
-                            height: Math.max(24, heightPx),
-                            zIndex: 1
+                            paddingTop: 1,
+                            paddingBottom: 1,
+                            zIndex: 1,
+                            cursor: 'pointer',
+                            top: Math.max(0, topPx),
+                            left: `${ev.leftPercent}%`,
+                            width: `${ev.widthPercent}%`,
+                            height: Math.max(20, heightPx),
+                          }}
+                          onClick={(e) => {
+                            if (onEventPress) {
+                              e.stopPropagation();
+                              onEventPress(ev);
+                            }
+                          }}
+                          onContextMenu={(e) => {
+                            if (onEventRightClick) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onEventRightClick(ev, e);
+                            }
                           }}
                         >
-                          {isVeryNarrow ? (
-                            // Very narrow: just show a colored bar with checkmark
-                            <View
-                              style={{
-                                width: '100%',
-                                height: '100%',
-                                backgroundColor: ev.color === 'teal' ? 'rgba(20, 184, 166, 0.25)' :
-                                                ev.color === 'violet' ? 'rgba(139, 92, 246, 0.25)' :
-                                                ev.color === 'amber' ? 'rgba(245, 158, 11, 0.25)' :
-                                                ev.color === 'sky' ? 'rgba(14, 165, 233, 0.25)' :
-                                                'rgba(20, 184, 166, 0.25)',
-                                borderWidth: 1,
-                                borderColor: ev.color === 'teal' ? 'rgba(20, 184, 166, 0.3)' :
-                                            ev.color === 'violet' ? 'rgba(139, 92, 246, 0.3)' :
-                                            ev.color === 'amber' ? 'rgba(245, 158, 11, 0.3)' :
-                                            ev.color === 'sky' ? 'rgba(14, 165, 233, 0.3)' :
-                                            'rgba(20, 184, 166, 0.3)',
-                                borderRadius: 4,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                opacity: ev.status === 'done' ? 0.6 : 1
-                              }}
-                            >
-                              {onEventComplete && (
-                                <View>
-                                  {ev.status === 'done' ? (
-                                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />
-                                  ) : (
-                                    <View style={{ width: 8, height: 8, borderRadius: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.6)' }} />
-                                  )}
-                                </View>
-                              )}
-                            </View>
-                          ) : (
-                            <EventChip
-                              ev={ev}
-                              compact={isTooNarrow}
-                              fullWidth={true}
-                              hideTime={isTooNarrow}
-                              onPress={onEventPress ? () => onEventPress(ev) : undefined}
-                              onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
-                              onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
-                              showCheckmark={true}
-                            />
-                          )}
-                        </View>
+                          <EventChip
+                            ev={ev}
+                            compact={ev.widthPercent < 20}
+                            fullWidth={true}
+                            hideTime={ev.widthPercent < 15}
+                            onPress={onEventPress ? () => onEventPress(ev) : undefined}
+                            onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
+                            onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
+                            showCheckmark={true}
+                          />
+                        </div>
                       );
-                    });
-                  })()}
+                    }
+                    
+                    // Native version
+                    return (
+                      <View
+                        key={ev.id}
+                        style={[
+                          styles.eventBlock,
+                          {
+                            top: Math.max(0, topPx),
+                            left: `${ev.leftPercent}%`,
+                            width: `${ev.widthPercent}%`,
+                            height: Math.max(20, heightPx),
+                          }
+                        ]}
+                      >
+                        <EventChip
+                          ev={ev}
+                          compact={ev.widthPercent < 20}
+                          fullWidth={true}
+                          hideTime={ev.widthPercent < 15}
+                          onPress={onEventPress ? () => onEventPress(ev) : undefined}
+                          onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
+                          onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
+                          showCheckmark={true}
+                        />
+                      </View>
+                    );
+                  })}
                 </View>
               );
             })}
@@ -388,3 +458,112 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+  },
+  timeColumnSpacer: {
+    width: 60,
+    borderRightWidth: 1,
+    borderRightColor: '#e5e7eb',
+  },
+  dayHeader: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#e5e7eb',
+  },
+  dayName: {
+    fontSize: 11,
+    color: '#6b7280',
+    fontWeight: '600',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dayNumber: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  dayNumberToday: {
+    color: '#3b82f6',
+  },
+  dayNumberOtherMonth: {
+    color: '#94a3b8',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    minHeight: 24 * 48, // 24 hours * 48px
+  },
+  timeColumn: {
+    width: 60,
+    borderRightWidth: 1,
+    borderRightColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+  },
+  timeCell: {
+    height: 48,
+    paddingRight: 8,
+    paddingTop: 2,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  timeText: {
+    fontSize: 11,
+    color: '#9ca3af',
+    fontWeight: '500',
+  },
+  dayColumnsContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  dayColumn: {
+    flex: 1,
+    borderRightWidth: 1,
+    borderRightColor: '#e5e7eb',
+    position: 'relative',
+    minHeight: 24 * 48, // 24 hours * 48px
+    backgroundColor: '#ffffff',
+  },
+  hourLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    zIndex: 0,
+  },
+  halfHourLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: '#fafbfc',
+    zIndex: 0,
+  },
+  eventBlock: {
+    position: 'absolute',
+    paddingHorizontal: 2,
+    paddingVertical: 1,
+    zIndex: 1,
+  },
+});

@@ -6,6 +6,26 @@ const STATES = ['None','AL','AK','AZ','AR','CA','CO','CT','DC','DE','FL','GA','H
 const INTERESTS = ['STEM','Reading','Writing','Arts','Music','Sports','Outdoors','Languages','History','Coding','Woodworking','Other'];
 const LEARNING_STYLES = ['Visual','Auditory','Kinesthetic','Mixed','Unsure'];
 
+// Support profile options
+const DIAGNOSES = ['ADHD', 'Dyslexia', 'Dyscalculia', 'Autism', 'Auditory Processing Disorder', 'Visual Processing Disorder', 'Gifted/2e', 'Motor challenges', 'Other'];
+const LEARNING_MODALITIES = ['Visual', 'Hands-on', 'Verbal', 'Repetition-based', 'Short bursts (Pomodoro-like)'];
+const SUPPORT_NEEDS = [
+  'Frequent breaks',
+  'Step-by-step instructions',
+  'Visual supports',
+  'Chunked tasks',
+  'Allow extra processing time',
+  'Quiet workspace',
+  'Movement breaks',
+  'Multi-sensory instruction',
+  'One-on-one guidance'
+];
+const EXECUTIVE_FUNCTION = [
+  'Difficulty with transitions',
+  'Difficulty sustaining attention',
+  'Difficulty planning tasks'
+];
+
 // Limit to 8 avatars as per spec
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8'];
 
@@ -14,7 +34,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const [nickname, setNickname] = useState(initial.nickname || '');
   const [age, setAge] = useState(initial.age ? String(initial.age) : '');
   const [grade, setGrade] = useState(initial.grade || initial.grade_label || '');
-  const [standardsState, setStandardsState] = useState(initial.standards_state || 'None');
+  const [standardsState, setStandardsState] = useState(initial.standards_state || initial.standardsState || 'None');
   const [interests, setInterests] = useState(Array.isArray(initial.interests) ? initial.interests : []);
   const [learningStyle, setLearningStyle] = useState(
     Array.isArray(initial.learning_styles) && initial.learning_styles.length > 0 
@@ -22,6 +42,55 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       : initial.learning_style || ''
   );
   const [avatar, setAvatar] = useState(initial.avatar || initial.avatar_url || 'prof1');
+  
+  // Support profile state
+  const [diagnoses, setDiagnoses] = useState(Array.isArray(initial.diagnoses) ? initial.diagnoses : []);
+  const [learningModalities, setLearningModalities] = useState(Array.isArray(initial.learning_modalities) ? initial.learning_modalities : []);
+  const [supportNeeds, setSupportNeeds] = useState(Array.isArray(initial.support_needs) ? initial.support_needs : []);
+  const [executiveFunction, setExecutiveFunction] = useState(Array.isArray(initial.executive_function) ? initial.executive_function : []);
+  const [supportNotes, setSupportNotes] = useState(initial.support_notes || '');
+  const [otherDiagnosis, setOtherDiagnosis] = useState('');
+
+  // Update form when initial data changes (for edit mode)
+  useEffect(() => {
+    if (initial.name !== undefined) setName(initial.name || '');
+    if (initial.nickname !== undefined) setNickname(initial.nickname || '');
+    if (initial.age !== undefined) setAge(initial.age ? String(initial.age) : '');
+    if (initial.grade !== undefined || initial.grade_label !== undefined) {
+      setGrade(initial.grade || initial.grade_label || '');
+    }
+    if (initial.standards_state !== undefined || initial.standardsState !== undefined) {
+      setStandardsState(initial.standards_state || initial.standardsState || 'None');
+    }
+    if (initial.interests !== undefined) {
+      setInterests(Array.isArray(initial.interests) ? initial.interests : []);
+    }
+    if (initial.learning_styles !== undefined || initial.learning_style !== undefined) {
+      setLearningStyle(
+        Array.isArray(initial.learning_styles) && initial.learning_styles.length > 0 
+          ? initial.learning_styles[0] 
+          : initial.learning_style || ''
+      );
+    }
+    if (initial.avatar !== undefined || initial.avatar_url !== undefined) {
+      setAvatar(initial.avatar || initial.avatar_url || 'prof1');
+    }
+    if (initial.diagnoses !== undefined) {
+      setDiagnoses(Array.isArray(initial.diagnoses) ? initial.diagnoses : []);
+    }
+    if (initial.learning_modalities !== undefined) {
+      setLearningModalities(Array.isArray(initial.learning_modalities) ? initial.learning_modalities : []);
+    }
+    if (initial.support_needs !== undefined) {
+      setSupportNeeds(Array.isArray(initial.support_needs) ? initial.support_needs : []);
+    }
+    if (initial.executive_function !== undefined) {
+      setExecutiveFunction(Array.isArray(initial.executive_function) ? initial.executive_function : []);
+    }
+    if (initial.support_notes !== undefined) {
+      setSupportNotes(initial.support_notes || '');
+    }
+  }, [initial]);
 
   const avatarSources = {
     prof1: require('../assets/prof1.png'),
@@ -57,6 +126,13 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const handleSubmit = () => {
     if (!canSubmit || submitting) return;
     
+    // Handle "Other" diagnosis
+    let finalDiagnoses = [...diagnoses];
+    if (diagnoses.includes('Other') && otherDiagnosis.trim()) {
+      finalDiagnoses = diagnoses.filter(d => d !== 'Other');
+      finalDiagnoses.push(`Other: ${otherDiagnosis.trim()}`);
+    }
+    
     const payload = {
       name: name.trim(),
       nickname: nickname.trim() || null,
@@ -66,6 +142,12 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       interests: interests || [],
       learningStyle: learningStyle || null,
       avatar: avatar || null,
+      // Support profile fields (only include if any are filled)
+      diagnoses: finalDiagnoses.length > 0 ? finalDiagnoses : null,
+      learningModalities: learningModalities.length > 0 ? learningModalities : null,
+      supportNeeds: supportNeeds.length > 0 ? supportNeeds : null,
+      executiveFunction: executiveFunction.length > 0 ? executiveFunction : null,
+      supportNotes: supportNotes.trim() || null,
     };
     
     onSubmit && onSubmit(payload);
@@ -186,6 +268,101 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
           ))}
         </View>
       </View>
+
+      {/* Section: Learning Profile & Supports (Optional) */}
+      <View style={[styles.section, styles.sectionLast]}>
+        <Text style={styles.sectionTitle}>Learning Profile & Supports</Text>
+        <Text style={styles.sectionSubtitle}>(Optional)</Text>
+
+        {/* Diagnosed learning differences */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Diagnosed learning differences</Text>
+          <View style={styles.chipsWrap}>
+            {DIAGNOSES.map(d => (
+              <TouchableOpacity 
+                key={d} 
+                style={[styles.chip, diagnoses.includes(d) && styles.chipSelected]} 
+                onPress={() => toggleFromList(d, diagnoses, setDiagnoses)}
+              >
+                <Text style={[styles.chipText, diagnoses.includes(d) && styles.chipTextSelected]}>{d}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {diagnoses.includes('Other') && (
+            <TextInput
+              style={[styles.input, { marginTop: 8 }]}
+              placeholder="Specify other diagnosis"
+              value={otherDiagnosis}
+              onChangeText={setOtherDiagnosis}
+              placeholderTextColor="#9ca3af"
+            />
+          )}
+        </View>
+
+        {/* Executive function challenges */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Executive function challenges</Text>
+          <View style={styles.chipsWrap}>
+            {EXECUTIVE_FUNCTION.map(ef => (
+              <TouchableOpacity 
+                key={ef} 
+                style={[styles.chip, executiveFunction.includes(ef) && styles.chipSelected]} 
+                onPress={() => toggleFromList(ef, executiveFunction, setExecutiveFunction)}
+              >
+                <Text style={[styles.chipText, executiveFunction.includes(ef) && styles.chipTextSelected]}>{ef}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Preferred learning modalities */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Preferred learning modalities</Text>
+          <View style={styles.chipsWrap}>
+            {LEARNING_MODALITIES.map(mod => (
+              <TouchableOpacity 
+                key={mod} 
+                style={[styles.chip, learningModalities.includes(mod) && styles.chipSelected]} 
+                onPress={() => toggleFromList(mod, learningModalities, setLearningModalities)}
+              >
+                <Text style={[styles.chipText, learningModalities.includes(mod) && styles.chipTextSelected]}>{mod}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Support needs */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Support needs</Text>
+          <View style={styles.chipsWrap}>
+            {SUPPORT_NEEDS.map(need => (
+              <TouchableOpacity 
+                key={need} 
+                style={[styles.chip, supportNeeds.includes(need) && styles.chipSelected]} 
+                onPress={() => toggleFromList(need, supportNeeds, setSupportNeeds)}
+              >
+                <Text style={[styles.chipText, supportNeeds.includes(need) && styles.chipTextSelected]}>{need}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Notes */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Additional notes</Text>
+          <Text style={styles.hint}>(Optional - any additional information about learning supports)</Text>
+          <TextInput
+            style={[styles.input, styles.textArea]}
+            placeholder="Add any additional notes about learning supports..."
+            value={supportNotes}
+            onChangeText={setSupportNotes}
+            placeholderTextColor="#9ca3af"
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+          />
+        </View>
+      </View>
     </View>
   );
 });
@@ -200,10 +377,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   section: {
-    marginBottom: 32,
-    paddingBottom: 24,
+    marginBottom: 24,
+    paddingBottom: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
+  },
+  sectionLast: {
+    marginBottom: 0,
+    paddingBottom: 0,
+    borderBottomWidth: 0,
   },
   sectionTitle: {
     fontSize: 18,
@@ -342,6 +524,11 @@ const styles = StyleSheet.create({
   avatarImg: {
     width: 48,
     height: 48,
+  },
+  textArea: {
+    minHeight: 80,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
 });
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import Section from './Section';
-import Card from './Card';
+import Card from '../ui/Card';
 import Modal from './Modal';
 import TaskItem from './TaskItem';
 import { useHiddenSections } from '../hooks/useHiddenSections';
@@ -98,16 +98,52 @@ const HomePage = ({ firstName = 'there' }) => {
         {!isHidden('recently-visited') && (
           <Section id="recently-visited" title="Recently visited">
             <View style={styles.grid}>
-              {sampleData.recentlyVisited.slice(0, 6).map((item) => (
+              {sampleData.recentlyVisited.slice(0, 6).map((item) => {
+                const getIconText = (iconType) => {
+                  const icons = {
+                    checklist: '☑',
+                    document: '📄',
+                    calendar: '📅',
+                    book: '📖',
+                    user: '👤',
+                    flask: '🧪',
+                    'book-open': '📖',
+                    chart: '📊',
+                    home: '🏠',
+                    settings: '⚙️',
+                    list: '📋',
+                    clock: '🕐'
+                  };
+                  return icons[iconType] || '📄';
+                };
+                return (
                 <Card
                   key={item.id}
-                  title={item.title}
-                  subtitle={item.subtitle}
-                  icon={item.icon}
-                  href={item.href}
-                  ariaLabel={`Open ${item.title}`}
-                />
-              ))}
+                    onPress={() => {
+                      if (item.href) {
+                        console.log('Navigate to:', item.href);
+                      }
+                    }}
+                    variant="default"
+                    padding="base"
+                    style={styles.homeCard}
+                  >
+                    <View style={styles.cardContent}>
+                      {item.icon && (
+                        <View style={styles.iconContainer}>
+                          <Text style={styles.icon}>{getIconText(item.icon)}</Text>
+                        </View>
+                      )}
+                      <View style={styles.textContainer}>
+                        <Text style={styles.cardTitle}>{item.title}</Text>
+                        {item.subtitle && (
+                          <Text style={styles.cardSubtitle}>{item.subtitle}</Text>
+                        )}
+                      </View>
+                    </View>
+                  </Card>
+                );
+              })}
             </View>
           </Section>
         )}
@@ -119,11 +155,20 @@ const HomePage = ({ firstName = 'there' }) => {
               {sampleData.learnArticles.slice(0, 4).map((article) => (
                 <Card
                   key={article.id}
-                  title={article.title}
-                  subtitle={article.excerpt}
-                  onClick={() => setSelectedArticle(article)}
-                  ariaLabel={`Learn about ${article.title}`}
-                />
+                  onPress={() => setSelectedArticle(article)}
+                  variant="default"
+                  padding="base"
+                  style={styles.homeCard}
+                >
+                  <View style={styles.cardContent}>
+                    <View style={styles.textContainer}>
+                      <Text style={styles.cardTitle}>{article.title}</Text>
+                      {article.excerpt && (
+                        <Text style={styles.cardSubtitle}>{article.excerpt}</Text>
+                      )}
+                    </View>
+                  </View>
+                </Card>
               ))}
             </View>
           </Section>
@@ -309,6 +354,40 @@ const styles = {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 16,
+  },
+  homeCard: {
+    minWidth: 200,
+    flex: 1,
+    maxWidth: 'calc(33.333% - 11px)',
+  },
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#f9fafb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  icon: {
+    fontSize: 18,
+  },
+  textContainer: {
+    flex: 1,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    color: '#6b7280',
   },
   eventsList: {
     gap: 24,

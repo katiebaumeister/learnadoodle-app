@@ -426,6 +426,25 @@ async def load_planning_context(
         _log("planning.standards_gaps.error", error=str(e))
         # Non-critical, continue without standards gaps
     
+    # Get support profiles for each child
+    _log("planning.support_profiles.query")
+    support_profiles_by_child = {}
+    try:
+        profiles_res = supa.table("child_support_profiles").select("*").in_("child_id", child_ids).execute()
+        for profile in (profiles_res.data or []):
+            child_id = profile.get("child_id")
+            if child_id:
+                support_profiles_by_child[child_id] = {
+                    "diagnoses": profile.get("diagnoses", []),
+                    "learning_modalities": profile.get("learning_modalities", []),
+                    "support_needs": profile.get("support_needs", []),
+                    "executive_function": profile.get("executive_function", [])
+                }
+        _log("planning.support_profiles.success", count=len(support_profiles_by_child))
+    except Exception as e:
+        _log("planning.support_profiles.error", error=str(e))
+        # Non-critical, continue without support profiles
+    
     result = {
         "family_id": family_id,
         "window": {"start": str(ws), "end": str(we)},
@@ -437,6 +456,7 @@ async def load_planning_context(
         "velocities": velocities,
         "recent_struggles": struggles_by_child_subject,
         "standards_gaps": standards_gaps_by_child,  # New: standards gaps per child
+        "support_profiles": support_profiles_by_child,  # New: support profiles per child
         "max_minutes_per_day": max_minutes_per_day,
         "current_minutes_by_day": current_minutes_by_day
     }

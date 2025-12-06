@@ -4,7 +4,12 @@ import { Calendar, ChevronRight, ChevronLeft, Check } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
-export default function YearPlannerWizard({ familyId, currentYearEnd, onComplete, onCancel }) {
+export default function YearPlannerWizard({ 
+  familyId, 
+  currentYearEnd, 
+  onComplete, // Called with { proposedChanges?, yearPlan }
+  onCancel 
+}) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [children, setChildren] = useState([]);
@@ -96,7 +101,10 @@ export default function YearPlannerWizard({ familyId, currentYearEnd, onComplete
           }
         }
 
-        onComplete?.(yearId);
+        // YearPlannerWizard typically doesn't return proposedChanges (it creates a plan, not events)
+        // But we'll check if backend returns any changes
+        const proposedChanges = data.proposed_changes || data.changes || [];
+        onComplete?.({ proposedChanges, yearPlan: { id: yearId, ...data }, result: data });
       } else {
         alert('Error creating year: ' + (data.error || 'Unknown error'));
       }

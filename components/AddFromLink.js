@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform } from 'react-native';
 import { Link, Plus } from 'lucide-react';
-import { addFromLink, addExternalLink } from '../lib/apiClient';
+import { addFromLink } from '../lib/apiClient';
 import { useToast } from './Toast';
 
 export default function AddFromLink({ familyId, children = [], onCreated }) {
@@ -14,45 +14,91 @@ export default function AddFromLink({ familyId, children = [], onCreated }) {
   const [expanded, setExpanded] = useState(false);
   const toast = useToast();
 
-  const isValidUrl = /youtube\.com|youtu\.be/.test(url);
+  // Validate URLs for supported providers: YouTube, Khan Academy, Coursera, or general educational links
+  const isValidUrl = (url) => {
+    if (!url || url.trim().length === 0) return false;
+    const urlLower = url.toLowerCase().trim();
+    return (
+      /youtube\.com|youtu\.be/.test(urlLower) ||
+      /khanacademy\.org/.test(urlLower) ||
+      /coursera\.org/.test(urlLower) ||
+      /^https?:\/\//.test(urlLower) // General HTTP/HTTPS URL
+    );
+  };
+
+  const urlIsValid = isValidUrl(url);
 
   const handleSubmit = async () => {
-    if (!isValidUrl) {
-      toast.push('Please paste a valid YouTube video or playlist URL', 'error');
+    if (!urlIsValid) {
+      toast.push('Please paste a valid URL (YouTube, Khan Academy, Coursera, or educational link)', 'error');
+      return;
+    }
+
+    if (!familyId) {
+      toast.push('Family ID is required', 'error');
       return;
     }
 
     setLoading(true);
     try {
-      const payload = {
+      // Use addFromLink endpoint which supports YouTube, Khan Academy, Coursera, and general links
+      const { data, error } = await addFromLink({
         familyId,
         url: url.trim(),
         childId: childId || undefined,
         startDate: expanded && childId ? startDate : undefined,
         daysPerWeek: expanded ? daysPerWeek : undefined,
         sessionsPerDay: expanded ? sessionsPerDay : undefined,
-      };
-
-      // Use new addExternalLink endpoint (for external_courses) instead of addFromLink (family_youtube_items)
-      const { data, error } = await addExternalLink({
-        childId: childId || children[0]?.id,
-        url: url.trim(),
       });
 
       if (error) {
         console.error('Error adding from link:', error);
-        toast.push(error.message || 'Failed to add from link', 'error');
+        console.error('Error details:', {
+          message: error.message,
+          detail: error.detail,
+          status: error.status,
+          fullError: error
+        });
+        // Extract detailed error message
+        let errorMsg = 'Failed to add from link';
+        if (error.detail) {
+          errorMsg = error.detail;
+        } else if (error.message) {
+          errorMsg = error.message;
+        }
+        // Show more helpful error messages
+        if (errorMsg.includes('Family ID')) {
+          errorMsg = 'Family ID mismatch. Please refresh the page.';
+        } else if (errorMsg.includes('authentication') || errorMsg.includes('login')) {
+          errorMsg = 'This page requires login. Only public pages can be parsed.';
+        } else if (errorMsg.includes('paywall')) {
+          errorMsg = 'This page is behind a paywall. Only public content can be parsed.';
+        } else if (errorMsg.includes('Invalid') || errorMsg.includes('not recognized')) {
+          errorMsg = `Unable to parse this URL. Supported: YouTube, Khan Academy courses/units/lessons, Coursera courses, or general educational links.`;
+        }
+        toast.push(errorMsg, 'error');
         return;
       }
 
-      const message = `Added "${data.title}" to backlog${data.duration_sec ? ` (${Math.ceil(data.duration_sec / 60)} min)` : ''}`;
+      if (!data) {
+        toast.push('No data returned from server', 'error');
+        return;
+      }
+
+      const previewTitle = data.preview_title || data.title || 'Course';
+      const lessonCount = data.created_lessons || data.preview_count || 0;
+      const totalMinutes = data.preview_total_minutes;
+      
+      const message = totalMinutes 
+        ? `Added "${previewTitle}" with ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''} (${totalMinutes} min total)`
+        : `Added "${previewTitle}" with ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}`;
       
       toast.push(message, 'success');
       setUrl('');
       setExpanded(false);
       
       if (onCreated) {
-        onCreated(data);
+        onCreated({ course_id: data.item_id || data.id, ...data });
       }
     } catch (err) {
       console.error('Error in handleSubmit:', err);
@@ -70,13 +116,13 @@ export default function AddFromLink({ familyId, children = [], onCreated }) {
       </View>
       
       <Text style={styles.description}>
-        Paste a YouTube video or playlist URL to turn it into lessons. Links open externally; we store metadata only.
+        Paste a URL from YouTube, Khan Academy, Coursera, or any educational link to turn it into lessons. Links open externally; we store metadata only.
       </Text>
 
       <View style={styles.inputRow}>
         <TextInput
-          style={[styles.urlInput, !isValidUrl && url.length > 0 && styles.urlInputError]}
-          placeholder="https://www.youtube.com/watch?v=..."
+          style={[styles.urlInput, !urlIsValid && url.length > 0 && styles.urlInputError]}
+          placeholder="https://www.youtube.com/watch?v=... or https://www.khanacademy.org/..."
           placeholderTextColor="#9ca3af"
           value={url}
           onChangeText={setUrl}
@@ -85,9 +131,9 @@ export default function AddFromLink({ familyId, children = [], onCreated }) {
           editable={!loading}
         />
         <TouchableOpacity
-          style={[styles.submitButton, (!isValidUrl || loading) && styles.submitButtonDisabled]}
+          style={[styles.submitButton, (!urlIsValid || loading) && styles.submitButtonDisabled]}
           onPress={handleSubmit}
-          disabled={!isValidUrl || loading}
+          disabled={!urlIsValid || loading}
         >
           <Text style={styles.submitButtonText}>{loading ? 'Adding…' : 'Add'}</Text>
         </TouchableOpacity>
@@ -173,7 +219,7 @@ export default function AddFromLink({ familyId, children = [], onCreated }) {
       )}
 
       <Text style={styles.footer}>
-        We only save titles, links, and durations. Content is viewed on YouTube under their Terms.
+        We only save titles, links, and durations. Content is viewed on the original provider's website under their Terms.
       </Text>
     </View>
   );

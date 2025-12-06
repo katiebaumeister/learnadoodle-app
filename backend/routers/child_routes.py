@@ -66,10 +66,10 @@ async def get_child_overview(
                 family_id = profile_res.data.get("family_id")
                 child_scope = []
         
-        if role != "child":
+        if role not in ("child", "student"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Child role required"
+                detail="Child or student role required"
             )
         
         # Get child_id from child_scope (should be single entry) or find by user_id

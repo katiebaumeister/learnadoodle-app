@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -44,7 +44,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
       fetchCalendarData();
       fetchLearningTracks();
     }
-  }, [selectedYear]);
+  }, [selectedYear, fetchCalendarData, fetchLearningTracks]);
 
   const fetchChildren = async () => {
     try {
@@ -130,7 +130,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     }
   };
 
-  const fetchCalendarData = async () => {
+  const fetchCalendarData = useCallback(async () => {
     if (!selectedYear) return;
 
     try {
@@ -217,9 +217,9 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [selectedYear]);
 
-  const fetchLearningTracks = async () => {
+  const fetchLearningTracks = useCallback(async () => {
     if (!selectedYear) return;
 
     try {
@@ -246,7 +246,18 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     } catch (error) {
       console.error('Error fetching learning tracks:', error);
     }
-  };
+  }, [selectedYear]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleRefresh = () => {
+      fetchCalendarData();
+    };
+    window.addEventListener('refreshCalendar', handleRefresh);
+    return () => {
+      window.removeEventListener('refreshCalendar', handleRefresh);
+    };
+  }, [fetchCalendarData]);
 
   const updateMarkedDates = (mappingsData, holidaysData, lessonsData, activitiesData) => {
     const newMarkedDates = {};
@@ -255,19 +266,21 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     mappingsData.forEach(mapping => {
       if (mapping.calendar_date) {
         const dateStr = mapping.calendar_date;
+        const isVacation = !!mapping.is_vacation;
+        const lessonsForDate = lessonsData?.filter(l => l.lesson_date === dateStr) || [];
         newMarkedDates[dateStr] = {
           marked: true,
-          dotColor: mapping.is_vacation ? '#FF6B6B' : '#38B6FF',
+          dotColor: isVacation ? '#FF6B6B' : '#38B6FF',
           textColor: '#333',
           selected: false,
           customStyles: {
             container: {
-              backgroundColor: mapping.is_vacation ? '#FFE5E5' : '#E5F3FF',
+              backgroundColor: isVacation ? '#FFE5E5' : '#E5F3FF',
             }
           },
-          // Add data for calendar chips
           calendarDay: mapping,
-          lessons: lessonsData?.filter(l => l.lesson_date === dateStr) || [],
+          lessons: isVacation ? [] : lessonsForDate,
+          suppressedLessons: isVacation ? lessonsForDate : [],
           activities: activitiesData?.filter(a => {
             try {
               const scheduleData = JSON.parse(a.schedule_data);
@@ -318,10 +331,17 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         }
         
         // Add lesson data
-        if (!newMarkedDates[dateStr].lessons) {
-          newMarkedDates[dateStr].lessons = [];
+        if (newMarkedDates[dateStr]?.calendarDay?.is_vacation) {
+          if (!newMarkedDates[dateStr].suppressedLessons) {
+            newMarkedDates[dateStr].suppressedLessons = [];
+          }
+          newMarkedDates[dateStr].suppressedLessons.push(lesson);
+        } else {
+          if (!newMarkedDates[dateStr].lessons) {
+            newMarkedDates[dateStr].lessons = [];
+          }
+          newMarkedDates[dateStr].lessons.push(lesson);
         }
-        newMarkedDates[dateStr].lessons.push(lesson);
       }
     });
 
@@ -340,6 +360,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         calendarDay: dayData.calendarDay,
         holiday: dayData.holiday,
         lessons: dayData.lessons || [],
+        suppressedLessons: dayData.suppressedLessons || [],
         activities: dayData.activities || [],
         children: children.filter(c => !selectedChildId || c.id === selectedChildId)
       });
@@ -703,6 +724,17 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
                 <Text style={styles.detailSectionTitle}>Class Day</Text>
                 <Text style={styles.classDayInfo}>
                   Class day scheduled
+                </Text>
+              </View>
+            )}
+
+            {dayDetails?.suppressedLessons && dayDetails.suppressedLessons.length > 0 && (
+              <View style={[styles.detailSection, styles.suppressedSection]}>
+                <Text style={styles.detailSectionTitle}>Time Off</Text>
+                <Text style={styles.suppressedText}>
+                  {dayDetails.suppressedLessons.length === 1
+                    ? '1 lesson is paused or needs rescheduling due to time off.'
+                    : `${dayDetails.suppressedLessons.length} lessons are paused or need rescheduling due to time off.`}
                 </Text>
               </View>
             )}
@@ -1450,11 +1482,21 @@ const styles = StyleSheet.create({
   detailSection: {
     marginBottom: 24,
   },
+  suppressedSection: {
+    backgroundColor: '#F3F4FF',
+    borderRadius: 12,
+    padding: 16,
+  },
   detailSectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
     marginBottom: 8,
+  },
+  suppressedText: {
+    fontSize: 14,
+    color: '#4c1d95',
+    lineHeight: 20,
   },
   holidayName: {
     fontSize: 18,

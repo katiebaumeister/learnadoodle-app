@@ -2,7 +2,7 @@ import os
 import json
 import time
 
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").lower()
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "warn").lower()  # Default to warn to reduce noise
 _LEVELS = ["debug", "info", "warn", "error"]
 
 

@@ -38,6 +38,7 @@ class OutcomeInput(BaseModel):
     note: Optional[str] = Field(None, description="Freeform note")
     strengths: Optional[List[str]] = Field(default_factory=list, description="Strengths chips")
     struggles: Optional[List[str]] = Field(default_factory=list, description="Struggles chips")
+    behavior_tags: Optional[List[str]] = Field(default_factory=list, description="Behavior tags: Focused, Distracted, Excited, Overwhelmed")
 
 
 class OutcomeOut(BaseModel):
@@ -48,6 +49,7 @@ class OutcomeOut(BaseModel):
     note: Optional[str]
     strengths: List[str]
     struggles: List[str]
+    behavior_tags: List[str]
     created_at: str
 
 
@@ -208,6 +210,12 @@ async def save_outcome(
                 detail="Event does not belong to your family"
             )
         
+        # Validate behavior tags (only allow predefined values)
+        valid_behavior_tags = {"Focused", "Distracted", "Excited", "Overwhelmed"}
+        behavior_tags = []
+        if body.behavior_tags:
+            behavior_tags = [tag for tag in body.behavior_tags if tag in valid_behavior_tags]
+        
         # Prepare outcome data
         outcome_data = {
             "family_id": family_id,
@@ -219,6 +227,7 @@ async def save_outcome(
             "note": body.note,
             "strengths": body.strengths or [],
             "struggles": body.struggles or [],
+            "behavior_tags": behavior_tags,
             "created_by": user["id"]
         }
         
@@ -236,7 +245,7 @@ async def save_outcome(
         
         outcome = outcome_res.data[0] if isinstance(outcome_res.data, list) else outcome_res.data
         
-        log_event("event.outcome.saved", event_id=event_id, family_id=family_id, has_rating=body.rating is not None, has_strengths=len(body.strengths or []) > 0, has_struggles=len(body.struggles or []) > 0)
+        log_event("event.outcome.saved", event_id=event_id, family_id=family_id, has_rating=body.rating is not None, has_strengths=len(body.strengths or []) > 0, has_struggles=len(body.struggles or []) > 0, has_behavior_tags=len(behavior_tags) > 0)
         
         return OutcomeOut(
             id=outcome["id"],
@@ -246,6 +255,7 @@ async def save_outcome(
             note=outcome.get("note"),
             strengths=outcome.get("strengths", []),
             struggles=outcome.get("struggles", []),
+            behavior_tags=outcome.get("behavior_tags", []),
             created_at=outcome["created_at"]
         )
         

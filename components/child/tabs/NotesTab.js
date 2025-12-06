@@ -1,33 +1,138 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { supabase } from '../../../lib/supabase';
+import { shouldSuppressError } from '../../../lib/apiClient';
 import { colors } from '../../../theme/colors';
 
 export default function NotesTab({ child }) {
-  // TODO: load notes from Supabase and persist on save
   const [draft, setDraft] = useState("");
-  const [notes, setNotes] = useState([
-    {
-      id: "n1",
-      createdAt: "Nov 12, 2025",
-      body: "Really excited about the new science unit on space. Asking lots of questions.",
-    },
-  ]);
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    if (!draft.trim()) return;
-    const newNote = {
-      id: `local-${Date.now()}`,
-      createdAt: new Date().toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }),
-      body: draft.trim(),
-    };
-    setNotes((prev) => [newNote, ...prev]);
-    setDraft("");
-    // TODO: POST to /api/records/notes
+  useEffect(() => {
+    fetchNotes();
+  }, [child.id]);
+
+  const fetchNotes = async () => {
+    if (!child?.id) return;
+    
+    try {
+      setLoading(true);
+      
+      // Check if there's a notes/records table, otherwise use events with notes
+      const { data: recordsNotes, error: recordsError } = await supabase
+        .from('records')
+        .select('id, notes, created_at')
+        .eq('child_id', child.id)
+        .not('notes', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (recordsError && !shouldSuppressError(recordsError) && recordsError.code !== 'PGRST116') {
+        // Table might not exist, try events table
+        const { data: eventNotes, error: eventsError } = await supabase
+          .from('events')
+          .select('id, description, created_at')
+          .eq('child_id', child.id)
+          .not('description', 'is', null)
+          .eq('source', 'note')
+          .order('created_at', { ascending: false });
+
+        if (!eventsError && eventNotes) {
+          const formattedNotes = eventNotes.map(note => ({
+            id: note.id,
+            createdAt: new Date(note.created_at).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            }),
+            body: note.description,
+          }));
+          setNotes(formattedNotes);
+        }
+      } else if (recordsNotes) {
+        const formattedNotes = recordsNotes.map(note => ({
+          id: note.id,
+          createdAt: new Date(note.created_at).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          }),
+          body: note.notes,
+        }));
+        setNotes(formattedNotes);
+      }
+    } catch (error) {
+      console.error('Error fetching notes:', error);
+      setNotes([]);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleSave = async () => {
+    if (!draft.trim() || !child?.id) return;
+    
+    try {
+      setSaving(true);
+      
+      // Try to save to records table first
+      const { data: profile } = await supabase.auth.getUser();
+      if (!profile?.user) throw new Error('Not authenticated');
+
+      const { data: familyData } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', profile.user.id)
+        .single();
+
+      if (!familyData?.family_id) throw new Error('No family found');
+
+      // Try records table
+      const { error: recordsError } = await supabase
+        .from('records')
+        .insert({
+          family_id: familyData.family_id,
+          child_id: child.id,
+          notes: draft.trim(),
+        });
+
+      if (recordsError && recordsError.code !== 'PGRST116') {
+        // If records table doesn't exist, create an event with source='note'
+        const { error: eventError } = await supabase
+          .from('events')
+          .insert({
+            family_id: familyData.family_id,
+            child_id: child.id,
+            title: 'Note',
+            description: draft.trim(),
+            source: 'note',
+            status: 'done',
+            start_ts: new Date().toISOString(),
+            end_ts: new Date().toISOString(),
+          });
+
+        if (eventError) throw eventError;
+      }
+
+      // Refresh notes
+      await fetchNotes();
+      setDraft("");
+    } catch (error) {
+      console.error('Error saving note:', error);
+      alert('Failed to save note. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.text} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
@@ -53,11 +158,15 @@ export default function NotesTab({ child }) {
             <Text style={styles.clearButtonText}>Clear</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.saveButton, !draft.trim() && styles.saveButtonDisabled]}
+            style={[styles.saveButton, (!draft.trim() || saving) && styles.saveButtonDisabled]}
             onPress={handleSave}
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || saving}
           >
-            <Text style={styles.saveButtonText}>Save note</Text>
+            {saving ? (
+              <ActivityIndicator size="small" color={colors.card} />
+            ) : (
+              <Text style={styles.saveButtonText}>Save note</Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>

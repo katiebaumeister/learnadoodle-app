@@ -19,6 +19,7 @@ try:
     from auth import get_current_user, rate_limiter
     from helpers import get_family_id_for_user
     from logger import log_event
+    from cache import cached
 except ImportError:
     # Fallback for different import styles
     import importlib.util
@@ -142,6 +143,38 @@ class AIPlanningSuggestionOut(BaseModel):
 # Endpoints
 # ============================================================================
 
+@cached(ttl_seconds=3600)  # Cache for 1 hour
+async def _fetch_standards(state_code: str, grade_level: str, subject: Optional[str], domain: Optional[str]):
+    """Internal function to fetch standards (cached)"""
+    supabase = get_admin_client()
+    
+    query = (
+        supabase.table("standards")
+        .select("*")
+        .eq("state_code", state_code.upper())
+        .eq("grade_level", grade_level)
+    )
+    
+    if subject:
+        query = query.eq("subject", subject)
+    if domain:
+        query = query.eq("domain", domain)
+    
+    query = query.order("standard_code")
+    
+    result = query.execute()
+    
+    return result.data if result.data else []
+
+
+@cached(ttl_seconds=300)  # Cache for 5 minutes
+def _fetch_subject_names(family_id: str):
+    """Fetch subject names for a family (cached)"""
+    supabase = get_admin_client()
+    subjects_res = supabase.table("subject").select("name").eq("family_id", family_id).execute()
+    return [s["name"] for s in (subjects_res.data or [])]
+
+
 @router.get("/", response_model=List[StandardOut])
 async def get_standards(
     state_code: str = Query(..., description="State code (e.g., 'VA', 'GA')"),
@@ -151,30 +184,9 @@ async def get_standards(
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
-    """Get standards for a specific state, grade, and optional subject/domain"""
+    """Get standards for a specific state, grade, and optional subject/domain (cached for 1 hour)"""
     try:
-        supabase = get_admin_client()
-        
-        query = (
-            supabase.table("standards")
-            .select("*")
-            .eq("state_code", state_code.upper())
-            .eq("grade_level", grade_level)
-        )
-        
-        if subject:
-            query = query.eq("subject", subject)
-        if domain:
-            query = query.eq("domain", domain)
-        
-        query = query.order("standard_code")
-        
-        result = query.execute()
-        
-        if result.data:
-            return result.data
-        return []
-        
+        return await _fetch_standards(state_code, grade_level, subject, domain)
     except Exception as e:
         log_event("standards.get.error", user_id=user["id"], error=str(e))
         raise HTTPException(
@@ -264,7 +276,7 @@ async def set_user_preference(
                 .execute()
             )
         
-        # Insert or update preference
+        # Insert new preference (we've already deactivated any conflicting ones above)
         insert_data = {
             "family_id": family_id,
             "child_id": preference.child_id,
@@ -275,16 +287,16 @@ async def set_user_preference(
             "is_active": True,
         }
         
-        # Use upsert to handle unique constraint
+        # Insert new preference (conflicts already handled by deactivating existing ones)
         result = (
             supabase.table("user_standards_preferences")
-            .upsert(insert_data, on_conflict="child_id,state_code,grade_level,subject_id")
+            .insert(insert_data)
             .execute()
         )
         
-        if result.data:
+        if result.data and len(result.data) > 0:
             log_event("standards.preference.set", user_id=user["id"], child_id=preference.child_id, state_code=preference.state_code)
-            return result.data[0]
+            return UserStandardsPreferenceOut(**result.data[0])
         
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to set preference")
         
@@ -550,9 +562,8 @@ async def ai_plan_standards(
                 "summary": f"Great news! {child_name} has covered all standards for {state_code} grade {grade_level}" + (f" {subject}" if subject else "")
             }
         
-        # Get child's current subjects
-        subjects_res = supabase.table("subject").select("name").eq("family_id", family_id).execute()
-        current_subjects = [s["name"] for s in (subjects_res.data or [])]
+        # Get child's current subjects (cached)
+        current_subjects = _fetch_subject_names(family_id)
         
         # Get child preferences (learning style, etc.) if available
         prefs_res = supabase.table("child_prefs").select("learning_style").eq("child_id", child_id).maybe_single().execute()
@@ -584,5 +595,295 @@ async def ai_plan_standards(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate AI plan: {str(e)}"
+        )
+
+
+# ============================================================================
+# Standards Engine Endpoints (New)
+# ============================================================================
+
+class AttachStandardsInput(BaseModel):
+    lesson_id: str
+    standards: List[str]  # array of standard IDs
+
+
+class GradeStandardInput(BaseModel):
+    student_id: str
+    standard_id: str
+    mastery_level: str = Field(..., description="mastered | developing | needs_work | not_attempted")
+    lesson_id: Optional[str] = None
+    evidence_id: Optional[str] = None
+    score: Optional[int] = Field(None, ge=0, le=100)
+
+
+@router.get("/search", response_model=List[Dict[str, Any]])
+async def search_standards(
+    query: Optional[str] = Query(None, description="Search text"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
+    grade_level: Optional[str] = Query(None, description="Filter by grade"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Search standards with filters"""
+    try:
+        supabase = get_admin_client()
+        
+        query_builder = supabase.table("standards").select("*")
+        
+        if query:
+            # Try both standard_code/code and standard_text/description fields
+            # Use OR condition for text search
+            query_builder = query_builder.or_(
+                f"standard_code.ilike.%{query}%,standard_text.ilike.%{query}%"
+            )
+        if subject_id:
+            # Filter by subject_id if it exists, otherwise try to match by subject name
+            # First, get the subject name to match against the text field
+            try:
+                subject_res = supabase.table("subject").select("name").eq("id", subject_id).maybe_single().execute()
+                if subject_res.data:
+                    subject_name = subject_res.data.get("name")
+                    # Try subject_id first, then subject text field
+                    query_builder = query_builder.or_(f"subject_id.eq.{subject_id},subject.ilike.%{subject_name}%")
+                else:
+                    query_builder = query_builder.eq("subject_id", subject_id)
+            except:
+                # Fallback: just try subject_id
+                query_builder = query_builder.eq("subject_id", subject_id)
+        if grade_level:
+            query_builder = query_builder.eq("grade_level", grade_level)
+        
+        # Try to order by standard_code first, fallback to code
+        try:
+            result = query_builder.order("standard_code").limit(100).execute()
+        except:
+            try:
+                result = query_builder.order("code").limit(100).execute()
+            except:
+                result = query_builder.limit(100).execute()
+        
+        return result.data or []
+        
+    except Exception as e:
+        log_event("standards.search.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search failed: {str(e)}"
+        )
+
+
+@router.post("/attach", response_model=Dict[str, Any])
+async def attach_standards(
+    input: AttachStandardsInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Attach standards to a lesson"""
+    try:
+        supabase = get_admin_client()
+        family_id = get_family_id_for_user(user["id"])
+        
+        # Verify lesson belongs to family
+        event_res = supabase.table("events").select("id, family_id").eq("id", input.lesson_id).maybe_single().execute()
+        if not event_res.data or event_res.data["family_id"] != family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lesson not found")
+        
+        # Delete existing attachments
+        supabase.table("lesson_standards").delete().eq("lesson_id", input.lesson_id).execute()
+        
+        # Insert new attachments
+        inserts = [{"lesson_id": input.lesson_id, "standard_id": std_id} for std_id in input.standards]
+        if inserts:
+            result = supabase.table("lesson_standards").insert(inserts).execute()
+        
+        log_event("standards.attach", user_id=user["id"], lesson_id=input.lesson_id, count=len(input.standards))
+        return {"success": True, "attached": len(input.standards)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("standards.attach.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Attach failed: {str(e)}"
+        )
+
+
+@router.post("/grade", response_model=Dict[str, Any])
+async def grade_standard(
+    input: GradeStandardInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Grade a student against a standard"""
+    try:
+        supabase = get_admin_client()
+        family_id = get_family_id_for_user(user["id"])
+        
+        # Verify student belongs to family
+        child_res = supabase.table("children").select("id, family_id").eq("id", input.student_id).maybe_single().execute()
+        if not child_res.data or child_res.data["family_id"] != family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student not found")
+        
+        # Verify mastery_level is valid
+        valid_levels = ['mastered', 'developing', 'needs_work', 'not_attempted']
+        if input.mastery_level not in valid_levels:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid mastery_level. Must be one of: {valid_levels}")
+        
+        # Check if record exists
+        existing = (
+            supabase.table("student_standard_mastery")
+            .select("id")
+            .eq("student_id", input.student_id)
+            .eq("standard_id", input.standard_id)
+            .maybe_single()
+            .execute()
+        )
+        
+        upsert_data = {
+            "family_id": family_id,
+            "student_id": input.student_id,
+            "standard_id": input.standard_id,
+            "mastery_level": input.mastery_level,
+            "lesson_id": input.lesson_id,
+            "evidence_id": input.evidence_id,
+            "score": input.score,
+            "updated_at": "now()",
+            "created_by": user["id"]
+        }
+        
+        # Insert or update
+        if existing.data:
+            result = (
+                supabase.table("student_standard_mastery")
+                .update(upsert_data)
+                .eq("id", existing.data["id"])
+                .execute()
+            )
+        else:
+            result = supabase.table("student_standard_mastery").insert(upsert_data).execute()
+        
+        log_event("standards.grade", user_id=user["id"], student_id=input.student_id, standard_id=input.standard_id)
+        return result.data[0] if result.data else {}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("standards.grade.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Grading failed: {str(e)}"
+        )
+
+
+@router.get("/student/{student_id}", response_model=Dict[str, Any])
+async def get_student_standards(
+    student_id: str,
+    subject_id: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Get all standards with mastery levels for a student, grouped by subject"""
+    try:
+        supabase = get_admin_client()
+        family_id = get_family_id_for_user(user["id"])
+        
+        # Verify student
+        child_res = supabase.table("children").select("id, family_id").eq("id", student_id).maybe_single().execute()
+        if not child_res.data or child_res.data["family_id"] != family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student not found")
+        
+        # Get mastery records with standards
+        query = (
+            supabase.table("student_standard_mastery")
+            .select("*, standards(*)")
+            .eq("student_id", student_id)
+        )
+        
+        if subject_id:
+            query = query.eq("standards.subject_id", subject_id)
+        
+        result = query.execute()
+        
+        # Group by subject
+        grouped = {}
+        for record in (result.data or []):
+            std = record.get("standards", {})
+            if not std:
+                continue
+            subj_id = std.get("subject_id")
+            if subj_id not in grouped:
+                grouped[subj_id] = []
+            grouped[subj_id].append({
+                "standard": std,
+                "mastery": {
+                    "mastery_level": record.get("mastery_level"),
+                    "score": record.get("score"),
+                    "lesson_id": record.get("lesson_id"),
+                    "evidence_id": record.get("evidence_id"),
+                    "updated_at": record.get("updated_at")
+                }
+            })
+        
+        return {"student_id": student_id, "by_subject": grouped}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("standards.student.get.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed: {str(e)}"
+        )
+
+
+@router.get("/class/{subject_id}", response_model=Dict[str, Any])
+async def get_class_proficiency(
+    subject_id: str,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Get aggregated proficiency bars for a class/subject"""
+    try:
+        supabase = get_admin_client()
+        family_id = get_family_id_for_user(user["id"])
+        
+        # Get all students in family
+        children_res = supabase.table("children").select("id").eq("family_id", family_id).eq("archived", False).execute()
+        child_ids = [c["id"] for c in (children_res.data or [])]
+        
+        if not child_ids:
+            return {"mastered": 0, "developing": 0, "needs_work": 0, "not_attempted": 0}
+        
+        # Get all standards for this subject
+        standards_res = supabase.table("standards").select("id").eq("subject_id", subject_id).execute()
+        standard_ids = [s["id"] for s in (standards_res.data or [])]
+        
+        if not standard_ids:
+            return {"mastered": 0, "developing": 0, "needs_work": 0, "not_attempted": 0}
+        
+        # Get all mastery records for this subject
+        result = (
+            supabase.table("student_standard_mastery")
+            .select("mastery_level")
+            .in_("student_id", child_ids)
+            .in_("standard_id", standard_ids)
+            .execute()
+        )
+        
+        # Aggregate counts
+        counts = {"mastered": 0, "developing": 0, "needs_work": 0, "not_attempted": 0}
+        for record in (result.data or []):
+            level = record.get("mastery_level")
+            if level in counts:
+                counts[level] += 1
+        
+        return counts
+        
+    except Exception as e:
+        log_event("standards.class.get.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed: {str(e)}"
         )
 

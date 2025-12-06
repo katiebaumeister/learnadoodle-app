@@ -299,12 +299,18 @@ export default function WebAuthScreen() {
           </TouchableOpacity>
           
           {!isSignUp && (
-            <TouchableOpacity
-              style={styles.linkButton}
-              onPress={() => setIsResetPassword(true)}
-            >
-              <Text style={styles.linkText}>Forgot Password?</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={styles.linkButton}
+                onPress={() => setIsResetPassword(true)}
+              >
+                <Text style={styles.linkText}>Forgot Password?</Text>
+              </TouchableOpacity>
+              <View style={styles.divider} />
+              <Text style={styles.studentHint}>
+                Students: Use the invite link your parent shared with you
+              </Text>
+            </>
           )}
         </View>
 
@@ -424,5 +430,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-
+  divider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 12,
+    width: '100%',
+  },
+  studentHint: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
 });

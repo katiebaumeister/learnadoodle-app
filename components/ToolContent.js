@@ -1,20 +1,32 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, Platform, Alert } from 'react-native';
 import { X, Search as SearchIcon } from 'lucide-react';
+import { colors, shadows } from '../theme/colors';
 import { fetchChildren, fetchTasks } from '../lib/toolData';
 import { proposeReschedule } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { TOOL_KEYS } from '../lib/toolTypes';
+import PlannerHealthPanel from '../app/components/schedule/PlannerHealthPanel';
 import ChipsBar from './ChipsBar';
 import TaskList from './TaskList';
+import TasksPane from './TasksPane';
+import BacklogPane from './BacklogPane';
+import BacklogBoard from './backlog/BacklogBoard';
+import RebalancePane from './RebalancePane';
 import AIModal from './AIModal';
 import PackWeekModal from './ai/PackWeekModal';
+import SuperpowerModal from './ai/SuperpowerModal';
 import EventSearch from './EventSearch';
 import { useToast } from './Toast';
 import GoogleCalendarConnect from './GoogleCalendarConnect';
 import ScheduleRulesView from './ScheduleRulesView';
 import BlackoutPanel from './planner/BlackoutPanel';
 import CurriculumHeatmap from './year/CurriculumHeatmap';
+import WeeklyOverviewEmailModal from './email/WeeklyOverviewEmailModal';
+import ParentCoachingModule from './parent/ParentCoachingModule';
+import CourseOverviewPage from './course/CourseOverviewPage';
+import SyllabusScanner from './syllabus/SyllabusScanner';
+import MultiYearPlanningWizard from './year/MultiYearPlanningWizard';
 
 /**
  * Add an AI suggestion to the calendar as an event
@@ -100,7 +112,17 @@ export default function ToolContent({
   const [showPackWeekModal, setShowPackWeekModal] = useState(false);
   const [settingsSubtab, setSettingsSubtab] = useState('schedule_rules');
   const [aiToolsSubtab, setAiToolsSubtab] = useState('plan-year');
+  const [showSuperpowerModal, setShowSuperpowerModal] = useState(false);
+  const [selectedSuperpower, setSelectedSuperpower] = useState(null);
+  const [backlogView, setBacklogView] = useState('list'); // 'list' or 'board'
   const toast = useToast();
+
+  // Redirect blackouts tab to availability (blackouts are now part of Availability)
+  useEffect(() => {
+    if (toolKey === TOOL_KEYS.SETTINGS && settingsSubtab === 'blackouts') {
+      setSettingsSubtab('schedule_rules');
+    }
+  }, [toolKey, settingsSubtab]);
 
   // Set default AI Tools subtab when toolKey changes to AI_TOOLS
   useEffect(() => {
@@ -193,7 +215,7 @@ export default function ToolContent({
 
   // Refresh tasks when filters or timeframe change
   useEffect(() => {
-    if (toolKey && toolKey !== TOOL_KEYS.CALENDAR && toolKey !== TOOL_KEYS.WEEKLY_OBJECTIVES && toolKey !== TOOL_KEYS.SEARCH) {
+    if (toolKey && toolKey !== TOOL_KEYS.CALENDAR && toolKey !== TOOL_KEYS.WEEKLY_OBJECTIVES && toolKey !== TOOL_KEYS.SEARCH && toolKey !== TOOL_KEYS.HEALTH) {
       refresh();
     }
   }, [toolKey, activeChildIds, activeLabels, timeframe, refresh]);
@@ -235,11 +257,21 @@ export default function ToolContent({
 
   const runRebalance = useCallback(async () => {
     if (!familyId) return [];
+    
+    // Use selected children or all children if none selected
+    const childIdsToUse = activeChildIds.length > 0 
+      ? activeChildIds 
+      : effectiveChildren.map(c => c.id).filter(Boolean);
+    
+    if (childIdsToUse.length === 0) {
+      throw new Error('No children available for scheduling');
+    }
+    
     try {
       const result = await proposeReschedule({
         familyId,
         weekStart: new Date(),
-        childIds: activeChildIds.length > 0 ? activeChildIds : undefined,
+        childIds: childIdsToUse,
         horizonWeeks: 2,
         reason: 'rebalance',
       });
@@ -248,35 +280,80 @@ export default function ToolContent({
         throw result.error;
       }
 
-      // Transform API response to suggestion format
-      // The API might return suggestions in different formats
-      const suggestions = result.data?.suggestions || result.data?.changes || [];
+      // Transform persisted changes directly (more reliable than matching with proposal)
+      const persistedChanges = result.data?.changes || [];
+      const suggestions = [];
       
-      return suggestions.map((s, idx) => ({
-        id: s.id || `rebalance-${idx}`,
-        title: s.title || s.event_title || 'Rescheduled Event',
-        proposedStart: s.proposed_start || s.start_ts || s.proposedStart,
-        proposedEnd: s.proposed_end || s.end_ts || s.proposedEnd,
-        notes: s.reason || s.notes || s.ai_reasoning || 'AI rebalanced schedule',
-        childId: s.child_id || s.childId,
-      }));
+      persistedChanges.forEach((change, idx) => {
+        const payload = change.payload || {};
+        const changeType = change.change_type;
+        
+        if (changeType === 'add') {
+          suggestions.push({
+            id: change.id || `rebalance-add-${idx}`,
+            title: payload.title || 'Rescheduled Event',
+            proposedStart: payload.start,
+            proposedEnd: payload.end,
+            notes: `Add: ${payload.title || 'New event'}`,
+            childId: payload.child_id,
+            changeType: 'add',
+            changeId: change.id,
+          });
+        } else if (changeType === 'move') {
+          suggestions.push({
+            id: change.id || `rebalance-move-${idx}`,
+            title: payload.reason || 'Rescheduled Event',
+            proposedStart: payload.to_start,
+            proposedEnd: payload.to_end,
+            notes: `Move: ${payload.reason || 'AI rebalanced schedule'}`,
+            eventId: payload.event_id || change.event_id,
+            fromStart: payload.from_start,
+            fromEnd: payload.from_end,
+            changeType: 'move',
+            changeId: change.id,
+          });
+        } else if (changeType === 'delete') {
+          suggestions.push({
+            id: change.id || `rebalance-delete-${idx}`,
+            title: payload.reason || 'Delete Event',
+            proposedStart: null,
+            proposedEnd: null,
+            notes: `Delete: ${payload.reason || 'Remove event'}`,
+            eventId: payload.event_id || change.event_id,
+            changeType: 'delete',
+            changeId: change.id,
+          });
+        }
+      });
+      
+      return suggestions;
     } catch (err) {
       console.error('Rebalance error:', err);
       throw new Error('Failed to rebalance schedule');
     }
-  }, [familyId, activeChildIds]);
+  }, [familyId, activeChildIds, effectiveChildren]);
 
   // Pack week now handled by PackWeekModal component
 
   const runWhatIf = useCallback(async () => {
     if (!familyId) return [];
+    
+    // Use selected children or all children if none selected
+    const childIdsToUse = activeChildIds.length > 0 
+      ? activeChildIds 
+      : effectiveChildren.map(c => c.id).filter(Boolean);
+    
+    if (childIdsToUse.length === 0) {
+      return [];
+    }
+    
     try {
       // What-if analysis: simulate different scenarios
       // For now, we'll use proposeReschedule with a what-if reason
       const result = await proposeReschedule({
         familyId,
         weekStart: new Date(),
-        childIds: activeChildIds.length > 0 ? activeChildIds : undefined,
+        childIds: childIdsToUse,
         horizonWeeks: 2,
         reason: 'what_if',
       });
@@ -285,22 +362,59 @@ export default function ToolContent({
         throw result.error;
       }
 
-      const suggestions = result.data?.suggestions || result.data?.changes || [];
+      // Transform persisted changes directly (more reliable than matching with proposal)
+      const persistedChanges = result.data?.changes || [];
+      const suggestions = [];
       
-      return suggestions.map((s, idx) => ({
-        id: s.id || `whatif-${idx}`,
-        title: s.title || s.event_title || 'What-if Scenario',
-        proposedStart: s.proposed_start || s.start_ts || s.proposedStart,
-        proposedEnd: s.proposed_end || s.end_ts || s.proposedEnd,
-        notes: s.reason || s.notes || s.ai_reasoning || 'What-if analysis scenario',
-        childId: s.child_id || s.childId,
-      }));
+      persistedChanges.forEach((change, idx) => {
+        const payload = change.payload || {};
+        const changeType = change.change_type;
+        
+        if (changeType === 'add') {
+          suggestions.push({
+            id: change.id || `whatif-add-${idx}`,
+            title: payload.title || 'What-if Event',
+            proposedStart: payload.start,
+            proposedEnd: payload.end,
+            notes: `What-if: ${payload.title || 'New scenario'}`,
+            childId: payload.child_id,
+            changeType: 'add',
+            changeId: change.id,
+          });
+        } else if (changeType === 'move') {
+          suggestions.push({
+            id: change.id || `whatif-move-${idx}`,
+            title: payload.reason || 'What-if Move',
+            proposedStart: payload.to_start,
+            proposedEnd: payload.to_end,
+            notes: `What-if: ${payload.reason || 'Alternative schedule'}`,
+            eventId: payload.event_id || change.event_id,
+            fromStart: payload.from_start,
+            fromEnd: payload.from_end,
+            changeType: 'move',
+            changeId: change.id,
+          });
+        } else if (changeType === 'delete') {
+          suggestions.push({
+            id: change.id || `whatif-delete-${idx}`,
+            title: payload.reason || 'What-if Delete',
+            proposedStart: null,
+            proposedEnd: null,
+            notes: `What-if: ${payload.reason || 'Remove event'}`,
+            eventId: payload.event_id || change.event_id,
+            changeType: 'delete',
+            changeId: change.id,
+          });
+        }
+      });
+      
+      return suggestions;
     } catch (err) {
       console.error('What-if error:', err);
       // Return empty array instead of throwing for what-if (it's exploratory)
       return [];
     }
-  }, [familyId, activeChildIds]);
+  }, [familyId, activeChildIds, effectiveChildren]);
 
   const renderHeader = (title, rightContent) => (
     <View style={styles.header}>
@@ -337,26 +451,37 @@ export default function ToolContent({
   switch (toolKey) {
     case TOOL_KEYS.TASKS:
       return (
-        <View style={styles.container}>
-          {renderHeader(
-            'Tasks',
-            onOpenKanban && (
-              <TouchableOpacity onPress={onOpenKanban} style={styles.headerButton}>
-                <Text style={styles.headerButtonText}>Open Kanban</Text>
-              </TouchableOpacity>
-            )
-          )}
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-            <ChipsBar
-              childrenList={children}
-              activeChildIds={activeChildIds}
-              onToggleChild={toggleChild}
-              activeLabels={activeLabels}
-              onToggleLabel={toggleLabel}
-            />
-            <TaskList tasks={tasks} emptyText="No tasks for this week" />
-          </ScrollView>
-        </View>
+        <TasksPane
+          tasks={tasks}
+          children={effectiveChildren}
+          activeChildIds={activeChildIds}
+          onToggleChild={toggleChild}
+          activeLabels={activeLabels}
+          onToggleLabel={toggleLabel}
+          onClose={onClose}
+          onOpenKanban={onOpenKanban}
+          onAddTask={() => {
+            // TODO: Open add task modal
+            console.log('Add task');
+          }}
+          onSearchTasks={() => {
+            // TODO: Focus search or open search pane
+            console.log('Search tasks');
+          }}
+          onEditTask={(task) => {
+            // TODO: Open edit task modal
+            console.log('Edit task:', task);
+          }}
+          onViewTask={(task) => {
+            // TODO: Open task details
+            console.log('View task:', task);
+          }}
+          onMarkComplete={(task) => {
+            // TODO: Mark task as complete
+            console.log('Mark complete:', task);
+            refresh();
+          }}
+        />
       );
 
     case TOOL_KEYS.SEARCH:
@@ -372,20 +497,79 @@ export default function ToolContent({
       );
 
     case TOOL_KEYS.BACKLOG:
+      if (backlogView === 'board') {
+        return (
+          <BacklogBoard
+            tasks={tasks}
+            children={effectiveChildren}
+            activeChildIds={activeChildIds}
+            onToggleChild={toggleChild}
+            activeLabels={activeLabels}
+            onToggleLabel={toggleLabel}
+            onClose={onClose}
+            onAddTask={(text, columnId) => {
+              // TODO: Add task to backlog with column
+              toast.push('Task added to backlog', 'success');
+              refresh();
+            }}
+            onEditTask={(task) => {
+              // TODO: Open edit task modal
+              console.log('Edit backlog task:', task);
+            }}
+            onMoveTask={(task, fromColumn, toColumn) => {
+              // TODO: Move task between columns
+              console.log('Move task:', task, fromColumn, toColumn);
+              refresh();
+            }}
+            onUpdateTaskStatus={(task, newStatus) => {
+              // TODO: Update task status
+              console.log('Update task status:', task, newStatus);
+              refresh();
+            }}
+            onDeleteTask={(task) => {
+              // TODO: Delete task
+              console.log('Delete task:', task);
+              refresh();
+            }}
+          />
+        );
+      }
+      
       return (
-        <View style={styles.container}>
-          {renderHeader('Backlog')}
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-            <ChipsBar
-              childrenList={children}
-              activeChildIds={activeChildIds}
-              onToggleChild={toggleChild}
-              activeLabels={activeLabels}
-              onToggleLabel={toggleLabel}
-            />
-            <TaskList tasks={tasks} emptyText="Add tasks you want to work on later." />
-          </ScrollView>
-        </View>
+        <BacklogPane
+          tasks={tasks}
+          children={effectiveChildren}
+          activeChildIds={activeChildIds}
+          onToggleChild={toggleChild}
+          activeLabels={activeLabels}
+          onToggleLabel={toggleLabel}
+          onClose={onClose}
+          onOpenKanban={() => setBacklogView('board')}
+          onAddTask={(text) => {
+            // TODO: Add task to backlog
+            toast.push('Task added to backlog', 'success');
+            refresh();
+          }}
+          onEditTask={(task) => {
+            // TODO: Open edit task modal
+            console.log('Edit backlog task:', task);
+          }}
+          onMoveToSchedule={(task) => {
+            // TODO: Move task to schedule
+            console.log('Move to schedule:', task);
+            refresh();
+          }}
+          onMarkReady={(task) => {
+            // TODO: Mark task as ready
+            console.log('Mark ready:', task);
+            refresh();
+          }}
+          onDeleteTask={(task) => {
+            // TODO: Delete task
+            console.log('Delete task:', task);
+            refresh();
+          }}
+        />
       );
 
     case TOOL_KEYS.COMPLETED:
@@ -436,7 +620,7 @@ export default function ToolContent({
               activeLabels={activeLabels}
               onToggleLabel={toggleLabel}
             />
-            <TaskList tasks={tasks} emptyText="No completed tasks" />
+            <TaskList tasks={tasks} emptyText="No completed tasks" isCompleted={true} />
           </ScrollView>
         </View>
       );
@@ -548,33 +732,24 @@ export default function ToolContent({
 
     case TOOL_KEYS.REBALANCE:
       return (
-        <View style={styles.container}>
-          {renderHeader('Rebalance Schedule')}
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-            <Text style={styles.description}>
-              AI will analyze your schedule and suggest optimizations to balance workload across time.
-            </Text>
-            <TouchableOpacity
-              style={styles.aiButton}
-              onPress={() => {
-                setAiModalKey(TOOL_KEYS.REBALANCE);
-                setShowAIModal(true);
-              }}
-            >
-              <Text style={styles.aiButtonText}>Run Rebalance</Text>
-            </TouchableOpacity>
-            <AIModal
-              title="Rebalance Schedule"
-              open={showAIModal && aiModalKey === TOOL_KEYS.REBALANCE}
-              onClose={() => {
-                setShowAIModal(false);
-                setAiModalKey(null);
-              }}
-              run={runRebalance}
-              onAccept={handleAIAccept}
-            />
-          </ScrollView>
-        </View>
+        <RebalancePane
+          familyId={familyId}
+          children={effectiveChildren}
+          activeChildIds={activeChildIds}
+          onClose={onClose}
+          runRebalance={runRebalance}
+          onAcceptSuggestion={handleAIAccept}
+          onAcceptAll={async (suggestions) => {
+            // Accept all suggestions
+            for (const suggestion of suggestions || []) {
+              try {
+                await handleAIAccept(suggestion);
+              } catch (err) {
+                console.error('Error accepting suggestion:', err);
+              }
+            }
+          }}
+        />
       );
 
     case TOOL_KEYS.PACK_THIS_WEEK:
@@ -660,13 +835,15 @@ export default function ToolContent({
       const getSettingsHeaderTitle = () => {
         switch (settingsSubtab) {
           case 'schedule_rules':
-            return 'Schedule Rules';
-          case 'blackouts':
-            return 'Blackouts';
+            return 'Availability';
           case 'calendar':
             return 'Calendar Integrations';
           case 'objectives':
             return 'Weekly Objectives';
+          case 'email':
+            return 'Email Preferences';
+          case 'coaching':
+            return 'Parent Coaching';
           default:
             return 'Settings';
         }
@@ -725,18 +902,7 @@ export default function ToolContent({
                 }}
               >
                 <Text style={[styles.subtabText, settingsSubtab === 'schedule_rules' && styles.subtabTextActive]}>
-                  Schedule Rules
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.subtab, settingsSubtab === 'blackouts' && styles.subtabActive]}
-                onPress={() => {
-                  console.log('[ToolContent] Settings tab clicked: blackouts');
-                  setSettingsSubtab('blackouts');
-                }}
-              >
-                <Text style={[styles.subtabText, settingsSubtab === 'blackouts' && styles.subtabTextActive]}>
-                  Blackouts
+                  Availability
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -761,6 +927,28 @@ export default function ToolContent({
                   Weekly Objectives
                 </Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.subtab, settingsSubtab === 'email' && styles.subtabActive]}
+                onPress={() => {
+                  console.log('[ToolContent] Settings tab clicked: email');
+                  setSettingsSubtab('email');
+                }}
+              >
+                <Text style={[styles.subtabText, settingsSubtab === 'email' && styles.subtabTextActive]}>
+                  Email
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.subtab, settingsSubtab === 'coaching' && styles.subtabActive]}
+                onPress={() => {
+                  console.log('[ToolContent] Settings tab clicked: coaching');
+                  setSettingsSubtab('coaching');
+                }}
+              >
+                <Text style={[styles.subtabText, settingsSubtab === 'coaching' && styles.subtabTextActive]}>
+                  Coaching
+                </Text>
+              </TouchableOpacity>
             </ScrollView>
           </View>
           <View style={styles.settingsContent}>
@@ -772,12 +960,6 @@ export default function ToolContent({
                   children={effectiveChildren}
                   hideHeader={true}
                 />
-              </>
-            )}
-            {settingsSubtab === 'blackouts' && (
-              <>
-                {console.log('[ToolContent] Rendering BlackoutPanel')}
-                <BlackoutPanel familyId={familyId} children={effectiveChildren} />
               </>
             )}
             {settingsSubtab === 'calendar' && (
@@ -806,6 +988,22 @@ export default function ToolContent({
                   </View>
                 </ScrollView>
               </>
+            )}
+            {settingsSubtab === 'email' && (
+              <WeeklyOverviewEmailModal
+                visible={true}
+                onClose={onClose}
+                familyId={familyId}
+                childIds={activeChildIds}
+                weekStart={new Date().toISOString().split('T')[0]}
+                children={effectiveChildren}
+              />
+            )}
+            {settingsSubtab === 'coaching' && (
+              <ParentCoachingModule
+                familyId={familyId}
+                childId={activeChildIds.length === 1 ? activeChildIds[0] : null}
+              />
             )}
             {settingsSubtab === 'objectives' && (
               <>
@@ -836,183 +1034,157 @@ export default function ToolContent({
           </View>
         </View>
       );
-
+    
+    case TOOL_KEYS.HEALTH:
+      return (
+        <View style={styles.container}>
+          <PlannerHealthPanel
+            childId={activeChildIds.length === 1 ? activeChildIds[0] : undefined}
+            familyId={familyId}
+            onRefresh={() => {
+              // Refresh can be handled by the panel itself
+            }}
+          />
+        </View>
+      );
+    
     case TOOL_KEYS.AI_TOOLS:
+      // Define the 3 superpowers with their modes
+      const superpowers = [
+        {
+          id: 'fix-my-week',
+          title: 'Fix My Week',
+          description: 'Things got messy. Help me tidy and catch up.',
+          modes: [
+            {
+              id: 'rebalance',
+              title: 'Rebalance',
+              description: 'Spread work more evenly so no day feels overloaded.',
+              tagline: 'Good when week feels uneven',
+              requires: () => true,
+            },
+            {
+              id: 'catch-up',
+              title: 'Catch Up',
+              description: 'Find missed or overdue work and suggest a realistic catch-up plan.',
+              tagline: 'Good when you\'ve missed days',
+              requires: () => onCatchUp !== undefined,
+            },
+            {
+              id: 'pack-week',
+              title: 'Pack This Week',
+              description: 'Fill open time this week with useful learning tasks from your backlog.',
+              tagline: 'Make the most of the time you do have',
+              requires: () => onPackWeek !== undefined,
+            },
+          ],
+        },
+        {
+          id: 'plan-ahead',
+          title: 'Plan Ahead',
+          description: 'Help me think beyond just this week.',
+          modes: [
+            {
+              id: 'plan-year',
+              title: 'Plan the Year',
+              description: 'Lay out a high-level plan for the whole year or term.',
+              tagline: 'A bird\'s-eye view of the year, made practical',
+              requires: () => onPlanYear !== undefined,
+            },
+            {
+              id: 'what-if',
+              title: 'What-If Scenarios',
+              description: 'Test changes—like a new co-op day or a long trip—without touching your real calendar.',
+              tagline: 'Try ideas safely before committing',
+              requires: () => onWhatIfAnalysis !== undefined,
+            },
+          ],
+        },
+        {
+          id: 'understand-progress',
+          title: 'Understand Our Progress',
+          description: 'Are we on track? What\'s working? What needs a tweak?',
+          modes: [
+            {
+              id: 'summarize-progress',
+              title: 'Progress Snapshot',
+              description: 'A plain-language overview of what each child has been working on and how it\'s going.',
+              tagline: 'From raw logs to a story you can actually read',
+              requires: () => onSummarizeProgress !== undefined,
+            },
+            {
+              id: 'analytics',
+              title: 'Learning Analytics',
+              description: 'Charts and numbers for hours, streaks, and subject balance.',
+              tagline: 'See patterns over weeks and months',
+              requires: () => onAnalytics !== undefined,
+            },
+            {
+              id: 'heatmap',
+              title: 'Curriculum Heatmap',
+              description: 'Where has our effort gone this term?',
+              tagline: 'Visualize subject coverage over time',
+              requires: () => onHeatmap !== undefined,
+            },
+          ],
+        },
+      ];
+
       return (
         <View style={styles.container}>
           {renderHeader('AI Tools')}
-          <View style={styles.subtabContainer}>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.subtabRow}
-            >
-              {onPlanYear && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'plan-year' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('plan-year')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'plan-year' && styles.subtabTextActive]}>
-                    Plan the Year
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {onHeatmap && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'heatmap' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('heatmap')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'heatmap' && styles.subtabTextActive]}>
-                    Heatmap
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {onPackWeek && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'pack-week' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('pack-week')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'pack-week' && styles.subtabTextActive]}>
-                    Pack Week
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {onCatchUp && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'catch-up' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('catch-up')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'catch-up' && styles.subtabTextActive]}>
-                    Catch Up
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {onSummarizeProgress && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'summarize-progress' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('summarize-progress')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'summarize-progress' && styles.subtabTextActive]}>
-                    Summarize Progress
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {onWhatIfAnalysis && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'whatif' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('whatif')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'whatif' && styles.subtabTextActive]}>
-                    What-If Analysis
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {onAnalytics && (
-                <TouchableOpacity
-                  style={[styles.subtab, aiToolsSubtab === 'analytics' && styles.subtabActive]}
-                  onPress={() => setAiToolsSubtab('analytics')}
-                >
-                  <Text style={[styles.subtabText, aiToolsSubtab === 'analytics' && styles.subtabTextActive]}>
-                    Analytics
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-            {aiToolsSubtab === 'plan-year' && onPlanYear && (
-              <View style={styles.aiToolContent}>
-                <Text style={styles.description}>
-                  Plan your entire year with AI-powered curriculum scheduling.
-                </Text>
-                <TouchableOpacity style={styles.aiButton} onPress={onPlanYear}>
-                  <Text style={styles.aiButtonText}>Plan the Year</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {aiToolsSubtab === 'heatmap' && onHeatmap && (
-              <View style={styles.aiToolContent}>
-                <CurriculumHeatmap
-                  familyId={familyId}
-                  startDate={new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]}
-                  endDate={new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0]}
-                  onClose={onClose}
-                />
-              </View>
-            )}
-            {aiToolsSubtab === 'pack-week' && onPackWeek && (
-              <View style={styles.aiToolContent}>
-                <Text style={styles.description}>
-                  AI will help you pack your week efficiently by suggesting optimal task scheduling.
-                </Text>
-                <TouchableOpacity style={styles.aiButton} onPress={() => setShowPackWeekModal(true)}>
-                  <Text style={styles.aiButtonText}>Pack This Week</Text>
-                </TouchableOpacity>
-                <PackWeekModal
-                  visible={showPackWeekModal}
-                  familyId={familyId}
-                  children={effectiveChildren}
-                  onClose={() => setShowPackWeekModal(false)}
-                />
-              </View>
-            )}
-            {aiToolsSubtab === 'catch-up' && onCatchUp && (
-              <View style={styles.aiToolContent}>
-                <Text style={styles.description}>
-                  AI will help you catch up on missed work and reschedule tasks.
-                </Text>
-                <TouchableOpacity style={styles.aiButton} onPress={onCatchUp}>
-                  <Text style={styles.aiButtonText}>Catch Up</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {aiToolsSubtab === 'summarize-progress' && onSummarizeProgress && (
-              <View style={styles.aiToolContent}>
-                <Text style={styles.description}>
-                  Get an AI-generated summary of your learning progress.
-                </Text>
-                <TouchableOpacity style={styles.aiButton} onPress={onSummarizeProgress}>
-                  <Text style={styles.aiButtonText}>Summarize Progress</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {aiToolsSubtab === 'whatif' && onWhatIfAnalysis && (
-              <View style={styles.aiToolContent}>
-                <Text style={styles.description}>
-                  Analyze different scheduling scenarios to see how changes would affect your calendar.
-                </Text>
+            <Text style={styles.superpowerIntro}>
+              Choose a superpower to get started:
+            </Text>
+            <View style={styles.superpowersContainer}>
+              {superpowers.map((superpower) => (
                 <TouchableOpacity
-                  style={styles.aiButton}
+                  key={superpower.id}
+                  style={styles.superpowerCard}
                   onPress={() => {
-                    setAiModalKey(TOOL_KEYS.WHAT_IF);
-                    setShowAIModal(true);
+                    setSelectedSuperpower(superpower);
+                    setShowSuperpowerModal(true);
                   }}
                 >
-                  <Text style={styles.aiButtonText}>Run What-if Analysis</Text>
+                  <View style={styles.superpowerCardContent}>
+                    <Text style={styles.superpowerTitle}>{superpower.title}</Text>
+                    <Text style={styles.superpowerDescription}>{superpower.description}</Text>
+                    <View style={styles.modesPreview}>
+                      {superpower.modes.filter(m => m.requires()).slice(0, 3).map((mode, idx) => (
+                        <View key={mode.id} style={styles.modePreviewBadge}>
+                          <Text style={styles.modePreviewText}>{mode.title}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
                 </TouchableOpacity>
-                <AIModal
-                  title="What-if Analysis"
-                  open={showAIModal && aiModalKey === TOOL_KEYS.WHAT_IF}
-                  onClose={() => {
-                    setShowAIModal(false);
-                    setAiModalKey(null);
-                  }}
-                  run={runWhatIf}
-                  onAccept={handleAIAccept}
-                />
-              </View>
-            )}
-            {aiToolsSubtab === 'analytics' && onAnalytics && (
-              <View style={styles.aiToolContent}>
-                <Text style={styles.description}>
-                  View detailed analytics and insights about your learning schedule.
-                </Text>
-                <TouchableOpacity style={styles.aiButton} onPress={onAnalytics}>
-                  <Text style={styles.aiButtonText}>View Analytics</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+              ))}
+            </View>
           </ScrollView>
+
+          {/* Superpower Modal */}
+          {selectedSuperpower && (
+            <SuperpowerModal
+              visible={showSuperpowerModal}
+              onClose={() => {
+                setShowSuperpowerModal(false);
+                setSelectedSuperpower(null);
+              }}
+              superpower={selectedSuperpower}
+              familyId={familyId}
+              children={effectiveChildren}
+              activeChildIds={activeChildIds}
+              onPlanYear={onPlanYear}
+              onHeatmap={onHeatmap}
+              onCatchUp={onCatchUp}
+              onSummarizeProgress={onSummarizeProgress}
+              onAnalytics={onAnalytics}
+              runRebalance={runRebalance}
+              runWhatIf={runWhatIf}
+              handleAIAccept={handleAIAccept}
+            />
+          )}
         </View>
       );
 
@@ -1028,30 +1200,38 @@ export default function ToolContent({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#FAFAFA',
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(229, 231, 235, 0.6)', // border-gray-200/60
   },
   panelWrapper: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#FAFAFA',
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(229, 231, 235, 0.6)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    paddingTop: 4, // Aligned with calendar top
+    paddingBottom: 8,
+    paddingHorizontal: 24, // px-6 (24px)
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: 'rgba(243, 244, 246, 0.7)', // border-gray-100/70
+    backgroundColor: '#FAFAFA',
     ...(Platform.OS === 'web' && {
       position: 'sticky',
       top: 0,
       zIndex: 100,
-      backgroundColor: '#ffffff',
     }),
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 18, // text-[18px]
+    fontWeight: '600', // font-semibold
     color: '#111827',
+    letterSpacing: -0.5, // tracking-tight
+    marginBottom: 4, // 4px margin-bottom
   },
   headerRight: {
     flexDirection: 'row',
@@ -1059,15 +1239,45 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#3b82f6',
+    paddingHorizontal: 16, // px-4
+    paddingVertical: 8,
+    borderRadius: 12, // rounded-xl
+    height: 36, // h-[36px]
+    backgroundColor: '#7c8cff', // Pastel primary button
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      transition: 'all 0.2s ease',
+      ':hover': {
+        backgroundColor: '#6c7bf3', // hover state
+      },
+    }),
   },
   headerButtonText: {
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '500',
+  },
+  sectionLabel: {
+    fontSize: 12, // text-xs
+    textTransform: 'uppercase',
+    letterSpacing: 1, // tracking-wider
+    color: 'rgba(107, 114, 128, 0.8)', // text-gray-500/80
+    marginTop: 16, // mt-4
+    marginBottom: 8, // mb-2
+    ...(Platform.OS === 'web' && {
+      textDecorationLine: 'underline',
+      textDecorationColor: 'rgba(107, 114, 128, 0.2)',
+    }),
+  },
+  standardCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12, // rounded-xl
+    padding: 16, // p-4
+    marginBottom: 16, // mb-4
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)', // shadow-[0_1px_2px_rgba(0,0,0,0.04)]
+    }),
   },
   closeButton: {
     padding: 4,
@@ -1076,11 +1286,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    padding: 16,
+    paddingHorizontal: 24, // px-6 (24px) - unified
+    paddingTop: 4, // pt-4 (16px) - aligned with header
+    paddingBottom: 32, // pb-8 (32px)
   },
   settingsContent: {
     flex: 1,
     overflow: 'hidden',
+    backgroundColor: '#FAFAFA', // Unified background
   },
   empty: {
     flex: 1,
@@ -1098,20 +1311,25 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   timeframeButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 9999, // rounded-full
     backgroundColor: '#f3f4f6',
+    borderWidth: 0,
   },
   timeframeButtonActive: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#e6eaff', // Soft pastel periwinkle
+    borderWidth: 1,
+    borderColor: '#7c8cff',
   },
   timeframeButtonText: {
-    fontSize: 12,
-    color: '#6b7280',
+    fontSize: 14,
+    color: '#4b5563',
+    fontWeight: '500',
   },
   timeframeButtonTextActive: {
-    color: '#ffffff',
+    color: '#4f46e5', // text-indigo-600
+    fontWeight: '600',
   },
   objectivesList: {
     gap: 8,
@@ -1180,12 +1398,20 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   aiButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 8,
-    paddingVertical: 12,
+    backgroundColor: '#7c8cff', // Pastel primary button
+    borderRadius: 12, // rounded-xl
+    paddingVertical: 8,
     paddingHorizontal: 16,
+    height: 36, // h-[36px]
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      transition: 'all 0.2s ease',
+      ':hover': {
+        backgroundColor: '#6c7bf3', // hover state
+      },
+    }),
   },
   aiButtonText: {
     color: '#ffffff',
@@ -1194,13 +1420,14 @@ const styles = StyleSheet.create({
   },
   subtabContainer: {
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.card,
     ...(Platform.OS === 'web' && {
       position: 'sticky',
       top: 0,
       zIndex: 99,
     }),
+    ...shadows.sm,
   },
   subtabRow: {
     flexDirection: 'row',
@@ -1227,23 +1454,175 @@ const styles = StyleSheet.create({
     }),
   },
   subtabActive: {
-    borderBottomColor: '#3b82f6',
+    borderBottomColor: colors.accent,
     backgroundColor: 'transparent',
   },
   subtabText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.muted,
     fontWeight: '500',
     ...(Platform.OS === 'web' && {
       whiteSpace: 'nowrap',
     }),
   },
   subtabTextActive: {
-    color: '#3b82f6',
+    color: colors.accent,
     fontWeight: '600',
   },
   aiToolContent: {
     paddingVertical: 8,
+  },
+  superpowerIntro: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  superpowersContainer: {
+    gap: 20,
+  },
+  superpowerCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e5e7eb',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  superpowerCardContent: {
+    padding: 24,
+  },
+  superpowerTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 8,
+  },
+  superpowerDescription: {
+    fontSize: 15,
+    color: '#6b7280',
+    marginBottom: 16,
+    lineHeight: 22,
+  },
+  modesPreview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  modePreviewBadge: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  modePreviewText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#1e40af',
+  },
+  stepsContainer: {
+    marginTop: 16,
+    marginBottom: 20,
+    gap: 12,
+  },
+  stepItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  stepIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepNumber: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  stepText: {
+    fontSize: 14,
+    color: '#6b7280',
+    flex: 1,
+  },
+  kanbanButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6', // Pale pastel
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    ...(Platform.OS === 'web' && {
+      transition: 'all 0.2s ease',
+    }),
+  },
+  kanbanButtonText: {
+    color: '#6b7280',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  quickAddContainer: {
+    marginBottom: 6, // Tightened spacing (reduced by 6px)
+  },
+  quickAddInput: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#111827',
+  },
+  emptyStateCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16, // Reduced padding
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)',
+    }),
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  dragZone: {
+    padding: 12, // Shrunk by 20% (from 16 to 12)
+    borderRadius: 8,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderStyle: 'dashed',
+    width: '80%', // Shrunk by 20%
+    alignItems: 'center',
+  },
+  dragZoneText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+  },
+  infoText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 8,
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });
 

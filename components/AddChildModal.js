@@ -59,6 +59,12 @@ export default function AddChildModal({
         avatar_url: formData.avatar || null,
         interests: formData.interests || [],
         learning_styles: formData.learningStyle ? [formData.learningStyle] : [],
+        // Support profile fields
+        diagnoses: formData.diagnoses || null,
+        learning_modalities: formData.learningModalities || null,
+        support_needs: formData.supportNeeds || null,
+        executive_function: formData.executiveFunction || null,
+        support_notes: formData.supportNotes || null,
       };
 
       // Call API endpoint

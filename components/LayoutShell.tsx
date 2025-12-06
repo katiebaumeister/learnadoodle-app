@@ -55,7 +55,8 @@ const styles = StyleSheet.create({
     overflowY: Platform.OS === 'web' ? ('auto' as any) : undefined,
     minHeight: Platform.OS === 'web' ? ('100vh' as any) : undefined,
     backgroundColor: '#FAFBFC',
-    // paddingTop removed - TopBar is now rendered inside views that need it
+    display: 'flex',
+    flexDirection: 'column',
   },
   mainInner: {
     width: '100%',

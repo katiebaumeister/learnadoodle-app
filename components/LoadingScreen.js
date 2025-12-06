@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 
 export default function LoadingScreen({ message = 'Loading...', timeout = 10000 }) {
@@ -61,10 +62,34 @@ export default function LoadingScreen({ message = 'Loading...', timeout = 10000 
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#80C1E1',
-    justifyContent: 'center',
-    alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: '100vw',
+      height: '100vh',
+      minHeight: '100vh',
+      minWidth: '100vw',
+      backgroundColor: '#80C1E1',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 99999,
+    } : {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: '100%',
+      height: '100%',
+      flex: 1,
+      backgroundColor: '#80C1E1',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 9999,
+    }),
   },
   content: {
     alignItems: 'center',

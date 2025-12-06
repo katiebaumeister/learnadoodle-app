@@ -1,23 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform } from 'react-native';
 import { AlertTriangle } from 'lucide-react';
 import { getFamilyMembers } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
+import EditChildModal from '../EditChildModal';
 
 export default function FamilyPanel({ user }) {
   const [family, setFamily] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [editingChild, setEditingChild] = useState(null);
+  const [showEditChildModal, setShowEditChildModal] = useState(false);
+  const [familyId, setFamilyId] = useState(null);
 
   useEffect(() => {
     const loadFamily = async () => {
       setLoading(true);
       setError(null);
       try {
+        // First get family_id from user profile
+        let profileFamilyId = null;
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (authUser) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('family_id')
+            .eq('id', authUser.id)
+            .maybeSingle();
+          if (profile?.family_id) {
+            profileFamilyId = profile.family_id;
+            setFamilyId(profile.family_id);
+          }
+        }
+        
         const { data, error: err } = await getFamilyMembers();
         if (err) throw err;
         setFamily(data);
+        const effectiveFamilyId = data?.id || profileFamilyId;
+        if (effectiveFamilyId) {
+          setFamilyId(effectiveFamilyId);
+        }
       } catch (err) {
         console.error('Error loading family:', err);
         setError(err.message || 'Failed to load family info');
@@ -93,7 +116,15 @@ export default function FamilyPanel({ user }) {
           <Text style={styles.emptyText}>No children added yet</Text>
         ) : (
           children.map((child) => (
-            <ChildManagementItem key={child.id} child={child} familyId={family?.id} />
+            <ChildManagementItem 
+              key={child.id} 
+              child={child} 
+              familyId={family?.id}
+              onEdit={() => {
+                setEditingChild(child);
+                setShowEditChildModal(true);
+              }}
+            />
           ))
         )}
 
@@ -119,6 +150,73 @@ export default function FamilyPanel({ user }) {
           ))
         )}
       </View>
+
+      {/* Edit Child Modal */}
+      <EditChildModal
+        visible={showEditChildModal}
+        onClose={() => {
+          setShowEditChildModal(false);
+          setEditingChild(null);
+        }}
+        child={editingChild}
+        familyId={family?.id || familyId}
+        onChildUpdated={(updatedChild) => {
+          // Optimistically update the child in the list immediately
+          if (updatedChild && family) {
+            setFamily(prevFamily => {
+              if (!prevFamily) return prevFamily;
+              const updatedChildren = (prevFamily.children || []).map(child => 
+                child.id === updatedChild.id 
+                  ? { 
+                      ...child, 
+                      first_name: updatedChild.first_name || updatedChild.name,
+                      name: updatedChild.first_name || updatedChild.name,
+                      // Include other fields that might have changed
+                      nickname: updatedChild.nickname,
+                      age: updatedChild.age,
+                      grade: updatedChild.grade,
+                      avatar: updatedChild.avatar,
+                      archived: updatedChild.archived
+                    }
+                  : child
+              );
+              return { ...prevFamily, children: updatedChildren };
+            });
+          }
+          
+          // Dispatch global event to refresh children in other components (sidebar, etc.)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshChildren'));
+          }
+          
+          // Then reload family data to ensure consistency
+          const loadFamily = async () => {
+            try {
+              const { data, error: err } = await getFamilyMembers();
+              if (!err && data) {
+                setFamily(data);
+              }
+            } catch (err) {
+              console.error('Error reloading family:', err);
+            }
+          };
+          loadFamily();
+        }}
+        onChildDeleted={() => {
+          // Reload family data to refresh the list
+          const loadFamily = async () => {
+            try {
+              const { data, error: err } = await getFamilyMembers();
+              if (!err && data) {
+                setFamily(data);
+              }
+            } catch (err) {
+              console.error('Error reloading family:', err);
+            }
+          };
+          loadFamily();
+        }}
+      />
     </View>
   );
 }
@@ -196,6 +294,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     marginBottom: 8,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
   },
   memberName: {
     fontSize: 12,
@@ -238,18 +341,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
-  manageButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#ffffff',
-  },
-  manageButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
+  editHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    fontStyle: 'italic',
   },
   dangerZone: {
     marginTop: 12,
@@ -344,218 +439,25 @@ const styles = StyleSheet.create({
   },
 });
 
-function ChildManagementItem({ child, familyId }) {
-  const [showDangerZone, setShowDangerZone] = useState(false);
-  const [confirmName, setConfirmName] = useState('');
-  const [archiving, setArchiving] = useState(false);
-  const [restoring, setRestoring] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [isArchived, setIsArchived] = useState(child.archived || false);
-
+function ChildManagementItem({ child, familyId, onEdit }) {
   const childName = child.name || child.first_name || 'Child';
 
-  const handleArchive = async () => {
-    Alert.alert(
-      'Archive Child',
-      `Are you sure you want to archive ${childName}? This will hide them from planners and reports, but data will be preserved.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Archive',
-          style: 'destructive',
-          onPress: async () => {
-            setArchiving(true);
-            const { data, error } = await supabase.rpc('archive_child', {
-              _family: familyId,
-              _child: child.id
-            });
-
-            setArchiving(false);
-
-            if (error || !data?.ok) {
-              Alert.alert('Error', 'Failed to archive child');
-              return;
-            }
-
-            Alert.alert('Success', 'Child archived successfully');
-            setIsArchived(true);
-            setShowDangerZone(false);
-            // Refresh the page to update the list
-            if (typeof window !== 'undefined') {
-              window.location.reload();
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleRestore = async () => {
-    setRestoring(true);
-    const { data, error } = await supabase.rpc('restore_child', {
-      _family: familyId,
-      _child: child.id
-    });
-
-    setRestoring(false);
-
-    if (error || !data?.ok) {
-      const reason = data?.reason || 'unknown';
-      Alert.alert(
-        'Error',
-        reason === 'forbidden' ? 'You do not have permission' :
-        reason === 'not_found' ? 'Child not found' :
-        'Failed to restore child'
-      );
-      return;
-    }
-
-    Alert.alert('Success', 'Child restored successfully');
-    setIsArchived(false);
-    setShowDangerZone(false);
-    // Refresh the page to update the list
-    if (typeof window !== 'undefined') {
-      window.location.reload();
-    }
-  };
-
-  const handleDelete = async () => {
-    if (confirmName.trim().toLowerCase() !== childName.trim().toLowerCase()) {
-      Alert.alert('Error', 'Name does not match');
-      return;
-    }
-
-    Alert.alert(
-      'Delete Permanently',
-      `This will permanently delete ${childName} and ALL their data including sessions, goals, rules, and progress. This CANNOT be undone.\n\nAre you absolutely sure?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Forever',
-          style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            const { data, error } = await supabase.rpc('delete_child_permanently', {
-              _family: familyId,
-              _child: child.id,
-              _confirm_name: confirmName
-            });
-
-            setDeleting(false);
-
-            if (error || !data?.ok) {
-              const reason = data?.reason || 'unknown';
-              Alert.alert(
-                'Error',
-                reason === 'name_mismatch' ? 'Name does not match' :
-                reason === 'forbidden' ? 'You do not have permission' :
-                'Failed to delete child'
-              );
-              return;
-            }
-
-            Alert.alert('Deleted', 'Child has been permanently deleted');
-            // Refresh the page to update the list
-            if (typeof window !== 'undefined') {
-              window.location.reload();
-            }
-          }
-        }
-      ]
-    );
-  };
-
   return (
-    <View style={styles.memberItem}>
+    <TouchableOpacity 
+      style={styles.memberItem}
+      onPress={onEdit}
+      activeOpacity={0.7}
+    >
       <View style={styles.childHeader}>
         <View style={styles.childInfo}>
           <Text style={styles.memberName}>{childName}</Text>
-          {isArchived && (
+          {child.archived && (
             <Text style={styles.archivedBadge}>Archived</Text>
           )}
         </View>
-        <TouchableOpacity
-          style={styles.manageButton}
-          onPress={() => setShowDangerZone(!showDangerZone)}
-        >
-          <Text style={styles.manageButtonText}>
-            {showDangerZone ? 'Hide' : 'Manage'}
-          </Text>
-        </TouchableOpacity>
+        <Text style={styles.editHint}>Tap to edit</Text>
       </View>
-
-      {showDangerZone && (
-        <View style={styles.dangerZone}>
-          <View style={styles.dangerZoneHeader}>
-            <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-            <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
-          </View>
-
-          {/* Archive Section */}
-          <View style={styles.dangerSection}>
-            <Text style={styles.dangerSectionTitle}>Archive child</Text>
-            <Text style={styles.dangerSectionDescription}>
-              Hides {childName} from Planner and reports. Data is preserved and can be restored.
-            </Text>
-            <View style={styles.dangerActions}>
-              <TouchableOpacity
-                style={styles.dangerButton}
-                onPress={handleArchive}
-                disabled={archiving || isArchived}
-              >
-                <Text style={styles.dangerButtonText}>
-                  {archiving ? 'Archiving...' : 'Archive'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.dangerButton}
-                onPress={handleRestore}
-                disabled={restoring || !isArchived}
-              >
-                <Text style={styles.dangerButtonText}>
-                  {restoring ? 'Restoring...' : 'Restore'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Delete Section */}
-          <View style={styles.dangerSection}>
-            <Text style={styles.dangerSectionTitle}>Delete permanently</Text>
-            <Text style={styles.dangerSectionDescription}>
-              This removes all sessions, goals, overrides, and cached days for{' '}
-              <Text style={styles.bold}>{childName}</Text>. This cannot be undone.
-            </Text>
-            
-            <Text style={styles.inputLabel}>
-              Type the child's name to confirm
-            </Text>
-            <TextInput
-              style={styles.dangerInput}
-              value={confirmName}
-              onChangeText={setConfirmName}
-              placeholder={childName}
-              autoCapitalize="words"
-            />
-
-            <TouchableOpacity
-              style={[
-                styles.deleteButton,
-                confirmName.trim().toLowerCase() !== childName.trim().toLowerCase() && styles.deleteButtonDisabled
-              ]}
-              onPress={handleDelete}
-              disabled={
-                confirmName.trim().toLowerCase() !== childName.trim().toLowerCase() || deleting
-              }
-            >
-              <Text style={styles.deleteButtonText}>
-                {deleting ? 'Deleting...' : `Delete ${childName}`}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-    </View>
+    </TouchableOpacity>
   );
 }
 

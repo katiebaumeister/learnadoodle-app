@@ -58,6 +58,12 @@ class AddChildIn(BaseModel):
     avatar_url: Optional[str] = None
     interests: List[str] = []
     learning_styles: List[str] = []
+    # Support profile fields (all optional)
+    diagnoses: Optional[List[str]] = None
+    learning_modalities: Optional[List[str]] = None
+    support_needs: Optional[List[str]] = None
+    executive_function: Optional[List[str]] = None
+    support_notes: Optional[str] = None
 
 
 class ChildOut(BaseModel):
@@ -73,6 +79,12 @@ class ChildOut(BaseModel):
     interests: Optional[List[str]] = None
     learning_styles: Optional[List[str]] = None
     created_at: Optional[str] = None
+    # Support profile fields
+    diagnoses: Optional[List[str]] = None
+    learning_modalities: Optional[List[str]] = None
+    support_needs: Optional[List[str]] = None
+    executive_function: Optional[List[str]] = None
+    support_notes: Optional[str] = None
 
 
 # ============================================================
@@ -210,13 +222,52 @@ async def add_child(
             )
         
         child_data = resp.data[0]
+        child_id = child_data["id"]
+        
+        # Create or update support profile if any support fields are provided
+        if any([body.diagnoses, body.learning_modalities, body.support_needs, body.executive_function, body.support_notes]):
+            support_profile_data = {}
+            if body.diagnoses is not None:
+                support_profile_data["diagnoses"] = body.diagnoses
+            if body.learning_modalities is not None:
+                support_profile_data["learning_modalities"] = body.learning_modalities
+            if body.support_needs is not None:
+                support_profile_data["support_needs"] = body.support_needs
+            if body.executive_function is not None:
+                support_profile_data["executive_function"] = body.executive_function
+            if body.support_notes is not None:
+                support_profile_data["notes"] = body.support_notes
+            
+            if support_profile_data:
+                support_profile_data["child_id"] = child_id
+                # Use upsert to handle both insert and update
+                try:
+                    supabase.table("child_support_profiles").upsert(
+                        support_profile_data,
+                        on_conflict="child_id"
+                    ).execute()
+                except Exception as profile_err:
+                    # Log but don't fail the child creation
+                    log_event("onboarding.add_child.support_profile_error", 
+                             user_id=user["id"], 
+                             child_id=child_id, 
+                             error=str(profile_err))
         
         increment_counter("children_added")
-        log_event("onboarding.add_child.success", user_id=user["id"], child_id=child_data["id"], family_id=family_id)
+        log_event("onboarding.add_child.success", user_id=user["id"], child_id=child_id, family_id=family_id)
+        
+        # Fetch support profile if it exists
+        support_profile = None
+        try:
+            profile_resp = supabase.table("child_support_profiles").select("*").eq("child_id", child_id).execute()
+            if profile_resp.data:
+                support_profile = profile_resp.data[0]
+        except Exception:
+            pass  # Support profile is optional
         
         # Return child data in expected format (API spec format)
-        return {
-            "id": child_data["id"],
+        result = {
+            "id": child_id,
             "family_id": child_data.get("family_id"),
             "name": child_data.get("first_name") or child_data.get("name"),  # Map first_name to name for API
             "nickname": child_data.get("nickname"),
@@ -229,6 +280,16 @@ async def add_child(
             "learning_styles": child_data.get("learning_styles", []) if isinstance(child_data.get("learning_styles"), list) else ([child_data.get("learning_style")] if child_data.get("learning_style") else []),
             "created_at": child_data.get("created_at"),
         }
+        
+        # Add support profile fields if available
+        if support_profile:
+            result["diagnoses"] = support_profile.get("diagnoses", [])
+            result["learning_modalities"] = support_profile.get("learning_modalities", [])
+            result["support_needs"] = support_profile.get("support_needs", [])
+            result["executive_function"] = support_profile.get("executive_function", [])
+            result["support_notes"] = support_profile.get("notes")
+        
+        return result
         
     except HTTPException:
         raise

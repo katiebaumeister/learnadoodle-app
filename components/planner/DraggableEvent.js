@@ -1,7 +1,8 @@
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
-import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator } from 'lucide-react';
+import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator, StickyNote } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 
 // Avatar-based color mapping
 const AVATAR_COLORS = {
@@ -232,6 +233,81 @@ function hexToRgba(hex, opacity = 1) {
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${opacity})`;
 }
 
+// Web-compatible note badge component for DraggableEvent
+function EventNoteBadge({ eventId, familyId }) {
+  const [noteCount, setNoteCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (eventId && familyId) {
+      loadNoteCount();
+    }
+  }, [eventId, familyId]);
+
+  const loadNoteCount = async () => {
+    if (!eventId || !familyId) return;
+    
+    setLoading(true);
+    try {
+      const { count, error } = await supabase
+        .from('notes')
+        .select('*', { count: 'exact', head: true })
+        .eq('family_id', familyId)
+        .eq('linked_event_id', eventId);
+
+      if (error) {
+        console.error('Error loading note count:', error);
+        setNoteCount(0);
+      } else {
+        setNoteCount(count || 0);
+      }
+    } catch (err) {
+      console.error('Exception loading note count:', err);
+      setNoteCount(0);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading || noteCount === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+        paddingLeft: 4,
+        paddingRight: noteCount > 1 ? 3 : 4,
+        paddingTop: 2,
+        paddingBottom: 2,
+        backgroundColor: '#e3f2fd',
+        borderRadius: 6,
+        marginLeft: 4,
+        pointerEvents: 'none',
+      }}
+    >
+      <StickyNote size={10} color={colors.primary || '#3b82f6'} />
+      {noteCount > 1 && (
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: '600',
+            color: colors.primary || '#3b82f6',
+            minWidth: 10,
+            textAlign: 'center',
+          }}
+        >
+          {noteCount}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // Get event colors based on child avatar - unified styling for all events
 function getEventColors(ev, children, isBlackoutDay) {
   if (isBlackoutDay) {
@@ -285,9 +361,61 @@ export default function DraggableEvent({
   children = [], // Array of child objects with id and first_name
   focusedChildId = null, // For focus mode - fade other children
   isWrapped = false, // If true, wrapper handles positioning
+  familyId = null, // For note preview tooltip
 }) {
   const ref = useRef(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [showNoteTooltip, setShowNoteTooltip] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [notePreview, setNotePreview] = useState([]);
+  const hoverTimeoutRef = useRef(null);
+
+  // Load note preview on hover
+  useEffect(() => {
+    if (isHovered && ev.id && familyId && typeof window !== 'undefined') {
+      // Delay tooltip to avoid flickering
+      hoverTimeoutRef.current = setTimeout(async () => {
+        try {
+          const { data, error } = await supabase
+            .from('notes')
+            .select('id, text, type, created_at')
+            .eq('family_id', familyId)
+            .eq('linked_event_id', ev.id)
+            .order('created_at', { ascending: false })
+            .limit(3);
+
+          if (!error && data && data.length > 0) {
+            setNotePreview(data);
+            // Get mouse position for tooltip
+            const updateTooltipPosition = (e) => {
+              setTooltipPosition({ x: e.clientX + 10, y: e.clientY + 10 });
+            };
+            if (ref.current) {
+              ref.current.addEventListener('mousemove', updateTooltipPosition);
+              setShowNoteTooltip(true);
+            }
+          }
+        } catch (err) {
+          console.error('Error loading note preview:', err);
+        }
+      }, 500); // 500ms delay before showing tooltip
+    } else {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      setShowNoteTooltip(false);
+      setNotePreview([]);
+    }
+
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      if (ref.current) {
+        ref.current.removeEventListener('mousemove', () => {});
+      }
+    };
+  }, [isHovered, ev.id, familyId]);
 
   const durMin = useMemo(() => {
     const s = new Date(ev.start_ts);
@@ -483,6 +611,9 @@ export default function DraggableEvent({
               >
                 {subjectName}
               </Text>
+              {ev.family_id && ev.id && (
+                <EventNoteBadge eventId={ev.id} familyId={ev.family_id} />
+              )}
             </div>
             
             {/* Line 2: Child name + category */}
@@ -513,6 +644,54 @@ export default function DraggableEvent({
           <Text style={styles.blackoutBadge}>Needs reschedule</Text>
         )}
       </div>
+      
+      {/* Note Preview Tooltip */}
+      {showNoteTooltip && notePreview.length > 0 && typeof window !== 'undefined' && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${tooltipPosition.x}px`,
+            top: `${tooltipPosition.y}px`,
+            backgroundColor: '#ffffff',
+            borderRadius: 8,
+            padding: 12,
+            borderWidth: 1,
+            borderStyle: 'solid',
+            borderColor: '#e5e7eb',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+            zIndex: 10000,
+            minWidth: 200,
+            maxWidth: 300,
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #e5e7eb' }}>
+            <StickyNote size={14} color={colors.primary || '#3b82f6'} />
+            <span style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>
+              {notePreview.length} {notePreview.length === 1 ? 'note' : 'notes'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {notePreview.map((note) => {
+              const date = new Date(note.created_at);
+              const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const textPreview = note.text && note.text.length > 60 
+                ? note.text.substring(0, 60) + '...' 
+                : note.text;
+              return (
+                <div key={note.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 12, color: '#374151', lineHeight: '16px' }}>
+                    {textPreview}
+                  </span>
+                  <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                    {dateStr}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </>
   );
 }

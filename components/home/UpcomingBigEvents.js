@@ -1,24 +1,45 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { ExternalLink, Plus } from 'lucide-react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { ExternalLink } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 
-export default function UpcomingBigEvents({ events = [], onAddToCalendar, onAddTravelBlock }) {
+export default function UpcomingBigEvents({ events = [], onViewPlanner }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
+        {onViewPlanner ? (
+          <TouchableOpacity
+            style={styles.headerLeft}
+            onPress={onViewPlanner}
+            activeOpacity={0.7}
+          >
+            <ExternalLink size={14} color={colors.text} />
+            <Text style={styles.title}>Upcoming big events</Text>
+          </TouchableOpacity>
+        ) : (
         <View style={styles.headerLeft}>
-          <ExternalLink size={16} color={colors.text} />
+          <ExternalLink size={14} color={colors.text} />
           <Text style={styles.title}>Upcoming big events</Text>
         </View>
+        )}
         <Text style={styles.subtitle}>Next 2 weeks</Text>
       </View>
 
       <View style={styles.eventsList}>
         {events.length > 0 ? (
           <>
-            {events.slice(0, 1).map((event) => (
-              <View key={event.id} style={styles.eventItem}>
+            {events.slice(0, 1).map((event) => {
+              const EventWrapper = onViewPlanner ? TouchableOpacity : View;
+              const wrapperProps = onViewPlanner
+                ? { onPress: onViewPlanner, activeOpacity: 0.8 }
+                : {};
+
+              return (
+                <EventWrapper
+                  key={event.id}
+                  style={styles.eventItem}
+                  {...wrapperProps}
+                >
                 <View style={styles.eventContent}>
                   <Text style={styles.eventTitle}>{event.title}</Text>
                   <Text style={styles.eventMeta}>
@@ -26,27 +47,19 @@ export default function UpcomingBigEvents({ events = [], onAddToCalendar, onAddT
                     {event.where ? ` · ${event.where}` : ''}
                   </Text>
                 </View>
-                <View style={styles.actionButtons}>
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => onAddTravelBlock?.(event)}
-                  >
-                    <Plus size={12} color={colors.accent} />
-                    <Text style={styles.actionButtonText}>Add travel/prep block</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => onAddToCalendar?.(event)}
-                  >
-                    <Text style={styles.actionButtonText}>Subscribe</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
+                </EventWrapper>
+              );
+            })}
             {events.length > 1 && (
+              <TouchableOpacity
+                onPress={onViewPlanner}
+                disabled={!onViewPlanner}
+                activeOpacity={0.7}
+              >
               <Text style={styles.moreEvents}>
                 +{events.length - 1} more events this week
               </Text>
+              </TouchableOpacity>
             )}
           </>
         ) : (
@@ -62,32 +75,25 @@ export default function UpcomingBigEvents({ events = [], onAddToCalendar, onAddT
 const styles = StyleSheet.create({
   container: {
     backgroundColor: colors.card,
-    borderRadius: colors.radiusLg,
+    borderRadius: colors.radiusMd,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 12,
-    ...shadows.md,
+    padding: 10,
+    ...shadows.sm,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-    backgroundColor: 'rgba(255, 231, 209, 0.25)', // orangeSoft with 25% opacity
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginHorizontal: -16,
-    marginTop: -16,
-    borderTopLeftRadius: colors.radiusLg,
-    borderTopRightRadius: colors.radiusLg,
+    marginBottom: 8,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   title: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
     color: colors.text,
   },
@@ -96,50 +102,27 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   eventsList: {
-    gap: 8,
+    gap: 6,
   },
   eventItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: colors.radiusMd,
-    padding: 12,
+    padding: 8,
     backgroundColor: colors.bgSubtle,
   },
   eventContent: {
     flex: 1,
   },
   eventTitle: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '500',
     color: colors.text,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   eventMeta: {
-    fontSize: 12,
-    color: colors.muted,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    backgroundColor: colors.bgSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  actionButtonText: {
     fontSize: 11,
-    color: colors.accent,
-    fontWeight: '500',
+    color: colors.muted,
   },
   moreEvents: {
     fontSize: 11,

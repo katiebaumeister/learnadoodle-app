@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -16,10 +16,11 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { Clock, ArrowRight, UserCircle, Link, MapPin, Eye, Plus, Upload, Copy, Sparkles, Download, Users, Settings, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { proposeReschedule, getWeekStart } from '../lib/apiClient'
+import { proposeReschedule, getWeekStart, apiRequest } from '../lib/apiClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import SyllabusUpload from './SyllabusUpload'
+import SyllabusUploadModal from './planner/SyllabusUploadModal'
 import OpenAITest from './OpenAITest'
 import AIChatModal from './AIChatModal'
 import AIConversationTest from './AIConversationTest'
@@ -27,12 +28,32 @@ import CalendarPlanning from './CalendarPlanning'
 import TaskCreateModal from './TaskCreateModal'
 import EventModal from './events/EventModal'
 import ExploreContent from './ExploreContent'
+import QuickReviewModal from './materials/QuickReviewModal'
 import RebalanceModal from './year/RebalanceModal'
 import EventOutcomeModal from './events/EventOutcomeModal'
 import ChildDashboard from './dashboards/ChildDashboard'
 import TutorDashboard from './dashboards/TutorDashboard'
 import IntegrationsSettings from './settings/IntegrationsSettings'
 import InspireLearning from './inspire/InspireLearning'
+import LearningStoryCard from './parent/LearningStoryCard'
+import AssuranceCard from './confidence/AssuranceCard'
+import StudentStreakNotification from './confidence/StudentStreakNotification'
+import ContinueLearningStrip from './content/ContinueLearningStrip'
+import TemplatesPage from './templates/TemplatesPage'
+import HomeTopBar from './home/HomeTopBar'
+import TodayNotificationCard from './home/TodayNotificationCard'
+import MicroNotificationCard from './home/MicroNotificationCard'
+import HeroMoodCard from './home/HeroMoodCard'
+import FamilyOverviewCards from './home/FamilyOverviewCards'
+import ChildMicroWorldCard from './home/ChildMicroWorldCard'
+import ParentCoachingCards from './home/ParentCoachingCards'
+import CollapsedInsightsSection from './home/CollapsedInsightsSection'
+import HomeTileMissingLogs from './home/tiles/HomeTileMissingLogs'
+import HomeTilePortfolioSuggestions from './home/tiles/HomeTilePortfolioSuggestions'
+import HomeTileAreasOfMastery from './home/tiles/HomeTileAreasOfMastery'
+import HomeTileReflectionPrompt from './home/tiles/HomeTileReflectionPrompt'
+import GroupsPage from './social/GroupsPage'
+import MarketplacePage from './social/MarketplacePage'
 
 // Simple notification system
 import { 
@@ -60,6 +81,7 @@ import { smartRefreshCache, refreshFamilyCache } from '../lib/cacheRefresh'
 
 import AddChildForm from './AddChildForm'
 import AddChildModal from './AddChildModal'
+import AddSubjectModal from './AddSubjectModal'
 import AddOptions from './AddOptions'
 import SubjectGoalsManager from './SubjectGoalsManager'
 import StudentDetailsModal from './StudentDetailsModal'
@@ -70,12 +92,27 @@ import AIPlannerView from './AIPlannerView'
 import PageHeader from './PageHeader'
 import StoriesRow from './home/StoriesRow'
 import TodaysLearning from './home/TodaysLearning'
+import TodaysLearningTimeGrouped from './home/TodaysLearningTimeGrouped'
+import DailyConnectionUnified from './home/DailyConnectionUnified'
+import TodayCard from './home/TodayCard'
+import WeeklyProgress from './home/WeeklyProgress'
 import DailyInsights from './home/DailyInsights'
+import HeroInsights from './home/HeroInsights'
+import StickyNotesContainer from './notes/StickyNotesContainer'
+import { getDailyTips } from '../lib/dailyTips'
+import LoadingScreen from './LoadingScreen'
 import UpcomingBigEvents from './home/UpcomingBigEvents'
 import RecommendedReads from './home/RecommendedReads'
 import TasksToday from './home/TasksToday'
+import ConversationStarters from './home/ConversationStarters'
 import NextUpTile from './home/NextUpTile'
 import DayDrawer from './planner/DayDrawer'
+import { getTodaySummary, getTodayInsights, getMultiDaySummary, getHomeTilesSummary } from '../lib/services/homeClient'
+import { generateInsights, buildInsightContext } from '../lib/services/insightEngine'
+import { getWeekDrift, getMicroTrends, getEnergyForecast } from '../lib/services/intelligenceModules'
+import WeekDriftRadar from './home/right/WeekDriftRadar'
+import MicroTrends from './home/right/MicroTrends'
+import EnergyForecast from './home/right/EnergyForecast'
 import AIActions from './planner/AIActions'
 import CenterPane from './planner/CenterPane'
 import ChildProfile from './ChildProfile'
@@ -86,14 +123,29 @@ import UploadsEnhanced from './documents/UploadsEnhanced'
 import LessonPlans from './lesson-plans/LessonPlans'
 import Reports from './records/Reports'
 import RecordsPhase4 from './records/RecordsPhase4'
+import WebRecordsScreen from './records/WebRecordsScreen'
+import PortfolioTimeline from './portfolio/PortfolioTimeline'
+import MaterialsLibrary from './materials/MaterialsLibrary'
+import IntelligenceHub from './intelligence/IntelligenceHub'
+import CoachTab from './ai/CoachTab'
+import ProfileScreen from '../app/profile';
+import ComprehensiveProfile from './profile/ComprehensiveProfile';
+import AppContainer from './ui/AppContainer'
+import SectionHeader from './ui/SectionHeader'
+import EvidenceUploadModal from './records/EvidenceUploadModal'
+import SuggestionActionModal from './planner/SuggestionActionModal'
+import NoteEditorModal from './records/NoteEditorModal'
+import CurriculumImportWizard from './curriculum/CurriculumImportWizard'
 import { colors, shadows } from '../theme/colors'
 
 import SubjectSelectForm from './SubjectSelectForm'
+import TemplatePicker from './templates/TemplatePicker'
 import { getSubjectRecommendations, processLiveClass, analyzeProgress, chatWithDoodleBot } from '../lib/aiProcessor.js'
 import { AIConversationService } from '../lib/aiConversationService.js'
 import { processDoodleMessage, executeTool } from '../lib/doodleAssistant.js'
+import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, onRightSidebarRender }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange }) {
   // Create rotating animation for loading spinners
   const spinValue = useRef(new Animated.Value(0)).current;
   
@@ -119,20 +171,294 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [homeData, setHomeData] = useState(null);
   const [homeLoading, setHomeLoading] = useState(true);
   const [selectedChildId, setSelectedChildId] = useState(null);
+  const [conversationStarters, setConversationStarters] = useState([]);
+  const [weeklyProgress, setWeeklyProgress] = useState({});
+  const [weeklyProgressLoading, setWeeklyProgressLoading] = useState(true);
+  const [hasWeeklyGoal, setHasWeeklyGoal] = useState(false);
+  const [hasBacklogItems, setHasBacklogItems] = useState(false);
+  const [backlogCount, setBacklogCount] = useState(0);
+  
+  // Home filters (date and children)
+  const [homeSelectedDate, setHomeSelectedDate] = useState(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+  });
+  const [homeSelectedChildren, setHomeSelectedChildren] = useState('all');
+  
+  // On app load, check if the real current date has changed and update homeSelectedDate if needed
+  useEffect(() => {
+    const checkAndUpdateDate = () => {
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      
+      // Compare dates using local date components to avoid timezone issues
+      const formatLocalDate = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+      
+      const nowDateStr = formatLocalDate(now);
+      const selectedDateStr = formatLocalDate(homeSelectedDate);
+      
+      if (nowDateStr !== selectedDateStr) {
+        console.log('[WebContent] Date changed detected on app load:', {
+          previous: selectedDateStr,
+          current: nowDateStr,
+          updating: true
+        });
+        setHomeSelectedDate(now);
+      }
+    };
+    
+    // Check immediately on mount
+    checkAndUpdateDate();
+  }, []); // Empty dependency array = run only on mount
+  
+  // Home summary data (from Records + Intelligence)
+  const [homeSummary, setHomeSummary] = useState(null);
+  const [homeSummaryLoading, setHomeSummaryLoading] = useState(false);
+  const [homeNotifications, setHomeNotifications] = useState([]);
+  const [microNotifications, setMicroNotifications] = useState([]);
+  const [multiDaySummary, setMultiDaySummary] = useState(null);
+  const [multiDayLoading, setMultiDayLoading] = useState(false);
+  const [homeTilesData, setHomeTilesData] = useState(null);
+  const [homeTilesLoading, setHomeTilesLoading] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(null);
+  const [showSuggestionModal, setShowSuggestionModal] = useState(false);
+  const [showCurriculumWizard, setShowCurriculumWizard] = useState(false);
+  
+  // Intelligence modules data
+  const [weekDriftData, setWeekDriftData] = useState([]);
+  const [microTrendsData, setMicroTrendsData] = useState([]);
+  const [energyForecastData, setEnergyForecastData] = useState([]);
+  
+  // Adaptive layout tier (1 = base, 2 = expanded, 3 = full)
+  const [rightSidebarTier, setRightSidebarTier] = useState(1);
+  const rightSidebarRef = useRef(null);
+  
+  // Family ID state (must be declared early to avoid TDZ errors)
+  const [familyId, setFamilyId] = useState(null);
+  
+  // Initialize offline sync
+  useOfflineSync(familyId);
+  
+  // Cache key for home data
+  const getHomeDataCacheKey = (familyId, date) => {
+    return `home_data_${familyId}_${date}`;
+  };
+
+  // Background function to check goals and backlog for CTA stories
+  const checkGoalsAndBacklogForCTAs = async (familyId, children, selectedChildId) => {
+    const ctaStories = [];
+    
+    try {
+      // Check for active goals (for selected child or first child in family)
+      let hasGoals = false;
+      let childIdToCheck = selectedChildId;
+      
+      if (!childIdToCheck && children.length > 0) {
+        childIdToCheck = children[0].id;
+      }
+      
+      if (childIdToCheck) {
+        try {
+          const { data: goalCount, error: goalsError } = await supabase
+            .rpc('get_child_active_goals_count', { p_child_id: childIdToCheck });
+          
+          if (!goalsError) {
+            hasGoals = (goalCount || 0) > 0;
+          }
+        } catch (err) {
+          console.warn('[Home] Error checking goals:', err);
+        }
+      }
+      
+      // Check for backlog items (events with status='backlog')
+      try {
+        let backlogQuery = supabase
+          .from('events')
+          .select('id')
+          .eq('family_id', familyId)
+          .eq('status', 'backlog');
+        if (selectedChildId) {
+          backlogQuery = backlogQuery.eq('child_id', selectedChildId);
+        }
+        const { data: backlog } = await backlogQuery;
+        const hasBacklog = (backlog || []).length > 0;
+        
+        // Add CTA stories if missing
+        if (!hasGoals) {
+          ctaStories.push({
+            id: 'cta-goals',
+            title: 'Set weekly goals',
+            tag: 'Tip',
+            kind: 'cta-goals',
+            body: 'Create minutes-per-week goals so we can suggest quick top‑offs.',
+            icon: 'sparkles'
+          });
+        }
+        if (!hasBacklog) {
+          ctaStories.push({
+            id: 'cta-backlog',
+            title: 'Add a backlog item',
+            tag: 'Planner',
+            kind: 'cta-backlog',
+            body: 'Add learning items to your backlog for easy scheduling later.',
+            icon: 'book-open'
+          });
+        }
+      } catch (err) {
+        console.warn('[Home] Error checking backlog:', err);
+      }
+    } catch (err) {
+      console.warn('[Home] Error in CTA check:', err);
+    }
+    
+    return ctaStories;
+  };
+
+  // Cache TTL: 15 minutes
+  const CACHE_TTL_MS = 15 * 60 * 1000;
+
+  // Load from cache
+  const loadHomeDataFromCache = (familyId, date) => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const cacheKey = getHomeDataCacheKey(familyId, date);
+      const cached = localStorage.getItem(cacheKey);
+      if (!cached) return null;
+      
+      const { data, timestamp } = JSON.parse(cached);
+      const age = Date.now() - timestamp;
+      
+      if (age < CACHE_TTL_MS) {
+        console.log(`[Home] Using cached data (age: ${Math.round(age / 1000)}s)`);
+        return data;
+      } else {
+        console.log(`[Home] Cache expired (age: ${Math.round(age / 1000)}s)`);
+        localStorage.removeItem(cacheKey);
+        return null;
+      }
+    } catch (err) {
+      console.error('[Home] Error reading cache:', err);
+      return null;
+    }
+  };
+
+  // Save to cache
+  const saveHomeDataToCache = (familyId, date, data) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const cacheKey = getHomeDataCacheKey(familyId, date);
+      localStorage.setItem(cacheKey, JSON.stringify({
+        data,
+        timestamp: Date.now()
+      }));
+      console.log('[Home] Data cached');
+    } catch (err) {
+      console.error('[Home] Error saving cache:', err);
+    }
+  };
+
+  // Invalidate cache (call when data changes)
+  const invalidateHomeDataCache = (familyId, date = null) => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (date) {
+        // Invalidate specific date
+        const cacheKey = getHomeDataCacheKey(familyId, date);
+        localStorage.removeItem(cacheKey);
+        console.log(`[Home] Cache invalidated for ${date}`);
+      } else {
+        // Invalidate all dates for this family
+        const prefix = `home_data_${familyId}_`;
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith(prefix)) {
+            localStorage.removeItem(key);
+          }
+        });
+        console.log('[Home] All cache invalidated for family');
+      }
+    } catch (err) {
+      console.error('[Home] Error invalidating cache:', err);
+    }
+  };
 
   // Ref to store refreshCalendarData function for event listener
   const refreshCalendarDataRef = useRef(null);
+  
+  // Initialize the ref and global function - this will be set when refreshCalendarData is defined
+  // We'll set it up in a useEffect that depends on refreshCalendarData being available
 
   // Listen for calendar refresh events from global task modal
   // This allows the TaskCreateModal in WebLayout to trigger a calendar refresh
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     
-    const handleRefreshCalendar = () => {
+    const handleRefreshCalendar = async (event) => {
+      console.log('[WebContent] handleRefreshCalendar called', event?.detail);
+      // Check if we should skip home refresh (e.g., when we're already refreshing)
+      const skipHomeRefresh = event?.detail?.skipHomeRefresh || false;
+      const targetMonth = event?.detail?.targetMonth;
+      const targetYear = event?.detail?.targetYear;
+      
+      // Use target date if provided, otherwise use current month
+      let refreshDate = null;
+      if (targetYear !== undefined && targetMonth !== undefined) {
+        refreshDate = new Date(targetYear, targetMonth, 1);
+        console.log('[WebContent] Refreshing specific month:', { year: targetYear, month: targetMonth, date: refreshDate });
+      }
+      
       // Always refresh calendar data when requested, regardless of active tab
       // This ensures new events appear immediately after year plan creation
       if (refreshCalendarDataRef.current) {
-        refreshCalendarDataRef.current().catch(err => console.error('Calendar refresh failed:', err));
+        console.log('[WebContent] Calling refreshCalendarDataRef.current() with date:', refreshDate);
+        refreshCalendarDataRef.current(refreshDate).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
+      } else if (typeof window !== 'undefined' && window.__refreshCalendarData) {
+        // Fallback: use global function if ref is not available yet
+        console.log('[WebContent] Using window.__refreshCalendarData with date:', refreshDate);
+        try {
+          window.__refreshCalendarData(refreshDate);
+        } catch (err) {
+          console.error('[WebContent] Calendar refresh failed (global):', err);
+        }
+      } else {
+        console.warn('[WebContent] refreshCalendarDataRef.current is null and window.__refreshCalendarData is not available - calendar refresh will be deferred');
+        // Don't dispatch another refreshCalendar event here - that would cause an infinite loop
+        // The ref will be set when the component mounts and refreshCalendarData is defined
+      }
+      
+      // Force planner to refresh by dispatching a custom event
+      // PlannerWeek listens to this event to trigger a refetch
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+      }
+      
+      // Invalidate home data cache when calendar refreshes (unless we're skipping home refresh)
+      if (user && !skipHomeRefresh) {
+        try {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('family_id')
+            .eq('id', user.id)
+            .maybeSingle();
+          
+          if (profileData?.family_id) {
+            invalidateHomeDataCache(profileData.family_id);
+            // If we're on home tab, trigger a refresh
+            if (activeTab === 'home') {
+              setHomeLoading(true);
+        if (onHomeLoadingChange) onHomeLoadingChange(true);
+              // Trigger re-fetch by clearing homeData
+              setHomeData(null);
+            }
+          }
+        } catch (err) {
+          console.error('[Home] Error invalidating cache on refresh:', err);
+        }
       }
     };
     
@@ -140,7 +466,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     return () => {
       window.removeEventListener('refreshCalendar', handleRefreshCalendar);
     };
-  }, [activeTab]);
+  }, [activeTab, homeData, user]);
 
   // Listen for rebalance modal events from PlannerWeek
   useEffect(() => {
@@ -154,8 +480,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     };
     
     window.addEventListener('openRebalanceModal', handleOpenRebalance);
+    
+    // Listen for openNoteEditor custom event
+    const handleOpenNoteEditor = (event) => {
+      const detail = event.detail || {};
+      setNoteEditorProps({
+        linkedEventId: detail.eventId || null,
+        defaultChildId: detail.childId || null,
+        defaultText: detail.defaultText || '',
+        date: detail.date || null,
+      });
+      setShowNoteEditor(true);
+    };
+    window.addEventListener('openNoteEditor', handleOpenNoteEditor);
     return () => {
       window.removeEventListener('openRebalanceModal', handleOpenRebalance);
+      window.removeEventListener('openNoteEditor', handleOpenNoteEditor);
     };
   }, []);
 
@@ -169,11 +509,23 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       try {
         const { getMe } = await import('../lib/apiClient');
         const { data: meData, error: meError } = await getMe();
+        
+        // Handle 401 errors gracefully (backend might not be running or auth not ready)
+        const isAuthError = meError?.status === 401 || meError?.response?.status === 401;
+        const isNetworkError = meError?.message?.includes('Cannot connect') || 
+                              meError?.message?.includes('Failed to fetch') ||
+                              meError?.message?.includes('Load failed');
+        
         if (!meError && meData) {
           setUserRole(meData.role || 'parent');
           setAccessibleChildren(meData.accessible_children || []);
-        } else {
-          // Fallback: get from profile
+        } else if (!isAuthError && !isNetworkError) {
+          // Only log non-auth, non-network errors
+          console.warn('[WebContent] getMe error (non-critical):', meError);
+        }
+        
+        // Always fallback to profile table (works even if backend is down or returns 401)
+        try {
           const { data: profileData } = await supabase
             .from('profiles')
             .select('role, family_id')
@@ -181,10 +533,29 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
             .maybeSingle();
           if (profileData) {
             setUserRole(profileData.role || 'parent');
+          } else {
+            setUserRole('parent'); // Default fallback
           }
+        } catch (profileError) {
+          // Silent fallback
+          setUserRole('parent');
+        }
+        
+        // Set empty accessible children if we couldn't get them from API
+        if (!meData?.accessible_children) {
+          setAccessibleChildren([]);
         }
       } catch (error) {
-        console.error('Error fetching user info:', error);
+        // Don't log network errors as errors
+        const isNetworkError = error.message?.includes('Cannot connect') || 
+                              error.message?.includes('Failed to fetch') ||
+                              error.message?.includes('Load failed');
+        if (!isNetworkError) {
+          console.error('Error fetching user info:', error);
+        }
+        // Set defaults on any error
+        setUserRole('parent');
+        setAccessibleChildren([]);
       }
     };
     fetchUserInfo();
@@ -195,6 +566,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       if (!user) return;
       try {
         setHomeLoading(true);
+        if (onHomeLoadingChange) onHomeLoadingChange(true);
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('family_id')
@@ -204,129 +576,154 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         if (profileError) {
           console.error('Error fetching profile for home:', profileError);
           setHomeLoading(false);
+        if (onHomeLoadingChange) onHomeLoadingChange(false);
           return;
         }
 
         if (profileData?.family_id) {
-          const { data, error } = await supabase.rpc('get_home_data', {
+          // Use selected date instead of always using today
+          const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+            ? homeSelectedDate
+            : new Date();
+          validDate.setHours(0, 0, 0, 0);
+          const selectedDateStr = validDate.toISOString().split('T')[0];
+          
+          // Try cache first
+          const cachedData = loadHomeDataFromCache(profileData.family_id, selectedDateStr);
+          if (cachedData) {
+            // Show cached data immediately
+            const cachedStories = (cachedData?.stories || []).filter(s => 
+              s && s.title && s.body && s.title.trim() && s.body.trim()
+            );
+            
+            setHomeData({
+              ...cachedData,
+              stories: cachedStories
+            });
+            // Set conversation starters from cache if available
+            setConversationStarters(cachedData?.conversation_starters || []);
+            setHomeLoading(false);
+            if (onHomeLoadingChange) onHomeLoadingChange(false);
+            
+            // Check for updated CTA stories in background (in case goals/backlog changed)
+            checkGoalsAndBacklogForCTAs(profileData.family_id, cachedData?.children || [], selectedChildId)
+              .then(ctaStories => {
+                if (ctaStories.length > 0) {
+                  // Only update if CTA stories are different from cached ones
+                  const hasCachedCTAs = cachedStories.some(s => s.kind === 'cta-goals' || s.kind === 'cta-backlog');
+                  if (!hasCachedCTAs) {
+                    setHomeData(prev => ({
+                      ...prev,
+                      stories: [...ctaStories, ...prev.stories]
+                    }));
+                  }
+                }
+              })
+              .catch(err => {
+                console.warn('[Home] Error checking CTA stories from cache:', err);
+              });
+            
+            return;
+          }
+
+          // No cache or expired - fetch fresh data
+          // Fetch home data first (critical), conversation starters can be non-blocking
+          const homeDataResult = await supabase.rpc('get_home_data', {
             _family_id: profileData.family_id,
-            _date: new Date().toISOString().split('T')[0],
+            _date: selectedDateStr,
             _horizon_days: 14,
           });
+
+          const { data, error } = homeDataResult;
+          
+          // Fetch conversation starters in parallel but don't block on it
+          let conversationData = [];
+          apiRequest('/api/conversation/starters', { method: 'GET' })
+            .then(result => {
+              conversationData = result?.data || [];
+              setConversationStarters(conversationData);
+              // Update cache with conversation starters if we have data
+              if (data && !error) {
+                const updatedData = {
+                  ...data,
+                  conversation_starters: conversationData
+                };
+                saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
+              }
+            })
+            .catch(err => {
+              console.warn('[Home] Error loading conversation starters (non-blocking):', err);
+              // Non-critical, continue without conversation starters
+            });
 
           if (error) {
             console.error('Error fetching home data:', error);
           } else {
-            // Debug: Log learning data to see what we're getting
-            console.log('Home data learning:', data?.learning);
-            console.log('Home data children:', data?.children);
-            console.log('Home data availability:', data?.availability);
-            console.log('Home data date:', data?.date);
-            
-            // Also check what events exist for today to debug
-            if (profileData?.family_id) {
-              const todayStr = new Date().toISOString().split('T')[0];
-              const { data: todayEvents } = await supabase
-                .from('events')
-                .select('id, child_id, title, start_ts, status')
-                .eq('family_id', profileData.family_id)
-                .gte('start_ts', todayStr + 'T00:00:00')
-                .lt('start_ts', todayStr + 'T23:59:59');
-              console.log('Direct events query for today:', todayEvents);
-            }
-            
-            // Check for goals and backlog, add CTA stories if missing
             // Filter out empty/invalid stories (missing title or body)
             const stories = (data?.stories || []).filter(s => 
               s && s.title && s.body && s.title.trim() && s.body.trim()
             );
-            let ctaStories = [];
             
-            // Check for active goals (for selected child or first child in family)
-            // RLS requires a specific child_id, so we always need to query with one
-            let hasGoals = false;
-            try {
-              let childIdToCheck = selectedChildId;
-              
-              // If no child selected, use first child from homeData (already fetched)
-              if (!childIdToCheck && data?.children && data.children.length > 0) {
-                childIdToCheck = data.children[0].id;
-              }
-              
-              // Only check if we have a child ID
-              if (childIdToCheck) {
-                // Use RPC function to bypass RLS issues
-                const { data: goalCount, error: goalsError } = await supabase
-                  .rpc('get_child_active_goals_count', { p_child_id: childIdToCheck });
-                
-                if (goalsError) {
-                  // Log error but treat as no goals (graceful degradation)
-                  console.warn('Error checking goals:', goalsError);
-                  hasGoals = false;
-                } else {
-                  hasGoals = (goalCount || 0) > 0;
-                  console.log(`Goals check for child ${childIdToCheck}: count=${goalCount}, hasGoals=${hasGoals}`);
-                }
-              } else {
-                console.log('No child ID to check goals for');
-              }
-              // If no children exist, hasGoals stays false (which is correct)
-            } catch (err) {
-              console.warn('Could not check goals:', err);
-              hasGoals = false;
-            }
-            
-            // Check for backlog items (events with status='backlog')
-            let backlogQuery = supabase
-              .from('events')
-              .select('id')
-              .eq('family_id', profileData.family_id)
-              .eq('status', 'backlog');
-            if (selectedChildId) {
-              backlogQuery = backlogQuery.eq('child_id', selectedChildId);
-            }
-            const { data: backlog } = await backlogQuery;
-            const hasBacklog = (backlog || []).length > 0;
-            console.log(`Backlog check: count=${(backlog || []).length}, hasBacklog=${hasBacklog}`);
-            
-            // Add CTA stories if missing
-            if (!hasGoals) {
-              ctaStories.push({
-                id: 'cta-goals',
-                title: 'Set weekly goals',
-                tag: 'Tip',
-                kind: 'cta-goals',
-                body: 'Create minutes-per-week goals so we can suggest quick top‑offs.',
-                icon: 'sparkles'
-              });
-            }
-            if (!hasBacklog) {
-              ctaStories.push({
-                id: 'cta-backlog',
-                title: 'Add a backlog item',
-                tag: 'Planner',
-                kind: 'cta-backlog',
-                body: 'Add learning items to your backlog for easy scheduling later.',
-                icon: 'book-open'
-              });
-            }
-            
-            // Prepend CTA stories to existing stories
-            setHomeData({
+            // Show UI immediately with main data (progressive loading)
+            const initialData = {
               ...data,
-              stories: [...ctaStories, ...stories]
-            });
+              stories: stories, // Show existing stories first
+              conversation_starters: [] // Will be updated when conversation starters load
+            };
+            
+            setHomeData(initialData);
+            setHomeLoading(false);
+            if (onHomeLoadingChange) onHomeLoadingChange(false);
+            
+            // Cache the initial data
+            saveHomeDataToCache(profileData.family_id, selectedDateStr, initialData);
+            
+            // Load CTA stories in background (non-blocking)
+            checkGoalsAndBacklogForCTAs(profileData.family_id, data?.children || [], selectedChildId)
+              .then(ctaStories => {
+                if (ctaStories.length > 0) {
+                  // Update stories with CTA stories prepended
+                  setHomeData(prev => ({
+                    ...prev,
+                    stories: [...ctaStories, ...prev.stories]
+                  }));
+                  
+                  // Update cache with CTA stories
+                  const updatedData = {
+                    ...initialData,
+                    stories: [...ctaStories, ...stories]
+                  };
+                  saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
+                }
+              })
+              .catch(err => {
+                console.warn('[Home] Error loading CTA stories:', err);
+                // Non-critical, so we don't block on this
+              });
           }
         }
       } catch (err) {
         console.error('Unexpected error fetching home data:', err);
       } finally {
         setHomeLoading(false);
+        if (onHomeLoadingChange) onHomeLoadingChange(false);
       }
     };
 
     fetchHomeData();
-  }, [user, selectedChildId]);
+    
+    // Clear cache when user logs out
+    return () => {
+      if (!user && typeof window !== 'undefined') {
+        // Clear all home data cache on logout
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('home_data_')) {
+            localStorage.removeItem(key);
+          }
+        });
+      }
+    };
+  }, [user, selectedChildId, homeSelectedDate]);
   
   // Add CSS animation for loading spinner and event chip hover (web only)
   React.useEffect(() => {
@@ -413,10 +810,32 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
-  const [familyId, setFamilyId] = useState(null)
+
+  // Load subjects when familyId is available
+  useEffect(() => {
+    if (!familyId) return;
+    
+    const loadSubjects = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('subject')
+          .select('id, name')
+          .eq('family_id', familyId)
+          .order('name');
+        
+        if (error) throw error;
+        setSubjects(data || []);
+      } catch (error) {
+        console.error('Error loading subjects:', error);
+      }
+    };
+    
+    loadSubjects();
+  }, [familyId]);
   
   // Calendar data caching
   const [calendarDataCache, setCalendarDataCache] = useState({})
+  const [calendarBlackoutDates, setCalendarBlackoutDates] = useState({})
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   const [calendarDataLoading, setCalendarDataLoading] = useState(false)
 
@@ -480,9 +899,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [eventModalVisible, setEventModalVisible] = useState(false)
   const [eventModalEventId, setEventModalEventId] = useState(null)
+  const [showNoteEditor, setShowNoteEditor] = useState(false)
+  const [noteEditorProps, setNoteEditorProps] = useState({
+    linkedEventId: null,
+    defaultChildId: null,
+    defaultText: '',
+    date: null,
+  })
   const [showOutcomeModal, setShowOutcomeModal] = useState(false)
   const [outcomeEvent, setOutcomeEvent] = useState(null)
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null)
+  const [showMaterialReviewModal, setShowMaterialReviewModal] = useState(false)
+  const [materialReviewEvent, setMaterialReviewEvent] = useState(null)
   const [isEditingEvent, setIsEditingEvent] = useState(false)
   const [editedEventData, setEditedEventData] = useState({})
   const [showActionMenu, setShowActionMenu] = useState(false)
@@ -517,6 +945,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [showNewEventForm, setShowNewEventForm] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskModalDate, setTaskModalDate] = useState(null);
+  const [taskModalChildId, setTaskModalChildId] = useState(null);
+  const [showEvidenceUploadModal, setShowEvidenceUploadModal] = useState(false);
+  const [evidenceUploadEventId, setEvidenceUploadEventId] = useState(null);
+  const [evidenceUploadChildId, setEvidenceUploadChildId] = useState(null);
+  const [evidenceUploadDate, setEvidenceUploadDate] = useState(null);
   
   // Home Page Modal State
   const [showHomeEventModal, setShowHomeEventModal] = useState(false);
@@ -538,7 +971,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     assignees: [],
     status: 'planned',
     trackId: null,
-    activityId: null
+    activityId: null,
+    subjectId: null
   });
 
   // Context menu state
@@ -772,7 +1206,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       assignees: [],
       status: 'planned',
       trackId: null,
-      activityId: null
+      activityId: null,
+      subjectId: null
     });
     setShowHomeEventModal(false);
 
@@ -2856,17 +3291,91 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
 
       if (!profile?.family_id) return
 
-      const { data: childrenData } = await supabase
-        .from('children')
-        .select('*')
-        .eq('family_id', profile.family_id)
-        .eq('archived', false)
+      // Try fetching with archived filter first
+      let childrenData, archivedData;
+      try {
+        const { data: activeData, error: activeError } = await supabase
+          .from('children')
+          .select('*')
+          .eq('family_id', profile.family_id)
+          .eq('archived', false)
 
-      const { data: archivedData } = await supabase
+        if (activeError) {
+          // Log the full error details for debugging
+          console.error('[WebContent] Error fetching children:', {
+            code: activeError.code,
+            message: activeError.message,
+            details: activeError.details,
+            hint: activeError.hint,
+            family_id: profile.family_id
+          });
+          
+          // If archived column doesn't exist or RLS issue, try without archived filter
+          if (activeError.code === '42703' || activeError.message?.includes('archived') || activeError.code === '400' || activeError.code === 'PGRST301' || activeError.code === '42501') {
+            console.log('[WebContent] Trying to fetch children without archived filter');
+            const { data: allData, error: allError } = await supabase
+              .from('children')
+              .select('*')
+              .eq('family_id', profile.family_id)
+            
+            if (allError) {
+              console.error('[WebContent] Error fetching children (fallback):', {
+                code: allError.code,
+                message: allError.message,
+                details: allError.details,
+                hint: allError.hint
+              });
+              // Don't return - set empty arrays instead
+              childrenData = [];
+              archivedData = [];
+            } else {
+              childrenData = allData || [];
+              archivedData = [];
+            }
+          } else {
+            // For other errors, still try without archived filter as fallback
+            console.log('[WebContent] Trying fallback query without archived filter');
+            const { data: allData, error: allError } = await supabase
+              .from('children')
+              .select('*')
+              .eq('family_id', profile.family_id)
+            
+            if (allError) {
+              console.error('[WebContent] Fallback also failed:', allError);
+              childrenData = [];
+              archivedData = [];
+            } else {
+              childrenData = allData || [];
+              archivedData = [];
+            }
+          }
+        } else {
+          childrenData = activeData || [];
+          
+          // Try fetching archived children
+          try {
+            const { data: archivedResult, error: archivedError } = await supabase
         .from('children')
         .select('*')
         .eq('family_id', profile.family_id)
         .eq('archived', true)
+            
+            if (archivedError && archivedError.code !== '42703') {
+              console.warn('[WebContent] Error fetching archived children:', archivedError);
+              archivedData = [];
+            } else {
+              archivedData = archivedResult || [];
+            }
+          } catch (archivedErr) {
+            console.warn('[WebContent] Exception fetching archived children:', archivedErr);
+            archivedData = [];
+          }
+        }
+      } catch (err) {
+        console.warn('[WebContent] Exception in fetchChildren:', err);
+        childrenData = [];
+        archivedData = [];
+      }
 
       if (childrenData) {
         setChildren(childrenData)
@@ -2878,7 +3387,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         setArchivedChildren(archivedData)
       }
     } catch (error) {
-      console.error('Error fetching children:', error)
+      console.error('[WebContent] Error fetching children:', error)
     }
   }
 
@@ -3244,6 +3753,84 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }
 
   const renderContent = () => {
+    // Check if it's a child profile tab (from sidebar)
+    if (activeTab.startsWith('child-')) {
+      const childId = activeTab.replace('child-', '');
+      const child = children.find(c => c.id === childId);
+      if (child) {
+        return (
+          <View style={{ flex: 1, backgroundColor: colors.bgSubtle }}>
+            <ChildProfile
+              childId={child.id}
+              childName={child.first_name}
+              familyId={familyId}
+              activeChildSection={activeChildSection || 'affirmation'}
+              onBack={null}
+              onDeleted={() => {
+                console.log('Child deleted, returning to children list');
+                onTabChange('children-list');
+                setTimeout(() => {
+                  window.location.reload();
+                }, 500);
+              }}
+              onAITopOff={(params) => {
+                console.log('AI top-off:', params);
+                if (typeof window !== 'undefined') {
+                  const urlParams = new URLSearchParams();
+                  urlParams.set('ai_topoff_for_subject', params.subject);
+                  urlParams.set('minutes_needed', params.minutesNeeded.toString());
+                  urlParams.set('plan_for_child', params.childId);
+                  window.history.replaceState({}, '', `?${urlParams.toString()}`);
+                }
+                onTabChange('planner');
+              }}
+              onEditGoal={(goal) => {
+                console.log('Edit goal:', goal);
+              }}
+              onAddGoal={() => {
+                console.log('Add goal for child:', child.id);
+              }}
+              onEditInfo={() => {
+                if (onEditChild) {
+                  onEditChild(child);
+                } else {
+                  console.log('Edit child info:', child.id);
+                }
+              }}
+              onAISummary={() => {
+                console.log('Generate AI summary for:', child.id);
+              }}
+              onPlanYear={() => {
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openYearWizard'));
+                }
+              }}
+              onAddSyllabus={onAddSyllabus}
+              onOpenPlanner={(params) => {
+                console.log('Open planner:', params);
+                if (typeof window !== 'undefined') {
+                  const urlParams = new URLSearchParams();
+                  urlParams.set('plan_for_child', params.childId);
+                  urlParams.set('week', params.weekStart);
+                  if (params.rebalance) {
+                    urlParams.set('rebalance', 'true');
+                  }
+                  window.history.replaceState({}, '', `?${urlParams.toString()}`);
+                }
+                onTabChange('planner');
+              }}
+              onNavigate={(section) => {
+                // Handle navigation to different child sections
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('childSectionChange', { detail: { childId: child.id, section } }));
+                }
+              }}
+            />
+          </View>
+        );
+      }
+    }
+    
     // Check if it's a syllabus upload tab for a specific child
     if (activeTab.startsWith('syllabus-upload-')) {
       return renderSyllabusContent()
@@ -3273,12 +3860,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       return renderPlannerContent()
     }
     // Schedule Rules and AI Planner are now modals, not separate tabs
-    // If somehow navigated to these tabs, redirect to calendar
+    // If somehow navigated to these tabs, redirect to planner
     if (activeTab === 'schedule-rules') {
-      return renderCalendarContent()
+      return renderPlannerContent()
     }
     if (activeTab === 'ai-planner') {
-      return renderCalendarContent()
+      return renderPlannerContent()
     }
     if (activeTab === 'notifications') {
       return (
@@ -3298,6 +3885,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         } else if (userRole === 'tutor') {
           return <TutorDashboard accessibleChildren={accessibleChildren} />
         } else {
+          // Don't show loading screen here - it's shown at WebLayout level
+          if (homeLoading || !homeData) {
+            return null;
+          }
           return renderHomeContent()
         }
       case 'child-dashboard':
@@ -3312,6 +3903,63 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return <TutorDashboard accessibleChildren={accessibleChildren} />
       case 'explore':
         return <ExploreContent familyId={familyId} children={children} />
+      case 'materials':
+        if (!familyId) {
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Loading...</Text>
+            </View>
+          )
+        }
+        try {
+          return <MaterialsLibrary familyId={familyId} children={children || []} />
+        } catch (err) {
+          console.error('[WebContent] Error rendering MaterialsLibrary:', err);
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Error Loading Library</Text>
+              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+            </View>
+          )
+        }
+      case 'intelligence':
+        if (!familyId) {
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Loading...</Text>
+            </View>
+          )
+        }
+        try {
+          return <IntelligenceHub familyId={familyId} children={children || []} />
+        } catch (err) {
+          console.error('[WebContent] Error rendering IntelligenceHub:', err);
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Error Loading Intelligence Hub</Text>
+              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+            </View>
+          )
+        }
+      case 'coach':
+        if (!familyId) {
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Loading...</Text>
+            </View>
+          )
+        }
+        try {
+          return <CoachTab familyId={familyId} children={children || []} userRole="parent" />
+        } catch (err) {
+          console.error('[WebContent] Error rendering CoachTab:', err);
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Error Loading Family Coach</Text>
+              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+            </View>
+          )
+        }
       case 'inspire-learning':
       case 'inspire':
         return (
@@ -3343,10 +3991,32 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'reports':
       case 'records':
         return renderRecordsContent()
+      case 'profile':
+        // Always show comprehensive profile
+        // If childId is available from activeSubtab, use it
+        // Otherwise, use first child if available, or show child selector
+        if (activeSubtab && children) {
+          const child = children.find(c => String(c.id) === String(activeSubtab));
+          if (child) {
+            return <ComprehensiveProfile childId={child.id} familyId={familyId} children={children} />;
+          }
+        }
+        // If no child selected but children exist, use first child
+        if (children && children.length > 0) {
+          return <ComprehensiveProfile childId={children[0].id} familyId={familyId} children={children} />;
+        }
+        // Show comprehensive profile with child selector
+        return <ComprehensiveProfile childId={null} familyId={familyId} children={children || []} />
       case 'integrations':
       case 'settings':
         return <IntegrationsSettings user={user} />
       case 'templates':
+        // Route to Records with templates subtab
+        if (onSubtabChange) onSubtabChange('templates');
+        return renderRecordsContent()
+      case 'curriculum-import':
+      case 'curriculum/import':
+        return renderCurriculumImportContent()
       case 'syllabi':
       case 'imports':
       case 'doodle-ai':
@@ -3355,6 +4025,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return renderCalendarPlanningContent()
       case 'kanban':
         return renderComingSoonContent()
+      case 'groups':
+        return <GroupsPage familyId={familyId} userId={user?.id} />
+      case 'marketplace':
+        return <MarketplacePage familyId={familyId} userId={user?.id} />
       default:
         // Default routing based on role
         if (userRole === 'child' && accessibleChildren.length > 0) {
@@ -3435,156 +4109,1213 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     )
   }
 
-  const renderHomeContent = () => {
-    if (homeLoading || !homeData) {
-      return (
-        <View style={styles.content}>
-          <View style={styles.greetingSection}>
-            <Text style={styles.greetingTitle}>{getTimeBasedGreeting()}</Text>
-          </View>
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
-      );
+  // Check for weekly goals and backlog items
+  useEffect(() => {
+    if (!familyId || !homeData?.children || homeData.children.length === 0) {
+      setHasWeeklyGoal(false);
+      setHasBacklogItems(false);
+      return;
     }
 
+    const checkGoalsAndBacklog = async () => {
+      try {
+        // Get child IDs for the family
+        const childIds = homeData.children.map(c => c.id);
+        
+        if (childIds.length === 0) {
+          setHasWeeklyGoal(false);
+          setHasBacklogItems(false);
+          return;
+        }
+
+        // Check for weekly goals using RPC function to bypass RLS issues
+        // Check each child and if any has goals, set hasWeeklyGoal to true
+        let foundGoals = false;
+        for (const childId of childIds) {
+          try {
+            const { data: goalCount, error: goalsError } = await supabase
+              .rpc('get_child_active_goals_count', { p_child_id: childId });
+            
+            if (!goalsError && goalCount > 0) {
+              foundGoals = true;
+              break; // Found at least one goal, no need to check others
+            }
+          } catch (err) {
+            // Silently continue - RPC might not be available or RLS might block
+            // Don't log errors here as they're expected in some setups
+            continue;
+          }
+        }
+        setHasWeeklyGoal(foundGoals);
+
+        // Check for backlog items and get count
+        const { data: backlog, error: backlogError } = await supabase
+          .from('events')
+          .select('id')
+          .eq('family_id', familyId)
+          .eq('status', 'backlog');
+        
+        if (backlogError) {
+          console.warn('[WebContent] Error checking backlog:', backlogError);
+          setHasBacklogItems(false);
+          setBacklogCount(0);
+        } else {
+          const backlogCount = backlog?.length || 0;
+          setHasBacklogItems(backlogCount > 0);
+          setBacklogCount(backlogCount);
+        }
+      } catch (err) {
+        console.warn('[WebContent] Error checking goals/backlog:', err);
+        setHasWeeklyGoal(false);
+        setHasBacklogItems(false);
+      }
+    };
+
+    checkGoalsAndBacklog();
+  }, [familyId, homeData?.children]);
+
+  // Generate tip context and get daily tip
+  const getTodayTip = (children, learning) => {
+    try {
+      const eventCount = learning.length;
+      const totalMinutes = learning.reduce((sum, event) => {
+        const start = new Date(event.start_ts || event.start_local);
+        const end = new Date(event.end_ts || event.end_local);
+        return sum + (end - start) / (1000 * 60);
+      }, 0);
+
+      const density = eventCount > 0 ? totalMinutes / (eventCount * 60) : 0;
+      
+      // Determine schedule load
+      let scheduleLoad = "light";
+      if (eventCount === 0) {
+        scheduleLoad = "light";
+      } else if (density < 1.5) {
+        scheduleLoad = "light";
+      } else if (density < 3) {
+        scheduleLoad = "medium";
+      } else {
+        scheduleLoad = "heavy";
+      }
+
+      const ctx = {
+        scheduleLoad,
+        hasWeeklyGoal,
+        hasBacklogItems,
+        numChildren: children?.length || 0,
+        dayOfWeek: new Date().getDay(),
+      };
+
+      const tips = getDailyTips(ctx, 1); // Get one tip (will prioritize perspective)
+      return tips[0] || null;
+    } catch (err) {
+      console.error('[WebContent] Error getting today tip:', err);
+      return null;
+    }
+  };
+
+  // Generate interpretive weekly progress line
+  const generateWeeklyProgressLine = (progress, children) => {
+    try {
+      if (!children || children.length === 0) return null;
+
+      const totalCompleted = Object.values(progress).reduce((sum, p) => sum + (p.completed || 0), 0);
+      const totalScheduled = Object.values(progress).reduce((sum, p) => sum + (p.total || 0), 0);
+      
+      if (totalScheduled === 0) {
+        return "A fresh week ahead — start with one small win.";
+      }
+
+      const completionRate = totalCompleted / totalScheduled;
+      
+      if (completionRate >= 0.7) {
+        return "You're off to a strong start. Keep the momentum going.";
+      } else if (completionRate >= 0.4) {
+        return "You're off to a good start. Small wins add up.";
+      } else if (completionRate > 0) {
+        return "Every step counts — you're building momentum.";
+      } else {
+        return "A fresh week ahead — start with one small win.";
+      }
+    } catch (err) {
+      console.error('[WebContent] Error generating weekly progress line:', err);
+      return null;
+    }
+  };
+
+  // Generate interpretive daily insights
+  const generateDailyInsights = (children, learning) => {
+    try {
+      const insights = [];
+      
+      if (learning.length === 0) {
+        insights.push("Today is a light day — perfect for following interests.");
+        return insights;
+      }
+
+      const eventCount = learning.length;
+      const totalMinutes = learning.reduce((sum, event) => {
+        const start = new Date(event.start_ts || event.start_local);
+        const end = new Date(event.end_ts || event.end_local);
+        return sum + (end - start) / (1000 * 60);
+      }, 0);
+
+      const density = eventCount > 0 ? totalMinutes / (eventCount * 60) : 0;
+      
+      // Interpretive insights based on schedule
+      if (density < 1.5) {
+        insights.push("Today's load is light — expect a spacious and flexible day.");
+      } else if (density < 3) {
+        insights.push("Today's load is moderate — expect a productive but manageable day.");
+      } else {
+        insights.push("Today's load is full — short, focused sessions will work best.");
+      }
+
+      // Time distribution insights
+      const morningEvents = learning.filter(e => {
+        const hour = new Date(e.start_ts || e.start_local).getHours();
+        return hour >= 8 && hour < 12;
+      });
+      const afternoonEvents = learning.filter(e => {
+        const hour = new Date(e.start_ts || e.start_local).getHours();
+        return hour >= 12 && hour < 17;
+      });
+
+      if (morningEvents.length > afternoonEvents.length && morningEvents.length > 0) {
+        const childNames = [...new Set(morningEvents.map(e => {
+          const child = children.find(c => c.id === e.child_id);
+          return child?.first_name || child?.name;
+        }))].filter(Boolean);
+        if (childNames.length > 0) {
+          insights.push(`${childNames.join(' and ')} ${childNames.length === 1 ? 'has' : 'have'} more learning front-loaded this morning.`);
+        }
+      } else if (afternoonEvents.length > morningEvents.length && afternoonEvents.length > 0) {
+        const childNames = [...new Set(afternoonEvents.map(e => {
+          const child = children.find(c => c.id === e.child_id);
+          return child?.first_name || child?.name;
+        }))].filter(Boolean);
+        if (childNames.length > 0) {
+          insights.push(`${childNames.join(' and ')} ${childNames.length === 1 ? 'has' : 'have'} more space later in the day.`);
+        }
+      }
+
+      // Subject-specific insights
+      const subjects = [...new Set(learning.map(l => l.subject))];
+      if (subjects.length === 1 && learning.length > 0) {
+        insights.push(`Today focuses on ${subjects[0]} — a good chance for deep work.`);
+      } else if (subjects.length > 0) {
+        const childSubjects = children.map(child => {
+          const childLearning = learning.filter(l => l.child_id === child.id);
+          const childSubjectsList = [...new Set(childLearning.map(l => l.subject))];
+          return { child, subjects: childSubjectsList };
+        }).filter(cs => cs.subjects.length > 0);
+
+        if (childSubjects.length === 1 && childSubjects[0].subjects.length === 1) {
+          const childName = childSubjects[0].child.first_name || childSubjects[0].child.name;
+          insights.push(`${childName} has one focused session — a good chance for deep work.`);
+        }
+      }
+
+      return insights.slice(0, 3); // Max 3 bullets
+    } catch (err) {
+      console.error('[WebContent] Error generating daily insights:', err);
+      return ["A steady day of learning ahead."];
+    }
+  };
+
+  // Load weekly progress
+  useEffect(() => {
+    if (!familyId || !homeData?.children || homeData.children.length === 0) {
+      setWeeklyProgressLoading(false);
+      return;
+    }
+
+    const loadWeeklyProgress = async () => {
+      setWeeklyProgressLoading(true);
+      try {
+        const weekStart = getWeekStart(new Date());
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        const progressData = {};
+        
+        for (const child of homeData.children) {
+          try {
+            const { data: allEvents, error: allEventsError } = await supabase
+              .from('events')
+              .select('id, status')
+              .eq('child_id', child.id)
+              .gte('start_ts', weekStart.toISOString())
+              .lte('start_ts', weekEnd.toISOString())
+              .in('status', ['scheduled', 'done']);
+
+            if (allEventsError) {
+              console.error(`[WebContent] Error loading events for ${child.id}:`, allEventsError);
+              progressData[child.id] = { completed: 0, total: 0 };
+              continue;
+            }
+
+            const totalEvents = allEvents?.length || 0;
+            const completedEvents = allEvents?.filter(e => e.status === 'done').length || 0;
+
+            progressData[child.id] = {
+              completed: completedEvents,
+              total: totalEvents || 0,
+            };
+          } catch (err) {
+            console.error(`[WebContent] Error processing child ${child.id}:`, err);
+            progressData[child.id] = { completed: 0, total: 0 };
+          }
+        }
+
+        setWeeklyProgress(progressData);
+      } catch (err) {
+        console.error('[WebContent] Error loading weekly progress:', err);
+      } finally {
+        setWeeklyProgressLoading(false);
+      }
+    };
+
+    loadWeeklyProgress();
+  }, [familyId, homeData?.children]);
+  
+  // Load home summary (Records + Intelligence data) when filters change
+  useEffect(() => {
+    if (!familyId || !homeData?.children) return;
+    
+    // Validate date
+    if (!(homeSelectedDate instanceof Date) || isNaN(homeSelectedDate.getTime())) {
+      console.warn('Invalid homeSelectedDate, resetting to today');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      setHomeSelectedDate(today);
+      return;
+    }
+    
+    const loadHomeSummary = async () => {
+      setHomeSummaryLoading(true);
+      try {
+        const resolvedChildIds = homeSelectedChildren === 'all'
+          ? (homeData?.children || []).map(c => c?.id).filter(Boolean)
+          : Array.isArray(homeSelectedChildren) ? homeSelectedChildren : [];
+        
+        // Ensure date is valid before passing
+        const validDate = new Date(homeSelectedDate);
+        validDate.setHours(0, 0, 0, 0);
+        
+        const [summary, insights] = await Promise.all([
+          getTodaySummary(familyId, validDate, resolvedChildIds).catch(err => {
+            console.warn('Error loading today summary:', err);
+            return { nextEvents: [], attendanceStatus: { thisWeek: { totalMinutes: 0, totalDays: 0, byDay: {} }, missingLogs: [] }, missingEvidence: { total: 0, byChild: {} }, date: validDate.toISOString().split('T')[0] };
+          }),
+          getTodayInsights(familyId, validDate, resolvedChildIds).catch(err => {
+            console.warn('Error loading insights:', err);
+            return [];
+          }),
+        ]);
+        
+        setHomeSummary({ ...summary, insights });
+        
+        // Generate micro notifications (2 max visible)
+        const microNotifs = [];
+        
+        // Card A - Daily Perspective
+        // Calculate learning density for today
+        const todayLearning = (homeData?.learning || []).filter(event => {
+          if (!event.start_ts && !event.start_local) return false;
+          try {
+            const eventDate = new Date(event.start_ts || event.start_local);
+            if (isNaN(eventDate.getTime())) return false;
+            const eventDateStr = eventDate.toISOString().split('T')[0];
+            const selectedDateStr = validDate.toISOString().split('T')[0];
+            if (eventDateStr !== selectedDateStr) return false;
+            if (resolvedChildIds.length > 0 && !resolvedChildIds.includes(event.child_id)) return false;
+            return true;
+          } catch (e) {
+            return false;
+          }
+        });
+        
+        const eventCount = todayLearning.length;
+        const totalMinutes = todayLearning.reduce((sum, event) => {
+          const start = new Date(event.start_ts || event.start_local);
+          const end = new Date(event.end_ts || event.end_local);
+          return sum + (end - start) / (1000 * 60);
+        }, 0);
+        const density = eventCount > 0 ? totalMinutes / (eventCount * 60) : 0;
+        
+        let perspectiveMessage = '';
+        if (eventCount === 0) {
+          perspectiveMessage = "Today is a good day for slow learning and noticing small wins.";
+        } else if (density < 1.5) {
+          perspectiveMessage = "Today is a good day for slow learning and noticing small wins.";
+        } else if (density < 3) {
+          perspectiveMessage = "Today is busy. Protect a few quiet minutes for reading or reflection.";
+        } else {
+          perspectiveMessage = "Today is busy. Protect a few quiet minutes for reading or reflection.";
+        }
+        
+        microNotifs.push({
+          id: 'daily_perspective',
+          type: 'perspective',
+          message: perspectiveMessage,
+          onPress: () => {}, // No action needed
+        });
+        
+        // Card B - Dynamic Nudge
+        // Check for missing logs
+        if (summary.attendanceStatus?.missingLogs?.length > 0) {
+          const missingCount = summary.attendanceStatus.missingLogs.length;
+          const childNames = homeData?.children || [];
+          const firstChild = childNames.find(c => resolvedChildIds.includes(c.id)) || childNames[0];
+          const childName = firstChild?.first_name || firstChild?.name || 'your child';
+          microNotifs.push({
+            id: 'nudge_missing_logs',
+            type: 'nudge',
+            message: `${childName} has ${missingCount} missing log${missingCount > 1 ? 's' : ''} — review attendance?`,
+            onPress: () => onTabChange('records?tab=attendance'),
+          });
+        }
+        // Check for missing evidence
+        else if (summary.missingEvidence?.total === 0 && resolvedChildIds.length > 0) {
+          const childNames = homeData?.children || [];
+          const firstChild = childNames.find(c => resolvedChildIds.includes(c.id)) || childNames[0];
+          const childName = firstChild?.first_name || firstChild?.name || 'your child';
+          microNotifs.push({
+            id: 'nudge_missing_evidence',
+            type: 'nudge',
+            message: `${childName} hasn't uploaded evidence this week.`,
+            onPress: () => onTabChange('records?tab=portfolio'),
+          });
+        }
+        // Check for project nudges (if we have project data)
+        else if (insights.length > 0) {
+          const projectInsight = insights.find(i => i.title?.toLowerCase().includes('project') || i.text?.toLowerCase().includes('project'));
+          if (projectInsight) {
+            const childNames = homeData?.children || [];
+            const firstChild = childNames.find(c => resolvedChildIds.includes(c.id)) || childNames[0];
+            const childName = firstChild?.first_name || firstChild?.name || 'your child';
+            const subjectMatch = projectInsight.text?.match(/(\w+)\s+project/i);
+            const subject = subjectMatch ? subjectMatch[1] : 'their';
+            microNotifs.push({
+              id: 'nudge_project',
+              type: 'nudge',
+              message: `Send ${childName} a nudge about their ${subject} project.`,
+              onPress: () => onTabChange('planner'),
+          });
+        }
+        }
+        
+        // Limit to 2 max
+        setMicroNotifications(microNotifs.slice(0, 2));
+        
+        // Keep old notifications for backward compatibility (but don't show them)
+        setHomeNotifications([]);
+      } catch (error) {
+        console.error('Error loading home summary:', error);
+        setHomeSummary(null);
+        setHomeNotifications([]);
+      } finally {
+        setHomeSummaryLoading(false);
+      }
+    };
+    
+    loadHomeSummary();
+  }, [familyId, homeSelectedDate, homeSelectedChildren, homeData?.children]);
+
+  // Load multi-day summary (yesterday, today, tomorrow) - simplified without caching hook for now
+  useEffect(() => {
+    if (!familyId || !homeData?.children || !Array.isArray(homeData.children) || homeData.children.length === 0) {
+      setMultiDaySummary(null);
+      setMultiDayLoading(false);
+      return;
+    }
+    
+    const loadMultiDaySummary = async () => {
+      setMultiDayLoading(true);
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        
+        const dates = [
+          yesterday.toISOString().split('T')[0],
+          today.toISOString().split('T')[0],
+          tomorrow.toISOString().split('T')[0],
+        ];
+        
+        const resolvedChildIds = homeSelectedChildren === 'all'
+          ? homeData.children.map(c => c?.id).filter(Boolean)
+          : Array.isArray(homeSelectedChildren) ? homeSelectedChildren : [];
+        
+        const summary = await getMultiDaySummary(familyId, dates, resolvedChildIds);
+        setMultiDaySummary(summary);
+      } catch (error) {
+        console.error('Error loading multi-day summary:', error);
+        setMultiDaySummary(null);
+      } finally {
+        setMultiDayLoading(false);
+      }
+    };
+    
+    loadMultiDaySummary();
+  }, [familyId, homeSelectedChildren, homeData]);
+
+  // Load home tiles summary - simplified without caching hook for now
+  useEffect(() => {
+    if (!familyId || !homeSelectedDate || !homeData?.children || !Array.isArray(homeData.children) || homeData.children.length === 0) {
+      setHomeTilesData(null);
+      setHomeTilesLoading(false);
+      return;
+    }
+    
+    const loadHomeTiles = async () => {
+      setHomeTilesLoading(true);
+      try {
+        const resolvedChildIds = homeSelectedChildren === 'all'
+          ? homeData.children.map(c => c?.id).filter(Boolean)
+          : (Array.isArray(homeSelectedChildren) ? homeSelectedChildren : []);
+        
+        const tilesData = await getHomeTilesSummary(familyId, homeSelectedDate, resolvedChildIds.length > 0 ? resolvedChildIds : 'all');
+        setHomeTilesData(tilesData);
+      } catch (error) {
+        console.error('Error loading home tiles:', error);
+        setHomeTilesData(null);
+      } finally {
+        setHomeTilesLoading(false);
+      }
+    };
+    
+    loadHomeTiles();
+  }, [familyId, homeSelectedDate, homeSelectedChildren, homeData]);
+
+  // Re-check goals/backlog when homeData changes
+  useEffect(() => {
+    if (!familyId || !homeData?.children) return;
+    // This will trigger the goals/backlog check which updates hasWeeklyGoal and hasBacklogItems
+  }, [familyId, homeData?.children]);
+
+  // Load intelligence modules data
+  useEffect(() => {
+    if (!familyId || !homeData) return;
+    
+    const loadIntelligenceData = async () => {
+      try {
+        const resolvedChildIds = homeSelectedChildren === 'all'
+          ? (homeData?.children || []).map(c => c?.id).filter(Boolean)
+          : Array.isArray(homeSelectedChildren) ? homeSelectedChildren : [];
+        
+        // Load week drift (Tier 2)
+        const drift = await getWeekDrift(familyId, resolvedChildIds);
+        setWeekDriftData(drift);
+        
+        // Load micro trends (Tier 2)
+        const trends = await getMicroTrends(familyId, resolvedChildIds);
+        setMicroTrendsData(trends);
+        
+        // Compute energy forecast (Tier 3) - client-side
+        const forecast = getEnergyForecast(homeData.learning || [], homeData.children || []);
+        setEnergyForecastData(forecast);
+      } catch (err) {
+        console.warn('Error loading intelligence modules:', err);
+      }
+    };
+    
+    loadIntelligenceData();
+  }, [familyId, homeData, homeSelectedChildren]);
+
+  // Adaptive layout: Determine tier based on container height and left column density
+  useEffect(() => {
+    if (!rightSidebarRef.current || Platform.OS !== 'web' || !homeData) {
+      setRightSidebarTier(1);
+      return;
+    }
+    
+    const updateTier = () => {
+      const container = rightSidebarRef.current;
+      if (!container) {
+        setRightSidebarTier(1);
+        return;
+      }
+      
+      const height = container.offsetHeight || container.clientHeight || 0;
+      const leftColumnEvents = (homeData.learning || []).length;
+      
+      // Tier logic:
+      // - Tier 3: Container > 900px OR left column has > 6 events
+      // - Tier 2: Container > 650px OR left column has > 4 events
+      // - Tier 1: Default (always show)
+      
+      if (height > 900 || leftColumnEvents > 6) {
+        setRightSidebarTier(3);
+      } else if (height > 650 || leftColumnEvents > 4) {
+        setRightSidebarTier(2);
+      } else {
+        setRightSidebarTier(1);
+      }
+    };
+    
+    // Small delay to ensure DOM is ready
+    const timeoutId = setTimeout(updateTier, 200);
+    
+    // Set up ResizeObserver for web
+    let resizeObserver = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.ResizeObserver) {
+      resizeObserver = new ResizeObserver(updateTier);
+      resizeObserver.observe(rightSidebarRef.current);
+    }
+    
+    // Fallback: check on window resize
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.addEventListener('resize', updateTier);
+    }
+    
+    return () => {
+      clearTimeout(timeoutId);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.removeEventListener('resize', updateTier);
+      }
+    };
+  }, [homeData]);
+
+  const renderHomeContent = () => {
+    if (homeLoading || !homeData) {
+      return null; // Don't show duplicate loading screen - initial app load already handles it
+    }
+
+    // Validate date before using it
+    const validSelectedDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+      ? homeSelectedDate
+      : new Date();
+    validSelectedDate.setHours(0, 0, 0, 0);
+    const selectedDateStr = validSelectedDate.toISOString().split('T')[0];
+
+    const todayTip = getTodayTip(homeData.children || [], homeData.learning || []);
+    const weeklyProgressLine = generateWeeklyProgressLine(weeklyProgress, homeData.children || []);
+    
+    // Generate daily insights using Insight Engine
+    let dailyInsightsData = null;
+    try {
+      const context = buildInsightContext(homeData, validSelectedDate);
+      dailyInsightsData = generateInsights(context);
+    } catch (err) {
+      console.warn('Insight Engine error, using fallback:', err);
+      // Fallback to legacy format
+    const dailyInsightsBullets = homeSummary?.insights?.length > 0
+      ? homeSummary.insights.slice(0, 3).map(i => i.summary || i.text || i.title)
+      : generateDailyInsights(homeData.children || [], homeData.learning || []);
+      dailyInsightsData = { bullets: dailyInsightsBullets };
+    }
+    
+    // Resolve child IDs for filtering
+    const resolvedChildIds = homeSelectedChildren === 'all'
+      ? (homeData?.children || []).map(c => c?.id).filter(Boolean)
+      : Array.isArray(homeSelectedChildren) ? homeSelectedChildren : [];
+    
+    // Filter learning events by selected date and children
+    
+    // Since get_home_data already filters by date, all events in homeData.learning are for the selected date
+    // We just need to filter by selected children
+    const filteredLearning = (homeData.learning || []).filter(event => {
+      // Filter by selected children if any are selected
+        if (resolvedChildIds.length > 0 && !resolvedChildIds.includes(event.child_id)) return false;
+      
+        return true;
+    });
+
+    // Generate perspective message for Hero Mood Card
+    const eventCount = filteredLearning.length;
+    const totalMinutes = filteredLearning.reduce((sum, event) => {
+      const start = new Date(event.start_ts || event.start_local);
+      const end = new Date(event.end_ts || event.end_local);
+      return sum + (end - start) / (1000 * 60);
+    }, 0);
+    const density = eventCount > 0 ? totalMinutes / (eventCount * 60) : 0;
+    
+    let perspectiveMessage = '';
+    if (eventCount === 0) {
+      perspectiveMessage = "Today is a good day for slow learning and noticing small wins.";
+    } else if (density < 1.5) {
+      perspectiveMessage = "Today is a good day for slow learning and noticing small wins.";
+    } else if (density < 3) {
+      perspectiveMessage = "Today is a good day for steady progress and focused attention.";
+            } else {
+      perspectiveMessage = "Today is a good day for pacing yourself and celebrating each step.";
+    }
+
+    // Generate child micro-world messages from Daily Connection data
+    const childMicroWorlds = (homeData.children || []).map((child, index) => {
+      const childName = child.first_name || child.name || 'Child';
+      
+      // Find connection starter for this child
+      const connection = conversationStarters?.find(c => c.child_id === child.id);
+      
+      let message = '';
+      if (connection) {
+        // Transform connection prompt into micro-world message
+        const prompt = connection.prompt || connection.detail || '';
+        const subject = connection.subject || 'learning';
+        
+        // Make it more emotional/personal
+        if (prompt.includes('curious') || prompt.includes('curiosity')) {
+          message = `Their ${subject.toLowerCase()} curiosity is peaking — ask about what's exciting them.`;
+        } else if (prompt.includes('diving') || prompt.includes('dive')) {
+          message = `${subject} is resurfacing — spark a conversation about what they're discovering.`;
+        } else if (prompt.includes('creative') || prompt.includes('project') || prompt.includes('groove')) {
+          message = "Creative mode is high — ask what project they're excited by.";
+        } else {
+          // Default transformation based on subject
+          const subjectLower = subject.toLowerCase();
+          if (subjectLower.includes('science')) {
+            message = "Her science curiosity is peaking — ask about energy or motion.";
+          } else if (subjectLower.includes('chemistry')) {
+            message = "Chemistry is resurfacing — spark a conversation about reactions.";
+          } else if (subjectLower.includes('art') || subjectLower.includes('creative')) {
+            message = "Creative mode is high — ask what project they're excited by.";
+          } else {
+            message = `Their ${subjectLower} interest is growing — ask what's capturing their attention.`;
+              }
+        }
+      } else {
+        // Fallback: generate based on child's learning
+        const childLearning = filteredLearning.filter(l => l.child_id === child.id);
+        const subjects = [...new Set(childLearning.map(l => l.subject).filter(Boolean))];
+        const primarySubject = subjects[0] || 'learning';
+        
+        // Generate emotional message based on subject
+        const subjectLower = primarySubject.toLowerCase();
+        if (subjectLower.includes('science')) {
+          message = "Her science curiosity is peaking — ask about energy or motion.";
+        } else if (subjectLower.includes('chemistry')) {
+          message = "Chemistry is resurfacing — spark a conversation about reactions.";
+        } else if (subjectLower.includes('art') || subjectLower.includes('creative')) {
+          message = "Creative mode is high — ask what project they're excited by.";
+        } else {
+          message = `Their ${subjectLower} interest is growing — ask what's capturing their attention.`;
+        }
+      }
+      
+      return {
+        childName,
+        message,
+      };
+    }).filter(w => w.message);
+
+    // Generate parent coaching suggestions
+    const coachingSuggestions = [];
+    if (homeSummary) {
+      const resolvedChildIdsForCoaching = homeSelectedChildren === 'all'
+                  ? homeData.children.map(c => c.id)
+                  : Array.isArray(homeSelectedChildren) ? homeSelectedChildren : [];
+                
+      // Check for light days
+      if (filteredLearning.length === 0 && homeData.children.length > 0) {
+        const child = homeData.children[0];
+        coachingSuggestions.push({
+          text: `Today is light for ${child.first_name || child.name} — a good day to catch up on Reading.`,
+                    });
+                }
+                
+      // Check attendance gaps
+      const missingLogs = homeSummary.attendanceStatus?.missingLogs || [];
+      if (missingLogs.length === 0) {
+        coachingSuggestions.push({
+          text: "Try 1 quiet moment of reflection.",
+        });
+      }
+      
+      // General guidance
+      if (eventCount > 3) {
+        coachingSuggestions.push({
+          text: "Focus on one meaningful block; don't over-schedule.",
+        });
+      } else {
+        coachingSuggestions.push({
+          text: "Protect time for deep work and meaningful connections.",
+        });
+      }
+    }
+
+    // Generate daily tips using getDailyTips
+    const scheduleLoad = eventCount === 0 ? 'light' : totalMinutes < 120 ? 'light' : totalMinutes < 240 ? 'medium' : 'heavy';
+    const tipsContext = {
+      scheduleLoad,
+      hasWeeklyGoal: hasWeeklyGoal,
+      hasBacklogItems: hasBacklogItems,
+      numChildren: homeData.children?.length || 0,
+      dayOfWeek: validSelectedDate.getDay(),
+    };
+    const dailyTips = getDailyTips(tipsContext, 2);
+
     return (
-      <View style={styles.content}>
-        {/* Time-based Greeting */}
+      <View style={{ flex: 1 }}>
+        <AppContainer fullWidth noPadding>
+        <ScrollView 
+          style={styles.content} 
+          contentContainerStyle={styles.homeContentContainer}
+          showsVerticalScrollIndicator={true}
+        >
+        {/* Greeting */}
         <View style={styles.greetingSection}>
-          <Text style={styles.greetingTitle}>{getTimeBasedGreeting()}</Text>
+          <Text style={styles.greetingTitle}>
+            {getTimeBasedGreeting()}
+          </Text>
         </View>
 
-        {/* Stories Row (Flo-style) */}
-        <StoriesRow 
-          stories={homeData.stories || []} 
-          currentDate={homeData.date ? new Date(homeData.date) : new Date()}
-          onGenerateTips={() => onTabChange('ai-planner')}
-          onStoryAction={(story) => {
-            console.log('Story action:', story);
-            // Handle CTA stories
-            if (story.kind === 'cta-goals') {
-              setSubjectGoalsModalOpen(true);
-            } else if (story.kind === 'cta-backlog') {
-              // Store intent to open backlog in sessionStorage for planner to check
-              if (typeof window !== 'undefined') {
-                sessionStorage.setItem('openBacklogDrawer', 'true');
-                console.log('Set sessionStorage flag for backlog drawer');
-              }
-              console.log('Switching to planner tab');
-              onTabChange('planner');
-              // Also dispatch event as fallback (wait for component to mount)
-              setTimeout(() => {
-                if (typeof window !== 'undefined') {
-                  console.log('Dispatching openBacklogDrawer event');
-                  window.dispatchEvent(new CustomEvent('openBacklogDrawer'));
+        {/* Hero Insights - Co-Star style daily guidance */}
+        <HeroInsights
+          primary={dailyInsightsData?.primary}
+          child_insight={dailyInsightsData?.child_insight}
+          emotional={dailyInsightsData?.emotional}
+          tactical={dailyInsightsData?.tactical}
+          strategic={dailyInsightsData?.strategic}
+          cta={dailyInsightsData?.cta || "View weekly story"}
+          onViewFull={() => onTabChange('records')}
+        />
+        
+
+        {/* Two Column Layout: Left (Learning + Tasks) | Right (Insights Sidebar) */}
+        <View style={styles.homeMainLayout}>
+          {/* Left Column */}
+          <View style={styles.homeLeftColumn}>
+            {/* Today's Learning */}
+            <TodaysLearningTimeGrouped 
+          children={homeData.children || []}
+              learning={filteredLearning}
+              currentDate={validSelectedDate}
+              onViewPlanner={() => onTabChange('planner')}
+              onEventClick={(event) => {
+                // Open event details modal
+                setEventModalEventId(event.id);
+                setEventModalInitialEvent(event);
+                setEventModalVisible(true);
+              }}
+              onEventComplete={async (event) => {
+                console.log('[WebContent] onEventComplete callback triggered for event:', event?.id);
+                
+                // Optimistically update the event status in homeData immediately
+                if (homeData && event?.id) {
+                  setHomeData(prev => {
+                    if (!prev) return prev;
+                    const updatedLearning = (prev.learning || []).map(e => 
+                      e.id === event.id ? { ...e, status: e.status === 'done' ? 'scheduled' : 'done' } : e
+                    );
+                    return {
+                      ...prev,
+                      learning: updatedLearning
+                    };
+                  });
                 }
-              }, 500);
-            } else if (story.kind === 'planner' || story.kind === 'tip') {
-              onTabChange('ai-planner');
-            } else if (story.kind === 'event') {
-              onTabChange('add-activity');
-            } else if (story.kind === 'article') {
-              // Open article link
-              console.log('Open article:', story.title);
+                
+                // Refresh home data in the background without showing loading screen
+                // Don't invalidate cache - just update it directly to avoid triggering reload
+                if (user && homeData) {
+                  try {
+                    const { data: profileData } = await supabase
+                      .from('profiles')
+                      .select('family_id')
+                      .eq('id', user.id)
+                      .maybeSingle();
+                    
+                    if (profileData?.family_id) {
+                      const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                        ? homeSelectedDate
+                        : new Date();
+                      validDate.setHours(0, 0, 0, 0);
+                      const selectedDateStr = validDate.toISOString().split('T')[0];
+                      
+                      // Refetch in background without setting loading state
+                      const homeDataResult = await supabase.rpc('get_home_data', {
+                        _family_id: profileData.family_id,
+                        _date: selectedDateStr,
+                        _horizon_days: 14,
+                      });
+                      
+                      const { data, error } = homeDataResult;
+                      
+                      if (!error && data) {
+                        const stories = (data?.stories || []).filter(s => 
+                          s && s.title && s.body && s.title.trim() && s.body.trim()
+                        );
+                        
+                        const updatedData = {
+                          ...data,
+                          stories: stories,
+                        };
+                        
+                        // Update state and cache without invalidating
+                        setHomeData(updatedData);
+                        saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
+                      }
+                    }
+                  } catch (err) {
+                    console.error('[WebContent] Error refreshing home data after event complete:', err);
+                  }
+                }
+                
+                // Also dispatch refresh event for other components
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+                }
+          }}
+        />
+        
+            {/* Tasks for today */}
+            <TasksToday
+              tasks={homeData.tasks || []}
+              backlogCount={backlogCount}
+              onViewPlanner={() => onTabChange('planner')}
+              onAddTask={() => {
+                setTaskModalDate(validSelectedDate);
+                setShowTaskModal(true);
+              }}
+              onToggleTask={(taskId) => {
+                // Handle task toggle
+              }}
+              onGenerateTasks={() => {
+                // Generate tasks from subjects
+                const dateStr = validSelectedDate.toISOString().split('T')[0];
+                onTabChange(`planner?date=${dateStr}&action=generate_tasks`);
+              }}
+              onAddFromBacklog={() => {
+                const dateStr = validSelectedDate.toISOString().split('T')[0];
+                onTabChange(`planner?date=${dateStr}&action=add_from_backlog`);
+                }}
+              />
+          </View>
+
+          {/* Right Sidebar - Insights Rail */}
+          <View style={styles.homeRightSidebar} ref={rightSidebarRef}>
+            {/* Upcoming Big Events */}
+            {homeData.events && homeData.events.length > 0 && (
+              <>
+                <UpcomingBigEvents
+                  events={homeData.events}
+                  onViewPlanner={() => onTabChange('planner')}
+                />
+                <View style={styles.sidebarDivider} />
+              </>
+            )}
+
+            {/* Inspire Learning */}
+            {homeData.children && homeData.children.length > 0 && (
+              <>
+                <InspireLearning
+              familyId={familyId}
+                  children={homeData.children}
+                  onViewIntelligence={() => onTabChange('intelligence')}
+                />
+                {(weekDriftData.length > 0 || microTrendsData.length > 0 || energyForecastData.length > 0) && (
+                  <View style={styles.sidebarDivider} />
+                )}
+              </>
+            )}
+
+                {/* Week Drift Radar */}
+                    <WeekDriftRadar 
+                      data={weekDriftData}
+                      onViewIntelligence={() => onTabChange('intelligence')}
+                    />
+            {(microTrendsData.length > 0 || energyForecastData.length > 0) && (
+                    <View style={styles.sidebarDivider} />
+                )}
+
+                {/* Micro Trends */}
+                    <MicroTrends 
+                      data={microTrendsData}
+                      onViewIntelligence={() => onTabChange('intelligence')}
+                    />
+            {energyForecastData.length > 0 && (
+              <View style={styles.sidebarDivider} />
+            )}
+
+            {/* Energy Forecast */}
+              <EnergyForecast 
+                data={energyForecastData}
+                onViewIntelligence={() => onTabChange('intelligence')}
+              />
+          </View>
+          </View>
+        </ScrollView>
+        </AppContainer>
+
+        {/* Suggestion Action Modal */}
+        <SuggestionActionModal
+          visible={showSuggestionModal}
+          suggestion={selectedSuggestion}
+          onClose={() => {
+            setShowSuggestionModal(false);
+            setSelectedSuggestion(null);
+          }}
+          onNavigateToPlanner={(date) => {
+            if (date) {
+              const dateStr = date instanceof Date ? date.toISOString().split('T')[0] : date;
+              onTabChange(`planner?date=${dateStr}`);
+            } else {
+              onTabChange('planner');
             }
           }}
         />
 
-        {/* Next Up Tile */}
-        <NextUpTile 
-          nextEvent={homeData.next_event}
-          onOpenSyllabus={handleOpenSyllabus}
-          onAIPlan={() => onTabChange('ai-planner')}
-        />
+        {/* Task Create Modal */}
+        <TaskCreateModal
+          visible={showTaskModal}
+          onClose={() => {
+            setShowTaskModal(false);
+            setTaskModalDate(null);
+            setTaskModalChildId(null);
+          }}
+          defaultDate={taskModalDate || validSelectedDate}
+          defaultChildId={taskModalChildId}
+          familyId={familyId}
+          familyMembers={(homeData?.children || []).map(child => ({
+            id: child.id,
+            name: child.first_name || child.name || 'Unknown',
+            role: 'child'
+          }))}
+          lists={[
+            { id: 'inbox', name: 'Inbox' },
+            ...(homeData?.children || []).map(child => ({
+              id: `child:${child.id}`,
+              name: child.first_name || child.name || 'Unknown'
+            }))
+          ]}
+          onCreated={async (task) => {
+            // Refresh home data after task creation
+            if (homeData) {
+              setHomeData(null); // This will trigger a refetch
+            }
+            // Also dispatch refresh event for other components
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+                  />
 
-        {/* Main Content Grid */}
-        <View style={styles.homeGrid}>
-          <View style={styles.homeMainColumn}>
-            <TodaysLearning 
-              children={homeData.children || []}
-              learning={homeData.learning || []}
-              availability={homeData.availability || []}
-              currentDate={homeData.date ? new Date(homeData.date) : new Date()}
-              onDateChange={async (newDate) => {
-                console.log('Date changed to:', newDate);
-                // Refetch home data for the new date
+        {/* Event Details Modal */}
+        <EventModal
+          visible={eventModalVisible}
+          eventId={eventModalEventId}
+          initialEvent={eventModalInitialEvent}
+          onClose={() => {
+            setEventModalVisible(false);
+            setEventModalEventId(null);
+            setEventModalInitialEvent(null);
+          }}
+          onEventUpdated={async () => {
+            console.log('[WebContent] onEventUpdated callback triggered');
+            
+            // Refresh home data after event update
+            if (homeData) {
+              // Invalidate cache and refetch
+              if (user) {
                 try {
-                  const { data: { user } } = await supabase.auth.getUser();
-                  if (!user) return;
-                  
-                  const { data: profile } = await supabase
+                  const { data: profileData } = await supabase
                     .from('profiles')
                     .select('family_id')
                     .eq('id', user.id)
                     .maybeSingle();
                   
-                  if (profile?.family_id) {
-                    const dateStr = newDate.toISOString().split('T')[0];
-                    const { data, error } = await supabase.rpc('get_home_data', {
-                      _family_id: profile.family_id,
-                      _date: dateStr,
+                  if (profileData?.family_id) {
+                    invalidateHomeDataCache(profileData.family_id);
+                    
+                    const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                      ? homeSelectedDate
+                      : new Date();
+                    validDate.setHours(0, 0, 0, 0);
+                    const selectedDateStr = validDate.toISOString().split('T')[0];
+                    
+                    const homeDataResult = await supabase.rpc('get_home_data', {
+                      _family_id: profileData.family_id,
+                      _date: selectedDateStr,
                       _horizon_days: 14,
                     });
                     
+                    const { data, error } = homeDataResult;
+                    
                     if (!error && data) {
-                      // Merge with existing homeData but update learning for the new date
+                      const stories = (data?.stories || []).filter(s => 
+                        s && s.title && s.body && s.title.trim() && s.body.trim()
+                      );
+                      
                       setHomeData({
-                        ...homeData,
                         ...data,
-                        date: dateStr
+                        stories: stories,
+                      });
+                      
+                      saveHomeDataToCache(profileData.family_id, selectedDateStr, {
+                        ...data,
+                        stories: stories,
                       });
                     }
                   }
                 } catch (err) {
-                  console.error('Error fetching home data for date:', err);
+                  console.error('[WebContent] Error refreshing home data after update:', err);
                 }
-              }}
-              onAddLesson={(childId) => {
-                console.log('Add lesson for child:', childId);
-                onTabChange('add-activity');
-              }}
-              onAIPlanDay={(childId) => {
-                console.log('AI plan day for child:', childId);
-                onTabChange('ai-planner');
-              }}
-            />
+              }
+            }
             
-            <TasksToday 
-              tasks={homeData.tasks || []}
-              onAddTask={() => onTabChange('add-activity')}
-              onToggleTask={(taskId) => console.log('Toggle task:', taskId)}
-              onGenerateTasks={() => {
-                console.log('Generate 3 quick tasks from subjects');
-                // TODO: Implement AI task generation
-              }}
-            />
-          </View>
-          
-          <View style={styles.homeSideColumn}>
-            <DailyInsights 
-              onGeneratePlan={() => onTabChange('ai-planner')}
-              onViewProgress={() => onTabChange('records')}
-            />
+            // Refresh calendar data for planner
+            console.log('[WebContent] Refreshing calendar data after event update');
+            await refreshCalendarData();
             
-            <UpcomingBigEvents 
-              events={homeData.events || []}
-              onAddToCalendar={(event) => {
-                console.log('Add to calendar:', event);
-              }}
-              onAddTravelBlock={(event) => {
-                console.log('Add travel/prep block for:', event);
-                onTabChange('add-activity');
-              }}
-            />
+            // Also dispatch refresh event for other components
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+            }
+          }}
+          onEventDeleted={async (deletedEventId) => {
+            console.log('[WebContent] onEventDeleted callback triggered');
+            console.log('[WebContent] Deleted event ID:', deletedEventId || eventModalEventId);
+            console.log('[WebContent] Current homeData:', homeData ? 'exists' : 'null');
             
-            <RecommendedReads />
+            const deletedId = deletedEventId || eventModalEventId;
             
-            <InspireLearning 
+            // Optimistically remove the event from current homeData immediately
+            if (homeData && deletedId) {
+              console.log('[WebContent] Optimistically removing event from homeData');
+              setHomeData(prev => {
+                if (!prev) return prev;
+                const updatedLearning = (prev.learning || []).filter(e => e.id !== deletedId);
+                return {
+                  ...prev,
+                  learning: updatedLearning
+                };
+              });
+            }
+            
+            // Optimistically remove from calendarEvents (for planner) immediately
+            if (deletedId) {
+              console.log('[WebContent] Optimistically removing event from calendarEvents');
+              setCalendarEvents(prevEvents => {
+                const updated = { ...prevEvents };
+                Object.keys(updated).forEach(dateKey => {
+                  if (Array.isArray(updated[dateKey])) {
+                    updated[dateKey] = updated[dateKey].filter(e => e.id !== deletedId);
+                    // Remove date key if no events left
+                    if (updated[dateKey].length === 0) {
+                      delete updated[dateKey];
+                    }
+                  }
+                });
+                return updated;
+              });
+            }
+            
+            // Close the modal first
+            console.log('[WebContent] Closing event modal');
+            setEventModalVisible(false);
+            setEventModalEventId(null);
+            setEventModalInitialEvent(null);
+            
+            // Invalidate cache and refetch immediately
+            if (user) {
+              try {
+                const { data: profileData } = await supabase
+                  .from('profiles')
+                  .select('family_id')
+                  .eq('id', user.id)
+                  .maybeSingle();
+                
+                if (profileData?.family_id) {
+                  // Invalidate cache first
+                  console.log('[WebContent] Invalidating home data cache');
+                  invalidateHomeDataCache(profileData.family_id);
+                  
+                  // Get current selected date
+                  const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                    ? homeSelectedDate
+                    : new Date();
+                  validDate.setHours(0, 0, 0, 0);
+                  const selectedDateStr = validDate.toISOString().split('T')[0];
+                  
+                  // Force refetch immediately without showing loading screen
+                  console.log('[WebContent] Refetching home data after delete');
+                  
+                  const homeDataResult = await supabase.rpc('get_home_data', {
+                    _family_id: profileData.family_id,
+                    _date: selectedDateStr,
+                    _horizon_days: 14,
+                  });
+                  
+                  const { data, error } = homeDataResult;
+                  
+                  if (error) {
+                    console.error('[WebContent] Error refetching home data:', error);
+                    // If refetch fails, keep current data visible and let useEffect handle retry
+                    // Don't set homeData to null - that would trigger loading screen
+                    // The useEffect will retry automatically
+                  } else {
+                    // Filter out empty/invalid stories
+                    const stories = (data?.stories || []).filter(s => 
+                      s && s.title && s.body && s.title.trim() && s.body.trim()
+                    );
+                    
+                    // Also filter out the deleted event (in case it's still in the response)
+                    const updatedLearning = deletedId 
+                      ? (data?.learning || []).filter(e => e.id !== deletedId)
+                      : (data?.learning || []);
+                    
+                    console.log('[WebContent] Filtered learning events:', {
+                      before: (data?.learning || []).length,
+                      after: updatedLearning.length,
+                      deletedId: deletedId
+                    });
+                    
+                    const updatedData = {
+                      ...data,
+                      stories: stories,
+                      learning: updatedLearning,
+                    };
+                    
+                    // Ensure loading state is false before updating
+                    setHomeLoading(false);
+                    if (onHomeLoadingChange) onHomeLoadingChange(false);
+                    
+                    // Update homeData immediately with fresh data
+                    setHomeData(updatedData);
+                    
+                    // Cache the updated data
+                    saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
+                    
+                    console.log('[WebContent] Home data updated successfully');
+                  }
+                  
+                  // Refresh calendar data for planner (this will update calendarEvents)
+                  // Refresh the month containing the deleted event, or current month if we don't know
+                  console.log('[WebContent] Refreshing calendar data for planner');
+                  const eventDate = eventModalInitialEvent?.start_ts || eventModalInitialEvent?.start;
+                  const refreshDate = eventDate ? new Date(eventDate) : currentMonth;
+                  await refreshCalendarData(refreshDate);
+                  
+                  // Dispatch calendar refresh event (but don't trigger home refresh since we already did)
+                  // This will refresh the calendar view without affecting home data
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    console.log('[WebContent] Dispatching refreshCalendar event for calendar view');
+                    // Use a different event name or add a flag to prevent home refresh
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+                  }
+                }
+              } catch (err) {
+                console.error('[WebContent] Error refreshing home data:', err);
+              }
+            }
+            console.log('[WebContent] onEventDeleted callback completed');
+          }}
               familyId={familyId}
-              children={children}
-            />
-          </View>
-        </View>
+          familyMembers={(homeData?.children || []).map(child => ({
+            id: child.id,
+            name: child.first_name || child.name || 'Unknown',
+            role: 'child'
+          }))}
+        />
       </View>
     );
   };
@@ -3761,8 +5492,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       
 
       </View>
-    )
-  }
+    );
+  };
 
   const renderAddChildContent = () => {
     return (
@@ -3861,80 +5592,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }
 
   const renderChildrenListContent = () => {
-    // If activeSubtab is set, show child profile
-    if (activeSubtab) {
-      const child = children.find(c => c.id === activeSubtab);
-      if (child) {
-        return (
-          <View style={{ flex: 1, backgroundColor: colors.bgSubtle }}>
-            <ChildProfile
-              childId={child.id}
-              childName={child.first_name}
-              familyId={familyId}
-              activeChildSection={activeChildSection || 'overview'}
-              onBack={() => {
-                console.log('Back to children list');
-                onSubtabChange?.(null);
-              }}
-              onDeleted={() => {
-                console.log('Child deleted, returning to children list');
-                onSubtabChange?.(null);
-                // Refresh children list
-                setTimeout(() => {
-                  window.location.reload();
-                }, 500);
-              }}
-              onAITopOff={(params) => {
-                console.log('AI top-off:', params);
-                // Set URL params for AI planner
-                if (typeof window !== 'undefined') {
-                  const urlParams = new URLSearchParams();
-                  urlParams.set('ai_topoff_for_subject', params.subject);
-                  urlParams.set('minutes_needed', params.minutesNeeded.toString());
-                  urlParams.set('plan_for_child', params.childId);
-                  window.history.replaceState({}, '', `?${urlParams.toString()}`);
-                }
-                onTabChange('ai-planner');
-              }}
-              onEditGoal={(goal) => {
-                console.log('Edit goal:', goal);
-                // TODO: Open goal edit modal
-              }}
-              onAddGoal={() => {
-                console.log('Add goal for child:', child.id);
-                // TODO: Open goal add modal
-              }}
-              onEditInfo={() => {
-                console.log('Edit child info:', child.id);
-                // TODO: Open edit child modal
-              }}
-              onAISummary={() => {
-                console.log('Generate AI summary for:', child.id);
-                // TODO: Call AI summary API
-              }}
-              onPlanYear={() => {
-                // Trigger year wizard from parent (WebLayout)
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openYearWizard'));
-                }
-              }}
-              onOpenPlanner={(params) => {
-                console.log('Open planner for next week:', params);
-                // Set URL params for AI planner
-                if (typeof window !== 'undefined') {
-                  const urlParams = new URLSearchParams();
-                  urlParams.set('plan_for_child', params.childId);
-                  urlParams.set('week', params.weekStart);
-                  window.history.replaceState({}, '', `?${urlParams.toString()}`);
-                }
-                onTabChange('ai-planner');
-              }}
-            />
-          </View>
-        );
-      }
-    }
-
     const childrenActions = [
       { 
         label: 'Add Child', 
@@ -3984,20 +5641,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           {children.length > 0 && (
             <View style={styles.childrenGrid}>
               {children.map(child => (
-                <TouchableOpacity 
+                <View 
                   key={child.id} 
                   style={styles.childCard}
-                  onPress={() => {
-                    // Navigate to child profile
-                    onSubtabChange?.(child.id);
-                  }}
                 >
                   <Text style={styles.childName}>{child.first_name}</Text>
                   <Text style={styles.childDetails}>
                     Age: {child.age} | Grade: {child.grade}
                   </Text>
-                  <Text style={styles.viewProfile}>View Profile →</Text>
-                </TouchableOpacity>
+                </View>
               ))}
             </View>
           )}
@@ -4052,16 +5704,37 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }
 
   const renderRecordsContent = () => {
-    // Phase 4: Use new comprehensive Records component
+    // New Records Architecture: Use WebRecordsScreen
     // Fallback to old attendance/reports views if subtab is specified
     if (activeSubtab === 'attendance') {
       return <Attendance familyId={familyId} />;
     } else if (activeSubtab === 'reports') {
       return <Reports familyId={familyId} />;
+    } else if (activeSubtab === 'templates') {
+      return <TemplatesPage familyId={familyId} children={children || []} />;
+    } else if (activeSubtab === 'timeline' || activeSubtab === 'portfolio') {
+      return <PortfolioTimeline familyId={familyId} />;
     }
 
-    // Default: Show Phase 4 Records component
-    return <RecordsPhase4 familyId={familyId} />;
+    // Default: Show new WebRecordsScreen component
+    return <WebRecordsScreen familyId={familyId} navigation={navigation} children={children || []} />;
+  }
+
+  const renderCurriculumImportContent = () => {
+    return (
+      <View style={styles.content}>
+        <CurriculumImportWizard
+          visible={true}
+          onClose={() => {
+            setShowCurriculumWizard(false);
+            onTabChange('home');
+          }}
+          familyId={familyId}
+          children={children || []}
+          subjects={subjects || []}
+        />
+      </View>
+    );
   }
 
   const renderComingSoonContent = () => {
@@ -4257,6 +5930,32 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }
       }
       
+      // If event has material_id, check if we should prompt for review
+      if (event.material_id && event.child_id && familyId) {
+        // Check if there's already a recent review for this material/child/event combo
+        const { getMaterialReviews } = await import('../lib/services/materialsClient');
+        try {
+          const reviews = await getMaterialReviews(event.material_id);
+          const hasRecentReview = reviews.some(r => 
+            r.child_id === event.child_id && 
+            r.event_id === event.id &&
+            // Only prompt if review is older than 1 day or doesn't exist
+            (!r.created_at || (new Date() - new Date(r.created_at)) > 24 * 60 * 60 * 1000)
+          );
+          
+          if (!hasRecentReview) {
+            // Prompt for material review
+            setMaterialReviewEvent(event);
+            setShowMaterialReviewModal(true);
+          }
+        } catch (err) {
+          console.error('Error checking for existing review:', err);
+          // Still prompt if check fails
+          setMaterialReviewEvent(event);
+          setShowMaterialReviewModal(true);
+        }
+      }
+      
       // Optionally prompt for outcome (for now, just complete silently)
       // User can click on completed event later to add reflection
     } catch (error) {
@@ -4398,6 +6097,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       }
       
       menuItems.push({ text: 'Create New Event', action: () => handleCreateNewEvent(dateKey) });
+      menuItems.push({ 
+        text: 'Add Note', 
+        action: () => {
+          // Open note editor for this day
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openNoteEditor', {
+              detail: { 
+                date: dateKey,
+                familyId: familyId,
+              }
+            }));
+          }
+        }
+      });
       
       menuItems.forEach((item, index) => {
         const div = document.createElement('div');
@@ -4501,6 +6214,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         // Holidays don't have track/activity data needed for cut/copy, but we can still duplicate
         menuItems.push(
           { text: 'Duplicate Event', action: () => handleDuplicateEvent(event) }
+        );
+      }
+      
+      // Add repeat/copy actions for events with start_ts (scheduled events)
+      if (event.start_ts || event.start) {
+        menuItems.push(
+          { text: 'Repeat Next Week', action: () => handleRepeatNextWeek(event) },
+          { text: 'Copy to Next Year', action: () => handleCopyToNextYear(event) }
         );
       }
       
@@ -5026,6 +6747,162 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
   };
 
+  const handleRepeatNextWeek = async (event) => {
+    if (!event || !event.id) {
+      console.warn('No event provided to repeat');
+      return;
+    }
+
+    try {
+      // Calculate new dates (7 days later)
+      const originalStart = new Date(event.start_ts);
+      const originalEnd = event.end_ts ? new Date(event.end_ts) : null;
+      
+      const newStart = new Date(originalStart);
+      newStart.setDate(newStart.getDate() + 7);
+      
+      const newEnd = originalEnd ? new Date(originalEnd) : null;
+      if (newEnd) {
+        newEnd.setDate(newEnd.getDate() + 7);
+      }
+
+      // Calculate duration in minutes
+      const durationMs = originalEnd 
+        ? (originalEnd.getTime() - originalStart.getTime())
+        : (event.minutes || 60) * 60 * 1000;
+      const minutes = Math.round(durationMs / 60000);
+
+      // Use create_task_event RPC to create the duplicated event
+      const { data: rpcData, error: rpcError } = await supabase.rpc('create_task_event', {
+        _family_id: event.family_id || familyId,
+        _child_id: event.child_id,
+        _title: event.title || 'Untitled Event',
+        _start_ts: newStart.toISOString(),
+        _description: event.description || null,
+        _end_ts: newEnd ? newEnd.toISOString() : null,
+        _status: 'scheduled',
+        _source: 'manual',
+        _tags: event.tags || null,
+        _is_flexible: event.is_flexible || false,
+        _event_type: event.event_type || null,
+        _subject_id: event.subject_id || null,
+        _unit: event.unit || null,
+        _grade: event.grade || null,
+        _location: event.location || null,
+        _mode: event.mode || null,
+        _instructor: event.instructor || null,
+        _goal_link: event.goal_link || null,
+        _minutes: minutes,
+        _materials_attachment_ids: event.materials_attachment_ids || null,
+        _source_link: event.source_link || null,
+        _resume_position: event.resume_position || null,
+      });
+
+      if (rpcError || !rpcData?.ok) {
+        const errorMsg = rpcError?.message || rpcData?.error || 'Failed to repeat event';
+        console.error('Error repeating event:', errorMsg);
+        if (typeof window !== 'undefined' && window.alert) {
+          window.alert(`Failed to repeat event: ${errorMsg}`);
+        }
+        return;
+      }
+
+      console.log('Event repeated successfully for next week');
+      
+      // Refresh calendar data
+      if (familyId && refreshCalendarDataRef.current) {
+        refreshCalendarDataRef.current();
+      }
+
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('Event repeated for next week successfully');
+      }
+    } catch (error) {
+      console.error('Error repeating event:', error);
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('Error repeating event: ' + error.message);
+      }
+    }
+  };
+
+  const handleCopyToNextYear = async (event) => {
+    if (!event || !event.id) {
+      console.warn('No event provided to copy');
+      return;
+    }
+
+    try {
+      // Calculate new dates (1 year later)
+      const originalStart = new Date(event.start_ts);
+      const originalEnd = event.end_ts ? new Date(event.end_ts) : null;
+      
+      const newStart = new Date(originalStart);
+      newStart.setFullYear(newStart.getFullYear() + 1);
+      
+      const newEnd = originalEnd ? new Date(originalEnd) : null;
+      if (newEnd) {
+        newEnd.setFullYear(newEnd.getFullYear() + 1);
+      }
+
+      // Calculate duration in minutes
+      const durationMs = originalEnd 
+        ? (originalEnd.getTime() - originalStart.getTime())
+        : (event.minutes || 60) * 60 * 1000;
+      const minutes = Math.round(durationMs / 60000);
+
+      // Use create_task_event RPC to create the duplicated event
+      const { data: rpcData, error: rpcError } = await supabase.rpc('create_task_event', {
+        _family_id: event.family_id || familyId,
+        _child_id: event.child_id,
+        _title: event.title || 'Untitled Event',
+        _start_ts: newStart.toISOString(),
+        _description: event.description || null,
+        _end_ts: newEnd ? newEnd.toISOString() : null,
+        _status: 'scheduled',
+        _source: 'manual',
+        _tags: event.tags || null,
+        _is_flexible: event.is_flexible || false,
+        _event_type: event.event_type || null,
+        _subject_id: event.subject_id || null,
+        _unit: event.unit || null,
+        _grade: event.grade || null,
+        _location: event.location || null,
+        _mode: event.mode || null,
+        _instructor: event.instructor || null,
+        _goal_link: event.goal_link || null,
+        _minutes: minutes,
+        _materials_attachment_ids: event.materials_attachment_ids || null,
+        _source_link: event.source_link || null,
+        _resume_position: event.resume_position || null,
+      });
+
+      if (rpcError || !rpcData?.ok) {
+        const errorMsg = rpcError?.message || rpcData?.error || 'Failed to copy event';
+        console.error('Error copying event to next year:', errorMsg);
+        if (typeof window !== 'undefined' && window.alert) {
+          window.alert(`Failed to copy event: ${errorMsg}`);
+        }
+        return;
+      }
+
+      console.log('Event copied successfully to next year');
+      
+      // Refresh calendar data
+      if (familyId && refreshCalendarDataRef.current) {
+        refreshCalendarDataRef.current();
+      }
+
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('Event copied to next year successfully');
+      }
+    } catch (error) {
+      console.error('Error copying event to next year:', error);
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('Error copying event: ' + error.message);
+      }
+    }
+  };
+
   const handleSaveEvent = async () => {
     try {
       // Here you would typically save to your database
@@ -5144,23 +7021,35 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     console.log('Loading month data for:', year, month);
     
     try {
+      // Filter out "all" and ensure we only pass valid UUIDs
+      let childIds = null;
+      if (selectedCalendarChildren && Array.isArray(selectedCalendarChildren) && selectedCalendarChildren.length > 0) {
+        // Filter out "all" and any non-UUID strings
+        const validIds = selectedCalendarChildren.filter(id => id && id !== 'all' && typeof id === 'string');
+        if (validIds.length > 0) {
+          childIds = validIds;
+        }
+      }
+      
       const { data, error } = await supabase.rpc('get_month_view', {
         _family_id: familyId,
         _year: year,
         _month: month,
-        _child_ids: selectedCalendarChildren && selectedCalendarChildren.length > 0 ? selectedCalendarChildren : null
+        _child_ids: childIds
       });
 
       console.log('get_month_view RPC call result:', { data, error, familyId, year, month });
 
       if (error) {
         console.error('Error fetching month data:', error);
-        return {};
+        console.error('Error details:', JSON.stringify(error, null, 2));
+        // Return null to indicate error (not empty object which would overwrite cache)
+        return null;
       }
 
       if (!data) {
         console.log('No data returned from get_month_view RPC');
-        return {};
+        return null;
       }
 
       // Debug: Log sample events from RPC
@@ -5180,11 +7069,201 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         });
       }
 
+      // Load blackout periods for this month to filter events
+      // month is 1-indexed (1-12), so month-1 is 0-indexed for Date constructor
+      const monthStart = new Date(year, month - 1, 1);
+      const monthEnd = new Date(year, month, 0); // Last day of the month
+      
+      // Use local date components to avoid timezone shifts from toISOString()
+      const formatLocalDate = (date) => {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      };
+      
+      const monthStartStr = formatLocalDate(monthStart);
+      const monthEndStr = formatLocalDate(monthEnd);
+      
+      console.log('[loadMonthData] Querying blackouts for month:', { 
+        year, 
+        month, 
+        monthName: new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        monthStartStr, 
+        monthEndStr,
+        monthStart: monthStart.toISOString(),
+        monthEnd: monthEnd.toISOString(),
+      });
+      
+      // Query blackouts that overlap with this month
+      // Get all blackouts for the family and filter in JavaScript for better control
+      // Query all blackouts for the family (no date filter) to avoid missing any
+      console.warn('[loadMonthData] Querying blackouts with familyId:', familyId);
+      console.warn('[loadMonthData] Query params:', {
+        familyId,
+        monthStart: monthStartStr,
+        monthEnd: monthEndStr,
+        year,
+        month,
+      });
+      const { data: allBlackouts, error: blackoutsError } = await supabase
+        .from('blackout_periods')
+        .select('id, starts_on, ends_on, child_id, family_id, reason')
+        .eq('family_id', familyId);
+      
+      if (blackoutsError) {
+        console.error('[loadMonthData] Error querying blackouts:', blackoutsError);
+        console.error('[loadMonthData] Error details:', JSON.stringify(blackoutsError, null, 2));
+      } else {
+        console.warn('[loadMonthData] All blackouts for family - COUNT:', allBlackouts?.length || 0);
+        if (allBlackouts && allBlackouts.length > 0) {
+          console.warn('[loadMonthData] BLACKOUTS FOUND:', JSON.stringify(allBlackouts, null, 2));
+        } else {
+          console.warn('[loadMonthData] NO BLACKOUTS FOUND for familyId:', familyId);
+        }
+        if (allBlackouts && allBlackouts.length > 0) {
+          console.warn('[loadMonthData] Blackout details:', allBlackouts.map(b => ({
+            id: b.id,
+            starts_on: b.starts_on,
+            ends_on: b.ends_on,
+            child_id: b.child_id,
+            family_id: b.family_id,
+          })));
+        }
+      }
+      
+      // Filter blackouts that overlap with this month in JavaScript
+      // IMPORTANT: do this using date strings (YYYY-MM-DD) instead of Date objects to avoid
+      // timezone shifts where UTC/local conversions can move a blackout outside the month.
+      const blackoutsData = (allBlackouts || []).filter(blackout => {
+        const toYmd = (value) => {
+          if (!value) return null;
+          // value might already be YYYY-MM-DD or a full ISO string
+          return String(value).split('T')[0];
+        };
+
+        const startStr = toYmd(blackout.starts_on);
+        const endStr = toYmd(blackout.ends_on);
+
+        if (!startStr || !endStr) {
+          console.warn('[loadMonthData] Blackout has invalid dates, skipping:', blackout);
+          return false;
+        }
+
+        // Overlap check using pure YYYY-MM-DD string comparison:
+        // starts_on <= monthEndStr AND ends_on >= monthStartStr
+        const overlaps = startStr <= monthEndStr && endStr >= monthStartStr;
+
+        if (overlaps) {
+          console.warn('[loadMonthData] Blackout overlaps:', {
+            blackout: JSON.stringify(blackout, null, 2),
+            start: startStr,
+            end: endStr,
+            monthStart: monthStartStr,
+            monthEnd: monthEndStr,
+            overlaps,
+          });
+        } else {
+          console.warn('[loadMonthData] Blackout does NOT overlap:', {
+            blackoutId: blackout.id,
+            blackoutStart: startStr,
+            blackoutEnd: endStr,
+            monthBeingChecked: `${year}-${String(month).padStart(2, '0')}`,
+            monthStart: monthStartStr,
+            monthEnd: monthEndStr,
+            reason: startStr > monthEndStr ? 'blackout is after month' : endStr < monthStartStr ? 'blackout is before month' : 'unknown',
+            overlaps,
+          });
+        }
+
+        return overlaps;
+      });
+      
+      console.warn('[loadMonthData] Blackouts overlapping with month - COUNT:', blackoutsData.length);
+      if (blackoutsData && blackoutsData.length > 0) {
+        console.warn('[loadMonthData] OVERLAPPING BLACKOUTS:', JSON.stringify(blackoutsData, null, 2));
+      } else {
+        console.warn('[loadMonthData] NO OVERLAPPING BLACKOUTS for month:', {
+          year,
+          month,
+          monthStart: monthStartStr,
+          monthEnd: monthEndStr,
+        });
+      }
+
+      // Build set of blackout dates
+      const blackoutDates = new Set();
+      if (blackoutsData) {
+          blackoutsData.forEach(blackout => {
+            // Parse date strings directly as local dates (YYYY-MM-DD format)
+            // Don't use new Date() which interprets as UTC and causes timezone shifts
+            const parseLocalDate = (dateStr) => {
+              if (!dateStr) return null;
+              // Extract YYYY-MM-DD parts directly
+              const parts = dateStr.split('T')[0].split('-');
+              if (parts.length !== 3) return null;
+              return {
+                year: parseInt(parts[0], 10),
+                month: parseInt(parts[1], 10), // 1-based month (1-12)
+                day: parseInt(parts[2], 10)
+              };
+            };
+            
+            const startDate = parseLocalDate(blackout.starts_on);
+            const endDate = parseLocalDate(blackout.ends_on);
+            
+            if (!startDate || !endDate) {
+              console.warn('[loadMonthData] Invalid blackout date format:', blackout);
+              return;
+            }
+            
+            // If child-specific blackout, only apply if child is in selectedCalendarChildren
+            const isFamilyWide = !blackout.child_id;
+            const appliesToSelected = !childIds || childIds.includes(blackout.child_id);
+            
+            if (isFamilyWide || appliesToSelected) {
+              console.log('[loadMonthData] Processing blackout:', {
+                starts_on: blackout.starts_on,
+                ends_on: blackout.ends_on,
+                startParsed: startDate,
+                endParsed: endDate,
+                isFamilyWide,
+                appliesToSelected
+              });
+              
+              // Iterate through date range using date string comparison (no Date objects = no timezone issues)
+              // Convert parsed dates back to YYYY-MM-DD strings for comparison
+              const startDateStr = `${startDate.year}-${String(startDate.month).padStart(2, '0')}-${String(startDate.day).padStart(2, '0')}`;
+              const endDateStr = `${endDate.year}-${String(endDate.month).padStart(2, '0')}-${String(endDate.day).padStart(2, '0')}`;
+              
+              // Iterate day by day using string comparison
+              let currentDateStr = startDateStr;
+              while (currentDateStr <= endDateStr) {
+                blackoutDates.add(currentDateStr);
+                // Move to next day by parsing and incrementing
+                const [year, month, day] = currentDateStr.split('-').map(Number);
+                const nextDate = new Date(year, month - 1, day + 1); // month is 0-based in Date constructor
+                const nextYear = nextDate.getFullYear();
+                const nextMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+                const nextDay = String(nextDate.getDate()).padStart(2, '0');
+                currentDateStr = `${nextYear}-${nextMonth}-${nextDay}`;
+              }
+              console.log('[loadMonthData] Added blackout dates from', startDateStr, 'to', endDateStr, '- total:', Array.from(blackoutDates).filter(d => d >= startDateStr && d <= endDateStr).length);
+            }
+          });
+      }
+
       // Convert the RPC response to the format expected by the calendar
       const events = {};
       
       // Convert events_by_date to the format expected by calendar
       Object.keys(eventsByDate).forEach(date => {
+        // Skip events on blackout days
+        if (blackoutDates.has(date)) {
+          events[date] = []; // Empty array for blackout days
+          return;
+        }
+        
         const dayEvents = eventsByDate[date] || [];
         events[date] = dayEvents.map(event => {
           // Determine color based on subject (if available) or default to teal
@@ -5221,9 +7300,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         });
       });
 
-      console.log('Month data loaded successfully. Events by date:', Object.keys(events).length);
+      console.log('[loadMonthData] Month data loaded successfully. Events by date:', Object.keys(events).length);
+      const blackoutDatesArray = Array.from(blackoutDates);
+      console.log('[loadMonthData] Blackout dates Set size:', blackoutDates.size);
+      console.log('[loadMonthData] Blackout dates array:', blackoutDatesArray);
+      console.log('[loadMonthData] Returning:', { 
+        eventsCount: Object.keys(events).length, 
+        blackoutDatesCount: blackoutDatesArray.length,
+        blackoutDates: blackoutDatesArray 
+      });
       
-      return events;
+      return { events, blackoutDates: blackoutDatesArray };
       
     } catch (error) {
       console.error('Error loading month data:', error);
@@ -5243,20 +7330,51 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       
       console.log('Pre-loading calendar data for current month using RPC:', currentYear, currentMonthNum);
       
-      const events = await loadMonthData(currentYear, currentMonthNum);
+      const monthData = await loadMonthData(currentYear, currentMonthNum);
       
-      // Store in cache with the correct key format (JavaScript months are 0-based)
-      const monthKey = `${currentYear}-${currentMonth.getMonth()}`;
-      const cache = { [monthKey]: events };
-      
-      console.log('Storing events in cache for month:', monthKey, 'with', Object.keys(events).length, 'days');
-      console.log('Events being stored:', events);
-      
-      setCalendarDataCache(cache);
-      setIsCalendarDataLoaded(true);
+      // Only store in cache if we got actual data (not null or empty due to error)
+      if (monthData && monthData !== null && typeof monthData === 'object') {
+        const events = monthData.events || monthData; // Handle both old and new format
+        const blackoutDates = monthData.blackoutDates || [];
+        
+        console.log('[preloadCalendarDataRPC] Extracted data:', {
+          hasEvents: !!events,
+          eventsCount: Object.keys(events).length,
+          blackoutDatesCount: blackoutDates.length,
+          blackoutDates,
+        });
+        
+        if (Object.keys(events).length > 0) {
+          // Store in cache with the correct key format (JavaScript months are 0-based)
+          // Merge with existing cache to preserve other months' data
+          const monthKey = `${currentYear}-${currentMonth.getMonth()}`;
+          
+          console.log('[preloadCalendarDataRPC] Storing events in cache for month:', monthKey, 'with', Object.keys(events).length, 'days');
+          console.log('[preloadCalendarDataRPC] Blackout dates to store:', blackoutDates);
+          
+          setCalendarDataCache(prev => ({
+            ...prev,
+            [monthKey]: events
+          }));
+          
+          // Store blackout dates separately - always store, even if empty array
+          console.log('[preloadCalendarDataRPC] Storing blackout dates for', monthKey, ':', blackoutDates);
+          setCalendarBlackoutDates(prev => ({
+            ...prev,
+            [monthKey]: blackoutDates
+          }));
+        }
+        setIsCalendarDataLoaded(true);
+      } else {
+        console.warn('No events loaded, preserving existing cache');
+        // Still mark as loaded so we don't keep retrying, but don't overwrite cache
+        setIsCalendarDataLoaded(true);
+      }
       
     } catch (error) {
       console.error('Error pre-loading calendar data:', error);
+      // Still mark as loaded to prevent infinite retry loops
+      setIsCalendarDataLoaded(true);
     } finally {
       setCalendarDataLoading(false);
     }
@@ -5577,10 +7695,19 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
   };
   const refreshCalendarData = async (referenceDate = null) => {
-    if (!familyId) return;
+    console.log('[WebContent] refreshCalendarData called', { referenceDate, familyId });
+    if (!familyId) {
+      console.warn('[WebContent] refreshCalendarData: No familyId, returning');
+      return;
+    }
     
     // Store function reference for event listener
     refreshCalendarDataRef.current = () => refreshCalendarData(referenceDate);
+    
+    // Also expose globally for direct calls
+    if (typeof window !== 'undefined') {
+      window.__refreshCalendarData = () => refreshCalendarData(referenceDate);
+    }
 
     try {
       let baseDate;
@@ -5609,17 +7736,56 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         delete newCache[monthKey];
         return newCache;
       });
+      
+      // Also clear blackout dates for this month
+      setCalendarBlackoutDates(prevBlackouts => {
+        const newBlackouts = { ...prevBlackouts };
+        delete newBlackouts[monthKey];
+        return newBlackouts;
+      });
 
-      const events = await loadMonthData(targetYear, targetMonthNum);
+      console.log('[WebContent] refreshCalendarData: Loading month data for', monthKey);
+      const monthData = await loadMonthData(targetYear, targetMonthNum);
+      const events = monthData.events || monthData; // Handle both old and new format
+      const blackoutDates = monthData.blackoutDates || [];
+      
+      console.log('[WebContent] refreshCalendarData: Loaded data for', monthKey, {
+        eventsCount: Object.keys(events).length,
+        blackoutDatesCount: blackoutDates.length,
+        blackoutDates,
+      });
 
       setCalendarDataCache(prevCache => ({
         ...prevCache,
         [monthKey]: events,
       }));
+      
+      // Update blackout dates cache - always store, even if empty
+      console.log('[WebContent] refreshCalendarData: Updating blackout dates cache for', monthKey, ':', blackoutDates);
+      setCalendarBlackoutDates(prevBlackouts => ({
+        ...prevBlackouts,
+        [monthKey]: blackoutDates,
+      }));
 
-      // Also update calendarEvents state if we're on the calendar tab
-      // Always update to ensure checkmarks reflect latest status
-      setCalendarEvents(events);
+      // Merge updated events into calendarEvents (don't replace all events, just update this month)
+      setCalendarEvents(prevEvents => {
+        const updated = { ...prevEvents };
+        // Update events for dates in this month
+        Object.keys(events).forEach(dateKey => {
+          updated[dateKey] = events[dateKey];
+        });
+        // Remove date keys that are in this month but no longer have events
+        const monthStart = new Date(targetYear, targetMonthIndex, 1);
+        const monthEnd = new Date(targetYear, targetMonthIndex + 1, 0);
+        for (let day = 1; day <= monthEnd.getDate(); day++) {
+          const date = new Date(targetYear, targetMonthIndex, day);
+          const dateKey = date.toISOString().split('T')[0];
+          if (!events[dateKey] && updated[dateKey]) {
+            delete updated[dateKey];
+          }
+        }
+        return updated;
+      });
 
       if (!isCalendarDataLoaded) {
         setIsCalendarDataLoaded(true);
@@ -5630,8 +7796,39 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       console.error('Error refreshing calendar data:', error);
     }
   };
-
-
+  
+  // Initialize ref and global function after refreshCalendarData is defined
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    
+    // Set up the ref - create a wrapper that calls refreshCalendarData
+    refreshCalendarDataRef.current = (referenceDate = null) => {
+      return refreshCalendarData(referenceDate);
+    };
+    
+    // Also expose globally for direct calls
+    if (typeof window !== 'undefined') {
+      window.__refreshCalendarData = (referenceDate = null) => {
+        return refreshCalendarData(referenceDate);
+      };
+      
+      // Also expose a cache clearing function
+      window.__clearCalendarCache = (monthKey) => {
+        console.log('[WebContent] Clearing calendar cache for:', monthKey);
+        setCalendarDataCache(prevCache => {
+          const newCache = { ...prevCache };
+          delete newCache[monthKey];
+          return newCache;
+        });
+        setCalendarBlackoutDates(prevBlackouts => {
+          const newBlackouts = { ...prevBlackouts };
+          delete newBlackouts[monthKey];
+          return newBlackouts;
+        });
+      };
+    }
+  }, [familyId]); // Re-initialize when familyId changes
+  
   // Load data for a specific year if not already cached
   const loadYearData = async (year) => {
     if (!familyId) return;
@@ -5722,7 +7919,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   // Update calendar events when month changes, but only if calendar tab is active
   useEffect(() => {
-    if (familyId && activeTab === 'calendar' && isCalendarDataLoaded) {
+    if (familyId && (activeTab === 'calendar' || activeTab === 'planner') && isCalendarDataLoaded) {
       const monthKey = `${currentMonth.getFullYear()}-${currentMonth.getMonth()}`;
       const monthEvents = calendarDataCache[monthKey] || {};
       
@@ -5731,11 +7928,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         console.log('No cached data for month:', monthKey, 'loading with RPC');
         loadMonthData(currentMonth.getFullYear(), currentMonth.getMonth() + 1)
           .then(events => {
-            if (Object.keys(events).length > 0) {
+            // Only update cache if we got actual data (not null or empty due to error)
+            if (events && events !== null && Object.keys(events).length > 0) {
               setCalendarDataCache(prev => ({
                 ...prev,
                 [monthKey]: events
               }));
+            } else {
+              console.warn('No events loaded for month', monthKey, 'not updating cache');
             }
           })
           .catch(error => {
@@ -5745,9 +7945,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
   }, [currentMonth, familyId, activeTab, isCalendarDataLoaded]);
 
-  // Separate useEffect to update calendar events when cache changes
+  // Separate useEffect to update calendar events when cache changes or when returning to planner/calendar tab
   useEffect(() => {
-    if (familyId && isCalendarDataLoaded && Object.keys(calendarDataCache).length > 0) {
+    if (familyId && (activeTab === 'calendar' || activeTab === 'planner') && isCalendarDataLoaded && Object.keys(calendarDataCache).length > 0) {
       // Merge all events from cache
       const allEvents = {};
       Object.keys(calendarDataCache).forEach(key => {
@@ -5777,13 +7977,96 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   // This useEffect was causing events to be reduced to only current month
   // and overwriting the cache watcher's work
 
-  // Fetch calendar data when switching to calendar tab
+  // Fetch calendar data when switching to calendar/planner tab
   useEffect(() => {
     if ((activeTab === 'calendar' || activeTab === 'planner') && familyId && !isCalendarDataLoaded) {
-      console.log('Calendar tab activated, triggering data pre-load');
+      console.log('Calendar/Planner tab activated, triggering data pre-load');
       preloadCalendarDataRPC();
     }
   }, [activeTab, familyId, isCalendarDataLoaded]);
+
+  // Load data for the current month when currentMonth changes (e.g., user navigates to different month)
+  useEffect(() => {
+    if ((activeTab === 'calendar' || activeTab === 'planner') && familyId && currentMonth) {
+      const targetYear = currentMonth.getFullYear();
+      const targetMonthIndex = currentMonth.getMonth();
+      const targetMonthNum = targetMonthIndex + 1; // 1-indexed for loadMonthData
+      const monthKey = `${targetYear}-${targetMonthIndex}`; // 0-indexed for cache key
+      
+      console.log('[WebContent] useEffect triggered for currentMonth change:', {
+        currentMonthISO: currentMonth.toISOString(),
+        targetYear,
+        targetMonthIndex,
+        targetMonthNum,
+        monthKey,
+        monthName: currentMonth.toLocaleString('en-US', { month: 'long' }),
+      });
+      
+      // Check if we already have data for this month in cache
+      const hasCachedData = calendarDataCache[monthKey] && Object.keys(calendarDataCache[monthKey]).length > 0;
+      
+      if (!hasCachedData) {
+        console.log('[WebContent] Current month changed, loading data for:', monthKey, `(month ${targetMonthNum}, ${currentMonth.toLocaleString('en-US', { month: 'long' })})`);
+        loadMonthData(targetYear, targetMonthNum).then(monthData => {
+          if (monthData && monthData !== null) {
+            const events = monthData.events || monthData;
+            const blackoutDates = monthData.blackoutDates || [];
+            
+            setCalendarDataCache(prevCache => ({
+              ...prevCache,
+              [monthKey]: events,
+            }));
+            
+            setCalendarBlackoutDates(prevBlackouts => ({
+              ...prevBlackouts,
+              [monthKey]: blackoutDates,
+            }));
+            
+            console.log('[WebContent] Loaded data for month', monthKey, {
+              eventsCount: Object.keys(events).length,
+              blackoutDatesCount: blackoutDates.length,
+              blackoutDates,
+            });
+          }
+        }).catch(err => {
+          console.error('[WebContent] Error loading month data:', err);
+        });
+      } else {
+        console.log('[WebContent] Using cached data for month:', monthKey, {
+          eventsCount: Object.keys(calendarDataCache[monthKey] || {}).length,
+          blackoutDatesCount: (calendarBlackoutDates[monthKey] || []).length,
+        });
+      }
+    }
+  }, [currentMonth, activeTab, familyId, calendarDataCache, calendarBlackoutDates]);
+
+  // Restore events from cache when returning to planner/calendar tab
+  // This ensures events are visible even if cache hasn't changed
+  const prevActiveTabRef = React.useRef(activeTab);
+  useEffect(() => {
+    const wasOnPlannerOrCalendar = prevActiveTabRef.current === 'planner' || prevActiveTabRef.current === 'calendar';
+    const isNowOnPlannerOrCalendar = activeTab === 'planner' || activeTab === 'calendar';
+    const returningToPlannerOrCalendar = !wasOnPlannerOrCalendar && isNowOnPlannerOrCalendar;
+    
+    prevActiveTabRef.current = activeTab;
+    
+    if (returningToPlannerOrCalendar && familyId && isCalendarDataLoaded && Object.keys(calendarDataCache).length > 0) {
+      // Merge all events from cache
+      const allEvents = {};
+      Object.keys(calendarDataCache).forEach(key => {
+        if (calendarDataCache[key] && typeof calendarDataCache[key] === 'object') {
+          Object.assign(allEvents, calendarDataCache[key]);
+        }
+      });
+      
+      // Only update if we have events
+      if (Object.keys(allEvents).length > 0) {
+        console.log('[WebContent] Restoring calendar events when returning to planner/calendar tab');
+        console.log('Restoring', Object.keys(allEvents).length, 'days of events from cache');
+        setCalendarEvents(allEvents);
+      }
+    }
+  }, [activeTab, familyId, isCalendarDataLoaded, calendarDataCache]);
 
   // Trigger search when query changes
   useEffect(() => {
@@ -5811,7 +8094,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const childParam = params.get('child');
-      return childParam ? childParam.split(',') : null;
+      if (childParam) {
+        // Filter out "all" and any invalid values
+        const childIds = childParam.split(',').filter(id => id && id !== 'all' && id.trim() !== '');
+        return childIds.length > 0 ? childIds : null;
+      }
+      return null;
     }
     return null;
   });
@@ -5823,9 +8111,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       const currentMonthNum = currentMonth.getMonth() + 1;
       console.log('Child filter changed, reloading month data with filter:', selectedCalendarChildren);
       loadMonthData(currentYear, currentMonthNum).then(events => {
-        const monthKey = `${currentYear}-${currentMonth.getMonth()}`;
-        setCalendarDataCache(prev => ({ ...prev, [monthKey]: events }));
-        setCalendarEvents(events);
+        // Only update cache and events if we got actual data (not null or empty due to error)
+        if (events && events !== null && Object.keys(events).length > 0) {
+          const monthKey = `${currentYear}-${currentMonth.getMonth()}`;
+          setCalendarDataCache(prev => ({ ...prev, [monthKey]: events }));
+          setCalendarEvents(events);
+        } else {
+          console.warn('No events loaded for month, not updating cache or events');
+        }
       });
     }
   }, [selectedCalendarChildren, familyId, calendarView, activeTab, currentMonth, isCalendarDataLoaded]);
@@ -5841,8 +8134,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         params.delete('view');
       }
       
-      if (selectedCalendarChildren && selectedCalendarChildren.length > 0) {
-        params.set('child', selectedCalendarChildren.join(','));
+      // Filter out "all" before setting URL param
+      const validChildIds = selectedCalendarChildren && Array.isArray(selectedCalendarChildren)
+        ? selectedCalendarChildren.filter(id => id && id !== 'all' && typeof id === 'string')
+        : [];
+      
+      if (validChildIds.length > 0) {
+        params.set('child', validChildIds.join(','));
       } else {
         params.delete('child');
       }
@@ -7575,158 +9873,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 </ScrollView>
           )
               ) : (
-          // Default Right Pane Content
-                <ScrollView 
-                  showsVerticalScrollIndicator={true}
-                  contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
-                  nestedScrollEnabled={true}
-            style={{ flex: 1, minHeight: 0 }}
-                >
-                                {/* Search Section */}
-            <View style={{ marginBottom: 24, flexShrink: 0 }}>
-                  <View 
-                    style={{
-                      backgroundColor: isSearchFocused ? '#ffffff' : '#f8fafc',
-                    borderRadius: 8,
-                    borderWidth: 1,
-                      borderColor: isSearchFocused ? '#e1e5e9' : 'transparent',
-                    paddingHorizontal: 16,
-                    paddingVertical: 8,
-                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-                      elevation: 1,
-                  transition: 'all 0.2s ease'
-                    }}
-                    {...(typeof window !== 'undefined' && {
-                      onMouseEnter: (e) => {
-                        if (!isSearchFocused) {
-                          e.target.style.borderColor = '#e1e5e9';
-                        }
-                      },
-                      onMouseLeave: (e) => {
-                        if (!isSearchFocused) {
-                          e.target.style.borderColor = 'transparent';
-                        }
-                      }
-                    })}
-                  >
-                    <TextInput
-                      style={{ 
-                        fontSize: 14, 
-                        color: '#374151',
-                        backgroundColor: 'transparent',
-                        borderWidth: 0,
-                        padding: 0,
-                        margin: 0,
-                        outline: 'none'
-                      }}
-                      placeholder="Search events"
-                      placeholderTextColor="#9ca3af"
-                      value={searchQuery}
-                      onChangeText={setSearchQuery}
-                      onSubmitEditing={handleSearch}
-                      onFocus={() => setIsSearchFocused(true)}
-                      onBlur={() => setIsSearchFocused(false)}
-                    />
-                  </View>
-              {searchQuery.length > 0 && (
-                <TouchableOpacity 
-                  onPress={() => setSearchQuery('')}
-                  style={{
-                    position: 'absolute',
-                    right: 16,
-                    top: 6,
-                    padding: 4
-                  }}
-                >
-                  <Text style={{ color: '#9ca3af', fontSize: 16 }}>✕</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            
-            {/* Search Results Section */}
-              {searchQuery.length > 0 && (
-                <View style={{ 
-                height: 'calc(100vh - 120px)',
-                  overflow: 'hidden'
-                }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: '#111827',
-                    marginBottom: 12
-                  }}>
-                    Search Results
-                  </Text>
-                  {isSearching ? (
-                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 0 }}>
-                    <Text style={{ color: '#6b7280', textAlign: 'center' }}>Searching...</Text>
-                    </View>
-                  ) : searchResults.length > 0 ? (
-                    <ScrollView 
-                    style={{ height: 'calc(100vh - 180px)' }}
-                      showsVerticalScrollIndicator={true}
-                      contentContainerStyle={{ paddingBottom: 20 }}
-                    >
-                  <View style={{ gap: 8 }}>
-                    {searchResults.map((result, index) => (
-                        <TouchableOpacity
-                        key={`search-result-${index}`}
-                        style={{
-                          backgroundColor: '#ffffff',
-                          borderRadius: 6,
-                          padding: 12,
-                          borderWidth: 1,
-                          borderColor: '#e1e5e9'
-                        }}
-                          onPress={() => {
-                            handleEventSelect(result);
-                          }}
-                        >
-                          <Text style={{
-                            fontSize: 14,
-                          fontWeight: '500',
-                            color: '#111827',
-                          marginBottom: 4
-                          }}>
-                          {result.title}
-                          </Text>
-                          <Text style={{
-                            fontSize: 12,
-                          color: '#6b7280'
-                          }}>
-                          {result.type} • {result.childName} • {result.date}
-                          </Text>
-                        </TouchableOpacity>
-                    ))}
-                    </View>
-                    </ScrollView>
-                  ) : (
-                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 0 }}>
-                    <Text style={{ color: '#6b7280', textAlign: 'center' }}>
-                      No results found
-                    </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-              
-            {/* Today's Schedule Section */}
-            {!searchQuery && (
-              <View style={{ marginTop: 20, flexShrink: 0 }}>
-                <Text style={{
-                  fontSize: 14,
-                  color: '#6b7280',
-                  textAlign: 'left'
-                }}>
-                  Nothing scheduled for today
-                </Text>
-              </View>
-            )}
-          </ScrollView>
+          // Default Right Pane Content - Empty when no tool is active
+                <View style={{ flex: 1, minHeight: 0 }} />
         )}
       </>
     );
-  }, [activeTab, calendarView, showNewEventForm, selectedEvent, searchQuery, isSearching, searchResults, newEventType, showEventTypeDropdown, isSearchFocused, onRightSidebarRender, closeNewEventForm, handleCloseEvent, handleEventSelect, handleSearch, newEventFormData, setNewEventFormData, holidayDateRange, setHolidayDateRange, holidayRepeat, setHolidayRepeat, availableTracks, availableActivities, trackTriggerRef, activityTriggerRef, statusTriggerRef, measureTriggerPosition, setShowTrackDropdown, setShowActivityDropdown, setShowStatusDropdown, setTrackTriggerDimensions, setActivityTriggerDimensions, setStatusTriggerDimensions, saveNewEventFromForm, editingTitle, tempTitle, handleTitleEdit, handleTitleSave, handleTitleCancel, editingStatus, tempStatus, handleStatusEdit, handleStatusSave, handleStatusCancel, editingScheduledTime, editingFinishTime, tempScheduledTime, tempFinishTime, handleScheduledTimeEdit, handleFinishTimeEdit, handleBothTimesSave, handleScheduledTimeCancel, handleFinishTimeCancel, editingScheduledDate, editingDueDate, tempScheduledDate, tempDueDate, handleScheduledDateEdit, handleDueDateEdit, handleScheduledDateSave, handleDueDateSave, handleScheduledDateCancel, handleDueDateCancel, editingAssignee, tempAssignee, handleAssigneeEdit, handleAssigneeSave, handleAssigneeCancel, isEditingEvent, editedEventData, setIsEditingEvent, setEditedEventData, handleDescriptionChange, children, getStatusColor, getCurrentAssignees, calculateFinishTime]);
+  }, [activeTab, calendarView, showNewEventForm, selectedEvent, searchQuery, isSearching, searchResults, newEventType, showEventTypeDropdown, isSearchFocused, onRightSidebarRender, closeNewEventForm, handleCloseEvent, handleEventSelect, handleSearch, newEventFormData, setNewEventFormData, holidayDateRange, setHolidayDateRange, holidayRepeat, setHolidayRepeat, availableTracks, availableActivities, trackTriggerRef, activityTriggerRef, statusTriggerRef, measureTriggerPosition, setShowTrackDropdown, setShowActivityDropdown, setShowStatusDropdown, setTrackTriggerDimensions, setActivityTriggerDimensions, setStatusTriggerDimensions, saveNewEventFromForm, editingTitle, tempTitle, handleTitleEdit, handleTitleSave, handleTitleCancel, editingStatus, tempStatus, handleStatusEdit, handleStatusSave, handleStatusCancel, editingScheduledTime, editingFinishTime, tempScheduledTime, tempFinishTime, handleScheduledTimeEdit, handleFinishTimeEdit, handleBothTimesSave, handleScheduledTimeCancel, handleFinishTimeCancel, editingScheduledDate, editingDueDate, tempScheduledDate, tempDueDate, handleScheduledDateEdit, handleDueDateEdit, handleScheduledDateSave, handleDueDateSave, handleScheduledDateCancel, handleDueDateCancel, editingAssignee, tempAssignee, handleAssigneeEdit, handleAssigneeSave, handleAssigneeCancel, isEditingEvent, editedEventData, setIsEditingEvent, setEditedEventData, handleDescriptionChange, children, getStatusColor, getCurrentAssignees, calculateFinishTime, familyId, selectedCalendarChildren]);
 
   // Memoize right sidebar content to avoid infinite loops
   const rightSidebarContent = React.useMemo(() => {
@@ -7778,7 +9930,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }, [activeTab, calendarView, showNewEventForm, selectedEvent, searchQuery, isSearching, searchResults, newEventType, showEventTypeDropdown, isSearchFocused, editingTitle, editingStatus, editingScheduledTime, editingFinishTime, editingScheduledDate, editingDueDate, editingAssignee, isEditingEvent, eventModalVisible, onRightSidebarRender, getRightSidebarContent]);
 
   // Convert calendarEvents object to array format for CenterPane
-  const convertCalendarEventsToArray = () => {
+  const convertCalendarEventsToArray = React.useCallback(() => {
     const eventsArray = [];
     Object.entries(calendarEvents).forEach(([dateKey, dayEvents]) => {
       if (Array.isArray(dayEvents)) {
@@ -7863,66 +10015,138 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       }
     });
     return eventsArray;
-  };
+  }, [calendarEvents]);
 
   const renderPlannerContent = () => {
     console.log('[Planner] renderPlannerContent called');
-    if (!familyId) {
-      return (
-        <View style={styles.content}>
-          <Text style={styles.title}>Planner</Text>
-          <Text style={styles.subtitle}>Loading family information...</Text>
-        </View>
-      );
-    }
-
-    // Show loading state for initial calendar load
-    if (!isCalendarDataLoaded || calendarDataLoading) {
-      return (
-        <View style={styles.content}>
-          <Text style={styles.title}>Planner</Text>
-          <Text style={styles.subtitle}>Pre-loading calendar data...</Text>
-          <View style={{ 
-            marginTop: 20,
-            alignItems: 'center' 
-          }}>
-            <Animated.View style={[styles.loadingSpinner, { transform: [{ rotate: spin }] }]} />
-            <Text style={{
-              marginTop: 16,
-              fontSize: 14,
-              color: '#6b7280',
-              textAlign: 'center'
-            }}>
-              Loading entire year of calendar events...
-            </Text>
-            <Text style={{
-              marginTop: 8,
-              fontSize: 12,
-              color: '#9ca3af',
-              textAlign: 'center'
-            }}>
-              This will make navigation instant!
-            </Text>
-          </View>
-        </View>
-      );
-    }
-
+    
+    // Show structure even while loading - use empty arrays/objects for initial render
     const eventsArray = convertCalendarEventsToArray();
     const filters = {
       childIds: selectedCalendarChildren,
       subjects: null // Can be added later if needed
     };
+    
+    // Get blackout dates for current month
+    const monthKey = `${currentMonth.getFullYear()}-${currentMonth.getMonth()}`;
+    const blackoutDates = calendarBlackoutDates[monthKey] || [];
+    
+    // Determine loading states
+    const isLoadingFamily = !familyId;
+    const isLoadingCalendar = !isCalendarDataLoaded || calendarDataLoading;
+    const hasCacheData = Object.keys(calendarDataCache).length > 0;
+    const hasCalendarEvents = Object.keys(calendarEvents).length > 0;
+    const isLoadingEvents = hasCacheData && !hasCalendarEvents;
+    
+    // Show loading indicator inline if needed
+    const showLoadingIndicator = isLoadingFamily || isLoadingCalendar || isLoadingEvents;
+
+    console.log('[WebContent] renderPlannerContent - currentMonth:', {
+      date: currentMonth.toISOString(),
+      year: currentMonth.getFullYear(),
+      monthIndex: currentMonth.getMonth(),
+      monthName: currentMonth.toLocaleString('en-US', { month: 'long' }),
+      monthKey,
+      blackoutDatesCount: blackoutDates.length,
+      blackoutDates,
+    });
 
     return (
       <View style={{ flex: 1, backgroundColor: 'white' }}>
+        {/* Show inline loading indicator if needed */}
+        {showLoadingIndicator && (
+          <View style={{
+            position: 'absolute',
+            top: 16,
+            right: 16,
+            zIndex: 1000,
+            backgroundColor: '#ffffff',
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            ...(Platform.OS === 'web' && {
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+            }),
+          }}>
+            <Animated.View style={[styles.loadingSpinner, { transform: [{ rotate: spin }] }]} />
+            <Text style={{
+              fontSize: 13,
+              color: '#6b7280',
+            }}>
+              {isLoadingFamily ? 'Loading family...' : 
+               isLoadingCalendar ? 'Loading calendar...' : 
+               'Loading events...'}
+            </Text>
+          </View>
+        )}
+        
         <CenterPane
           date={currentMonth}
           events={eventsArray}
           selectedDate={selectedDate}
-          onSelectDate={setSelectedDate}
+          onSelectDate={(newDate) => {
+            setSelectedDate(newDate);
+            // Also update currentMonth if the month/year changed
+            if (newDate instanceof Date && !isNaN(newDate.getTime())) {
+              const newMonth = newDate.getMonth();
+              const newYear = newDate.getFullYear();
+              const currentMonthNum = currentMonth.getMonth();
+              const currentYear = currentMonth.getFullYear();
+              
+              console.log('[WebContent] onSelectDate called:', {
+                newDate: newDate.toISOString(),
+                newMonth,
+                newYear,
+                currentMonthNum,
+                currentYear,
+                willUpdate: newMonth !== currentMonthNum || newYear !== currentYear,
+              });
+              
+              if (newMonth !== currentMonthNum || newYear !== currentYear) {
+                const newMonthDate = new Date(newYear, newMonth, 1);
+                console.log('[WebContent] Month changed via onSelectDate:', {
+                  from: `${currentYear}-${currentMonthNum + 1} (${currentMonth.toLocaleString('en-US', { month: 'long' })})`,
+                  to: `${newYear}-${newMonth + 1} (${newMonthDate.toLocaleString('en-US', { month: 'long' })})`,
+                  settingCurrentMonthTo: newMonthDate.toISOString(),
+                });
+                setCurrentMonth(newMonthDate);
+              }
+            }
+          }}
           onEventSelect={handleEventSelect}
           onEventComplete={handleEventComplete}
+          filters={filters}
+          children={children}
+          blackoutDates={blackoutDates}
+          onChildFilterChange={(childIds) => {
+            // Filter out "all" and ensure we only store valid UUIDs
+            if (childIds && Array.isArray(childIds)) {
+              const validIds = childIds.filter(id => id && id !== 'all' && typeof id === 'string');
+              setSelectedCalendarChildren(validIds.length > 0 ? validIds : null);
+            } else {
+              setSelectedCalendarChildren(null);
+            }
+          }}
+          onCreateTask={() => {
+            setTaskModalDate(selectedDate || new Date());
+            setShowTaskModal(true);
+          }}
+          onNavigateToIntelligence={(params) => {
+            // Navigate to Intelligence Hub with query params
+            if (onTabChange) {
+              onTabChange('intelligence');
+              // Store params for IntelligenceHub to read
+              if (typeof window !== 'undefined') {
+                const queryString = new URLSearchParams(params).toString();
+                window.history.replaceState({}, '', `?tab=intelligence&${queryString}`);
+              }
+            }
+          }}
           onEventRightClick={(event, nativeEvent) => {
             console.log('[WebContent] CenterPane right-click on event:', event?.title);
             if (typeof window !== 'undefined' && nativeEvent) {
@@ -7960,6 +10184,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               const menuItems = [];
               
               menuItems.push({ text: 'Edit Event', action: () => handleEventSelect(event) });
+              
+              // Add "Attach evidence" option
+              menuItems.push({ 
+                text: 'Attach evidence...', 
+                action: () => {
+                  setEvidenceUploadEventId(event.id);
+                  setEvidenceUploadChildId(event.child_id);
+                  if (event.start_ts) {
+                    const eventDate = new Date(event.start_ts);
+                    setEvidenceUploadDate(eventDate.toISOString().split('T')[0]);
+                  }
+                  setShowEvidenceUploadModal(true);
+                }
+              });
               
               // Add "Add reflection" option for completed events
               if (event.status === 'done') {
@@ -8058,8 +10296,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         {/* Task Create Modal */}
         <TaskCreateModal
           visible={showTaskModal}
-          onClose={() => setShowTaskModal(false)}
+          onClose={() => {
+            setShowTaskModal(false);
+            setTaskModalChildId(null);
+          }}
           defaultDate={taskModalDate}
+          defaultChildId={taskModalChildId}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,
@@ -8082,19 +10324,174 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           visible={eventModalVisible}
           eventId={eventModalEventId}
           initialEvent={eventModalInitialEvent}
+          familyId={familyId}
           onClose={() => {
             setEventModalVisible(false);
             setEventModalEventId(null);
             setEventModalInitialEvent(null);
           }}
           onEventUpdated={async () => {
+            console.log('[WebContent] Planner EventModal onEventUpdated');
+            
+            // Refresh calendar data for planner
             await refreshCalendarData();
+            
+            // Also refresh home data if we're viewing home
+            if (activeTab === 'home' && homeData && user) {
+              try {
+                const { data: profileData } = await supabase
+                  .from('profiles')
+                  .select('family_id')
+                  .eq('id', user.id)
+                  .maybeSingle();
+                
+                if (profileData?.family_id) {
+                  invalidateHomeDataCache(profileData.family_id);
+                  
+                  const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                    ? homeSelectedDate
+                    : new Date();
+                  validDate.setHours(0, 0, 0, 0);
+                  const selectedDateStr = validDate.toISOString().split('T')[0];
+                  
+                  const homeDataResult = await supabase.rpc('get_home_data', {
+                    _family_id: profileData.family_id,
+                    _date: selectedDateStr,
+                    _horizon_days: 14,
+                  });
+                  
+                  const { data, error } = homeDataResult;
+                  
+                  if (!error && data) {
+                    const stories = (data?.stories || []).filter(s => 
+                      s && s.title && s.body && s.title.trim() && s.body.trim()
+                    );
+                    
+                    setHomeData({
+                      ...data,
+                      stories: stories,
+                    });
+                    
+                    saveHomeDataToCache(profileData.family_id, selectedDateStr, {
+                      ...data,
+                      stories: stories,
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error('[WebContent] Error refreshing home data after planner update:', err);
+              }
+            }
+            
+            // Dispatch refresh event
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+            }
           }}
-          onEventDeleted={async () => {
-            await refreshCalendarData();
+          onEventDeleted={async (deletedEventId) => {
+            console.log('[WebContent] Planner EventModal onEventDeleted with ID:', deletedEventId || eventModalEventId);
+            
+            const deletedId = deletedEventId || eventModalEventId;
+            
+            // Optimistically remove from calendarEvents immediately
+            if (deletedId) {
+              console.log('[WebContent] Optimistically removing event from calendarEvents (planner)');
+              setCalendarEvents(prevEvents => {
+                const updated = { ...prevEvents };
+                Object.keys(updated).forEach(dateKey => {
+                  if (Array.isArray(updated[dateKey])) {
+                    updated[dateKey] = updated[dateKey].filter(e => e.id !== deletedId);
+                    // Remove date key if no events left
+                    if (updated[dateKey].length === 0) {
+                      delete updated[dateKey];
+                    }
+                  }
+                });
+                return updated;
+              });
+            }
+            
+            // Optimistically remove from homeData if we're viewing home
+            if (activeTab === 'home' && homeData && deletedId) {
+              console.log('[WebContent] Optimistically removing event from homeData (planner delete)');
+              setHomeData(prev => {
+                if (!prev) return prev;
+                const updatedLearning = (prev.learning || []).filter(e => e.id !== deletedId);
+                return {
+                  ...prev,
+                  learning: updatedLearning
+                };
+              });
+            }
+            
+            // Close modal
             setEventModalVisible(false);
             setEventModalEventId(null);
             setEventModalInitialEvent(null);
+            
+            // Refresh calendar data for the month containing the deleted event
+            const eventDate = eventModalInitialEvent?.start_ts || eventModalInitialEvent?.start;
+            const refreshDate = eventDate ? new Date(eventDate) : currentMonth;
+            console.log('[WebContent] Refreshing calendar data for month containing deleted event:', refreshDate);
+            await refreshCalendarData(refreshDate);
+            
+            // Refresh home data if needed
+            if (activeTab === 'home' && homeData && user) {
+              try {
+                const { data: profileData } = await supabase
+                  .from('profiles')
+                  .select('family_id')
+                  .eq('id', user.id)
+                  .maybeSingle();
+                
+                if (profileData?.family_id) {
+                  invalidateHomeDataCache(profileData.family_id);
+                  
+                  const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                    ? homeSelectedDate
+                    : new Date();
+                  validDate.setHours(0, 0, 0, 0);
+                  const selectedDateStr = validDate.toISOString().split('T')[0];
+                  
+                  const homeDataResult = await supabase.rpc('get_home_data', {
+                    _family_id: profileData.family_id,
+                    _date: selectedDateStr,
+                    _horizon_days: 14,
+                  });
+                  
+                  const { data, error } = homeDataResult;
+                  
+                  if (!error && data) {
+                    const stories = (data?.stories || []).filter(s => 
+                      s && s.title && s.body && s.title.trim() && s.body.trim()
+                    );
+                    
+                    const updatedLearning = deletedId 
+                      ? (data?.learning || []).filter(e => e.id !== deletedId)
+                      : (data?.learning || []);
+                    
+                    setHomeData({
+                      ...data,
+                      stories: stories,
+                      learning: updatedLearning,
+                    });
+                    
+                    saveHomeDataToCache(profileData.family_id, selectedDateStr, {
+                      ...data,
+                      stories: stories,
+                      learning: updatedLearning,
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error('[WebContent] Error refreshing home data after planner delete:', err);
+              }
+            }
+            
+            // Dispatch refresh event
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+            }
           }}
           onEventPatched={handleEventModalPatched}
           familyMembers={children.map(child => ({
@@ -8102,6 +10499,27 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             name: child.first_name || child.name || 'Unknown',
           }))}
         />
+        
+        {/* Material Review Modal */}
+        {materialReviewEvent && (
+          <QuickReviewModal
+            visible={showMaterialReviewModal}
+            onClose={() => {
+              setShowMaterialReviewModal(false);
+              setMaterialReviewEvent(null);
+            }}
+            onSaved={() => {
+              setShowMaterialReviewModal(false);
+              setMaterialReviewEvent(null);
+            }}
+            materialId={materialReviewEvent.material_id}
+            childId={materialReviewEvent.child_id}
+            familyId={familyId}
+            eventId={materialReviewEvent.id}
+            materialTitle={materialReviewEvent.material?.title || 'this material'}
+            childName={children.find(c => c.id === materialReviewEvent.child_id)?.first_name || ''}
+          />
+        )}
       </View>
     );
   };
@@ -8248,26 +10666,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                              }
                            }}
                          >
-                           <View style={{
-                             width: 14,
-                             height: 14,
-                             borderWidth: 2,
-                             borderColor: isSelected ? '#3b82f6' : '#d1d5db',
-                             backgroundColor: isSelected ? '#3b82f6' : 'transparent',
-                             borderRadius: 3,
-                             alignItems: 'center',
-                             justifyContent: 'center'
-                           }}>
-                             {isSelected && (
-                                          <Text style={{
-                                 color: '#ffffff',
-                                 fontSize: 8,
-                                 fontWeight: 'bold'
-                               }}>
-                                 ✓
-                                          </Text>
-                             )}
-                                        </View>
+                           <Image 
+                             source={getAvatarSource(child.avatar)} 
+                             style={{
+                               width: 20,
+                               height: 20,
+                               borderRadius: 10,
+                               borderWidth: isSelected ? 2 : 1,
+                               borderColor: isSelected ? '#3b82f6' : '#d1d5db',
+                               opacity: isSelected ? 1 : 0.6
+                             }}
+                             resizeMode="contain"
+                           />
                                           <Text style={{
                              color: isSelected ? '#1e40af' : '#6b7280', 
                                             fontSize: 12,
@@ -8835,8 +11245,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           {/* Task Create Modal */}
           <TaskCreateModal
             visible={showTaskModal}
-            onClose={() => setShowTaskModal(false)}
+            onClose={() => {
+              setShowTaskModal(false);
+              setTaskModalChildId(null);
+            }}
             defaultDate={taskModalDate}
+            defaultChildId={taskModalChildId}
             familyId={familyId}
             familyMembers={children.map(child => ({
               id: child.id,
@@ -8854,6 +11268,31 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               // Refresh calendar data after task creation
               await refreshCalendarData();
             }}
+          />
+          
+          {/* Evidence Upload Modal */}
+          <EvidenceUploadModal
+            visible={showEvidenceUploadModal}
+            onClose={() => {
+              setShowEvidenceUploadModal(false);
+              setEvidenceUploadEventId(null);
+              setEvidenceUploadChildId(null);
+              setEvidenceUploadDate(null);
+            }}
+            onUploaded={() => {
+              setShowEvidenceUploadModal(false);
+              setEvidenceUploadEventId(null);
+              setEvidenceUploadChildId(null);
+              setEvidenceUploadDate(null);
+              // Refresh calendar/planner if needed
+              refreshCalendarData();
+            }}
+            familyId={familyId}
+            defaultChildId={evidenceUploadChildId}
+            defaultDate={evidenceUploadDate}
+            linkedEventId={evidenceUploadEventId}
+            children={children}
+            subjects={subjects}
           />
           </View>
         )
@@ -8980,8 +11419,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }
 
   return (
-    <View style={styles.container}>
-      {renderContent()}
+    <>
+      {/* Sticky Notes Container - Always visible */}
+      {familyId && <StickyNotesContainer familyId={familyId} visible={true} />}
+      <View style={styles.container}>
+        {renderContent()}
       <HomeEventModal
         showHomeEventModal={showHomeEventModal}
         setShowHomeEventModal={setShowHomeEventModal}
@@ -8991,6 +11433,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         setHomeEventFormData={setHomeEventFormData}
         saveHomeEvent={saveHomeEvent}
         students={children}
+        familyId={familyId}
+        subjects={subjects}
       />
       <AddChildModal
         visible={showAddChildModal}
@@ -9001,6 +11445,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }
           // Refresh children list
           fetchChildren();
+        }}
+        familyId={familyId}
+      />
+      <AddSubjectModal
+        visible={showAddSubjectModal}
+        onClose={onCloseAddSubjectModal}
+        onSubjectAdded={() => {
+          // Refresh subjects if needed
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
         }}
         familyId={familyId}
       />
@@ -9039,7 +11494,48 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         />
       )}
       
-    </View>
+      <SyllabusUploadModal
+        visible={showSyllabusModal}
+        onClose={handleCloseSyllabusUpload}
+        familyId={familyId}
+        children={children || []}
+        subjects={subjects || []}
+        onPlanCreated={({ planId }) => {
+          handleCloseSyllabusUpload();
+          if (onSyllabusProcessed) {
+            onSyllabusProcessed({ success: true, planId });
+          }
+          // Refresh planner if on planner tab
+          if (activeTab === 'planner' && refreshCalendarDataRef.current) {
+            refreshCalendarDataRef.current();
+          }
+        }}
+      />
+      
+      <NoteEditorModal
+        visible={showNoteEditor}
+        onClose={() => {
+          setShowNoteEditor(false);
+          setNoteEditorProps({ linkedEventId: null, defaultChildId: null, defaultText: '', date: null });
+        }}
+        onSaved={() => {
+          setShowNoteEditor(false);
+          setNoteEditorProps({ linkedEventId: null, defaultChildId: null, defaultText: '', date: null });
+          // Refresh calendar/planner data
+          if (refreshCalendarDataRef.current) {
+            refreshCalendarDataRef.current();
+          }
+        }}
+        familyId={familyId}
+        linkedEventId={noteEditorProps.linkedEventId}
+        defaultChildId={noteEditorProps.defaultChildId}
+        defaultText={noteEditorProps.defaultText}
+        children={children || []}
+        availableEvents={[]}
+      />
+
+      </View>
+    </>
   );
 };
 
@@ -9053,15 +11549,219 @@ const styles = StyleSheet.create({
     backgroundColor: '#fbfbfc',
     overflow: 'auto',
   },
-  greetingSection: {
-    marginTop: 32,
+  notificationsContainer: {
+    marginBottom: 16,
+  },
+  microNotificationsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  suggestionsContainer: {
     marginBottom: 24,
+    marginHorizontal: 20,
+  },
+  suggestionsContainerInline: {
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  greetingSection: {
+    marginTop: 24, // mt-6
+    marginBottom: 24, // mb-6
+    paddingHorizontal: 24, // px-6 (align with AppContainer)
   },
   greetingTitle: {
-    fontSize: 28,
+    fontSize: 24, // text-2xl
+    fontWeight: '700', // font-bold (standardized)
+    color: '#111827', // colors.text (standardized)
+    marginBottom: 0,
+    lineHeight: 32,
+  },
+  todayCardsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+  },
+  todayCardWrapper: {
+    minWidth: 280,
+    maxWidth: 400,
+    ...Platform.select({
+      web: {
+        flexShrink: 1,
+        flexGrow: 0,
+        flexBasis: 'auto',
+      },
+      default: {
+        flex: 1,
+      },
+    }),
+  },
+  homeContentContainer: {
+    paddingBottom: 40,
+  },
+  homeMainLayout: {
+    flexDirection: 'row',
+    gap: 20,
+    alignItems: 'flex-start',
+    ...Platform.select({
+      web: {
+        display: 'flex',
+      },
+      default: {
+        flexDirection: 'column',
+      },
+    }),
+  },
+  homeLeftColumn: {
+    flex: 2,
+    minWidth: 0,
+    gap: 16,
+    ...Platform.select({
+      web: {
+        maxWidth: 'calc(72% - 10px)',
+      },
+      default: {
+        flex: 1,
+        width: '100%',
+      },
+    }),
+  },
+  homeRightSidebar: {
+    flex: 1,
+    minWidth: 0,
+    gap: 0,
+    ...Platform.select({
+      web: {
+        maxWidth: 'calc(28% - 10px)',
+      },
+      default: {
+        flex: 1,
+        width: '100%',
+      },
+    }),
+  },
+  sidebarDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 12,
+  },
+  multiDayPreview: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  homeTilesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 24,
+    paddingHorizontal: 20,
+  },
+  homeTileWrapper: {
+    width: 'calc(50% - 6px)',
+    minWidth: 200,
+    flex: 1,
+    maxWidth: 'calc(50% - 6px)',
+  },
+  tilesLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 16,
+    width: '100%',
+    justifyContent: 'center',
+  },
+  tilesLoadingText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  multiDayCard: {
+    flex: 1,
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    cursor: 'pointer',
+  },
+  multiDayCardActive: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#3b82f6',
+  },
+  multiDayLabel: {
+    fontSize: 14,
     fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 16,
+    color: '#1e293b',
+    marginBottom: 8,
+  },
+  multiDayBullet: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  coachingSection: {
+    marginBottom: 24,
+    padding: 20,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  coachingTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 12,
+  },
+  coachingSuggestions: {
+    gap: 12,
+  },
+  coachingSuggestion: {
+    padding: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  coachingSuggestionText: {
+    fontSize: 14,
+    color: '#475569',
+    marginBottom: 8,
+  },
+  coachingAction: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#3b82f6',
+    borderRadius: 6,
+  },
+  coachingActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  insightsWhySection: {
+    marginTop: 12,
+    gap: 8,
+  },
+  insightWhy: {
+    padding: 10,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3b82f6',
+  },
+  insightWhyLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  insightWhyText: {
+    fontSize: 12,
+    color: '#64748b',
   },
   quickActions: {
     flexDirection: 'row',
@@ -9135,16 +11835,19 @@ const styles = StyleSheet.create({
   },
   homeGrid: {
     flexDirection: 'row',
-    gap: 20,
+    gap: 24,
     marginBottom: 24,
+    flexWrap: 'wrap',
   },
   homeMainColumn: {
     flex: 2,
-    gap: 16,
+    minWidth: 400,
+    maxWidth: '100%',
   },
   homeSideColumn: {
     flex: 1,
-    gap: 16,
+    minWidth: 300,
+    maxWidth: '100%',
   },
   greetingSubtitle: {
     fontSize: 16,
@@ -11023,7 +13726,7 @@ const styles = StyleSheet.create({
 });
 
 // Add the home page modal after the main component
-const HomeEventModal = ({ showHomeEventModal, setShowHomeEventModal, homeEventType, setHomeEventType, homeEventFormData, setHomeEventFormData, saveHomeEvent, students = [] }) => {
+const HomeEventModal = ({ showHomeEventModal, setShowHomeEventModal, homeEventType, setHomeEventType, homeEventFormData, setHomeEventFormData, saveHomeEvent, students = [], familyId, subjects = [] }) => {
   if (!showHomeEventModal) return null;
 
   return (
@@ -11126,6 +13829,37 @@ const HomeEventModal = ({ showHomeEventModal, setShowHomeEventModal, homeEventTy
             </View>
 
             {homeEventType !== 'holiday' && (
+              <>
+                {/* Subject Selection */}
+                <View style={styles.formField}>
+                  <Text style={styles.formLabel}>Subject (optional)</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {subjects.slice(0, 10).map(subj => (
+                      <TouchableOpacity
+                        key={subj.id}
+                        style={{
+                          paddingVertical: 8,
+                          paddingHorizontal: 12,
+                          borderRadius: 20,
+                          borderWidth: 2,
+                          borderColor: homeEventFormData.subjectId === subj.id ? '#38B6FF' : '#e5e7eb',
+                          backgroundColor: homeEventFormData.subjectId === subj.id ? '#E6F4FF' : '#ffffff'
+                        }}
+                        onPress={() => {
+                          setHomeEventFormData(prev => ({
+                            ...prev,
+                            subjectId: prev.subjectId === subj.id ? null : subj.id
+                          }));
+                        }}
+                      >
+                        <Text style={{ color: '#111827', fontSize: 12 }}>
+                          {subj.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
               <View style={styles.formField}>
                 <Text style={styles.formLabel}>Time</Text>
                 <TextInput
@@ -11143,6 +13877,7 @@ const HomeEventModal = ({ showHomeEventModal, setShowHomeEventModal, homeEventTy
                   onChangeText={(text) => setHomeEventFormData({...homeEventFormData, endTime: text})}
                 />
               </View>
+              </>
             )}
 
             <View style={styles.formField}>
@@ -11156,6 +13891,26 @@ const HomeEventModal = ({ showHomeEventModal, setShowHomeEventModal, homeEventTy
                 numberOfLines={3}
               />
             </View>
+
+            {/* Template Picker - only for lessons */}
+            {homeEventType === 'lesson' && familyId && (
+              <View style={styles.formField}>
+                <Text style={styles.formLabel}>Template (optional)</Text>
+                <TemplatePicker
+                  subjectId={homeEventFormData.subjectId}
+                  familyId={familyId}
+                  onSelect={(template) => {
+                    // Apply template data to form
+                    if (template.default_objectives) {
+                      setHomeEventFormData(prev => ({
+                        ...prev,
+                        description: template.default_objectives
+                      }));
+                    }
+                  }}
+                />
+              </View>
+            )}
 
             {/* Status selection for lesson/activity */}
             {homeEventType !== 'holiday' && (

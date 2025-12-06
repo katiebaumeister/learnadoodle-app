@@ -1,7 +1,31 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { BookOpen, Clock, CheckCircle, Plus, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
+
+const avatarSources = {
+  prof1: require('../../assets/prof1.png'),
+  prof2: require('../../assets/prof2.png'),
+  prof3: require('../../assets/prof3.png'),
+  prof4: require('../../assets/prof4.png'),
+  prof5: require('../../assets/prof5.png'),
+  prof6: require('../../assets/prof6.png'),
+  prof7: require('../../assets/prof7.png'),
+  prof8: require('../../assets/prof8.png'),
+  prof9: require('../../assets/prof9.png'),
+  prof10: require('../../assets/prof10.png'),
+};
+
+const resolveAvatarSource = (avatarKey) => {
+  if (!avatarKey) {
+    return avatarSources.prof1;
+  }
+  const normalized = String(avatarKey)
+    .toLowerCase()
+    .replace(/.*\//, '')
+    .replace(/\.(png|jpg|jpeg|webp|gif)$/i, '');
+  return avatarSources[normalized] || avatarSources.prof1;
+};
 
 const subjectColors = [
   { bg: colors.blueSoft, text: colors.blueBold },
@@ -102,11 +126,11 @@ export default function TodaysLearning({
           return (
             <View key={child.id} style={styles.childCard}>
               <View style={styles.childHeader}>
-                <View style={[styles.avatar, { backgroundColor: colorScheme.bg }]}>
-                  <Text style={[styles.avatarText, { color: colorScheme.text }]}>
-                    {child.name.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
+                <Image
+                  source={resolveAvatarSource(child.avatar)}
+                  style={styles.avatar}
+                  resizeMode="contain"
+                />
                 <View style={styles.childInfo}>
                   <Text style={styles.childName}>{child.name}</Text>
                   {/* Minutes counter */}
@@ -259,12 +283,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 16,
-    fontWeight: '600',
   },
   childInfo: {
     flex: 1,

@@ -17,6 +17,7 @@ import {
 import { X, Sparkles, Plus } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { completeEvent, saveOutcome, getEventTags } from '../../lib/services/attendanceClient';
+import { supabase } from '../../lib/supabase';
 
 const GRADES = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F', 'Pass', 'Fail'];
 
@@ -33,21 +34,62 @@ export default function EventOutcomeModal({
   const [note, setNote] = useState('');
   const [strengths, setStrengths] = useState([]);
   const [struggles, setStruggles] = useState([]);
+  const [behaviorTags, setBehaviorTags] = useState([]);
   const [newStrength, setNewStrength] = useState('');
   const [newStruggle, setNewStruggle] = useState('');
 
   useEffect(() => {
     if (visible && event) {
-      // Reset form when modal opens
+      // Load existing outcome if available
+      loadExistingOutcome();
+    } else {
+      // Reset form when modal closes
       setRating(null);
       setGrade(null);
       setNote('');
       setStrengths([]);
       setStruggles([]);
+      setBehaviorTags([]);
       setNewStrength('');
       setNewStruggle('');
     }
   }, [visible, event]);
+
+  const loadExistingOutcome = async () => {
+    if (!event?.id) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('event_outcomes')
+        .select('*')
+        .eq('event_id', event.id)
+        .maybeSingle();
+      
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error loading outcome:', error);
+        return;
+      }
+      
+      if (data) {
+        setRating(data.rating || null);
+        setGrade(data.grade || null);
+        setNote(data.note || '');
+        setStrengths(data.strengths || []);
+        setStruggles(data.struggles || []);
+        setBehaviorTags(data.behavior_tags || []);
+      } else {
+        // Reset to defaults if no existing outcome
+        setRating(null);
+        setGrade(null);
+        setNote('');
+        setStrengths([]);
+        setStruggles([]);
+        setBehaviorTags([]);
+      }
+    } catch (error) {
+      console.error('Error loading existing outcome:', error);
+    }
+  };
 
   const handleSuggestTags = async () => {
     if (!event?.id) return;
@@ -125,6 +167,7 @@ export default function EventOutcomeModal({
         note,
         strengths,
         struggles,
+        behavior_tags: behaviorTags,
       });
       
       if (outcomeResult.error) {
@@ -325,6 +368,49 @@ export default function EventOutcomeModal({
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* Behavior Tags */}
+            <View style={styles.section}>
+              <Text style={styles.label}>How was their focus?</Text>
+              <Text style={styles.subLabel}>Select all that apply</Text>
+              <View style={styles.behaviorContainer}>
+                {['Focused', 'Distracted', 'Excited', 'Overwhelmed'].map((tag) => {
+                  const isSelected = behaviorTags.includes(tag);
+                  const tagColors = {
+                    'Focused': { bg: '#d1fae5', border: '#10b981', text: '#065f46' },
+                    'Distracted': { bg: '#fee2e2', border: '#ef4444', text: '#991b1b' },
+                    'Excited': { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' },
+                    'Overwhelmed': { bg: '#e0e7ff', border: '#6366f1', text: '#312e81' },
+                  };
+                  const colors = tagColors[tag] || tagColors['Focused'];
+                  
+                  return (
+                    <TouchableOpacity
+                      key={tag}
+                      style={[
+                        styles.behaviorTag,
+                        {
+                          backgroundColor: isSelected ? colors.bg : '#ffffff',
+                          borderColor: isSelected ? colors.border : colors.border + '40',
+                          borderWidth: isSelected ? 2 : 1,
+                        }
+                      ]}
+                      onPress={() => {
+                        if (isSelected) {
+                          setBehaviorTags(behaviorTags.filter(t => t !== tag));
+                        } else {
+                          setBehaviorTags([...behaviorTags, tag]);
+                        }
+                      }}
+                    >
+                      <Text style={[styles.behaviorTagText, { color: isSelected ? colors.text : colors.text + '80' }]}>
+                        {tag}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
           </ScrollView>
 
           {/* Footer */}
@@ -521,6 +607,27 @@ const styles = StyleSheet.create({
   },
   addButton: {
     padding: 8,
+  },
+  subLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 12,
+  },
+  behaviorContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  behaviorTag: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  behaviorTagText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   aiButton: {
     flexDirection: 'row',

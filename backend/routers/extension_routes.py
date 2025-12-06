@@ -198,17 +198,100 @@ async def extension_add(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         
-        # Only support single videos for now
-        if kind != "video":
-            raise HTTPException(
-                status_code=400,
-                detail="Only single video URLs are supported. Playlist support coming soon."
-            )
+        supabase = get_admin_client()
         
+        if kind == "playlist":
+            # Handle playlist - create course with multiple lessons
+            try:
+                from routers.external_routes import fetch_youtube_playlist_items, fetch_youtube_playlist_title
+                
+                # Fetch playlist metadata
+                playlist_title = fetch_youtube_playlist_title(yt_id)
+                playlist_items = fetch_youtube_playlist_items(yt_id)
+                
+                # Format as playlist_meta
+                playlist_meta = {
+                    "title": playlist_title,
+                    "thumbnail_url": None,  # Playlists don't have single thumbnails
+                    "videos": []
+                }
+                
+                # Convert playlist items to video format
+                for item in playlist_items[:50]:  # Limit to 50
+                    video_id = item.get("video_id")
+                    if video_id:
+                        playlist_meta["videos"].append({
+                            "title": item.get("title", "Untitled Video"),
+                            "url": item.get("url", f"https://www.youtube.com/watch?v={video_id}"),
+                            "thumbnail_url": None,  # Can be fetched separately if needed
+                            "duration_sec": item.get("seconds", 0)
+                        })
+                
+                # Create course for the playlist
+                course_res = supabase.table("external_courses").insert({
+                    "family_id": family_id,
+                    "provider": "YouTube",
+                    "title": playlist_meta.get("title", "YouTube Playlist"),
+                    "source_url": body.url,
+                    "thumbnail_url": playlist_meta.get("thumbnail_url"),
+                    "imported_by": user["id"],
+                    "source_slug": yt_id
+                }).execute()
+                
+                if not course_res.data:
+                    raise HTTPException(status_code=500, detail="Failed to create course")
+                
+                course_id = course_res.data[0]["id"]
+                created_lessons = 0
+                backlog_tasks = []
+                
+                # Create lessons for each video in playlist
+                videos = playlist_meta.get("videos", [])
+                for idx, video in enumerate(videos[:50]):  # Limit to 50 videos
+                    lesson_res = supabase.table("external_lessons").insert({
+                        "course_id": course_id,
+                        "title": video.get("title", f"Video {idx + 1}"),
+                        "source_url": video.get("url"),
+                        "thumbnail_url": video.get("thumbnail_url"),
+                        "duration_minutes_est": video.get("duration_sec", 0) // 60,
+                        "ordinal": idx + 1
+                    }).execute()
+                    
+                    if lesson_res.data:
+                        created_lessons += 1
+                        lesson_id = lesson_res.data[0]["id"]
+                        
+                        # Create backlog task for this lesson
+                        backlog_res = supabase.table("backlog_items").insert({
+                            "family_id": family_id,
+                            "child_id": child_id,
+                            "title": video.get("title", f"Video {idx + 1}"),
+                            "notes": f"YouTube playlist: {playlist_meta.get('title', 'Playlist')}",
+                            "estimated_minutes": video.get("duration_sec", 0) // 60 or 30,
+                            "created_by": user["id"]
+                        }).execute()
+                        
+                        if backlog_res.data:
+                            backlog_tasks.append(backlog_res.data[0]["id"])
+                
+                return ExtensionAddOut(
+                    course_id=course_id,
+                    lesson_id=None,  # Playlist has multiple lessons
+                    title=playlist_meta.get("title", "YouTube Playlist"),
+                    thumbnail_url=playlist_meta.get("thumbnail_url"),
+                    duration_sec=None,
+                    backlog_task_id=None,  # Multiple tasks created
+                    event_id=None
+                )
+            except ImportError:
+                raise HTTPException(status_code=501, detail="Playlist support requires additional implementation")
+            except Exception as e:
+                log_event("extension.add.playlist_error", user_id=user["id"], error=str(e))
+                raise HTTPException(status_code=500, detail=f"Failed to process playlist: {str(e)}")
+        
+        # Handle single video
         # Fetch YouTube video metadata
         meta = fetch_youtube_video_meta(yt_id)
-        
-        supabase = get_admin_client()
         
         # Call RPC to create course/lesson and backlog task
         rpc_result = supabase.rpc(

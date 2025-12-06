@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, TextInput, StyleSheet, Alert, Image, Platform } from 'react-native';
 import { Upload, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { shouldSuppressError } from '../../lib/apiClient';
 import { colors, shadows } from '../../theme/colors';
 
 export default function Uploads({ familyId, initialChildren = [] }) {
@@ -26,15 +27,23 @@ export default function Uploads({ familyId, initialChildren = [] }) {
       }
 
       // Load uploads
-      const { data } = await supabase.rpc('get_uploads', {
+      const { data, error: rpcError } = await supabase.rpc('get_uploads', {
         _family: familyId,
         _q: q || null,
         _child_ids: childIds
       });
+      
+      if (rpcError && !shouldSuppressError(rpcError)) {
+        console.error('Error loading uploads:', rpcError);
+        Alert.alert('Error', 'Failed to load uploads');
+      }
+      
       setItems(data || []);
     } catch (error) {
-      console.error('Error loading uploads:', error);
-      Alert.alert('Error', 'Failed to load uploads');
+      if (!shouldSuppressError(error)) {
+        console.error('Error loading uploads:', error);
+        Alert.alert('Error', 'Failed to load uploads');
+      }
     } finally {
       setLoading(false);
     }
@@ -68,7 +77,7 @@ export default function Uploads({ familyId, initialChildren = [] }) {
       }
 
       // Create upload record
-      await supabase.rpc('create_upload_record', {
+      const { data: uploadRecord, error: recordError } = await supabase.rpc('create_upload_record', {
         _family: familyId,
         _child: null,
         _subject: null,
@@ -80,6 +89,20 @@ export default function Uploads({ familyId, initialChildren = [] }) {
         _tags: [],
         _notes: null
       });
+
+      if (recordError) throw recordError;
+
+      // Get upload ID and file URL for auto-captioning
+      const uploadId = uploadRecord?.id || uploadRecord?.ok ? uploadRecord.id : null;
+      const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(uploadData?.path);
+      const fileUrl = urlData?.publicUrl;
+
+      // Trigger auto-captioning (non-blocking)
+      if (uploadId && fileUrl) {
+        autoCaptionOnUpload(uploadId, file.type, fileUrl, file.name).catch(err => {
+          console.log('Auto-captioning failed (non-critical):', err);
+        });
+      }
 
       await loadData();
       Alert.alert('Success', 'File uploaded successfully');
@@ -96,6 +119,15 @@ export default function Uploads({ familyId, initialChildren = [] }) {
       return (
         <View style={styles.pdfPreview}>
           <Text style={styles.pdfText}>PDF</Text>
+          <View style={styles.pdfActions}>
+            <PDFViewer uploadId={item.id} familyId={familyId} />
+            <MagicExtract
+              uploadId={item.id}
+              onExtracted={(extractedItem, type) => {
+                Alert.alert('Extracted', `${type} extracted. Create event from extracted item?`);
+              }}
+            />
+          </View>
         </View>
       );
     } else {

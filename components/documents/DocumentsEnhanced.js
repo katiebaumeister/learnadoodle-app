@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
-import { Search, X, FileText, Upload as UploadIcon } from 'lucide-react';
+import { Search, X, FileText, Upload as UploadIcon, Folder, Link as LinkIcon } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { colors, shadows } from '../../theme/colors';
 import SplitButton from '../ui/SplitButton';
 import SyllabusWizard from './SyllabusWizard';
 import SyllabusViewer from './SyllabusViewer';
 import Uploads from './Uploads';
+import FoldersManager from '../content/FoldersManager';
+import ExternalLinksManager from '../content/ExternalLinksManager';
 
 export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
-  const [tab, setTab] = useState('syllabi'); // 'syllabi' | 'files'
+  const [tab, setTab] = useState('syllabi'); // 'syllabi' | 'files' | 'folders' | 'links'
   const [q, setQ] = useState('');
   const [selectedChildren, setSelectedChildren] = useState([]);
   const [selectedSubjects, setSelectedSubjects] = useState([]);
@@ -122,7 +124,7 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
 
             if (uploadError) throw uploadError;
 
-            await supabase.rpc('create_upload_record', {
+            const { data: uploadRecord, error: recordError } = await supabase.rpc('create_upload_record', {
               _family: familyId,
               _child: null,
               _subject: null,
@@ -134,6 +136,21 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
               _tags: [],
               _notes: null
             });
+
+            if (recordError) throw recordError;
+
+            // Get upload ID and file URL for auto-captioning
+            const uploadId = uploadRecord?.id || uploadRecord?.ok ? uploadRecord.id : null;
+            const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(path);
+            const fileUrl = urlData?.publicUrl;
+
+            // Trigger auto-captioning (non-blocking)
+            if (uploadId && fileUrl) {
+              const { autoCaptionOnUpload } = await import('../../lib/services/autoCaptionService');
+              autoCaptionOnUpload(uploadId, file.type, fileUrl, file.name).catch(err => {
+                console.log('Auto-captioning failed (non-critical):', err);
+              });
+            }
 
             Alert.alert('Success', 'File uploaded successfully');
             if (tab === 'files') {
@@ -210,6 +227,28 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
           <UploadIcon size={16} color={tab === 'files' ? colors.indigoBold : colors.text} />
           <Text style={[styles.tabText, tab === 'files' && styles.tabTextActive]}>
             Files
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => setTab('folders')}
+          style={[styles.tab, tab === 'folders' && styles.tabActive]}
+          activeOpacity={0.7}
+        >
+          <Folder size={16} color={tab === 'folders' ? colors.indigoBold : colors.text} />
+          <Text style={[styles.tabText, tab === 'folders' && styles.tabTextActive]}>
+            Folders
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => setTab('links')}
+          style={[styles.tab, tab === 'links' && styles.tabActive]}
+          activeOpacity={0.7}
+        >
+          <LinkIcon size={16} color={tab === 'links' ? colors.indigoBold : colors.text} />
+          <Text style={[styles.tabText, tab === 'links' && styles.tabTextActive]}>
+            External Links
           </Text>
         </TouchableOpacity>
       </View>
@@ -324,7 +363,25 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
 
       {/* Content */}
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
-        {tab === 'syllabi' ? (
+        {tab === 'folders' ? (
+          <FoldersManager
+            familyId={familyId}
+            childId={selectedChildren.length === 1 ? selectedChildren[0] : null}
+            onFolderSelected={(folder) => {
+              // Could filter files by folder
+              console.log('Selected folder:', folder);
+            }}
+          />
+        ) : tab === 'links' ? (
+          <ExternalLinksManager
+            familyId={familyId}
+            childId={selectedChildren.length === 1 ? selectedChildren[0] : null}
+            subjectId={selectedSubjects.length === 1 ? selectedSubjects[0] : null}
+            onLinkAdded={(link) => {
+              console.log('Link added:', link);
+            }}
+          />
+        ) : tab === 'syllabi' ? (
           <View style={styles.listContainer}>
             {loading ? (
               <Text style={styles.emptyText}>Loading...</Text>

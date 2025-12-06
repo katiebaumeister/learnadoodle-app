@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { ChevronLeft, ChevronRight, Target, Lightbulb, AlertCircle, BookOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Target, Lightbulb, AlertCircle, BookOpen, Sparkles } from 'lucide-react';
 import { colors } from '../../../theme/colors';
 import IdentityPanel from '../IdentityPanel';
 import WeeklySummary from '../WeeklySummary';
@@ -11,6 +11,8 @@ import GoalsList from '../../goals/GoalsList';
 import EventsTimeline from '../../profile/EventsTimeline';
 import NextWeekPlan from '../../profile/NextWeekPlan';
 import RecommendedActions from '../RecommendedActions';
+import StudentStreakNotification from '../../confidence/StudentStreakNotification';
+import ConversationStarters from '../../home/ConversationStarters';
 
 export default function OverviewTab({
   child,
@@ -27,6 +29,7 @@ export default function OverviewTab({
   onAddSession,
   onAddActivity,
   onAddSyllabus,
+  onNavigate,
 }) {
   const goals = data.goals || [];
   const events = data.events || [];
@@ -111,32 +114,85 @@ export default function OverviewTab({
         <WeeklySummary summary={summary} goals={goals} streak={streak} />
       </View>
 
+      {/* Conversation Starters */}
+      {child?.id && (
+        <View style={styles.section}>
+          <ConversationStarters 
+            familyId={data.familyId || child.family_id}
+            childId={child.id}
+            limit={3}
+          />
+        </View>
+      )}
+
+      {/* Student Streak Notification (for parents) */}
+      <View style={styles.section}>
+        <StudentStreakNotification
+          childId={child.id}
+          childName={child.first_name || child.name}
+        />
+      </View>
+
       {/* Contextual Helper Tips */}
       {summary.done_minutes === 0 && (
-        <View style={styles.tipCard}>
+        <TouchableOpacity 
+          style={styles.tipCard}
+          onPress={() => {
+            if (onOpenPlanner) {
+              onOpenPlanner({
+                childId: child.id,
+                weekStart: weekStart.toISOString().split('T')[0],
+              });
+            }
+          }}
+        >
           <Lightbulb size={16} color={colors.orangeBold} />
           <Text style={styles.tipText}>
             Start with a favorite subject — one small win creates momentum.
           </Text>
-        </View>
+          <Sparkles size={14} color={colors.orangeBold} style={{ marginLeft: 'auto' }} />
+        </TouchableOpacity>
       )}
 
       {missedSessions > 0 && (
-        <View style={[styles.tipCard, styles.tipCardWarning]}>
+        <TouchableOpacity 
+          style={[styles.tipCard, styles.tipCardWarning]}
+          onPress={() => {
+            if (onOpenPlanner) {
+              // Open AI planner with rebalance focus for current week
+              onOpenPlanner({
+                childId: child.id,
+                weekStart: weekStart.toISOString().split('T')[0],
+                rebalance: true,
+              });
+            }
+          }}
+        >
           <AlertCircle size={16} color={colors.redBold} />
           <Text style={styles.tipText}>
             Missed {missedSessions} session{missedSessions > 1 ? 's' : ''}. Want AI to rebalance the week?
           </Text>
-        </View>
+          <Sparkles size={14} color={colors.redBold} style={{ marginLeft: 'auto' }} />
+        </TouchableOpacity>
       )}
 
       {!hasSyllabus && (
-        <View style={styles.tipCard}>
+        <TouchableOpacity 
+          style={styles.tipCard}
+          onPress={() => {
+            if (onAddSyllabus) {
+              onAddSyllabus();
+            } else if (onNavigate) {
+              onNavigate('syllabus');
+            }
+          }}
+        >
           <BookOpen size={16} color={colors.blueBold} />
           <Text style={styles.tipText}>
             Add a syllabus to unlock progress tracking and pacing insights.
           </Text>
-        </View>
+          <Sparkles size={14} color={colors.blueBold} style={{ marginLeft: 'auto' }} />
+        </TouchableOpacity>
       )}
 
       {/* Weekly Metrics Cards */}
@@ -325,6 +381,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.yellowBold + '30',
+    cursor: 'pointer',
   },
   tipCardWarning: {
     backgroundColor: colors.redSoft,

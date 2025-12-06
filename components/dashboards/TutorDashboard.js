@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, TextInput, Platform } from 'react-native';
 import { Calendar, CheckCircle, X, Clock, TrendingUp, Award, BookOpen, Sparkles, ExternalLink, Video, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { getTutorOverview, getLearningSuggestions } from '../../lib/apiClient';
+import { getTutorOverview, getLearningSuggestions, logTutorOutcome } from '../../lib/apiClient';
 import { useToast } from '../Toast';
 
 export default function TutorDashboard({ accessibleChildren = [] }) {
@@ -117,19 +117,23 @@ export default function TutorDashboard({ accessibleChildren = [] }) {
     if (!selectedEvent || !reflectionText.trim()) return;
 
     try {
-      // Create or update event_outcome with note
-      const { error } = await supabase
-        .from('event_outcomes')
-        .upsert({
-          event_id: selectedEvent,
-          child_id: selectedChildId,
-          family_id: (await supabase.from('children').select('family_id').eq('id', selectedChildId).single()).data?.family_id,
-          note: reflectionText,
-        }, {
-          onConflict: 'event_id'
-        });
+      // Use tutor outcome logging API
+      const { data: childData } = await supabase
+        .from('children')
+        .select('family_id')
+        .eq('id', selectedChildId)
+        .single();
 
-      if (error) throw error;
+      const { error: apiError } = await logTutorOutcome({
+        event_id: selectedEvent,
+        child_id: selectedChildId,
+        note: reflectionText,
+        rating: null, // Can add rating UI later
+        strengths: [],
+        struggles: [],
+      });
+
+      if (apiError) throw apiError;
 
       toast.push('Reflection saved', 'success');
       setShowReflectionModal(false);

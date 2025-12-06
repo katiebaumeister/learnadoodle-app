@@ -28,22 +28,50 @@ AS $$
   );
 $$;
 
--- attendance_records table
-CREATE TABLE IF NOT EXISTS public.attendance_records (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_id UUID NOT NULL,
-  child_id UUID NOT NULL REFERENCES public.children(id) ON DELETE CASCADE,
-  date DATE NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('present','absent','tardy','excused','holiday')),
-  minutes_present INT NOT NULL DEFAULT 0 CHECK (minutes_present >= 0),
-  notes TEXT,
-  source TEXT NOT NULL DEFAULT 'manual',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (child_id, date)
-);
-
-CREATE INDEX IF NOT EXISTS attendance_records_family_date_idx ON public.attendance_records (family_id, date);
-CREATE INDEX IF NOT EXISTS attendance_records_child_date_idx ON public.attendance_records (child_id, date);
+-- attendance_records table - Check which schema exists and adapt
+DO $$
+BEGIN
+  -- Check if table exists with 'day_date' column (newer schema)
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'attendance_records' AND column_name = 'day_date'
+  ) THEN
+    -- Table exists with newer schema (day_date), skip creation
+    RAISE NOTICE 'attendance_records table exists with day_date column (newer schema)';
+  ELSIF EXISTS (
+    SELECT 1 FROM information_schema.tables 
+    WHERE table_name = 'attendance_records'
+  ) THEN
+    -- Table exists but might have 'date' column (older schema)
+    -- Check if we need to migrate
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'attendance_records' AND column_name = 'date'
+    ) THEN
+      RAISE NOTICE 'attendance_records table exists with date column (older schema)';
+    END IF;
+  ELSE
+    -- Table doesn't exist, create with newer schema (day_date)
+    CREATE TABLE public.attendance_records (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      family_id UUID NOT NULL,
+      child_id UUID NOT NULL REFERENCES public.children(id) ON DELETE CASCADE,
+      event_id UUID REFERENCES public.events(id) ON DELETE CASCADE,
+      day_date DATE NOT NULL,
+      minutes INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'present'
+        CHECK (status IN ('present', 'partial', 'absent')),
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      created_by UUID REFERENCES profiles(id),
+      UNIQUE (event_id)
+    );
+    
+    CREATE INDEX attendance_records_family_date_idx ON public.attendance_records (family_id, day_date);
+    CREATE INDEX attendance_records_child_date_idx ON public.attendance_records (child_id, day_date);
+    CREATE UNIQUE INDEX attendance_records_event_unique ON public.attendance_records(event_id);
+  END IF;
+END $$;
 
 -- RLS for attendance_records
 ALTER TABLE public.attendance_records ENABLE ROW LEVEL SECURITY;
@@ -63,7 +91,7 @@ USING (is_family_member(family_id)) WITH CHECK (is_family_member(family_id));
 DROP POLICY IF EXISTS attendance_delete ON public.attendance_records;
 CREATE POLICY attendance_delete ON public.attendance_records FOR DELETE USING (is_family_member(family_id));
 
--- Trigger for automatic attendance from events
+-- Trigger for automatic attendance from events - adapts to schema
 CREATE OR REPLACE FUNCTION public._attendance_upsert_from_event()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -72,20 +100,39 @@ DECLARE
   _date DATE;
   _mins INT;
   _cap INT := 24 * 60;
+  _has_day_date BOOLEAN;
 BEGIN
+  -- Check which schema we're using
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'attendance_records' AND column_name = 'day_date'
+  ) INTO _has_day_date;
+
   IF (TG_OP = 'UPDATE' AND NEW.status = 'done' AND (OLD.status IS DISTINCT FROM 'done')) OR
      (TG_OP = 'INSERT' AND NEW.status = 'done') THEN
     _date := (NEW.start_ts AT TIME ZONE 'UTC')::DATE;
     _mins := GREATEST(0, CAST(EXTRACT(EPOCH FROM (NEW.end_ts - NEW.start_ts)) / 60 AS INT));
 
-    INSERT INTO public.attendance_records (family_id, child_id, date, status, minutes_present, source)
-    VALUES (NEW.family_id, NEW.child_id, _date, 'present', LEAST(_mins, _cap), 'event')
-    ON CONFLICT (child_id, date) DO UPDATE
-      SET minutes_present = LEAST(
-        COALESCE(public.attendance_records.minutes_present,0) + EXCLUDED.minutes_present, _cap
-      ),
-      status = CASE WHEN EXCLUDED.minutes_present > 0 THEN 'present' ELSE public.attendance_records.status END
-      WHERE public.attendance_records.family_id = NEW.family_id;
+    IF _has_day_date THEN
+      -- Newer schema: day_date, minutes, event_id
+      INSERT INTO public.attendance_records (family_id, child_id, event_id, day_date, minutes, status)
+      VALUES (NEW.family_id, NEW.child_id, NEW.id, _date, LEAST(_mins, _cap), 'present')
+      ON CONFLICT (event_id) DO UPDATE
+        SET minutes = LEAST(
+          COALESCE(public.attendance_records.minutes,0) + EXCLUDED.minutes, _cap
+        ),
+        status = CASE WHEN EXCLUDED.minutes > 0 THEN 'present' ELSE public.attendance_records.status END;
+    ELSE
+      -- Older schema: date, minutes_present
+      INSERT INTO public.attendance_records (family_id, child_id, date, status, minutes_present, source)
+      VALUES (NEW.family_id, NEW.child_id, _date, 'present', LEAST(_mins, _cap), 'event')
+      ON CONFLICT (child_id, date) DO UPDATE
+        SET minutes_present = LEAST(
+          COALESCE(public.attendance_records.minutes_present,0) + EXCLUDED.minutes_present, _cap
+        ),
+        status = CASE WHEN EXCLUDED.minutes_present > 0 THEN 'present' ELSE public.attendance_records.status END
+        WHERE public.attendance_records.family_id = NEW.family_id;
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -97,21 +144,34 @@ AFTER INSERT OR UPDATE OF status ON public.events
 FOR EACH ROW
 EXECUTE FUNCTION public._attendance_upsert_from_event();
 
--- Attendance RPCs
+-- Attendance RPCs - adapt to schema
 CREATE OR REPLACE FUNCTION public.upsert_attendance(
   _family UUID, _child UUID, _date DATE, _status TEXT, _minutes_present INT, _notes TEXT DEFAULT NULL
 ) RETURNS JSON
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
+DECLARE
+  _has_day_date BOOLEAN;
 BEGIN
   IF NOT is_family_member(_family) THEN RAISE EXCEPTION 'not authorized'; END IF;
   IF NOT child_belongs_to_family(_child, _family) THEN RAISE EXCEPTION 'child not in family'; END IF;
-  IF _status NOT IN ('present','absent','tardy','excused','holiday') THEN RAISE EXCEPTION 'invalid status %', _status; END IF;
+  
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'attendance_records' AND column_name = 'day_date'
+  ) INTO _has_day_date;
 
-  INSERT INTO attendance_records (family_id, child_id, date, status, minutes_present, notes, source)
-  VALUES (_family, _child, _date, _status, GREATEST(0,_minutes_present), _notes, 'manual')
-  ON CONFLICT (child_id, date) DO UPDATE
-    SET status = EXCLUDED.status, minutes_present = GREATEST(0, EXCLUDED.minutes_present), notes = EXCLUDED.notes, source = 'manual';
+  IF _has_day_date THEN
+    -- Newer schema - note: this function may not work perfectly with newer schema
+    -- as newer schema uses event_id, not child_id+date
+    RAISE EXCEPTION 'upsert_attendance not fully compatible with newer schema. Use event-based attendance instead.';
+  ELSE
+    IF _status NOT IN ('present','absent','tardy','excused','holiday') THEN RAISE EXCEPTION 'invalid status %', _status; END IF;
+    INSERT INTO attendance_records (family_id, child_id, date, status, minutes_present, notes, source)
+    VALUES (_family, _child, _date, _status, GREATEST(0,_minutes_present), _notes, 'manual')
+    ON CONFLICT (child_id, date) DO UPDATE
+      SET status = EXCLUDED.status, minutes_present = GREATEST(0, EXCLUDED.minutes_present), notes = EXCLUDED.notes, source = 'manual';
+  END IF;
 
   RETURN json_build_object('ok', true);
 END;
@@ -120,12 +180,30 @@ $$;
 CREATE OR REPLACE FUNCTION public.get_attendance_range(
   _family UUID, _from DATE, _to DATE, _child_ids UUID[] DEFAULT NULL
 ) RETURNS TABLE (day DATE, child_id UUID, status TEXT, minutes_present INT)
-LANGUAGE SQL SECURITY DEFINER SET search_path = public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
-  SELECT ar.date AS day, ar.child_id, ar.status, ar.minutes_present
-  FROM attendance_records ar
-  WHERE ar.family_id = _family AND ar.date >= _from AND ar.date <= _to
-    AND ( _child_ids IS NULL OR ar.child_id = ANY(_child_ids) );
+DECLARE
+  _has_day_date BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'attendance_records' AND column_name = 'day_date'
+  ) INTO _has_day_date;
+
+  IF _has_day_date THEN
+    RETURN QUERY
+    SELECT ar.day_date AS day, ar.child_id, ar.status, ar.minutes AS minutes_present
+    FROM attendance_records ar
+    WHERE ar.family_id = _family AND ar.day_date >= _from AND ar.day_date <= _to
+      AND ( _child_ids IS NULL OR ar.child_id = ANY(_child_ids) );
+  ELSE
+    RETURN QUERY
+    SELECT ar.date AS day, ar.child_id, ar.status, ar.minutes_present
+    FROM attendance_records ar
+    WHERE ar.family_id = _family AND ar.date >= _from AND ar.date <= _to
+      AND ( _child_ids IS NULL OR ar.child_id = ANY(_child_ids) );
+  END IF;
+END;
 $$;
 
 DROP FUNCTION IF EXISTS public.get_attendance_summary(UUID, DATE, DATE);
@@ -133,30 +211,66 @@ CREATE OR REPLACE FUNCTION public.get_attendance_summary(_family UUID, _from DAT
 RETURNS JSON
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
-DECLARE _by_child JSON; _total_days INT; _present_days INT; _pct NUMERIC;
+DECLARE 
+  _by_child JSON; 
+  _total_days INT; 
+  _present_days INT; 
+  _pct NUMERIC;
+  _has_day_date BOOLEAN;
+  _date_col TEXT;
 BEGIN
   IF NOT is_family_member(_family) THEN RAISE EXCEPTION 'not authorized'; END IF;
 
-  WITH days AS (
-    SELECT ar.child_id, ar.status, COUNT(*)::INT AS cnt, SUM(ar.minutes_present)::INT AS minutes
-    FROM attendance_records ar
-    WHERE ar.family_id = _family AND ar.date BETWEEN _from AND _to
-    GROUP BY ar.child_id, ar.status
-  )
-  SELECT COALESCE(json_agg(json_build_object(
-    'child_id', child_id,
-    'present_days', COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='present'),0),
-    'absent_days',  COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='absent'),0),
-    'tardy_days',   COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='tardy'),0),
-    'excused_days', COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='excused'),0),
-    'minutes_present', COALESCE((SELECT minutes FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='present'),0)
-  )), '[]'::JSON) INTO _by_child
-  FROM (SELECT DISTINCT child_id FROM attendance_records WHERE family_id=_family AND date BETWEEN _from AND _to) days;
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'attendance_records' AND column_name = 'day_date'
+  ) INTO _has_day_date;
 
-  SELECT COUNT(DISTINCT date)::INT INTO _total_days FROM attendance_records ar WHERE ar.family_id=_family AND ar.date BETWEEN _from AND _to;
-  SELECT COUNT(*)::INT INTO _present_days FROM (
-    SELECT child_id, date FROM attendance_records WHERE family_id=_family AND date BETWEEN _from AND _to AND status='present'
-  ) s;
+  IF _has_day_date THEN
+    _date_col := 'day_date';
+    WITH days AS (
+      SELECT ar.child_id, ar.status, COUNT(*)::INT AS cnt, SUM(ar.minutes)::INT AS minutes
+      FROM attendance_records ar
+      WHERE ar.family_id = _family AND ar.day_date BETWEEN _from AND _to
+      GROUP BY ar.child_id, ar.status
+    )
+    SELECT COALESCE(json_agg(json_build_object(
+      'child_id', child_id,
+      'present_days', COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='present'),0),
+      'absent_days',  COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='absent'),0),
+      'tardy_days',   COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='tardy'),0),
+      'excused_days', COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='excused'),0),
+      'minutes_present', COALESCE((SELECT minutes FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='present'),0)
+    )), '[]'::JSON) INTO _by_child
+    FROM (SELECT DISTINCT child_id FROM attendance_records WHERE family_id=_family AND day_date BETWEEN _from AND _to) days;
+
+    SELECT COUNT(DISTINCT day_date)::INT INTO _total_days FROM attendance_records ar WHERE ar.family_id=_family AND ar.day_date BETWEEN _from AND _to;
+    SELECT COUNT(*)::INT INTO _present_days FROM (
+      SELECT child_id, day_date FROM attendance_records WHERE family_id=_family AND day_date BETWEEN _from AND _to AND status='present'
+    ) s;
+  ELSE
+    _date_col := 'date';
+    WITH days AS (
+      SELECT ar.child_id, ar.status, COUNT(*)::INT AS cnt, SUM(ar.minutes_present)::INT AS minutes
+      FROM attendance_records ar
+      WHERE ar.family_id = _family AND ar.date BETWEEN _from AND _to
+      GROUP BY ar.child_id, ar.status
+    )
+    SELECT COALESCE(json_agg(json_build_object(
+      'child_id', child_id,
+      'present_days', COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='present'),0),
+      'absent_days',  COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='absent'),0),
+      'tardy_days',   COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='tardy'),0),
+      'excused_days', COALESCE((SELECT cnt FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='excused'),0),
+      'minutes_present', COALESCE((SELECT minutes FROM days d2 WHERE d2.child_id=days.child_id AND d2.status='present'),0)
+    )), '[]'::JSON) INTO _by_child
+    FROM (SELECT DISTINCT child_id FROM attendance_records WHERE family_id=_family AND date BETWEEN _from AND _to) days;
+
+    SELECT COUNT(DISTINCT date)::INT INTO _total_days FROM attendance_records ar WHERE ar.family_id=_family AND ar.date BETWEEN _from AND _to;
+    SELECT COUNT(*)::INT INTO _present_days FROM (
+      SELECT child_id, date FROM attendance_records WHERE family_id=_family AND date BETWEEN _from AND _to AND status='present'
+    ) s;
+  END IF;
 
   _pct := CASE WHEN _total_days = 0 THEN 0 ELSE ROUND((_present_days::NUMERIC / _total_days::NUMERIC)*100,2) END;
   RETURN json_build_object('by_child', _by_child, 'pct_present', _pct);
@@ -171,22 +285,41 @@ GRANT EXECUTE ON FUNCTION public.get_attendance_summary(UUID, DATE, DATE) TO aut
 -- STEP 2: UPLOADS SYSTEM
 -- ============================================================================
 
--- uploads table
-CREATE TABLE IF NOT EXISTS public.uploads (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_id UUID NOT NULL,
-  child_id UUID NULL REFERENCES public.children(id) ON DELETE SET NULL,
-  subject_id UUID NULL,
-  event_id UUID NULL REFERENCES public.events(id) ON DELETE SET NULL,
-  storage_path TEXT NOT NULL,
-  mime TEXT NOT NULL,
-  bytes INT NOT NULL DEFAULT 0,
-  title TEXT NOT NULL,
-  tags TEXT[] NOT NULL DEFAULT '{}',
-  notes TEXT,
-  created_by UUID NOT NULL DEFAULT auth.uid(),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- uploads table - ensure caption column exists
+DO $$
+BEGIN
+  -- Check if table exists
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables 
+    WHERE table_schema = 'public' AND table_name = 'uploads'
+  ) THEN
+    -- Create table with all columns including caption
+    CREATE TABLE public.uploads (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      family_id UUID NOT NULL,
+      child_id UUID NULL REFERENCES public.children(id) ON DELETE SET NULL,
+      subject_id UUID NULL,
+      event_id UUID NULL REFERENCES public.events(id) ON DELETE SET NULL,
+      storage_path TEXT NOT NULL,
+      mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+      bytes INT NOT NULL DEFAULT 0,
+      title TEXT NOT NULL DEFAULT '',
+      caption TEXT NULL,
+      tags TEXT[] NOT NULL DEFAULT '{}',
+      notes TEXT NULL,
+      created_by UUID NOT NULL DEFAULT auth.uid(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  ELSE
+    -- Table exists, add caption if missing
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_schema = 'public' AND table_name = 'uploads' AND column_name = 'caption'
+    ) THEN
+      ALTER TABLE public.uploads ADD COLUMN caption TEXT NULL;
+    END IF;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS uploads_family_created_idx ON public.uploads (family_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS uploads_child_created_idx ON public.uploads (child_id, created_at DESC);

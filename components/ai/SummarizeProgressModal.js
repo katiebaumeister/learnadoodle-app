@@ -24,6 +24,7 @@ export default function SummarizeProgressModal({
   visible,
   familyId,
   onClose,
+  onComplete, // Optional callback with proposedChanges (usually empty for summaries)
 }) {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState(null);
@@ -65,6 +66,14 @@ export default function SummarizeProgressModal({
 
       if (data && data.summary) {
         setSummary(data.summary);
+        
+        // SummarizeProgress typically doesn't return proposedChanges, but check anyway
+        const proposedChanges = data.proposed_changes || data.changes || [];
+        
+        // Call onComplete if provided (even if no changes, to signal completion)
+        if (onComplete) {
+          onComplete({ proposedChanges, summary: data.summary, result: data });
+        }
       }
     } catch (err) {
       console.error('[SummarizeProgressModal] Exception:', err);

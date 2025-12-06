@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
-import { CheckCircle, XCircle, Clock, Slash, Plus, BookOpen } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Slash, Plus, BookOpen, Play } from 'lucide-react';
 import { colors, shadows, getCategoryColor } from '../../theme/colors';
 
 function StatusIcon({ status }) {
@@ -106,6 +106,16 @@ export default function EventsTimeline({ events = [], onAddSession, onEventPress
                     {ev.duration_min}m
                   </Text>
                 </View>
+                
+                {/* Resume Chip */}
+                {ev.source_link && ev.resume_position && ev.status !== 'done' && (
+                  <View style={styles.resumeChip}>
+                    <Play size={10} color={colors.accent} fill={colors.accent} />
+                    <Text style={styles.resumeChipText}>
+                      Resume at {ev.resume_position}
+                    </Text>
+                  </View>
+                )}
                 
                 {/* Status Icon */}
                 <StatusIcon status={ev.status} />
@@ -242,5 +252,19 @@ const styles = StyleSheet.create({
   durationText: {
     fontSize: 12,
     fontWeight: '600',
+  },
+  resumeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#dbeafe',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  resumeChipText: {
+    fontSize: 11,
+    color: '#1e40af',
+    fontWeight: '500',
   },
 });

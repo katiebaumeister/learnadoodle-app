@@ -14,8 +14,16 @@ const filterTextNodes = (children) => {
   });
 };
 
-export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete }) {
+export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [] }) {
   const matrix = eachDayMatrix(date);
+  
+  // Convert blackout dates to Set for fast lookup
+  const blackoutDatesSet = new Set(blackoutDates.map(d => {
+    if (typeof d === 'string') return d;
+    return d.toISOString().split('T')[0];
+  }));
+  
+  console.log('[MonthGrid] Received blackoutDates:', blackoutDates, 'Set:', Array.from(blackoutDatesSet));
 
   // Event bucketing by day with deduplication
   const byDay = new Map();
@@ -95,7 +103,13 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               {week.map((day, j) => {
               const inMonth = isSameMonth(day, date);
               const k = day.toDateString();
-              const dayEvents = byDay.get(k) ?? [];
+              // Use local date components to avoid timezone shifts
+              const year = day.getFullYear();
+              const month = String(day.getMonth() + 1).padStart(2, '0');
+              const dayNum = String(day.getDate()).padStart(2, '0');
+              const dayDateStr = `${year}-${month}-${dayNum}`;
+              const isBlackout = blackoutDatesSet.has(dayDateStr);
+              const dayEvents = isBlackout ? [] : (byDay.get(k) ?? []); // No events on blackout days
               const isSel = selectedDate && day.toDateString() === selectedDate.toDateString();
               
               // Filter valid events and limit to 4 for display
@@ -114,17 +128,38 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                     borderRightWidth: j < 6 ? 1 : 0, 
                     borderRightColor: '#eef2f7', 
                     padding: 4,
-                    backgroundColor: isSel ? '#eef6ff' : 'transparent'
+                    backgroundColor: isSel ? '#eef6ff' : (isBlackout ? '#fef2f2' : 'transparent'),
+                    opacity: isBlackout ? 0.5 : 1
                   }}
                 >
                   <Text style={{ 
                     marginBottom: 2, 
                     fontSize: 12, 
-                    color: !inMonth ? '#d1d5db' : (isToday(day) ? '#0ea5e9' : '#374151'),
+                    color: !inMonth ? '#d1d5db' : (isToday(day) ? '#0ea5e9' : (isBlackout ? '#ef4444' : '#374151')),
                     fontWeight: isToday(day) ? '600' : 'normal'
                   }}>
                     {formatDayNum(day)}
                   </Text>
+                  
+                  {/* Blackout indicator */}
+                  {isBlackout && inMonth && (
+                    <View style={{
+                      backgroundColor: '#fee2e2',
+                      borderRadius: 4,
+                      paddingHorizontal: 4,
+                      paddingVertical: 2,
+                      marginBottom: 2,
+                      alignSelf: 'flex-start'
+                    }}>
+                      <Text style={{
+                        fontSize: 8,
+                        color: '#dc2626',
+                        fontWeight: '600'
+                      }}>
+                        OFF
+                      </Text>
+                    </View>
+                  )}
                   
                   {/* Event Chips Container */}
                   <View style={{ 

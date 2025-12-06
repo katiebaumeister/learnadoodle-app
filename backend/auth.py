@@ -6,6 +6,8 @@ from fastapi import Depends, HTTPException, status, Request
 
 from supabase_client import get_admin_client
 
+_LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").lower()
+
 _rate_lock = threading.Lock()
 _rate_hits = {}
 _RATE_LIMIT_WINDOW = 60  # seconds
@@ -38,12 +40,15 @@ def get_current_user(request: Request) -> dict:
 
     if auth_header and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
-        print(f"[AUTH] Found Bearer token: {token[:20]}...")
+        if _LOG_LEVEL == "debug":
+            print(f"[AUTH] Found Bearer token: {token[:20]}...")
     elif "sb-access-token" in request.cookies:
         token = request.cookies.get("sb-access-token")
-        print(f"[AUTH] Found cookie token")
+        if _LOG_LEVEL == "debug":
+            print(f"[AUTH] Found cookie token")
     else:
-        print(f"[AUTH] No Authorization header found. Headers: {list(request.headers.keys())}")
+        if _LOG_LEVEL == "debug":
+            print(f"[AUTH] No Authorization header found. Headers: {list(request.headers.keys())}")
 
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing access token")
@@ -52,15 +57,18 @@ def get_current_user(request: Request) -> dict:
     try:
         resp = supabase.auth.get_user(token)
         if not resp or not resp.user:
-            print(f"[AUTH] Invalid token response")
+            if _LOG_LEVEL == "debug":
+                print(f"[AUTH] Invalid token response")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token")
     except Exception as exc:
-        print(f"[AUTH] Token validation error: {type(exc).__name__}: {str(exc)}")
+        if _LOG_LEVEL == "debug":
+            print(f"[AUTH] Token validation error: {type(exc).__name__}: {str(exc)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token") from exc
 
     user = resp.user
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
-    print(f"[AUTH] Authenticated user: {user.email}")
+    if _LOG_LEVEL == "debug":
+        print(f"[AUTH] Authenticated user: {user.email}")
     return {"id": user.id, "email": user.email}

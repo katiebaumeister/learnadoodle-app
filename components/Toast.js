@@ -7,15 +7,17 @@ const ToastContext = createContext(null);
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
-  const push = useCallback((message, type = 'info') => {
+  const push = useCallback((message, type = 'info', persistent = false) => {
     const id = Date.now().toString();
-    const newToast = { id, message, type };
+    const newToast = { id, message, type, persistent };
     setToasts((prev) => [...prev, newToast]);
     
-    // Auto-dismiss after 3 seconds
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
+    // Auto-dismiss after 3 seconds unless persistent
+    if (!persistent) {
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 3000);
+    }
     
     return id;
   }, []);
@@ -60,7 +62,7 @@ const styles = StyleSheet.create({
     position: Platform.OS === 'web' ? 'fixed' : 'absolute',
     bottom: 16,
     right: 16,
-    zIndex: 9999,
+    zIndex: 999999, // Higher than modal overlays
     gap: 8,
     alignItems: 'flex-end',
   },

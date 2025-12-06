@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { Plus, Home, CalendarDays, Search, Compass, FileText } from 'lucide-react';
+import { Plus, Home, CalendarDays, Search, Compass, FileText, BookOpen, Brain, UserCircle } from 'lucide-react';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 
@@ -38,13 +38,9 @@ const SIDEBAR_COLORS = {
 };
 
 const CHILD_SECTIONS = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'schedule', label: 'Schedule' },
-  { key: 'assignments', label: 'Assignments' },
-  { key: 'projects', label: 'Projects' },
-  { key: 'syllabus', label: 'Syllabus' },
-  { key: 'portfolio', label: 'Portfolio' },
-  { key: 'notes', label: 'Notes' },
+  { key: 'affirmation', label: 'Affirmation' },
+  { key: 'updates', label: 'Updates' },
+  { key: 'growth', label: 'Growth' },
 ];
 
 export default function LeftRail({
@@ -52,7 +48,7 @@ export default function LeftRail({
   onSelectTop,
   childrenList = [],
   activeChildId,
-  activeChildSection = 'overview',
+  activeChildSection = 'affirmation',
   onSelectChild,
   onSelectChildSection,
   onOpenNew,
@@ -62,6 +58,7 @@ export default function LeftRail({
   userRole = 'parent',
 }) {
   const [isCollapsed] = useState(false);
+  const [expandedChildren, setExpandedChildren] = useState(new Set());
 
   const handleNewPress = useCallback(
     (event) => {
@@ -84,8 +81,11 @@ export default function LeftRail({
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'explore', label: 'Explore', icon: Compass },
+        { key: 'intelligence', label: 'Intelligence', icon: Brain },
+        { key: 'materials', label: 'Library', icon: BookOpen },
+        { key: 'profile', label: 'Profile', icon: UserCircle },
         { key: 'records', label: 'Records', icon: FileText },
+        { key: 'explore', label: 'Explore', icon: Compass },
       ];
 
       // Filter based on role
@@ -149,36 +149,6 @@ export default function LeftRail({
               </TouchableOpacity>
             );
           })}
-
-          {onOpenSearch ? (
-            <TouchableOpacity
-              style={[
-                styles.navItem,
-                isCollapsed && styles.navItemCollapsed,
-              ]}
-              onPress={onOpenSearch}
-              accessibilityRole="button"
-              accessibilityLabel="Open search"
-            >
-              <Search size={18} color="rgba(15,23,42,0.6)" />
-              {!isCollapsed && <Text style={styles.navLabel}>Search</Text>}
-            </TouchableOpacity>
-          ) : null}
-
-          {onOpenNew && userRole !== 'child' ? (
-            <TouchableOpacity
-              style={[
-                styles.navItem,
-                isCollapsed && styles.navItemCollapsed,
-              ]}
-              onPress={handleNewPress}
-              accessibilityRole="button"
-              accessibilityLabel="Create new item"
-            >
-              <Plus size={18} color="rgba(15,23,42,0.6)" />
-              {!isCollapsed && <Text style={styles.navLabel}>New</Text>}
-            </TouchableOpacity>
-          ) : null}
         </View>
 
         <View style={styles.divider} />
@@ -191,6 +161,7 @@ export default function LeftRail({
           <View style={styles.familyGroup}>
             {childrenList.map((child) => {
               const active = activeChildId === child.id;
+              const isExpanded = expandedChildren.has(child.id);
               return (
                 <View key={child.id} style={styles.childBlock}>
                   <TouchableOpacity
@@ -199,7 +170,20 @@ export default function LeftRail({
                       active && styles.childItemActive,
                       isCollapsed && styles.childItemCollapsed,
                     ]}
-                    onPress={() => onSelectChild?.(child.id)}
+                    onPress={() => {
+                      if (!isCollapsed) {
+                        const newExpanded = new Set(expandedChildren);
+                        if (isExpanded) {
+                          newExpanded.delete(child.id);
+                        } else {
+                          newExpanded.add(child.id);
+                          onSelectChild?.(child.id);
+                        }
+                        setExpandedChildren(newExpanded);
+                      } else {
+                        onSelectChild?.(child.id);
+                      }
+                    }}
                   >
                     {renderChildAvatar(child)}
                     {!isCollapsed && (
@@ -214,7 +198,7 @@ export default function LeftRail({
                     )}
                   </TouchableOpacity>
 
-                  {!isCollapsed && active && (
+                  {!isCollapsed && isExpanded && (
                     <View style={styles.childSections}>
                       {CHILD_SECTIONS.map((section) => {
                         const sectionActive = activeChildSection === section.key;
@@ -245,6 +229,39 @@ export default function LeftRail({
             })}
           </View>
         )}
+
+        {/* Utility Zone - Bottom */}
+        <View style={styles.utilityZone}>
+          {onOpenNew && userRole !== 'child' ? (
+            <TouchableOpacity
+              style={[
+                styles.navItem,
+                isCollapsed && styles.navItemCollapsed,
+              ]}
+              onPress={handleNewPress}
+              accessibilityRole="button"
+              accessibilityLabel="Create new item"
+            >
+              <Plus size={18} color="rgba(15,23,42,0.6)" />
+              {!isCollapsed && <Text style={styles.navLabel}>New</Text>}
+            </TouchableOpacity>
+          ) : null}
+
+          {onOpenSearch ? (
+            <TouchableOpacity
+              style={[
+                styles.navItem,
+                isCollapsed && styles.navItemCollapsed,
+              ]}
+              onPress={onOpenSearch}
+              accessibilityRole="button"
+              accessibilityLabel="Open search"
+            >
+              <Search size={18} color="rgba(15,23,42,0.6)" />
+              {!isCollapsed && <Text style={styles.navLabel}>Search</Text>}
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
     </View>
   );
@@ -371,6 +388,14 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     paddingLeft: 48,
+    paddingTop: 4,
+  },
+  utilityZone: {
+    marginTop: 'auto',
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: SIDEBAR_COLORS.border,
+    gap: 8,
   },
   childSectionButton: {
     paddingHorizontal: 8,

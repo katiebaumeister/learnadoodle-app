@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, TextInput, ScrollView, ActivityIndicator, Platform, Modal } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -42,7 +42,9 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
     }
   }, []);
 
-  // Debounce search
+  // Instant search with client-side caching
+  const searchCache = useRef(new Map());
+  
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
@@ -53,7 +55,17 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
       return;
     }
 
+    // Check cache first for instant results
+    const cacheKey = `${familyId}:${query.toLowerCase()}`;
+    const cached = searchCache.current.get(cacheKey);
+    if (cached) {
+      setResults(cached);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
+    // Reduced debounce for near-instant feel
     const id = setTimeout(async () => {
       try {
         const results = [];
@@ -170,21 +182,39 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
           });
         }
 
+        // Run all searches in parallel for instant results
+        const [eventsResult, syllabiResult, uploadsResult, notesResult] = await Promise.all([
+          supabase
+            .from('events')
+            .select('id, title, start_ts, child_id')
+            .eq('family_id', familyId)
+            .ilike('title', `%${query}%`)
+            .limit(10)
+            .order('start_ts', { ascending: false }),
+          supabase
+            .from('syllabi')
+            .select('id, title, child_id, subject_id')
+            .eq('family_id', familyId)
+            .ilike('title', `%${query}%`)
+            .limit(5),
+          supabase
+            .from('uploads')
+            .select('id, title, child_id')
+            .eq('family_id', familyId)
+            .ilike('title', `%${query}%`)
+            .limit(5),
+          supabase
+            .from('notes')
+            .select('id, text, description, child_id, created_at')
+            .eq('family_id', familyId)
+            .or(`text.ilike.%${query}%,description.ilike.%${query}%`)
+            .limit(5)
+            .order('created_at', { ascending: false }),
+        ]);
+
         // 1) Search Events
-        const { data: events, error: eventsError } = await supabase
-          .from('events')
-          .select('id, title, start_ts, child_id')
-          .eq('family_id', familyId)
-          .ilike('title', `%${query}%`)
-          .limit(10)
-          .order('start_ts', { ascending: false });
-
-        if (eventsError) {
-          console.error('Error fetching events for search:', eventsError);
-        }
-
-        if (events) {
-          events.forEach((e) => {
+        if (eventsResult.data) {
+          eventsResult.data.forEach((e) => {
             const childName = e.child_id ? (childrenMap[e.child_id] || 'Unknown') : 'Unknown';
             const dateStr = e.start_ts
               ? new Date(e.start_ts).toLocaleDateString()
@@ -200,19 +230,8 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
         }
 
         // 2) Search Documents (syllabi)
-        const { data: syllabi, error: syllabiError } = await supabase
-          .from('syllabi')
-          .select('id, title, child_id, subject_id')
-          .eq('family_id', familyId)
-          .ilike('title', `%${query}%`)
-          .limit(5);
-
-        if (syllabiError) {
-          console.error('Error fetching syllabi for search:', syllabiError);
-        }
-
-        if (syllabi) {
-          syllabi.forEach((s) => {
+        if (syllabiResult.data) {
+          syllabiResult.data.forEach((s) => {
             const childName = s.child_id ? (childrenMap[s.child_id] || 'Unknown') : 'Unknown';
             results.push({
               id: `syllabus-${s.id}`,
@@ -225,19 +244,8 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
         }
 
         // 3) Search Uploads
-        const { data: uploads, error: uploadsError } = await supabase
-          .from('uploads')
-          .select('id, title, child_id')
-          .eq('family_id', familyId)
-          .ilike('title', `%${query}%`)
-          .limit(5);
-
-        if (uploadsError) {
-          console.error('Error fetching uploads for search:', uploadsError);
-        }
-
-        if (uploads) {
-          uploads.forEach((u) => {
+        if (uploadsResult.data) {
+          uploadsResult.data.forEach((u) => {
             const childName = u.child_id ? (childrenMap[u.child_id] || 'Unknown') : 'Unknown';
             results.push({
               id: `upload-${u.id}`,
@@ -245,6 +253,22 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
               title: u.title,
               subtitle: `${childName} • Upload`,
               payload: { uploadId: u.id },
+            });
+          });
+        }
+
+        // 4) Search Notes
+        if (notesResult.data) {
+          notesResult.data.forEach((n) => {
+            const childName = n.child_id ? (childrenMap[n.child_id] || 'Unknown') : 'Unknown';
+            const noteText = n.text || n.description || '';
+            const preview = noteText.length > 50 ? noteText.substring(0, 50) + '...' : noteText;
+            results.push({
+              id: `note-${n.id}`,
+              type: 'note',
+              title: preview,
+              subtitle: `${childName} • Note`,
+              payload: { noteId: n.id },
             });
           });
         }
@@ -297,6 +321,14 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
           sampleResults: results.slice(0, 5).map(r => ({ id: r.id, type: r.type, title: r.title }))
         });
 
+        // Cache results for instant future searches
+        searchCache.current.set(cacheKey, results);
+        // Limit cache size to 50 entries
+        if (searchCache.current.size > 50) {
+          const firstKey = searchCache.current.keys().next().value;
+          searchCache.current.delete(firstKey);
+        }
+
         setResults(results);
       } catch (e) {
         console.error('search failed', e);
@@ -304,7 +336,7 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
       } finally {
         setLoading(false);
       }
-    }, 180);
+    }, 50); // Reduced from 180ms to 50ms for near-instant feel
 
     return () => clearTimeout(id);
   }, [query, familyId]);
@@ -342,6 +374,8 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
         key = 'Planner Events';
       } else if (r.type === 'document') {
         key = 'Docs & Records';
+      } else if (r.type === 'note') {
+        key = 'Notes';
       } else if (r.type === 'course') {
         key = 'Explore Courses';
       } else if (r.type === 'child' || r.type === 'child-section') {
@@ -403,6 +437,10 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
       onClose();
     } else if (item.type === 'document') {
       navHandler('records');
+      onClose();
+    } else if (item.type === 'note') {
+      const noteId = item.payload?.noteId || item.id.replace('note-', '');
+      navHandler('records', null, { noteId });
       onClose();
     } else if (item.type === 'child' || item.type === 'child-section') {
       const childId = item.payload?.childId || item.id.replace(/^child-/, '').replace(/-\w+$/, '');

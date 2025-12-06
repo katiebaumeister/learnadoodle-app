@@ -1,34 +1,115 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
 import { Plus } from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
+import { shouldSuppressError } from '../../../lib/apiClient';
 import { colors } from '../../../theme/colors';
 
 export default function PortfolioTab({ child }) {
-  // TODO: load from evidence/uploads table + Supabase Storage
-  const items = [
-    {
-      id: "pf1",
-      type: "Photo",
-      subject: "Art",
-      title: "Watercolor landscape",
-      date: "Nov 10",
-      thumbnailUrl: null,
-    },
-    {
-      id: "pf2",
-      type: "PDF",
-      subject: "Writing",
-      title: "Short story – 'The Lost Rocket'",
-      date: "Nov 7",
-      thumbnailUrl: null,
-    },
-  ];
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchPortfolioItems();
+  }, [child.id]);
+
+  const fetchPortfolioItems = async () => {
+    if (!child?.id) return;
+    
+    try {
+      setLoading(true);
+      
+      const { data: uploads, error } = await supabase
+        .from('uploads')
+        .select('id, storage_path, title, url, kind, created_at, caption, subject_id, filename')
+        .eq('child_id', child.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        // Log error details for debugging
+        console.error('[PortfolioTab] Error loading uploads:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        });
+        if (!shouldSuppressError(error) && error.code !== 'PGRST116') throw error;
+      }
+
+      if (!uploads || uploads.length === 0) {
+        setItems([]);
+        setLoading(false);
+        return;
+      }
+
+      // Fetch subject names separately
+      const subjectIds = [...new Set(uploads.map(u => u.subject_id).filter(Boolean))];
+      const subjectLookup = {};
+      
+      if (subjectIds.length > 0) {
+        const { data: subjects } = await supabase
+          .from('subject')
+          .select('id, name')
+          .in('id', subjectIds);
+        
+        (subjects || []).forEach(s => {
+          subjectLookup[s.id] = s.name;
+        });
+      }
+
+      const formattedItems = uploads.map(upload => {
+        // Extract filename from storage_path or use filename column if available
+        const filename = upload.filename || (upload.storage_path ? upload.storage_path.split('/').pop() : '');
+        const fileExt = filename?.split('.').pop()?.toLowerCase() || '';
+        let type = 'File';
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExt)) {
+          type = 'Photo';
+        } else if (fileExt === 'pdf') {
+          type = 'PDF';
+        } else if (['doc', 'docx'].includes(fileExt)) {
+          type = 'Document';
+        }
+
+        return {
+          id: upload.id,
+          type,
+          subject: upload.subject_id ? (subjectLookup[upload.subject_id] || 'Unassigned') : 'Unassigned',
+          title: upload.caption || upload.title || filename || 'Untitled',
+          date: new Date(upload.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+          thumbnailUrl: type === 'Photo' ? upload.url : null,
+          url: upload.url,
+        };
+      });
+
+      setItems(formattedItems);
+    } catch (error) {
+      console.error('Error fetching portfolio items:', error);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.text} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Portfolio for {child.first_name}</Text>
-        <TouchableOpacity style={styles.addButton}>
+        <TouchableOpacity 
+          style={styles.addButton}
+          onPress={() => {
+            // TODO: Open upload modal
+            console.log('Upload work clicked');
+          }}
+        >
           <Plus size={14} color={colors.card} />
           <Text style={styles.addButtonText}>Upload work</Text>
         </TouchableOpacity>
@@ -44,7 +125,11 @@ export default function PortfolioTab({ child }) {
         <View style={styles.itemsGrid}>
           {items.map((item) => (
             <View key={item.id} style={styles.itemCard}>
-              <View style={styles.thumbnail} />
+              {item.thumbnailUrl ? (
+                <Image source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} />
+              ) : (
+                <View style={styles.thumbnail} />
+              )}
               <View style={styles.itemInfo}>
                 <View style={styles.itemHeader}>
                   <Text style={styles.itemTitle}>{item.title}</Text>

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
-import { ChevronLeft, Edit, Sparkles } from 'lucide-react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors, shadows } from '../theme/colors';
 import { checkFeatureFlags } from '../lib/services/yearClient';
 import { compareToSyllabusWeek, getWeekStart } from '../lib/apiClient';
+
+
 import OverviewTab from './child/tabs/OverviewTab';
 import ScheduleTab from './child/tabs/ScheduleTab';
 import AssignmentsTab from './child/tabs/AssignmentsTab';
@@ -12,6 +13,20 @@ import ProjectsTab from './child/tabs/ProjectsTab';
 import SyllabusTab from './child/tabs/SyllabusTab';
 import PortfolioTab from './child/tabs/PortfolioTab';
 import NotesTab from './child/tabs/NotesTab';
+import MaterialsTab from './child/tabs/MaterialsTab';
+import StudentSettings from './settings/StudentSettings';
+import WebChildProgressTab from './child/tabs/WebChildProgressTab';
+import WebChildStudentSettingsTab from './child/tabs/WebChildStudentSettingsTab';
+import WebChildRecordsTab from './child/tabs/WebChildRecordsTab';
+import WebChildAffirmationTab from './child/tabs/WebChildAffirmationTab';
+import WebChildUpdatesTab from './child/tabs/WebChildUpdatesTab';
+import WebChildGrowthTab from './child/tabs/WebChildGrowthTab';
+import SkillsTab from './child/tabs/SkillsTab';
+import LearnerProfileSettings from './LearnerProfileSettings';
+import LearningBiography from './child/tabs/LearningBiography';
+import MasteryGrowth from './child/tabs/MasteryGrowth';
+import { ColorModeProvider } from '../contexts/ColorModeContext';
+import ComprehensiveProfile from './profile/ComprehensiveProfile';
 
 function useChildProfile(childId, weekStart) {
   const [data, setData] = useState(null);
@@ -57,7 +72,8 @@ export default function ChildProfile({
   onBack,
   onNavigate,
   onPlanYear,
-  activeChildSection = 'overview',
+  onAddSyllabus,
+  activeChildSection = 'affirmation',
 }) {
   const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
 
@@ -131,82 +147,160 @@ export default function ChildProfile({
 
   const renderTabContent = () => {
     switch (activeChildSection) {
+      case 'affirmation':
+        if (Platform.OS === 'web') {
+          return (
+            <WebChildAffirmationTab
+              childId={child.id}
+              childName={child.name || child.first_name || childName}
+              familyId={familyId}
+              onNavigate={onNavigate}
+              activeChildSection={activeChildSection}
+            />
+          );
+        }
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Affirmation view coming soon for mobile
+            </Text>
+          </View>
+        );
+      case 'updates':
+        if (Platform.OS === 'web') {
+          return (
+            <WebChildUpdatesTab
+              childId={child.id}
+              childName={child.name || child.first_name || childName}
+              familyId={familyId}
+              onNavigate={onNavigate}
+            />
+          );
+        }
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Updates view coming soon for mobile
+            </Text>
+          </View>
+        );
+      case 'growth':
+        if (Platform.OS === 'web') {
+          return (
+            <WebChildGrowthTab
+              childId={child.id}
+              childName={child.name || child.first_name || childName}
+              familyId={familyId}
+              onNavigate={onNavigate}
+            />
+          );
+        }
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Growth view coming soon for mobile
+            </Text>
+          </View>
+        );
       case 'schedule':
         return <ScheduleTab child={child} />;
       case 'assignments':
-        return <AssignmentsTab child={child} />;
+        return <AssignmentsTab child={child} familyId={familyId} />;
       case 'projects':
         return <ProjectsTab child={child} />;
       case 'syllabus':
-        return <SyllabusTab child={child} />;
+        return <SyllabusTab child={child} familyId={familyId} onAddSyllabus={onAddSyllabus} />;
       case 'portfolio':
         return <PortfolioTab child={child} />;
+      case 'progress':
+        if (Platform.OS === 'web') {
+          return <WebChildProgressTab childId={child.id} familyId={familyId} onNavigate={onNavigate} />;
+        }
+        // Mobile: placeholder for now - can create ProgressTab.js later if needed
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Progress view coming soon for mobile
+            </Text>
+          </View>
+        );
       case 'notes':
         return <NotesTab child={child} />;
+      case 'materials':
+        return <MaterialsTab child={child} familyId={familyId} />;
+      case 'skills':
+        return <SkillsTab child={child} />;
+      case 'records':
+        if (Platform.OS === 'web') {
+          return (
+            <WebChildRecordsTab
+              childId={child.id}
+              familyId={familyId}
+              childName={child.name || child.first_name || childName}
+              onNavigate={onNavigate}
+            />
+          );
+        }
+        // Mobile: show a simplified view or redirect
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Records view coming soon for mobile
+            </Text>
+          </View>
+        );
+      case 'learning-biography':
+        return <LearningBiography childId={child.id} childName={child.name || child.first_name || childName} />;
+      case 'mastery-growth':
+        return <MasteryGrowth childId={child.id} />;
+      case 'complete-profile':
+        if (Platform.OS === 'web') {
+          return <ComprehensiveProfile childId={child.id} familyId={familyId} />;
+        }
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Complete profile view available on web
+            </Text>
+          </View>
+        );
+      case 'student-settings':
+        if (Platform.OS === 'web') {
+          return <WebChildStudentSettingsTab childId={child.id} childName={child.name || child.first_name || childName} familyId={familyId} />;
+        }
+        return <StudentSettings childId={child.id} childName={child.name || child.first_name || childName} />;
+      case 'learner-profile':
+        return <LearnerProfileSettings childId={child.id} childName={child.name || child.first_name || childName} familyId={familyId} />;
       case 'overview':
       default:
+        // Default to affirmation tab instead of overview
+        if (Platform.OS === 'web') {
+          return (
+            <WebChildAffirmationTab
+              childId={child.id}
+              childName={child.name || child.first_name || childName}
+              familyId={familyId}
+              onNavigate={onNavigate}
+            />
+          );
+        }
         return (
-          <OverviewTab
-            child={child}
-            data={data}
-            weekStart={weekStart}
-            setWeekStart={setWeekStart}
-            pacingData={pacingData}
-            onAITopOff={onAITopOff}
-            onEditGoal={onEditGoal}
-            onAddGoal={onAddGoal}
-            onOpenPlanner={onOpenPlanner}
-            onPlanYear={onPlanYear}
-            yearPlansEnabled={yearPlansEnabled}
-          />
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: colors.text, textAlign: 'center' }}>
+              Affirmation view coming soon for mobile
+            </Text>
+          </View>
         );
     }
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <ChevronLeft size={20} color={colors.muted} />
-          <Text style={styles.backText}>Back to Children</Text>
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <View style={styles.headerLeft}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {(child.name || child.first_name || childName || 'C').charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View>
-              <Text style={styles.title}>{child.name || child.first_name || childName}</Text>
-              {activeChildSection === 'overview' && (
-                <Text style={styles.subtitle}>Week of {weekLabel}</Text>
-              )}
-            </View>
-            </View>
-          <View style={styles.headerActions}>
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={onEditInfo}
-          >
-            <Edit size={16} color={colors.text} />
-            <Text style={styles.headerButtonText}>Edit info</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={onAISummary}
-          >
-            <Sparkles size={16} color={colors.text} />
-            <Text style={styles.headerButtonText}>AI Summary</Text>
-          </TouchableOpacity>
-          </View>
-        </View>
+    <ColorModeProvider childId={childId}>
+      <View style={styles.container}>
+        {/* Tab Content */}
+        {renderTabContent()}
       </View>
-
-      {/* Tab Content */}
-      {renderTabContent()}
-    </View>
+    </ColorModeProvider>
   );
 }
 
@@ -231,75 +325,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.muted,
     textAlign: 'center',
-  },
-  header: {
-    padding: 24,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  backText: {
-    fontSize: 14,
-    color: colors.muted,
-    fontWeight: '500',
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.blueSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.blueBold,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  headerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: colors.radiusMd,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  headerButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.text,
   },
 });

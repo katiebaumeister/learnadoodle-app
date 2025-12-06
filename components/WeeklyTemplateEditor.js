@@ -182,7 +182,9 @@ const WeeklyTemplateEditor = ({
             textAlign: 'center',
             minHeight: 36,
             width: '100%',
-            outline: 'none',
+            ...(Platform.OS === 'web' && {
+              outlineStyle: 'none',
+            }),
           }}
         />
       ) : (

@@ -56,5 +56,5 @@ echo "📚 API docs available at http://localhost:8000/docs"
 echo "🛑 Press Ctrl+C to stop"
 echo ""
 
-python -m uvicorn main:app --reload --port 8000
+python -m uvicorn main:app --reload --port 8000 --log-level warning --no-access-log
 

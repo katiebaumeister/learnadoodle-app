@@ -23,7 +23,7 @@ from logger import log_event
 from metrics import increment_counter
 
 try:
-    from llm import llm_pack_week, llm_catch_up, llm_event_tags, llm_summarize_progress, llm_generate_syllabus, llm_inspire_learning
+    from llm import llm_pack_week, llm_catch_up, llm_event_tags, llm_summarize_progress, llm_generate_syllabus, llm_inspire_learning, llm_generate_learner_recommendations
 except ImportError:
     import importlib.util
     spec = importlib.util.spec_from_file_location("llm", backend_dir / "llm.py")
@@ -35,6 +35,7 @@ except ImportError:
     llm_summarize_progress = getattr(llm_module, 'llm_summarize_progress', None)
     llm_generate_syllabus = getattr(llm_module, 'llm_generate_syllabus', None)
     llm_inspire_learning = getattr(llm_module, 'llm_inspire_learning', None)
+    llm_generate_learner_recommendations = getattr(llm_module, 'llm_generate_learner_recommendations', None)
 
 try:
     from routers.util import load_planning_context
@@ -364,7 +365,7 @@ async def summarize_progress(
         
         try:
             print(f"[AI_ROUTES] Logging event")
-            log_event("ai_summarize_progress", {"family_id": family_id, "task_id": task_id})
+            log_event("ai_summarize_progress", family_id=family_id, task_id=task_id)
             print(f"[AI_ROUTES] Event logged")
         except Exception as e:
             print(f"[AI_ROUTES] Warning: Failed to log event (non-blocking): {e}")
@@ -471,7 +472,7 @@ async def pack_week(
         except Exception as ctx_error:
             # If load_planning_context fails (e.g., blackout_periods table doesn't exist),
             # fall back to basic context
-            log_event("ai_pack_week.context_load_error", {"task_id": task_id, "error": str(ctx_error)})
+            log_event("ai_pack_week.context_load_error", task_id=task_id, error=str(ctx_error))
             # Get basic availability and events using get_week_view RPC
             week_view_res = supabase.rpc(
                 "get_week_view",
@@ -531,7 +532,7 @@ async def pack_week(
             error_type = type(llm_error).__name__
             print(f"[AI_ROUTES] LLM error: {error_type}: {error_msg}")
             print(f"[AI_ROUTES] Exception details: {repr(llm_error)}")
-            log_event("ai_pack_week.llm_error", {"task_id": task_id, "error": error_msg})
+            log_event("ai_pack_week.llm_error", task_id=task_id, error=error_msg)
             # Fallback: return empty result with error message
             try:
                 _update_ai_task(supabase, task_id, "failed", error=f"LLM call failed: {error_msg}")
@@ -623,7 +624,7 @@ async def pack_week(
                 error_msg = str(e)
                 print(f"[AI_ROUTES] Error creating event {idx+1}: {error_msg}")
                 print(f"[AI_ROUTES] Event data: {event_data}")
-                log_event("ai_pack_week.event_create_error", {"task_id": task_id, "error": error_msg, "event_data": event_data})
+                log_event("ai_pack_week.event_create_error", task_id=task_id, error=error_msg, event_data=event_data)
                 # Continue with other events
         
         # Refresh calendar cache
@@ -641,7 +642,7 @@ async def pack_week(
         except Exception as e:
             error_msg = str(e)
             print(f"[AI_ROUTES] Warning: Failed to refresh cache (non-blocking): {error_msg}")
-            log_event("ai_pack_week.cache_refresh_error", {"task_id": task_id, "error": error_msg})
+            log_event("ai_pack_week.cache_refresh_error", task_id=task_id, error=error_msg)
         
         notes = "\n".join(rationale) if rationale else f"Created {len(created_events)} events for the week."
         
@@ -666,7 +667,7 @@ async def pack_week(
         
         try:
             print(f"[AI_ROUTES] Logging event")
-            log_event("ai_pack_week", {"family_id": family_id, "task_id": task_id, "events_created": len(created_events)})
+            log_event("ai_pack_week", family_id=family_id, task_id=task_id, events_created=len(created_events))
             print(f"[AI_ROUTES] Event logged")
         except Exception as e:
             print(f"[AI_ROUTES] Warning: Failed to log event (non-blocking): {e}")
@@ -783,7 +784,7 @@ async def catch_up(
             )
         except Exception as ctx_error:
             # If load_planning_context fails, fall back to basic context
-            log_event("ai_catch_up.context_load_error", {"task_id": task_id, "error": str(ctx_error)})
+            log_event("ai_catch_up.context_load_error", task_id=task_id, error=str(ctx_error))
             # Get basic availability using get_week_view RPC
             week_view_res = supabase.rpc(
                 "get_week_view",
@@ -836,7 +837,7 @@ async def catch_up(
         try:
             llm_result = await llm_catch_up(llm_context)
         except Exception as llm_error:
-            log_event("ai_catch_up.llm_error", {"task_id": task_id, "error": str(llm_error)})
+            log_event("ai_catch_up.llm_error", task_id=task_id, error=str(llm_error))
             # Fallback: return empty result with error message
             _update_ai_task(supabase, task_id, "failed", error=f"LLM call failed: {str(llm_error)}")
             raise HTTPException(
@@ -948,7 +949,7 @@ async def catch_up(
                         "reason": move.get("reason", "Rescheduled")
                     })
             except Exception as e:
-                log_event("ai_catch_up.event_update_error", {"task_id": task_id, "error": str(e), "move": move})
+                log_event("ai_catch_up.event_update_error", task_id=task_id, error=str(e), move=move)
                 # Continue with other moves
         
         # Refresh calendar cache
@@ -962,7 +963,7 @@ async def catch_up(
                 }
             ).execute()
         except Exception as e:
-            log_event("ai_catch_up.cache_refresh_error", {"task_id": task_id, "error": str(e)})
+            log_event("ai_catch_up.cache_refresh_error", task_id=task_id, error=str(e))
         
         notes = "\n".join(rationale) if rationale else f"Rescheduled {len(rescheduled_events)} events."
         
@@ -974,7 +975,7 @@ async def catch_up(
         )
         
         increment_counter("ai_catch_up", {"family_id": family_id})
-        log_event("ai_catch_up", {"family_id": family_id, "task_id": task_id, "events_rescheduled": len(rescheduled_events)})
+        log_event("ai_catch_up", family_id=family_id, task_id=task_id, events_rescheduled=len(rescheduled_events))
         
         return CatchUpOut(
             ok=True,
@@ -1063,7 +1064,7 @@ async def get_event_tags(
             llm_result = await llm_event_tags(context)
         except Exception as llm_error:
             error_msg = str(llm_error)
-            log_event("ai_event_tags.llm_error", {"event_id": body.event_id, "error": error_msg})
+            log_event("ai_event_tags.llm_error", event_id=body.event_id, error=error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"AI service unavailable: {error_msg}"
@@ -1088,7 +1089,7 @@ async def get_event_tags(
         raise
     except Exception as e:
         error_msg = str(e)
-        log_event("ai_event_tags.error", {"event_id": body.event_id, "error": error_msg})
+        log_event("ai_event_tags.error", event_id=body.event_id, error=error_msg)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate tags: {error_msg}"
@@ -1146,7 +1147,7 @@ async def generate_syllabus(
             llm_result = await llm_generate_syllabus(url_to_use, metadata)
         except Exception as llm_error:
             error_msg = str(llm_error)
-            log_event("ai_generate_syllabus.llm_error", {"url": body.url[:50], "error": error_msg})
+            log_event("ai_generate_syllabus.llm_error", url=body.url[:50], error=error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"AI service unavailable: {error_msg}"
@@ -1233,7 +1234,7 @@ async def generate_syllabus(
         raise
     except Exception as e:
         error_msg = str(e)
-        log_event("ai_generate_syllabus.error", {"url": body.url[:50], "error": error_msg})
+        log_event("ai_generate_syllabus.error", url=body.url[:50], error=error_msg)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate syllabus: {error_msg}"
@@ -1342,6 +1343,20 @@ async def inspire_learning(
                             "url": course.get("public_url")
                         })
         
+        # Get support profile if available
+        support_profile = None
+        try:
+            profile_res = supabase.table("child_support_profiles").select("*").eq("child_id", body.child_id).maybe_single().execute()
+            if profile_res.data:
+                support_profile = {
+                    "diagnoses": profile_res.data.get("diagnoses", []),
+                    "learning_modalities": profile_res.data.get("learning_modalities", []),
+                    "support_needs": profile_res.data.get("support_needs", []),
+                    "executive_function": profile_res.data.get("executive_function", [])
+                }
+        except Exception as profile_err:
+            log_event("ai_inspire_learning.profile_error", child_id=body.child_id, error=str(profile_err))
+        
         # Build context for LLM
         context = {
             "family_id": family_id,
@@ -1350,7 +1365,8 @@ async def inspire_learning(
             "subjects": subjects,
             "recent_outcomes": recent_outcomes,
             "viewing_history": viewing_history,
-            "interests": interests
+            "interests": interests,
+            "support_profile": support_profile
         }
         
         # Call LLM to generate suggestions
@@ -1483,5 +1499,126 @@ async def inspire_learning(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate learning suggestions: {error_msg}"
+        )
+
+
+class GenerateLearnerRecommendationsInput(BaseModel):
+    family_id: str
+    child_id: str
+    child_name: str
+    age: Optional[int] = None
+    grade: Optional[str] = None
+    diagnoses: Optional[List[str]] = []
+    learning_modalities: Optional[List[str]] = []
+    support_needs: Optional[List[str]] = []
+    executive_function: Optional[List[str]] = []
+    strengths: Optional[List[str]] = []
+    interests: Optional[List[str]] = []
+    academic_strengths: Optional[List[str]] = []
+    academic_challenges: Optional[List[str]] = []
+    preferred_subjects: Optional[List[str]] = []
+    motivation_factors: Optional[List[str]] = []
+    recent_events: Optional[List[Dict[str, Any]]] = []
+    recent_outcomes: Optional[List[Dict[str, Any]]] = []
+    assignments: Optional[List[Dict[str, Any]]] = []
+
+
+class LearnerRecommendationOut(BaseModel):
+    recommendation_type: str
+    title: str
+    description: str
+    rationale: str
+    linked_content_type: Optional[str] = None
+    linked_content_id: Optional[str] = None
+    priority: int
+    confidence_score: float
+    estimated_benefit: str
+    estimated_time_minutes: Optional[int] = None
+    cognitive_load: str
+    influenced_by: Dict[str, Any]
+
+
+class GenerateLearnerRecommendationsOut(BaseModel):
+    recommendations: List[LearnerRecommendationOut]
+
+
+@router.post("/generate_learner_recommendations", response_model=GenerateLearnerRecommendationsOut)
+async def generate_learner_recommendations(
+    body: GenerateLearnerRecommendationsInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Generate personalized learning recommendations based on comprehensive learner profile.
+    """
+    log_event("ai.generate_learner_recommendations.start", user_id=user["id"], child_id=body.child_id)
+    
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+        
+        # Verify child belongs to family
+        if not child_belongs_to_family(body.child_id, family_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Child not in family"
+            )
+        
+        # Build context for LLM
+        context = {
+            "family_id": body.family_id,
+            "child_id": body.child_id,
+            "child_name": body.child_name,
+            "age": body.age,
+            "grade": body.grade,
+            "diagnoses": body.diagnoses or [],
+            "learning_modalities": body.learning_modalities or [],
+            "support_needs": body.support_needs or [],
+            "executive_function": body.executive_function or [],
+            "strengths": body.strengths or [],
+            "interests": body.interests or [],
+            "academic_strengths": body.academic_strengths or [],
+            "academic_challenges": body.academic_challenges or [],
+            "preferred_subjects": body.preferred_subjects or [],
+            "motivation_factors": body.motivation_factors or [],
+            "recent_events": body.recent_events or [],
+            "recent_outcomes": body.recent_outcomes or [],
+            "assignments": body.assignments or [],
+        }
+        
+        # Call LLM to generate recommendations
+        if not llm_generate_learner_recommendations:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="LLM service not available"
+            )
+        
+        try:
+            result = await llm_generate_learner_recommendations(context)
+        except Exception as e:
+            log_event("ai.generate_learner_recommendations.llm_error", user_id=user["id"], error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"AI service unavailable: {str(e)}"
+            )
+        
+        log_event("ai.generate_learner_recommendations.success", 
+                 user_id=user["id"], 
+                 child_id=body.child_id,
+                 count=len(result.get("recommendations", [])))
+        
+        return GenerateLearnerRecommendationsOut(**result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("ai.generate_learner_recommendations.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate recommendations: {str(e)}"
         )
 

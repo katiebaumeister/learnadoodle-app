@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
-import { Sparkles, ExternalLink, CheckCircle, X, Clock, BookOpen, Video, FileText, Award, RefreshCw } from 'lucide-react';
-import { inspireLearning, getLearningSuggestions, approveSuggestion, rejectSuggestion } from '../../lib/apiClient';
+import { Sparkles, ExternalLink, CheckCircle, X, Clock, BookOpen, Video, FileText, Award, RefreshCw, CalendarPlus, ListTodo, Lightbulb } from 'lucide-react';
+import { inspireLearning, getLearningSuggestions, approveSuggestion, rejectSuggestion, createIdeaEventFromSuggestion, createTodoFromSuggestion, saveSuggestionToIdeas } from '../../lib/apiClient';
 import { useToast } from '../Toast';
+import { colors, shadows } from '../../theme/colors';
 
-export default function InspireLearning({ familyId, children = [] }) {
+export default function InspireLearning({ familyId, children = [], onViewIntelligence }) {
   const [selectedChildId, setSelectedChildId] = useState(children[0]?.id || null);
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -96,13 +98,78 @@ export default function InspireLearning({ familyId, children = [] }) {
   const approvedCount = suggestions.filter(s => s.approved_by_parent).length;
   const pendingCount = suggestions.filter(s => !s.approved_by_parent).length;
 
+  const handleAddToSchedule = async (suggestion) => {
+    if (!selectedChild) {
+      toast.push('Please select a child', 'error');
+      return;
+    }
+    setActionLoadingId(suggestion.id);
+    try {
+      const { error } = await createIdeaEventFromSuggestion(suggestion.id, selectedChild.id);
+      if (error) throw error;
+      toast.push('Added to schedule (next available slot)', 'success');
+    } catch (error) {
+      console.error('Error adding suggestion to schedule:', error);
+      toast.push('Could not add to schedule', 'error');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleAddToTodo = async (suggestion) => {
+    if (!selectedChild) {
+      toast.push('Please select a child', 'error');
+      return;
+    }
+    setActionLoadingId(suggestion.id);
+    try {
+      const { error } = await createTodoFromSuggestion(suggestion.id, selectedChild.id);
+      if (error) throw error;
+      toast.push('Added to todo list', 'success');
+    } catch (error) {
+      console.error('Error adding suggestion to todo list:', error);
+      toast.push('Could not add to todo list', 'error');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleSaveToIdeas = async (suggestion) => {
+    if (!selectedChild) {
+      toast.push('Please select a child', 'error');
+      return;
+    }
+    setActionLoadingId(suggestion.id);
+    try {
+      const { error } = await saveSuggestionToIdeas(suggestion.id, selectedChild.id);
+      if (error) throw error;
+      toast.push('Saved to ideas list', 'success');
+    } catch (error) {
+      console.error('Error saving suggestion to ideas list:', error);
+      toast.push('Could not save to ideas list', 'error');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
+        {onViewIntelligence ? (
+          <TouchableOpacity
+            style={styles.headerLeft}
+            onPress={onViewIntelligence}
+            activeOpacity={0.7}
+          >
+            <Sparkles size={14} color="#8b5cf6" />
+            <Text style={styles.title}>Inspire Learning</Text>
+          </TouchableOpacity>
+        ) : (
         <View style={styles.headerLeft}>
-          <Sparkles size={16} color="#8b5cf6" />
+          <Sparkles size={14} color="#8b5cf6" />
           <Text style={styles.title}>Inspire Learning</Text>
         </View>
+        )}
         {selectedChild && (
           <Text style={styles.subtitle}>For {selectedChild.first_name || selectedChild.name}</Text>
         )}
@@ -243,6 +310,35 @@ export default function InspireLearning({ familyId, children = [] }) {
                   </TouchableOpacity>
                 )}
               </View>
+
+              {suggestion.approved_by_parent && (
+                <View style={styles.postApprovalActions}>
+                  <TouchableOpacity
+                    style={styles.postActionButton}
+                    onPress={() => handleAddToSchedule(suggestion)}
+                    disabled={actionLoadingId === suggestion.id}
+                  >
+                    <CalendarPlus size={14} color="#4f46e5" />
+                    <Text style={styles.postActionButtonText}>Add to schedule</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.postActionButton}
+                    onPress={() => handleAddToTodo(suggestion)}
+                    disabled={actionLoadingId === suggestion.id}
+                  >
+                    <ListTodo size={14} color="#4b5563" />
+                    <Text style={styles.postActionButtonText}>Add to todo list</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.postActionButton}
+                    onPress={() => handleSaveToIdeas(suggestion)}
+                    disabled={actionLoadingId === suggestion.id}
+                  >
+                    <Lightbulb size={14} color="#d97706" />
+                    <Text style={styles.postActionButtonText}>Save to ideas</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           ))}
         </ScrollView>
@@ -253,28 +349,29 @@ export default function InspireLearning({ familyId, children = [] }) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    backgroundColor: colors.card,
+    borderRadius: colors.radiusMd,
+    padding: 10,
+    marginBottom: 0,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: colors.border,
+    ...shadows.sm,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   title: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#111827',
+    color: colors.text,
   },
   subtitle: {
     fontSize: 12,
@@ -482,6 +579,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: '#6b7280',
+  },
+  postApprovalActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  postActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+    gap: 6,
+  },
+  postActionButtonText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#374151',
   },
 });
 

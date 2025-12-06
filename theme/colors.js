@@ -1,10 +1,13 @@
 import { designTokens, getSubjectAccent } from './designTokens';
+import { useColorMode } from '../contexts/ColorModeContext';
 
 /**
  * Backwards-compatible color exports while leaning on the new design tokens.
+ * Now supports color mode context for sensory-friendly modes.
  */
 
-export const colors = {
+// Default colors (fallback when context not available)
+const defaultColors = {
   bg: designTokens.colors.paper,
   bgSubtle: '#f8f9ff',
   panel: '#f6f8ff',
@@ -14,6 +17,16 @@ export const colors = {
   muted: 'rgba(15, 23, 42, 0.65)',
   accent: designTokens.accents.core,
   accentContrast: '#ffffff',
+  background: designTokens.colors.paper,
+  textSecondary: 'rgba(15, 23, 42, 0.65)',
+  error: '#e2556a',
+  white: '#ffffff',
+  indigo: designTokens.accents.math,
+  green: designTokens.accents.science,
+  blue: designTokens.accents.core,
+  orange: '#f08a24',
+  red: '#e2556a',
+  purple: designTokens.accents.reading,
   redSoft: '#fde2e4',
   redBold: '#e2556a',
   orangeSoft: '#ffe7d1',
@@ -31,6 +44,31 @@ export const colors = {
   radiusMd: 12,
   radiusLg: designTokens.radius,
 };
+
+// Hook version that uses color mode context
+export function useColors() {
+  try {
+    const { colors: modeColors } = useColorMode();
+    return {
+      ...defaultColors,
+      bg: modeColors.background || defaultColors.bg,
+      bgSubtle: modeColors.bgSubtle || defaultColors.bgSubtle,
+      panel: modeColors.panel || defaultColors.panel,
+      card: modeColors.card || defaultColors.card,
+      border: modeColors.border || defaultColors.border,
+      text: modeColors.text || defaultColors.text,
+      muted: modeColors.muted || defaultColors.muted,
+      accent: modeColors.accent || defaultColors.accent,
+      background: modeColors.background || defaultColors.background,
+    };
+  } catch {
+    // Context not available, return defaults
+    return defaultColors;
+  }
+}
+
+// Static export for backwards compatibility (uses defaults)
+export const colors = defaultColors;
 
 export const shadows = {
   sm: {

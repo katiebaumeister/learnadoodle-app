@@ -16,7 +16,8 @@ import {
   Package,
   RotateCcw,
   FileText,
-  BarChart3
+  BarChart3,
+  Activity
 } from 'lucide-react';
 import { TOOL_META } from '../lib/toolTypes';
 import { checkFeatureFlags } from '../lib/services/yearClient';
@@ -41,6 +42,7 @@ export default function RightToolbar({
   activeTool = null,
   onSettings,
   onAITools,
+  onHealth,
 }) {
   const [hoveredTool, setHoveredTool] = useState(null);
   const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
@@ -60,6 +62,13 @@ export default function RightToolbar({
   // Group A: Core, Everyday Planner Actions (always visible)
   const coreTools = [
     { 
+      key: 'search', 
+      icon: Search, 
+      label: 'Search',
+      onPress: onSearch,
+      color: '#64748b'
+    },
+    { 
       key: 'tasks', 
       icon: CheckSquare, 
       label: 'Tasks',
@@ -72,13 +81,6 @@ export default function RightToolbar({
       label: 'Backlog',
       onPress: onBacklog,
       color: '#8b5cf6'
-    },
-    { 
-      key: 'search', 
-      icon: Search, 
-      label: 'Search',
-      onPress: onSearch,
-      color: '#64748b'
     },
     { 
       key: 'completed', 
@@ -94,6 +96,13 @@ export default function RightToolbar({
       onPress: onRebalance,
       color: '#f59e0b'
     },
+    { 
+      key: 'health', 
+      icon: Activity, 
+      label: 'Health',
+      onPress: onHealth,
+      color: '#10b981'
+    },
   ];
 
   // Group B: Settings (collapsed)
@@ -105,15 +114,11 @@ export default function RightToolbar({
     color: '#0ea5e9'
   };
 
-  // Group C: AI Tools (collapsed, shown only when available)
-  const hasAITools = onPlanYear || onHeatmap || onPackWeek || onCatchUp || onSummarizeProgress || onAnalytics || onWhatIfAnalysis;
-  const aiToolsTool = hasAITools ? {
-    key: 'ai_tools',
-    icon: Sparkles,
-    label: 'AI Tools',
-    onPress: onAITools,
-    color: '#8b5cf6'
-  } : null;
+  // Group C: AI Tools removed - now only Pack Week and Catch Up remain (navigate to Intelligence)
+  // Heavy AI tools (Plan Year, Heatmap, What-If, Summarize Progress) removed from toolbar
+  // They are now only accessible via Intelligence Hub
+  const hasAITools = onPackWeek || onCatchUp;
+  const aiToolsTool = null; // No longer showing collapsed AI Tools menu
 
   const renderToolButton = (tool, index, isLastInGroup = false) => {
     const Icon = tool.icon;
@@ -152,10 +157,10 @@ export default function RightToolbar({
             isHovered && !isActive && styles.iconWrapperHovered,
           ]}>
             <Icon 
-              size={20} 
+              size={17} 
               color={
                 isActive 
-                  ? '#ffffff' 
+                  ? '#4f46e5' // text-indigo-600
                   : isHovered 
                     ? tool.color 
                     : 'rgba(15,23,42,0.6)'
@@ -190,7 +195,7 @@ const styles = StyleSheet.create({
   toolbar: {
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 4,
+    gap: 0,
     width: '100%',
     paddingVertical: 16,
   },
@@ -200,13 +205,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
-    marginVertical: 2,
+    marginVertical: 0,
+    marginBottom: 16, // Fixed 16px margin between icons
   },
   toolButtonActive: {
     backgroundColor: 'rgba(99,102,241,0.12)',
   },
   lastButtonInGroup: {
-    marginBottom: 4,
+    marginBottom: 16, // Fixed spacing
   },
   divider: {
     width: 24,
@@ -222,12 +228,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 6,
     transition: Platform.OS === 'web' ? 'all 0.2s ease' : undefined,
+    ...(Platform.OS === 'web' && {
+      ':hover': {
+        backgroundColor: 'rgba(15,23,42,0.03)',
+      },
+    }),
   },
   iconWrapperActive: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#e6eaff', // Pastel periwinkle bg-[#e6eaff]
   },
   iconWrapperHovered: {
-    backgroundColor: 'rgba(15,23,42,0.04)',
+    backgroundColor: 'rgba(15,23,42,0.03)', // 3% tint circle
   },
   toolButtonWrapper: {
     position: 'relative',

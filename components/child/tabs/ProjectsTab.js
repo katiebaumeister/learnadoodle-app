@@ -1,36 +1,128 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Plus } from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
 import { colors } from '../../../theme/colors';
 
 export default function ProjectsTab({ child }) {
-  // TODO: load from projects table
-  const projects = [
-    {
-      id: "p1",
-      name: "Solar system model",
-      subject: "Science",
-      due: "Dec 5",
-      progressPct: 40,
-      status: "In progress",
-      nextStep: "Paint the planets",
-    },
-    {
-      id: "p2",
-      name: "Family history booklet",
-      subject: "Writing",
-      due: "Jan 10",
-      progressPct: 10,
-      status: "Planned",
-      nextStep: "Choose 3 relatives to interview",
-    },
-  ];
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchProjects();
+  }, [child.id]);
+
+  const fetchProjects = async () => {
+    if (!child?.id) return;
+    
+    try {
+      setLoading(true);
+      
+      // Fetch backlog items (projects) for this child
+      const { data: backlogItems, error } = await supabase
+        .from('backlog_items')
+        .select('id, title, notes, due_ts, estimated_minutes, priority, subject_id')
+        .eq('child_id', child.id)
+        .order('due_ts', { ascending: true });
+
+      if (error && error.code !== 'PGRST116') throw error;
+
+      // Also fetch events that might be projects (longer duration events)
+      const { data: projectEvents, error: eventsError } = await supabase
+        .from('events')
+        .select('id, title, description, due_ts, start_ts, end_ts, status, subject_id')
+        .eq('child_id', child.id)
+        .not('due_ts', 'is', null)
+        .order('due_ts', { ascending: true });
+
+      if (eventsError) throw eventsError;
+
+      // Fetch subject names separately
+      const allSubjectIds = [
+        ...(backlogItems || []).map(i => i.subject_id),
+        ...(projectEvents || []).map(e => e.subject_id)
+      ].filter(Boolean);
+      const subjectIds = [...new Set(allSubjectIds)];
+      const subjectLookup = {};
+      
+      if (subjectIds.length > 0) {
+        const { data: subjects } = await supabase
+          .from('subject')
+          .select('id, name')
+          .in('id', subjectIds);
+        
+        (subjects || []).forEach(s => {
+          subjectLookup[s.id] = s.name;
+        });
+      }
+
+      const formattedProjects = [];
+
+      // Process backlog items
+      (backlogItems || []).forEach(item => {
+        const dueDate = item.due_ts ? new Date(item.due_ts) : null;
+        formattedProjects.push({
+          id: item.id,
+          name: item.title,
+          subject: item.subject_id ? (subjectLookup[item.subject_id] || 'Unassigned') : 'Unassigned',
+          due: dueDate ? dueDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No due date',
+          progressPct: 0, // Backlog items start at 0%
+          status: 'Planned',
+          nextStep: item.notes || 'Get started',
+        });
+      });
+
+      // Process project events (events with due dates that are longer-term)
+      (projectEvents || []).forEach(event => {
+        const duration = event.end_ts && event.start_ts 
+          ? (new Date(event.end_ts) - new Date(event.start_ts)) / (1000 * 60 * 60 * 24) // days
+          : 0;
+        
+        // Consider events with duration > 7 days as projects
+        if (duration > 7 || event.description?.length > 100) {
+          const dueDate = event.due_ts ? new Date(event.due_ts) : null;
+          const isDone = event.status === 'done';
+          
+          formattedProjects.push({
+            id: `event-${event.id}`,
+            name: event.title,
+            subject: event.subject_id ? (subjectLookup[event.subject_id] || 'Unassigned') : 'Unassigned',
+            due: dueDate ? dueDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No due date',
+            progressPct: isDone ? 100 : 50, // Estimate based on status
+            status: isDone ? 'Completed' : event.status === 'in_progress' ? 'In progress' : 'Planned',
+            nextStep: event.description || 'Continue working',
+          });
+        }
+      });
+
+      setProjects(formattedProjects);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      setProjects([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.text} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Projects for {child.first_name}</Text>
-        <TouchableOpacity style={styles.addButton}>
+        <TouchableOpacity 
+          style={styles.addButton}
+          onPress={() => {
+            // TODO: Open add project modal
+            console.log('Add project clicked');
+          }}
+        >
           <Plus size={14} color={colors.card} />
           <Text style={styles.addButtonText}>Add project</Text>
         </TouchableOpacity>

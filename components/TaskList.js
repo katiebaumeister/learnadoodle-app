@@ -1,8 +1,19 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
+import { Calendar, ChevronDown } from 'lucide-react';
 import TaskCard from './TaskCard';
 
-export default function TaskList({ tasks = [], emptyText = 'No tasks found' }) {
+export default function TaskList({ 
+  tasks = [], 
+  emptyText = 'No tasks found', 
+  isCompleted = false,
+  children = [],
+  onEditTask,
+  onViewTask,
+  onMarkComplete,
+  hoveredTask,
+  onHoverTask,
+}) {
   const groupedTasks = useMemo(() => {
     const groups = {};
     const unscheduled = [];
@@ -63,25 +74,74 @@ export default function TaskList({ tasks = [], emptyText = 'No tasks found' }) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Scheduled Tasks */}
-      {groupedTasks.scheduled.map((group) => (
-        <View key={group.dateKey} style={styles.group}>
-          <View style={styles.header}>
-            <Text style={styles.headerText}>{formatDayHeader(group.date)}</Text>
+      {groupedTasks.scheduled.map((group) => {
+        // For completed pane, check if tasks are older than 7 days
+        const isOldGroup = isCompleted && group.date && (() => {
+          try {
+            const taskDate = new Date(group.date);
+            const daysAgo = (Date.now() - taskDate.getTime()) / (1000 * 60 * 60 * 24);
+            return daysAgo > 7;
+          } catch {
+            return false;
+          }
+        })();
+        
+        return (
+          <View key={group.dateKey} style={[styles.group, isOldGroup && styles.oldGroup]}>
+            {/* Divider BEFORE date header */}
+            <View style={styles.dateDivider} />
+            
+            <View style={styles.header}>
+              <Calendar size={14} color="#6b7280" style={{ marginRight: 6 }} />
+              <Text style={styles.headerText}>
+                {formatDayHeader(group.date)}
+              </Text>
+              <Text style={styles.headerCount}>
+                · {group.tasks.length} {group.tasks.length === 1 ? 'task' : 'tasks'}
+              </Text>
+              {isCompleted && (
+                <ChevronDown size={14} color="#9ca3af" style={{ marginLeft: 4 }} />
+              )}
+            </View>
+            
+            {group.tasks.map((task, idx) => (
+              <TaskCard 
+                key={task.id || idx} 
+                task={task} 
+                opacity={isOldGroup ? 0.9 : 1}
+                children={children}
+                onEditTask={onEditTask}
+                onViewTask={onViewTask}
+                onMarkComplete={onMarkComplete}
+                isHovered={hoveredTask === task.id}
+                onHover={onHoverTask}
+              />
+            ))}
           </View>
-          {group.tasks.map((task, idx) => (
-            <TaskCard key={task.id || idx} task={task} />
-          ))}
-        </View>
-      ))}
+        );
+      })}
 
       {/* Unscheduled Tasks */}
       {groupedTasks.unscheduled.length > 0 && (
         <View style={styles.group}>
+          <View style={styles.dateDivider} />
           <View style={styles.header}>
             <Text style={styles.headerText}>Unscheduled</Text>
+            <Text style={styles.headerCount}>
+              · {groupedTasks.unscheduled.length} {groupedTasks.unscheduled.length === 1 ? 'task' : 'tasks'}
+            </Text>
           </View>
           {groupedTasks.unscheduled.map((task, idx) => (
-            <TaskCard key={task.id || idx} task={task} />
+            <TaskCard 
+              key={task.id || idx} 
+              task={task}
+              children={children}
+              onEditTask={onEditTask}
+              onViewTask={onViewTask}
+              onMarkComplete={onMarkComplete}
+              isHovered={hoveredTask === task.id}
+              onHover={onHoverTask}
+            />
           ))}
         </View>
       )}
@@ -95,27 +155,42 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: 16,
+    paddingHorizontal: 20,
   },
   group: {
-    marginBottom: 24,
+    marginBottom: 20,
+    paddingTop: 8,
+  },
+  dateDivider: {
+    height: 1,
+    backgroundColor: 'rgba(243, 244, 246, 0.7)',
+    marginBottom: 12,
+    marginTop: 4,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    marginBottom: 8,
     ...(Platform.OS === 'web' && {
       position: 'sticky',
       top: 0,
       zIndex: 10,
-      backgroundColor: '#ffffff',
+      backgroundColor: 'rgba(250, 250, 250, 0.95)',
+      backdropFilter: 'blur(4px)',
     }),
-    paddingVertical: 8,
-    paddingHorizontal: 0,
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
   },
   headerText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
+    fontSize: 14, // Increased from 13
+    fontWeight: '600', // Increased font weight
+    color: '#374151', // Darker color
+  },
+  headerCount: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#9ca3af',
+    marginLeft: 4,
   },
   empty: {
     flex: 1,
@@ -128,5 +203,7 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
   },
+  oldGroup: {
+    opacity: 0.9,
+  },
 });
-
