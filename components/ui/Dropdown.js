@@ -7,7 +7,7 @@
  *   visible={showDropdown}
  *   triggerRef={buttonRef}
  *   onClose={() => setShowDropdown(false)}
- *   placement="bottom-start" // 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
+ *   placement="bottom-start" // 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'right-down' | 'right-up'
  * >
  *   <DropdownItem icon={Edit} label="Edit" onPress={handleEdit} />
  *   <DropdownItem icon={Trash} label="Delete" onPress={handleDelete} />
@@ -36,24 +36,53 @@ export default function Dropdown({
     const updatePosition = () => {
       if (!triggerRef.current) return;
       
-      const triggerRect = triggerRef.current.getBoundingClientRect();
+      // Handle React Native refs that may need _nativeNode
+      const triggerNode = triggerRef.current._nativeNode || triggerRef.current;
+      if (!triggerNode || !triggerNode.getBoundingClientRect) return;
+      
+      const triggerRect = triggerNode.getBoundingClientRect();
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       
       let top = 0;
       let left = 0;
       
-      // Calculate position based on placement
+      // Handle special right-down and right-up placements (similar to collapse menu)
+      if (placement === 'right-down') {
+        // Position to the right and below the trigger
+        left = triggerRect.right + window.scrollX + offset;
+        top = triggerRect.bottom + window.scrollY + offset;
+        setPosition({ top, left });
+        return;
+      } else if (placement === 'right-up') {
+        // Position to the right and above the trigger
+        // Estimate height: ~48px per item (padding + border) × number of items
+        const itemCount = React.Children.count(children);
+        const estimatedHeight = itemCount * 48; // Approximate height per item
+        left = triggerRect.right + window.scrollX + offset;
+        // Position dropdown so its bottom edge is just above the button's top
+        top = triggerRect.top + window.scrollY - estimatedHeight - offset;
+        setPosition({ top, left });
+        return;
+      }
+      
+      // Calculate position based on standard placement
       if (placement.startsWith('bottom')) {
         top = triggerRect.bottom + offset;
-      } else {
+      } else if (placement.startsWith('top')) {
         top = triggerRect.top - offset;
+      } else {
+        // Default to bottom
+        top = triggerRect.bottom + offset;
       }
       
       if (placement.endsWith('start')) {
         left = triggerRect.left;
-      } else {
+      } else if (placement.endsWith('end')) {
         left = triggerRect.right - width;
+      } else {
+        // Default to start
+        left = triggerRect.left;
       }
       
       // Boundary detection - adjust if would overflow viewport
@@ -86,7 +115,7 @@ export default function Dropdown({
       window.removeEventListener('scroll', updatePosition, true);
       window.removeEventListener('resize', updatePosition);
     };
-  }, [visible, triggerRef, placement, offset, width, maxHeight]);
+  }, [visible, triggerRef, placement, offset, width, maxHeight, children]);
   
   useEffect(() => {
     if (!visible) return;
@@ -113,7 +142,15 @@ export default function Dropdown({
   if (!visible) return null;
   
   if (Platform.OS === 'web') {
-    return (
+    // Use portal for web to escape stacking context issues
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (e) {
+      // ReactDOM not available, fall back to normal rendering
+    }
+    
+    const dropdownContent = (
       <View
         ref={dropdownRef}
         style={[
@@ -124,13 +161,21 @@ export default function Dropdown({
             left: position.left,
             width,
             maxHeight,
-            zIndex: 1000,
+            zIndex: 99999,
+            isolation: 'isolate', // Create new stacking context
           },
         ]}
       >
         {children}
       </View>
     );
+    
+    // Render to document.body via portal if available, otherwise render normally
+    if (ReactDOM && typeof document !== 'undefined' && document.body) {
+      return ReactDOM.createPortal(dropdownContent, document.body);
+    }
+    
+    return dropdownContent;
   }
   
   // Mobile: use Modal

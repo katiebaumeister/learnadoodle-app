@@ -1,6 +1,7 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { Plus, Home, CalendarDays, Search, Compass, FileText, BookOpen, Brain, UserCircle } from 'lucide-react';
+import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircle, Settings, MessageSquare } from 'lucide-react';
+import Dropdown, { DropdownItem } from './ui/Dropdown';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 
@@ -29,11 +30,11 @@ const resolveAvatarSource = (avatarKey) => {
 };
 
 const SIDEBAR_COLORS = {
-  background: '#F4F6F8',
+  backgroundColor: '#F8F9FA',
   border: 'rgba(148, 163, 184, 0.24)',
-  accent: '#475569',
-  accentSoft: 'rgba(71, 85, 105, 0.18)',
-  accentSofter: 'rgba(71, 85, 105, 0.12)',
+  accent: '#4F46E5',
+  accentSoft: 'rgba(79, 70, 229, 0.18)',
+  accentSofter: 'rgba(79, 70, 229, 0.12)',
   avatar: 'rgba(148, 163, 184, 0.28)',
 };
 
@@ -56,9 +57,47 @@ export default function LeftRail({
   onAvatarPress,
   user,
   userRole = 'parent',
+  onOpenSettings,
+  onOpenFeedback,
+  isCollapsed: isCollapsedProp,
+  sidebarMode: sidebarModeProp,
+  setIsHoveringSidebar,
 }) {
-  const [isCollapsed] = useState(false);
   const [expandedChildren, setExpandedChildren] = useState(new Set());
+  const [hoveredItem, setHoveredItem] = useState(null);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreButtonRef = useRef(null);
+  const moreMenuTimeoutRef = useRef(null);
+  
+  // Use props if provided, otherwise default to expanded
+  const isCollapsed = isCollapsedProp ?? false;
+  
+  // Handle closing menu with delay to allow moving to dropdown
+  const handleMoreMenuClose = useCallback(() => {
+    if (moreMenuTimeoutRef.current) {
+      clearTimeout(moreMenuTimeoutRef.current);
+    }
+    moreMenuTimeoutRef.current = setTimeout(() => {
+      setShowMoreMenu(false);
+    }, 150); // Small delay to allow moving to dropdown
+  }, []);
+  
+  const handleMoreMenuOpen = useCallback(() => {
+    if (moreMenuTimeoutRef.current) {
+      clearTimeout(moreMenuTimeoutRef.current);
+      moreMenuTimeoutRef.current = null;
+    }
+    setShowMoreMenu(true);
+  }, []);
+  
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (moreMenuTimeoutRef.current) {
+        clearTimeout(moreMenuTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleNewPress = useCallback(
     (event) => {
@@ -83,9 +122,9 @@ export default function LeftRail({
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'intelligence', label: 'Intelligence', icon: Brain },
         { key: 'materials', label: 'Library', icon: BookOpen },
-        { key: 'profile', label: 'Profile', icon: UserCircle },
-        { key: 'records', label: 'Records', icon: FileText },
-        { key: 'explore', label: 'Explore', icon: Compass },
+        { key: 'profile', label: 'Family', icon: UserCircle },
+        // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
+        // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
       ];
 
       // Filter based on role
@@ -93,175 +132,201 @@ export default function LeftRail({
         // Children only see Home
         return allItems.filter(item => item.key === 'home');
       } else if (userRole === 'tutor') {
-        // Tutors see Home, Planner, Explore (no Records)
-        return allItems.filter(item => item.key !== 'records');
+        // Tutors see Home, Planner (no Records, no Explore - archived)
+        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       } else {
-        // Parents see everything
-        return allItems;
+        // Parents see everything except archived items
+        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       }
     },
     [userRole]
   );
 
+  // Helper to validate if avatar_url is a valid URL (not just a UUID)
+  const isValidAvatarUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    // Check if it's a valid URL (starts with http/https/data) or is a known avatar key
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // If it's just a UUID without http/https, it's invalid
+    if (uuidPattern.test(url.trim())) return false;
+    // Valid if it starts with http/https/data or is a known avatar key
+    return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || 
+           Object.keys(avatarSources).includes(url.toLowerCase().replace(/\.(png|jpg|jpeg|webp|gif)$/i, ''));
+  };
+
   const renderChildAvatar = (child) => {
-    if (child.avatar_url) {
-      return <Image source={{ uri: child.avatar_url }} style={styles.childAvatar} />;
+    if (child.avatar_url && isValidAvatarUrl(child.avatar_url)) {
+      return (
+        <Image 
+          source={{ uri: child.avatar_url }} 
+          style={styles.childAvatar}
+          onError={(e) => {
+            // Suppress 404 errors for missing avatars - they're harmless
+            if (Platform.OS === 'web' && e.nativeEvent) {
+              e.preventDefault?.();
+            }
+          }}
+        />
+      );
     }
 
     const source = resolveAvatarSource(child.avatar);
     return <Image source={source} style={styles.childAvatar} />;
   };
 
+  // Apply glass class on web
+  const containerClassName = Platform.OS === 'web' ? 'glass sidebarWash' : undefined;
+
   return (
-    <View style={[styles.container, isCollapsed ? styles.collapsed : styles.expanded]}>
+    <View 
+      style={[styles.container, isCollapsed ? styles.collapsed : styles.expanded]}
+      {...(Platform.OS === 'web' && containerClassName ? { className: containerClassName } : {})}
+      {...(Platform.OS === 'web' && sidebarModeProp === 'expandOnHover' && setIsHoveringSidebar && {
+        onMouseEnter: () => setIsHoveringSidebar(true),
+        onMouseLeave: () => setIsHoveringSidebar(false),
+      })}
+    >
       <View style={[styles.wrap, isCollapsed && styles.wrapCollapsed]}>
+        {/* Top Icon - Only shown when expanded */}
         {!isCollapsed && (
-          <TouchableOpacity
-            onPress={onAvatarPress}
-            accessibilityRole="button"
-            accessibilityLabel="Account and settings"
-            disabled={!onAvatarPress}
+          <TouchableOpacity 
+            style={styles.topIconContainer}
+            onPress={onOpenSettings}
+            activeOpacity={0.7}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.brandHeading}>Learnadoodle</Text>
+            <View style={styles.topIconWrapper}>
+              <Image 
+                source={require('../assets/learnadoodle-logo.png')} 
+                style={styles.topIcon}
+                resizeMode="cover"
+              />
+            </View>
           </TouchableOpacity>
         )}
 
+        {/* Main menu section */}
         <View style={styles.sectionGroup}>
           {topNavItems.map((item) => {
             const Icon = item.icon;
             const active = topActive === item.key;
+            const isHovered = hoveredItem === item.key && !active;
+            const isHome = item.key === 'home';
+            const isPlanner = item.key === 'planner';
+            const isLibrary = item.key === 'materials';
+            const isFamily = item.key === 'profile';
+            const isIntelligence = item.key === 'intelligence';
+            const isMore = item.key === 'more';
             return (
               <TouchableOpacity
                 key={item.key}
+                ref={isMore ? moreButtonRef : null}
                 style={[
                   styles.navItem,
                   active && styles.navItemActive,
+                  isHovered && styles.navItemHover,
                   isCollapsed && styles.navItemCollapsed,
                 ]}
-                onPress={() => onSelectTop?.(item.key)}
+                onPress={() => {
+                  if (isMore) {
+                    if (Platform.OS === 'web') {
+                      setShowMoreMenu(!showMoreMenu);
+                    } else {
+                      // On mobile, show menu on press
+                      setShowMoreMenu(true);
+                    }
+                  } else {
+                    onSelectTop?.(item.key);
+                  }
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={item.label}
+                {...(Platform.OS === 'web' && {
+                  onMouseEnter: () => {
+                    if (isMore) {
+                      handleMoreMenuOpen();
+                    } else if (!active) {
+                      setHoveredItem(item.key);
+                    }
+                  },
+                  onMouseLeave: () => {
+                    if (isMore) {
+                      handleMoreMenuClose();
+                    } else {
+                      setHoveredItem(null);
+                    }
+                  },
+                })}
               >
-                <Icon size={18} color={active ? SIDEBAR_COLORS.accent : 'rgba(15,23,42,0.6)'} />
+                <View style={styles.iconWrapper}>
+                  {isHome ? (
+                    <View style={styles.homeIconContainer}>
+                      <Image 
+                        source={require('../assets/home.png')} 
+                        style={styles.homeIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : isPlanner ? (
+                    <View style={styles.plannerIconContainer}>
+                      <Image 
+                        source={require('../assets/planner.png')} 
+                        style={styles.plannerIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : isLibrary ? (
+                    <View style={styles.libraryIconContainer}>
+                      <Image 
+                        source={require('../assets/library.png')} 
+                        style={styles.libraryIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : isFamily ? (
+                    <View style={styles.familyIconContainer}>
+                      <Image 
+                        source={require('../assets/family.png')} 
+                        style={styles.familyIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : isIntelligence ? (
+                    <View style={styles.intelligenceIconContainer}>
+                      <Image 
+                        source={require('../assets/intelligence.png')} 
+                        style={styles.intelligenceIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : isMore ? (
+                    <View style={styles.moreIconContainer}>
+                      <Image 
+                        source={require('../assets/more.png')} 
+                        style={styles.moreIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : (
+                    Icon && <View style={styles.iconContainer}>
+                      <Icon size={42} color={active ? SIDEBAR_COLORS.accent : 'rgba(15,23,42,0.6)'} />
+                    </View>
+                  )}
+                </View>
                 {!isCollapsed && (
-                  <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>
+                  <View style={styles.navLabelContainer}>
+                    <Text style={[
+                      styles.navLabel, 
+                      active && styles.navLabelActive,
+                      isHovered && styles.navLabelHover,
+                    ]}>{item.label}</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             );
           })}
         </View>
 
-        <View style={styles.divider} />
-
-        {!isCollapsed && childrenList.length > 0 && userRole !== 'child' ? (
-          <Text style={styles.sectionLabel}>Family</Text>
-        ) : null}
-
-        {userRole !== 'child' && (
-          <View style={styles.familyGroup}>
-            {childrenList.map((child) => {
-              const active = activeChildId === child.id;
-              const isExpanded = expandedChildren.has(child.id);
-              return (
-                <View key={child.id} style={styles.childBlock}>
-                  <TouchableOpacity
-                    style={[
-                      styles.childItem,
-                      active && styles.childItemActive,
-                      isCollapsed && styles.childItemCollapsed,
-                    ]}
-                    onPress={() => {
-                      if (!isCollapsed) {
-                        const newExpanded = new Set(expandedChildren);
-                        if (isExpanded) {
-                          newExpanded.delete(child.id);
-                        } else {
-                          newExpanded.add(child.id);
-                          onSelectChild?.(child.id);
-                        }
-                        setExpandedChildren(newExpanded);
-                      } else {
-                        onSelectChild?.(child.id);
-                      }
-                    }}
-                  >
-                    {renderChildAvatar(child)}
-                    {!isCollapsed && (
-                      <View style={styles.childInfo}>
-                        <Text style={[styles.childLabel, active && styles.childLabelActive]}>
-                          {child.first_name || child.name || 'Student'}
-                        </Text>
-                        {child.grade ? (
-                          <Text style={styles.childSubLabel}>Grade {child.grade}</Text>
-                        ) : null}
-                      </View>
-                    )}
-                  </TouchableOpacity>
-
-                  {!isCollapsed && isExpanded && (
-                    <View style={styles.childSections}>
-                      {CHILD_SECTIONS.map((section) => {
-                        const sectionActive = activeChildSection === section.key;
-                        return (
-                          <TouchableOpacity
-                            key={`${child.id}-${section.key}`}
-                            style={[
-                              styles.childSectionButton,
-                              sectionActive && styles.childSectionButtonActive,
-                            ]}
-                            onPress={() => onSelectChildSection?.(child.id, section.key)}
-                          >
-                            <Text
-                              style={[
-                                styles.childSectionLabel,
-                                sectionActive && styles.childSectionLabelActive,
-                              ]}
-                            >
-                              {section.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Utility Zone - Bottom */}
-        <View style={styles.utilityZone}>
-          {onOpenNew && userRole !== 'child' ? (
-            <TouchableOpacity
-              style={[
-                styles.navItem,
-                isCollapsed && styles.navItemCollapsed,
-              ]}
-              onPress={handleNewPress}
-              accessibilityRole="button"
-              accessibilityLabel="Create new item"
-            >
-              <Plus size={18} color="rgba(15,23,42,0.6)" />
-              {!isCollapsed && <Text style={styles.navLabel}>New</Text>}
-            </TouchableOpacity>
-          ) : null}
-
-          {onOpenSearch ? (
-            <TouchableOpacity
-              style={[
-                styles.navItem,
-                isCollapsed && styles.navItemCollapsed,
-              ]}
-              onPress={onOpenSearch}
-              accessibilityRole="button"
-              accessibilityLabel="Open search"
-            >
-              <Search size={18} color="rgba(15,23,42,0.6)" />
-              {!isCollapsed && <Text style={styles.navLabel}>Search</Text>}
-            </TouchableOpacity>
-          ) : null}
-        </View>
       </View>
     </View>
   );
@@ -269,19 +334,19 @@ export default function LeftRail({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: SIDEBAR_COLORS.background,
-    borderRightWidth: Platform.OS === 'web' ? 1 : StyleSheet.hairlineWidth,
-    borderRightColor: SIDEBAR_COLORS.border,
+    ...(Platform.OS === 'web' ? {} : { backgroundColor: SIDEBAR_COLORS.background }),
+    // Border is handled by the outer LayoutShell to avoid double dividers.
     paddingVertical: 16,
     flex: 1,
     minHeight: Platform.OS === 'web' ? '100vh' : undefined,
+    overflow: 'hidden',
   },
   collapsed: {
     width: 76,
     paddingHorizontal: 8,
   },
   expanded: {
-    width: 256,
+    width: 240, // Match sidebarContainer width
   },
   wrap: {
     flexDirection: 'column',
@@ -296,33 +361,79 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    borderRadius: 10,
+    gap: 0, // Remove gap since iconWrapper has fixed width
+    paddingVertical: 4,
+    paddingHorizontal: 20,
+    borderRadius: 0,
+    marginHorizontal: 0,
+    maxWidth: '100%',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    ...(Platform.OS === 'web' && {
+      transition: 'all 0.15s ease',
+      cursor: 'pointer',
+    }),
   },
   navItemActive: {
-    backgroundColor: SIDEBAR_COLORS.accentSofter,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12, // Curved edge
+    borderWidth: 0,
+    paddingVertical: 4, // Shorter height to match navItem
+    paddingRight: 24, // Extend fill just past text
+    ...(Platform.OS === 'web' && {
+      backgroundColor: '#FFFFFF',
+    }),
+  },
+  navItemHover: {
+    backgroundColor: 'transparent',
   },
   navItemCollapsed: {
     justifyContent: 'center',
   },
+  navLabelContainer: {
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    height: '100%',
+    marginLeft: 12, // Fixed spacing from icon wrapper
+  },
   navLabel: {
-    fontSize: 14,
-    color: 'rgba(15,23,42,0.7)',
-    fontWeight: '500',
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    lineHeight: 22, // Consistent line height for alignment
+    includeFontPadding: false, // Remove extra padding for better alignment
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '-0.011em', // Tighter, more editorial
+      lineHeight: '22px',
+    }),
   },
   navLabelActive: {
-    color: SIDEBAR_COLORS.accent,
-    fontWeight: '600',
+    color: 'rgba(167, 139, 250, 0.9)', // Purple matching segmented control
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    lineHeight: 22, // Consistent line height for alignment
+    includeFontPadding: false, // Remove extra padding for better alignment
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '-0.011em',
+      lineHeight: '22px',
+    }),
+  },
+  navLabelHover: {
+    color: '#374151',
   },
   sectionGroup: {
     flexDirection: 'column',
-    gap: 8,
+    gap: 0,
   },
   divider: {
     height: 1,
@@ -330,11 +441,48 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   sectionLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: 'rgba(15,23,42,0.5)',
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
     textTransform: 'uppercase',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sectionLabelFirst: {
+    marginTop: 0,
+    paddingTop: 8,
+  },
+  topIconContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 16,
+    paddingBottom: 8,
+    marginHorizontal: -16,
+    paddingLeft: 12,
+    paddingRight: 0,
+  },
+  topIconWrapper: {
+    width: 220, // Slightly smaller
+    height: 36, // Slightly smaller
+    overflow: 'hidden',
+    borderRadius: 4,
+  },
+  topIcon: {
+    width: 220, // Slightly smaller
+    height: 72, // Slightly smaller
+    marginTop: -12, // Crop top significantly
+    marginBottom: -12, // Crop bottom significantly
+    // No left/right margins - only crop top and bottom
+  },
+  settingsSection: {
+    flexDirection: 'column',
+    gap: 8,
   },
   familyGroup: {
     flexDirection: 'column',
@@ -371,9 +519,12 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   childLabel: {
-    fontSize: 14,
+    fontSize: 13,
     color: 'rgba(15,23,42,0.75)',
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childLabelActive: {
     color: SIDEBAR_COLORS.accent,
@@ -382,6 +533,9 @@ const styles = StyleSheet.create({
   childSubLabel: {
     fontSize: 12,
     color: 'rgba(148,163,184,1)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childSections: {
     flexDirection: 'row',
@@ -393,8 +547,6 @@ const styles = StyleSheet.create({
   utilityZone: {
     marginTop: 'auto',
     paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: SIDEBAR_COLORS.border,
     gap: 8,
   },
   childSectionButton: {
@@ -410,9 +562,89 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(148,163,184,0.9)',
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childSectionLabelActive: {
     color: SIDEBAR_COLORS.accent,
+  },
+  iconWrapper: {
+    width: 52, // Fixed width - matches largest icon container (planner/library)
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconContainer: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeIconContainer: {
+    width: 52,
+    height: 52,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeIcon: {
+    width: 50, // Slightly smaller than container to prevent cropping
+    height: 50,
+  },
+  plannerIconContainer: {
+    width: 48,
+    height: 48,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  plannerIcon: {
+    width: 46, // Slightly smaller than container to prevent cropping
+    height: 46,
+  },
+  libraryIconContainer: {
+    width: 54,
+    height: 54,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  libraryIcon: {
+    width: 52, // Slightly smaller than container to prevent cropping
+    height: 52,
+  },
+  familyIconContainer: {
+    width: 48,
+    height: 48,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  familyIcon: {
+    width: 46, // Slightly smaller than container to prevent cropping
+    height: 46,
+  },
+  intelligenceIconContainer: {
+    width: 40,
+    height: 40,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  intelligenceIcon: {
+    width: 38, // Slightly smaller than container to prevent cropping
+    height: 38,
+  },
+  moreIconContainer: {
+    width: 40,
+    height: 40,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreIcon: {
+    width: 38, // Slightly smaller than container to prevent cropping
+    height: 38,
   },
 });
 

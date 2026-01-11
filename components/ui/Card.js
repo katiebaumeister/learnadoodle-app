@@ -17,13 +17,14 @@ import { colors, shadows } from '../../theme/colors';
 
 export default function Card({ 
   children, 
-  variant = 'default', // 'default' | 'elevated' | 'outlined' | 'flat'
+  variant = 'default', // 'default' | 'elevated' | 'outlined' | 'flat' | 'glass'
   padding = 'base', // 'sm' | 'base' | 'lg' | 'xl'
   onPress,
   style,
   ...props
 }) {
   const Component = onPress ? TouchableOpacity : View;
+  const cardClassName = Platform.OS === 'web' && variant === 'glass' ? 'glass' : undefined;
   
   return (
     <Component
@@ -35,6 +36,7 @@ export default function Card({
       ]}
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
+      {...(Platform.OS === 'web' && cardClassName ? { className: cardClassName } : {})}
       {...props}
     >
       {children}
@@ -42,21 +44,29 @@ export default function Card({
   );
 }
 
+// Strict spacing scale: 4, 8, 12, 16, 24, 32, 40
 const paddingValues = {
-  sm: 12,   // p-3
-  base: 16, // p-4
-  lg: 20,   // p-5
-  xl: 24,   // p-6
+  sm: 12,   // --spacing-md (12px)
+  base: 16, // --layout-card-padding (16px)
+  lg: 20,   // --layout-card-padding-large (20px)
+  xl: 24,   // --spacing-lg (24px)
 };
 
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: 12, // rounded-xl
-    borderWidth: 1,
+    borderRadius: 24, // --radius-lg (24px) for glass cards
+    borderWidth: 1, // Hairline border
     borderColor: colors.border,
     ...(Platform.OS === 'web' && {
       transition: 'all 0.2s ease',
+    }),
+  },
+  glass: {
+    // On web, .glass class handles styling
+    ...(Platform.OS === 'web' ? {} : {
+      backgroundColor: 'rgba(255,255,255,.72)',
+      borderColor: 'rgba(17,24,39,.08)',
     }),
   },
   default: {

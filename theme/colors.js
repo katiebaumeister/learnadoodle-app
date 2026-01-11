@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { designTokens, getSubjectAccent } from './designTokens';
 import { useColorMode } from '../contexts/ColorModeContext';
 
@@ -70,14 +71,13 @@ export function useColors() {
 // Static export for backwards compatibility (uses defaults)
 export const colors = defaultColors;
 
-export const shadows = {
+const shadowDefinitions = {
   sm: {
     shadowColor: '#101828',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
     shadowRadius: 0,
     elevation: 1,
-    // Web compatibility
     boxShadow: '0 1px 0 rgba(16,24,40,.04)',
   },
   md: {
@@ -86,7 +86,6 @@ export const shadows = {
     shadowOpacity: 0.06,
     shadowRadius: 2,
     elevation: 2,
-    // Web compatibility
     boxShadow: '0 1px 2px rgba(16,24,40,.06), 0 1px 1px rgba(16,24,40,.04)',
   },
   lg: {
@@ -95,9 +94,38 @@ export const shadows = {
     shadowOpacity: 0.08,
     shadowRadius: 4,
     elevation: 4,
-    // Web compatibility
     boxShadow: '0 2px 4px rgba(16,24,40,.08), 0 1px 2px rgba(16,24,40,.06)',
   },
+  large: {
+    shadowColor: '#101828',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 8,
+    boxShadow: '0 4px 8px rgba(16,24,40,.1), 0 2px 4px rgba(16,24,40,.08)',
+  },
+};
+
+// Helper function to get platform-appropriate shadow styles
+export function getShadow(level = 'md') {
+  const shadow = shadowDefinitions[level] || shadowDefinitions.md;
+  return Platform.OS === 'web'
+    ? { boxShadow: shadow.boxShadow }
+    : {
+        shadowColor: shadow.shadowColor,
+        shadowOffset: shadow.shadowOffset,
+        shadowOpacity: shadow.shadowOpacity,
+        shadowRadius: shadow.shadowRadius,
+        elevation: shadow.elevation,
+      };
+}
+
+// Legacy export for backwards compatibility (deprecated - use getShadow instead)
+export const shadows = {
+  sm: shadowDefinitions.sm,
+  md: shadowDefinitions.md,
+  lg: shadowDefinitions.lg,
+  large: shadowDefinitions.large,
 };
 
 export const rainbow = {

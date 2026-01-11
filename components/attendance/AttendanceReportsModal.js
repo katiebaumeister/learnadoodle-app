@@ -99,7 +99,6 @@ export default function AttendanceReportsModal({
 
       onClose();
     } catch (err) {
-      console.error('Error generating report:', err);
       setError(err.message || 'Failed to generate report');
     } finally {
       setGenerating(false);

@@ -155,7 +155,6 @@ export default function TodaysLearningTimeGrouped({
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
       }
     } catch (error) {
-      console.error(`Error ${isCurrentlyDone ? 'unmarking' : 'marking'} event as done:`, error);
       if (Platform.OS === 'web') {
         alert(`Failed to ${isCurrentlyDone ? 'unmark' : 'mark'} event as done: ${error.message || error}`);
       }
@@ -183,28 +182,21 @@ export default function TodaysLearningTimeGrouped({
     }
   };
 
+  // Format date for header: "Your schedule today, Friday, January 9"
+  const formatHeaderDate = (date) => {
+    const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'long' });
+    const month = date.toLocaleDateString('en-US', { month: 'long' });
+    const day = date.getDate();
+    return `Today, ${dayOfWeek}, ${month} ${day}`;
+  };
+
   // If no events, show two cards side-by-side
   if (sortedEvents.length === 0) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <BookOpen size={16} color={colors.text} />
-            <Text style={styles.title}>Today's Learning</Text>
-          </View>
-          <View style={styles.headerRight}>
-            <Text style={styles.subtitle}>
-              {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-            </Text>
-            {onViewPlanner && (
-              <TouchableOpacity
-                style={styles.plannerLink}
-                onPress={onViewPlanner}
-              >
-                <Text style={styles.plannerLinkText}>View planner</Text>
-                <ArrowRight size={12} color={colors.accent} />
-              </TouchableOpacity>
-            )}
+            <Text style={styles.title}>{formatHeaderDate(currentDate)}</Text>
           </View>
         </View>
 
@@ -271,29 +263,13 @@ export default function TodaysLearningTimeGrouped({
             onPress={onViewPlanner}
             activeOpacity={0.7}
           >
-            <BookOpen size={16} color={colors.text} />
-            <Text style={styles.title}>Today's Learning</Text>
+            <Text style={styles.title}>{formatHeaderDate(currentDate)}</Text>
           </TouchableOpacity>
         ) : (
         <View style={styles.headerLeft}>
-          <BookOpen size={16} color={colors.text} />
-          <Text style={styles.title}>Today's Learning</Text>
+          <Text style={styles.title}>{formatHeaderDate(currentDate)}</Text>
         </View>
         )}
-        <View style={styles.headerRight}>
-          <Text style={styles.subtitle}>
-            {currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-          </Text>
-          {onViewPlanner && (
-            <TouchableOpacity
-              style={styles.plannerLink}
-              onPress={onViewPlanner}
-            >
-              <Text style={styles.plannerLinkText}>View planner</Text>
-              <ArrowRight size={10} color={colors.accent} />
-            </TouchableOpacity>
-          )}
-        </View>
       </View>
       
       <View style={styles.sessionsList}>
@@ -304,8 +280,8 @@ export default function TodaysLearningTimeGrouped({
           const isCompleting = completingEventId === event.id;
           const isHovered = hoveredCardId === event.id;
           const child = children.find(c => c.id === event.child_id);
-          const categoryLabel = getCategoryLabel(event.subject || event.title);
-          const subjectIcon = getSubjectIcon(event.subject || event.title);
+          const categoryLabel = getCategoryLabel(event.topic || event.title || event.subject);
+          const subjectIcon = getSubjectIcon(event.topic || event.title || event.subject);
           const isFirst = index === 0;
           const isLast = index === sortedEvents.length - 1;
 
@@ -343,17 +319,9 @@ export default function TodaysLearningTimeGrouped({
               <View style={styles.sessionCardContent}>
                 <View style={styles.sessionHeader}>
                   <View style={styles.sessionTitleRow}>
-                    <View style={styles.subjectIconWrapper}>
-                      {subjectIcon}
-                    </View>
                     <Text style={[styles.sessionSubject, isDone && styles.sessionSubjectDone]}>
-                      {event.subject || event.title || 'Learning session'}
+                      {event.topic || event.title || event.subject || 'Learning session'}
                     </Text>
-                    {categoryLabel && (
-                      <View style={styles.categoryTag}>
-                        <Text style={styles.categoryTagText}>{categoryLabel}</Text>
-                      </View>
-                    )}
                   </View>
                   <TouchableOpacity
                     onPress={(e) => {
@@ -388,21 +356,6 @@ export default function TodaysLearningTimeGrouped({
                     </Text>
                   </View>
                 </View>
-
-                {!isDone && (
-                  <View style={styles.sessionActions}>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.actionButtonLog]}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleLog(event);
-                      }}
-                    >
-                      <FileText size={10} color={colors.text} />
-                      <Text style={styles.actionButtonText}>Log</Text>
-                    </TouchableOpacity>
-                    </View>
-                )}
               </View>
             </TouchableOpacity>
           );
@@ -420,7 +373,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 12,
     ...shadows.md,
-    marginBottom: 24,
+    marginBottom: 6,
     marginTop: 0,
   },
   header: {
@@ -442,13 +395,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   title: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '600',
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subtitle: {
     fontSize: 11,
     color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   headerRight: {
     flexDirection: 'row',
@@ -465,6 +424,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.accent,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sessionsList: {
     gap: 7,
@@ -487,18 +449,14 @@ const styles = StyleSheet.create({
   sessionCardHovered: {
     backgroundColor: colors.bgSubtle,
     ...(Platform.OS === 'web' && {
-      borderLeftWidth: 2,
-      borderLeftColor: colors.border,
       boxShadow: '0 2px 4px rgba(0,0,0,0.04)',
     }),
   },
   sessionCardActive: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
     backgroundColor: colors.blueSoft,
   },
   sessionCardPast: {
-    opacity: 0.75,
+    // Past events no longer greyed out
   },
   sessionCardDone: {
     backgroundColor: colors.bgSubtle,
@@ -533,10 +491,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timelineTimePast: {
     color: colors.muted,
-    textDecorationLine: 'line-through',
   },
   timelineTimeDone: {
     color: colors.muted,
@@ -585,10 +545,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0F172A', // Slightly darker than default text
     flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sessionSubjectDone: {
     color: colors.muted,
-    textDecorationLine: 'line-through',
   },
   categoryTag: {
     backgroundColor: '#F8F9FA',
@@ -605,6 +567,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.2,
     lineHeight: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sessionInfo: {
     gap: 2,
@@ -615,13 +580,16 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   childAvatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
   },
   sessionStudent: {
-    fontSize: 12,
+    fontSize: 13,
     color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sessionActions: {
     flexDirection: 'row',
@@ -650,6 +618,9 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyCardsRow: {
     ...Platform.select({
@@ -676,6 +647,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
     marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   suggestedList: {
     gap: 12,
@@ -700,12 +674,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.text,
     letterSpacing: 0.3,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   suggestedActivity: {
     fontSize: 13,
     color: colors.text,
     flex: 1,
     lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   quickAddCard: {
     flex: 1,

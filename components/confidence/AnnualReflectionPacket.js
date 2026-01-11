@@ -124,7 +124,6 @@ export default function AnnualReflectionPacket({ childId, childName, familyId, y
         grades: gradesRes.data || [],
       });
     } catch (error) {
-      console.error('Error loading annual reflection data:', error);
       toast.push('Failed to load reflection data', 'error');
     } finally {
       setLoading(false);
@@ -137,7 +136,6 @@ export default function AnnualReflectionPacket({ childId, childName, familyId, y
       // TODO: Implement PDF generation service
       toast.push('PDF generation coming soon!', 'info');
     } catch (error) {
-      console.error('Error generating PDF:', error);
       toast.push('Failed to generate PDF', 'error');
     } finally {
       setGenerating(false);

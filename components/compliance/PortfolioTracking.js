@@ -36,7 +36,6 @@ export default function PortfolioTracking({ childId, familyId, stateCode }) {
         .order('requirement_type', { ascending: true });
 
       if (reqsError && reqsError.code !== 'PGRST116') {
-        console.error('Error loading requirements:', reqsError);
       }
 
       // Load tracking data
@@ -54,7 +53,6 @@ export default function PortfolioTracking({ childId, familyId, stateCode }) {
         .eq('state_code', stateCode);
 
       if (trackError && trackError.code !== 'PGRST116') {
-        console.error('Error loading tracking:', trackError);
       }
 
       // Merge requirements with tracking
@@ -69,7 +67,6 @@ export default function PortfolioTracking({ childId, familyId, stateCode }) {
       setRequirements(merged);
       setTracking(track || []);
     } catch (error) {
-      console.error('Error loading portfolio data:', error);
     } finally {
       setLoading(false);
     }
@@ -98,7 +95,6 @@ export default function PortfolioTracking({ childId, familyId, stateCode }) {
 
       await loadPortfolioData();
     } catch (error) {
-      console.error('Error updating tracking:', error);
       alert('Failed to update tracking status');
     }
   };

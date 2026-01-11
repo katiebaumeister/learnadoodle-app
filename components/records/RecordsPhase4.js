@@ -6,7 +6,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Award, Upload, CheckCircle2, Download, Plus, X, FileText, Clock, Target, Map, BarChart3, GraduationCap, Calendar, Shield, Heart, FileCheck, ChevronDown, ChevronUp, ExternalLink, ChevronRight, Sliders, AlertCircle, Info } from 'lucide-react';
 import ExportMenu from '../exports/ExportMenu';
 import { supabase } from '../../lib/supabase';
-import { format } from '../../components/planner/utils/date';
+import { format } from '../planner/utils/date';
 import {
   addGrade,
   addPortfolioUpload,
@@ -219,7 +219,7 @@ function RecordsSectionGroup({
                 fontSize: '14px',
                 fontWeight: '500',
                 color: '#4f46e5',
-                background: 'none',
+                backgroundColor: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
               }}
@@ -583,7 +583,6 @@ function StandardsModal({ isOpen, onClose, selectedChildId, stateCode, gradeLeve
 function HeaderRow({ lastTranscript, onExport, selectedChildId, students, activeId, onSelect }) {
   return null; // Child selector is now in sticky bar above
 }
-
 
 // StudentSelector Component
 function StudentSelector({ students, activeId, onSelect }) {
@@ -1753,7 +1752,6 @@ export default function RecordsPhase4({ familyId }) {
     } catch (error) {
       // Silently handle errors - 403s are expected if no transcript exists
       if (error.code !== 'PGRST116') {
-        console.error('Error loading last transcript:', error);
       }
       setLastTranscript(null);
       setLastExportRange(null);
@@ -1767,19 +1765,15 @@ export default function RecordsPhase4({ familyId }) {
     try {
       const [attendance, gradesData, uploadsData, documentsData] = await Promise.all([
         getAttendanceTimeline(selectedChildId, dateRange.start, dateRange.end).catch(err => {
-          console.error('Error loading attendance:', err);
           return []; // Return empty array on error
         }),
         getGrades(selectedChildId).catch(err => {
-          console.error('Error loading grades:', err);
           return []; // Return empty array on error
         }),
         getPortfolioUploads(selectedChildId).catch(err => {
-          console.error('Error loading uploads:', err);
           return []; // Return empty array on error
         }),
         getDocuments(selectedChildId).catch(err => {
-          console.error('Error loading documents:', err);
           return []; // Return empty array on error
         }),
       ]);
@@ -1789,7 +1783,6 @@ export default function RecordsPhase4({ familyId }) {
       setUploads(uploadsData || []);
       setDocuments(documentsData || []);
     } catch (error) {
-      console.error('Error loading records data:', error);
       // Don't show alert - just log and use empty arrays
       setAttendanceData([]);
       setGrades([]);
@@ -1805,7 +1798,6 @@ export default function RecordsPhase4({ familyId }) {
       const requirements = await getStateRequirements(stateCode);
       setStateRequirements(requirements);
     } catch (error) {
-      console.error('Error loading state requirements:', error);
     }
   };
   
@@ -1837,7 +1829,6 @@ export default function RecordsPhase4({ familyId }) {
       );
       setStandardsGaps(gapsData || []);
     } catch (error) {
-      console.error('Error loading standards data:', error);
     } finally {
       setLoadingStandards(false);
     }
@@ -1852,7 +1843,6 @@ export default function RecordsPhase4({ familyId }) {
         setStandardsList(data);
       }
     } catch (error) {
-      console.error('Error loading standards list:', error);
     }
   };
   
@@ -1889,7 +1879,6 @@ export default function RecordsPhase4({ familyId }) {
         await loadStandardsList();
       }
     } catch (error) {
-      console.error('Error loading standards for mapping:', error);
     } finally {
       setLoadingStandards(false);
     }
@@ -1917,7 +1906,6 @@ export default function RecordsPhase4({ familyId }) {
       // Reload standards data to update coverage
       await loadStandardsData();
     } catch (error) {
-      console.error('Error saving mapping:', error);
       alert('Failed to save mapping');
     }
   };
@@ -1941,7 +1929,6 @@ export default function RecordsPhase4({ familyId }) {
       await loadStandardsData();
       alert('Standards preference set successfully');
     } catch (error) {
-      console.error('Error setting standards preference:', error);
       alert('Failed to set standards preference');
     }
   };
@@ -1957,7 +1944,6 @@ export default function RecordsPhase4({ familyId }) {
       
       setAiPlanSuggestions(data);
     } catch (error) {
-      console.error('Error generating AI plan:', error);
       alert('Failed to generate AI plan');
     } finally {
       setLoadingStandards(false);
@@ -1989,7 +1975,6 @@ export default function RecordsPhase4({ familyId }) {
       });
       loadAllData();
     } catch (error) {
-      console.error('Error adding grade:', error);
       alert('Failed to add grade');
     }
   };
@@ -2001,7 +1986,6 @@ export default function RecordsPhase4({ familyId }) {
       const outcomes = await getGradeOutcomes(grade);
       setGradeOutcomes(outcomes);
     } catch (error) {
-      console.error('Error loading grade outcomes:', error);
       setGradeOutcomes({ events: [], outcomes: [] });
     }
   };
@@ -2034,7 +2018,6 @@ export default function RecordsPhase4({ familyId }) {
       // Reload last transcript
       loadLastTranscript();
     } catch (error) {
-      console.error('Error generating transcript:', error);
       alert('Failed to generate transcript');
     }
   };
@@ -2066,7 +2049,6 @@ export default function RecordsPhase4({ familyId }) {
       });
       loadAllData();
     } catch (error) {
-      console.error('Error adding upload:', error);
       alert('Failed to add upload');
     }
   };
@@ -2098,7 +2080,6 @@ export default function RecordsPhase4({ familyId }) {
       });
       loadAllData();
     } catch (error) {
-      console.error('Error adding document:', error);
       alert('Failed to add document. Please try again.');
     }
   };
@@ -2629,7 +2610,7 @@ export default function RecordsPhase4({ familyId }) {
               </button>
             </div>
             <p className="text-xs text-slate-500 text-center" style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', margin: 0 }}>
-              <a href="#" className="hover:text-indigo-600 transition" style={{ color: '#64748b', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.color = '#4f46e5'} onMouseLeave={(e) => e.target.style.color = '#64748b'}>
+              <a href="#" className="hover:text-indigo-600 transition" style={{ color: '#64748b', textDecorationLine: 'none' }} onMouseEnter={(e) => e.target.style.color = '#4f46e5'} onMouseLeave={(e) => e.target.style.color = '#64748b'}>
                 Need something else exported? Request a format.
               </a>
             </p>
@@ -2638,11 +2619,11 @@ export default function RecordsPhase4({ familyId }) {
 
         {/* Footer Links */}
         <div className="flex items-center gap-4 text-sm text-slate-600" style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '14px', color: '#475569' }}>
-          <a href="#" className="hover:text-indigo-600 transition" style={{ color: '#475569', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.color = '#4f46e5'} onMouseLeave={(e) => e.target.style.color = '#475569'}>
+          <a href="#" className="hover:text-indigo-600 transition" style={{ color: '#475569', textDecorationLine: 'none' }} onMouseEnter={(e) => e.target.style.color = '#4f46e5'} onMouseLeave={(e) => e.target.style.color = '#475569'}>
             See detailed schedule →
           </a>
           <span className="text-slate-300" style={{ color: '#cbd5e1' }}>•</span>
-          <a href="#" className="hover:text-indigo-600 transition" style={{ color: '#475569', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.color = '#4f46e5'} onMouseLeave={(e) => e.target.style.color = '#475569'}>
+          <a href="#" className="hover:text-indigo-600 transition" style={{ color: '#475569', textDecorationLine: 'none' }} onMouseEnter={(e) => e.target.style.color = '#4f46e5'} onMouseLeave={(e) => e.target.style.color = '#475569'}>
             See mastery timeline →
           </a>
         </div>

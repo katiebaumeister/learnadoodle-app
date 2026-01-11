@@ -21,7 +21,6 @@ export default function AssuranceCard({ weekStart, onViewDetails }) {
       if (error) throw error;
       setData(result);
     } catch (error) {
-      console.error('Error loading assurance card:', error);
       toast.push('Failed to load assurance data', 'error');
     } finally {
       setLoading(false);

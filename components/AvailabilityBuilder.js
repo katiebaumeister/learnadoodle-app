@@ -75,7 +75,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error('Error loading rules:', error);
         setRules([]);
         return;
       }
@@ -92,7 +91,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
         setWeeklyRhythmBlocks(blocks);
       }
     } catch (error) {
-      console.error('Error loading rules:', error);
       setRules([]);
     } finally {
       setLoading(false);
@@ -110,14 +108,12 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error('Error loading family rules:', error);
         setFamilyRules([]);
         return;
       }
       
       setFamilyRules(data || []);
     } catch (error) {
-      console.error('Error loading family rules:', error);
       setFamilyRules([]);
     }
   };
@@ -140,13 +136,11 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
         .order('date', { ascending: true });
 
       if (error) {
-        console.log('Error loading overrides:', error);
         setOverrides([]);
         return;
       }
       setOverrides(data || []);
     } catch (error) {
-      console.error('Error loading overrides:', error);
     }
   };
 
@@ -172,7 +166,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
         .order('starts_on', { ascending: true });
 
       if (error) {
-        console.error('Error loading blackouts:', error);
         setBlackouts([]);
         return;
       }
@@ -187,7 +180,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
       
       setBlackouts(filtered);
     } catch (error) {
-      console.error('Error loading blackouts:', error);
       setBlackouts([]);
     }
   };
@@ -263,7 +255,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
       setHasUnsavedChanges(false);
       showAlert('Success', 'Availability saved successfully');
     } catch (error) {
-      console.error('Error saving availability:', error);
       showAlert('Error', 'Failed to save availability');
     } finally {
       setSaving(false);
@@ -290,7 +281,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
       .eq('scope_id', scopeId);
     
     if (deactivateError) {
-      console.error('Error deactivating rules:', deactivateError);
       throw deactivateError;
     }
     
@@ -334,7 +324,6 @@ const AvailabilityBuilder = ({ familyId, children, hideHeader = false }) => {
     const results = await Promise.all(insertPromises);
     const errors = results.filter(r => r.error);
     if (errors.length > 0) {
-      console.error('Error inserting rules:', errors);
       throw errors[0].error;
     }
   };

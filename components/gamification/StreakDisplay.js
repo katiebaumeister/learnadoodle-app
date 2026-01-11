@@ -29,12 +29,10 @@ export default function StreakDisplay({ childId, familyId, compact = false }) {
         .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Error loading gamification:', error);
       } else {
         setGamification(data);
       }
     } catch (error) {
-      console.error('Error loading gamification:', error);
     } finally {
       setLoading(false);
     }

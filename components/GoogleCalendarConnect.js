@@ -106,7 +106,6 @@ export default function GoogleCalendarConnect({ familyId, style, onConnected, on
       openOAuthPopup(data.auth_url);
       setPolling(true);
     } catch (err) {
-      console.error('Google connect error:', err);
       toast.push('Failed to initiate Google connection', 'error');
       setConnecting(false);
     }

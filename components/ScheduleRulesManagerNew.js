@@ -47,7 +47,6 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         setSpecificityCascade(data.specificity_cascade);
       }
     } catch (error) {
-      console.error('Error loading family settings:', error);
     }
   };
 
@@ -65,14 +64,12 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         .order('updated_at', { ascending: false }); // Order by latest updated instead of priority
 
       if (error) {
-        console.error('Error loading rules:', error);
         setRules([]);
         return;
       }
       
       setRules(data || []);
     } catch (error) {
-      console.error('Error loading rules:', error);
       setRules([]);
     } finally {
       setLoading(false);
@@ -97,13 +94,11 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         .order('date', { ascending: true });
 
       if (error) {
-        console.log('Error loading overrides:', error);
         setOverrides([]);
         return;
       }
       setOverrides(data || []);
     } catch (error) {
-      console.error('Error loading overrides:', error);
     }
   };
 
@@ -122,14 +117,12 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
       });
 
       if (error) {
-        console.error('Error loading preview data:', error);
         setPreviewData([]);
         return;
       }
       
       setPreviewData(data || []);
     } catch (error) {
-      console.error('Error loading preview data:', error);
     }
   };
 
@@ -164,7 +157,6 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
       // Reload preview data
       loadPreviewData();
     } catch (error) {
-      console.error('Error refreshing cache:', error);
     }
   };
 

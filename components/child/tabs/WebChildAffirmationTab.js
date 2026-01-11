@@ -723,7 +723,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: 8,
-    fontFamily: Platform.OS === 'web' ? '-apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", sans-serif' : 'System',
+    fontFamily: Platform.OS === 'web' ? '-apple-system, BlinkMacSystemFont, "Cooper Hewitt", "SF Pro Text", sans-serif' : 'System',
   },
   axisSliderContainer: {
     marginBottom: 8,

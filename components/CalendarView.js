@@ -12,8 +12,6 @@ import {
 
 import { supabase } from '../lib/supabase';
 
-
-
 export default function CalendarView({ familyId, selectedChildId = null, onChildSelect = null, onPlanNew = null }) {
   // State for calendar data
   const [academicYears, setAcademicYears] = useState([]);
@@ -58,12 +56,10 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         .maybeSingle();
 
       if (profileError) {
-        console.error('Error fetching profile:', profileError);
         return;
       }
 
       if (!profile || !profile.family_id) {
-        console.log('No profile or family_id found for user');
         return;
       }
 
@@ -76,7 +72,6 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         setChildren(childrenData);
       }
     } catch (error) {
-      console.error('Error fetching children:', error);
     }
   };
 
@@ -93,17 +88,13 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         .maybeSingle();
 
       if (profileError) {
-        console.error('Error fetching profile:', profileError);
         return;
       }
 
       if (!profile || !profile.family_id) {
-        console.log('No profile or family_id found for user');
         return;
       }
 
-      console.log('Profile family_id:', profile.family_id);
-      
       const { data: years, error } = await supabase
         .from('family_years')
         .select('*')
@@ -111,20 +102,15 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         .order('start_date', { ascending: false });
 
       if (error) {
-        console.error('Error fetching academic years:', error);
         return;
       }
 
       if (years && years.length > 0) {
-        console.log('Academic years found:', years.length);
-        console.log('First year details:', years[0]);
         setAcademicYears(years);
         setSelectedYear(years[0]); // Select the most recent year
       } else {
-        console.log('No academic years found for family_id:', profile.family_id);
       }
     } catch (error) {
-      console.error('Error fetching academic years:', error);
     } finally {
       setIsLoading(false);
     }
@@ -153,7 +139,6 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
             p_date: dateStr,
           });
           if (error) {
-            console.warn('get_calendar_day_status error for', dateStr, error.message);
             return { dateStr, is_teaching: null, is_vacation: null, notes: null };
           }
           const row = Array.isArray(data) ? data[0] : data; // rpc returns setof
@@ -184,7 +169,6 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         .order('lesson_date', { ascending: true });
 
       if (lessonsData) {
-        console.log('Lessons loaded:', lessonsData.length);
         // Store lessons for calendar display
         setLessons(lessonsData);
       }
@@ -197,7 +181,6 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         .order('created_at', { ascending: true });
 
       if (activitiesData) {
-        console.log('Activities loaded:', activitiesData.length);
         // Store activities for calendar display
         setActivities(activitiesData);
       }
@@ -206,14 +189,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
       updateMarkedDates(calendarDayMarks || [], holidaysData || [], lessonsData || [], activitiesData || []);
       
       // Debug logging
-      console.log('Calendar data loaded:');
-      console.log('- Calendar days:', calendarDayMarks?.length || 0);
-      console.log('- Holidays:', holidaysData?.length || 0);
-      console.log('- Lessons:', lessonsData?.length || 0);
-      console.log('- Activities:', activitiesData?.length || 0);
-      
-    } catch (error) {
-      console.error('Error fetching calendar data:', error);
+} catch (error) {
     } finally {
       setIsLoading(false);
     }
@@ -223,8 +199,6 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     if (!selectedYear) return;
 
     try {
-      console.log('Fetching learning tracks for family_id:', selectedYear.family_id);
-      
       const { data: tracksData, error } = await supabase
         .from('subject_track')
         .select('*')
@@ -232,19 +206,14 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         .order('name', { ascending: true });
 
       if (error) {
-        console.error('Supabase error fetching learning tracks:', error);
         return;
       }
 
       if (tracksData) {
         setLearningTracks(tracksData);
-        console.log('Learning tracks loaded:', tracksData.length);
-        console.log('Track names:', tracksData.map(t => t.name));
-      } else {
-        console.log('No learning tracks found for family_id:', selectedYear.family_id);
+} else {
       }
     } catch (error) {
-      console.error('Error fetching learning tracks:', error);
     }
   }, [selectedYear]);
 
@@ -346,8 +315,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     });
 
     setMarkedDates(newMarkedDates);
-    console.log('Marked dates updated with rich data:', Object.keys(newMarkedDates).length);
-  };
+};
 
   const handleDayPress = (day) => {
     const date = day.dateString;
@@ -368,8 +336,6 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
     }
   };
 
-
-
   const handleChildSelect = (childId) => {
     setLocalSelectedChildId(childId);
     if (onChildSelect) {
@@ -378,34 +344,24 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
   };
 
   const getFilteredLearningTracks = () => {
-    console.log('Filtering tracks. Selected child ID:', localSelectedChildId);
-            console.log('Available children:', children.map(c => ({ id: c.id, name: c.first_name })));
-    console.log('All learning tracks:', learningTracks.map(t => t.name));
-    
     if (!localSelectedChildId) {
-      console.log('No child selected, returning all tracks');
       return learningTracks;
     }
     
     // Filter tracks based on child name in track name
     const filtered = learningTracks.filter(track => {
               const childName = children.find(c => c.id === localSelectedChildId)?.first_name;
-      console.log('Looking for child name:', childName, 'in track:', track.name);
+
       if (childName) {
         const includes = track.name.includes(childName);
-        console.log('Track includes child name:', includes);
+
         return includes;
       }
       return false;
     });
-    
-    console.log('Filtered tracks:', filtered.map(t => t.name));
+
     return filtered;
   };
-
-
-
-
 
   const renderCalendar = () => (
     <View style={styles.calendarContainer}>
@@ -663,8 +619,7 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
               style={[styles.trackCard, styles.rightColumnTrackCard]}
               onPress={() => {
                 // TODO: Show track details modal
-                console.log('Track clicked:', track.name);
-              }}
+}}
             >
               <View style={styles.trackCardContent}>
                 <Text style={styles.trackNameCompact}>{track.name}</Text>
@@ -1082,8 +1037,6 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-
-
 
   calendarContainer: {
     backgroundColor: '#ffffff',

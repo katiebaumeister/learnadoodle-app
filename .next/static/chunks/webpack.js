@@ -360,12 +360,7 @@
 /******/ 						me.children.push(request);
 /******/ 					}
 /******/ 				} else {
-/******/ 					console.warn(
-/******/ 						"[HMR] unexpected require(" +
-/******/ 							request +
-/******/ 							") from disposed module " +
-/******/ 							moduleId
-/******/ 					);
+/******/ 					
 /******/ 					currentParents = [];
 /******/ 				}
 /******/ 				return require(request);
@@ -1007,9 +1002,7 @@
 /******/ 			var appliedUpdate = {};
 /******/ 		
 /******/ 			var warnUnexpectedRequire = function warnUnexpectedRequire(module) {
-/******/ 				console.warn(
-/******/ 					"[HMR] unexpected require(" + module.id + ") to disposed module"
-/******/ 				);
+/******/ 				
 /******/ 			};
 /******/ 		
 /******/ 			for (var moduleId in currentUpdate) {

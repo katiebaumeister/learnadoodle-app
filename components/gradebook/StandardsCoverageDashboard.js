@@ -29,10 +29,8 @@ export default function StandardsCoverageDashboard({ childId, subject = null, st
       setCoverage(Array.isArray(coverageData) ? coverageData : []);
       
       if (result?.error) {
-        console.warn('Error loading standards coverage:', result.error);
       }
     } catch (error) {
-      console.error('Exception loading standards coverage:', error);
       setCoverage([]);
     } finally {
       setLoading(false);

@@ -59,8 +59,7 @@ export function PlannerHealthProvider({ children }: { children: ReactNode }) {
       setHealthState(data);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch planner health');
-      console.error('Error fetching planner health:', err);
-    } finally {
+} finally {
       setLoading(false);
     }
   }, []);

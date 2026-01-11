@@ -66,7 +66,6 @@ export default function EventOutcomeModal({
         .maybeSingle();
       
       if (error && error.code !== 'PGRST116') {
-        console.error('Error loading outcome:', error);
         return;
       }
       
@@ -87,7 +86,6 @@ export default function EventOutcomeModal({
         setBehaviorTags([]);
       }
     } catch (error) {
-      console.error('Error loading existing outcome:', error);
     }
   };
 
@@ -112,11 +110,9 @@ export default function EventOutcomeModal({
         });
         
         if (Platform.OS === 'web') {
-          console.log('AI suggestions added');
         }
       }
     } catch (error) {
-      console.error('[EventOutcomeModal] Error getting tags:', error);
       if (Platform.OS === 'web') {
         alert('Failed to get AI suggestions');
       }
@@ -175,14 +171,12 @@ export default function EventOutcomeModal({
       }
       
       if (Platform.OS === 'web') {
-        console.log('Outcome saved');
       }
       if (onSaved) {
         onSaved(outcomeResult.data);
       }
       onClose();
     } catch (error) {
-      console.error('[EventOutcomeModal] Error saving:', error);
       if (Platform.OS === 'web') {
         alert(error.message || 'Failed to save outcome');
       }

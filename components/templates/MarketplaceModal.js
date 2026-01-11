@@ -38,7 +38,6 @@ export default function MarketplaceModal({
       
       setMarketplaceTemplates(marketplace);
     } catch (error) {
-      console.error('Error loading marketplace templates:', error);
       toast.push('Failed to load marketplace templates', 'error');
     } finally {
       setLoading(false);

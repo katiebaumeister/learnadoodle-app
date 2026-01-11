@@ -307,13 +307,13 @@ export default function ChildProfile({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bgSubtle,
+    backgroundColor: '#FFFFFF',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: colors.bgSubtle,
+    backgroundColor: '#FFFFFF',
   },
   loadingText: {
     marginTop: 12,

@@ -17,7 +17,8 @@ from routers.util import (
     load_planning_context,
     persist_ai_plan,
     apply_ai_plan_changes,
-    util_save_outline
+    util_save_outline,
+    get_admin_client
 )
 from llm import llm_extract_outline, llm_suggest_plan
 from llm_skills import llm_extract_skills
@@ -426,8 +427,106 @@ async def suggest_plan(body: SuggestPlanBody):
             horizon_weeks=body.horizon_weeks
         )
         
+        # Validate context and provide user clarity
+        required_minutes = context.get("required_minutes", [])
+        availability = context.get("availability", [])
+        events = context.get("events", [])
+        
+        # Check for pack_week specific requirements
+        if body.reason == "pack_week":
+            # For pack_week, we need flexible backlog items
+            # Check if there are any flexible backlog items in the context
+            # (This would be added to context in load_planning_context if needed)
+            # For now, we'll let the LLM handle it and add a message if nothing is found
+            
+            # Check if there's any availability with actual time windows
+            has_availability = any(
+                entry.get("windows") and len(entry.get("windows", [])) > 0
+                for entry in availability
+            )
+            
+            if not has_availability:
+                # Check if this is due to cache failure (availability entries exist but no windows)
+                has_entries_but_no_windows = len(availability) > 0 and not has_availability
+                
+                if has_entries_but_no_windows:
+                    # This likely means calendar_days_cache RLS is blocking or cache is empty
+                    # The fallback should have tried to refresh the cache, but it may need schedule rules
+                    # Check if schedule rules exist
+                    try:
+                        supa = get_admin_client()
+                        rules_res = supa.table("schedule_rules").select("id").eq(
+                            "family_id", body.family_id
+                        ).eq("is_active", True).limit(1).execute()
+                        has_rules = len(rules_res.data or []) > 0
+                    except:
+                        has_rules = False  # Assume no rules if check fails
+                    
+                    return {
+                        "planId": None,
+                        "summary": {"adds": 0, "moves": 0, "deletes": 0},
+                        "proposal": {
+                            "adds": [],
+                            "moves": [],
+                            "deletes": [],
+                            "rationale": [
+                                "Schedule availability cache is not accessible or empty. The system attempted to refresh it, but schedule rules may need to be set up first."
+                            ]
+                        },
+                        "changes": [],
+                        "userMessage": "No available time slots found. This usually means:\n\n• Schedule rules need to be set up\n  → Go to Settings → Schedule Rules\n  → Define when teaching time is available (e.g., 9am-3pm weekdays)\n\n• Calendar cache needs to be populated\n  → The system tried to refresh it automatically\n  → If it's still empty, set up schedule rules first\n\n• RLS permissions may be blocking access\n  → Run fix_calendar_days_cache_rls.sql in Supabase if needed\n\nOnce schedule rules are set up, the cache will populate and planning will work.",
+                        "needsScheduleRules": not has_rules  # Flag to route to schedule rules
+                    }
+                else:
+                    # No availability entries at all
+                    return {
+                        "planId": None,
+                        "summary": {"adds": 0, "moves": 0, "deletes": 0},
+                        "proposal": {
+                            "adds": [],
+                            "moves": [],
+                            "deletes": [],
+                            "rationale": [
+                                "No available time slots found for the selected period. Please check your schedule rules and blackout periods."
+                            ]
+                        },
+                        "changes": [],
+                        "userMessage": "No available time slots found. Please check your schedule rules and ensure there are no blackout periods blocking the planning window."
+                    }
+        
+        # Check if there are required minutes for catch_up mode
+        if body.reason == "catch_up" and len(required_minutes) == 0:
+            return {
+                "planId": None,
+                "summary": {"adds": 0, "moves": 0, "deletes": 0},
+                "proposal": {
+                    "adds": [],
+                    "moves": [],
+                    "deletes": [],
+                    "rationale": [
+                        "No required minutes found for any subjects. To use catch-up planning, please set up subject requirements or syllabi with required weekly minutes."
+                    ]
+                },
+                "changes": [],
+                "userMessage": "No required minutes found. Please set up subject requirements or syllabi with weekly minute targets to use catch-up planning."
+            }
+        
         # Get LLM suggestion (pass reason for context-aware behavior)
         proposal = await llm_suggest_plan(context, reason=body.reason)
+        
+        # Check if proposal is empty and add helpful message
+        adds_count = len(proposal.get("adds", []))
+        moves_count = len(proposal.get("moves", []))
+        deletes_count = len(proposal.get("deletes", []))
+        
+        user_message = None
+        if adds_count == 0 and moves_count == 0 and deletes_count == 0:
+            if body.reason == "pack_week":
+                user_message = "No events were scheduled. This usually means:\n• No flexible backlog items are available to schedule\n• All available time slots are already filled\n• No schedule rules are configured\n\nTry adding items to your backlog first, or check your schedule rules."
+            elif body.reason == "catch_up":
+                user_message = "No catch-up sessions were suggested. This usually means:\n• No required minutes are set for subjects\n• All requirements are already met\n• No availability windows found\n\nTry setting up subject requirements or syllabi with weekly targets."
+            else:
+                user_message = "No schedule changes were suggested. Your schedule appears to be balanced already."
         
         # Persist plan
         plan_id, counts, persisted_changes = await persist_ai_plan(
@@ -441,12 +540,17 @@ async def suggest_plan(body: SuggestPlanBody):
             proposal=proposal
         )
         
-        return {
+        result = {
             "planId": plan_id,
             "summary": counts,
             "proposal": proposal,
             "changes": persisted_changes  # Include persisted changes with database IDs
         }
+        
+        if user_message:
+            result["userMessage"] = user_message
+        
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to suggest plan: {str(e)}")
 

@@ -31,13 +31,11 @@ export default function AssignmentsCard({ childId, familyId, onNavigate }) {
       setLoading(true);
       const { data, error } = await getAssignments(childId);
       if (error) {
-        console.error('Error loading assignments:', error);
         setAssignments([]);
         return;
       }
       setAssignments(data || []);
     } catch (error) {
-      console.error('Error loading assignments:', error);
       setAssignments([]);
     } finally {
       setLoading(false);

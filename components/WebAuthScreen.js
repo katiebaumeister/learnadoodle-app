@@ -20,17 +20,13 @@ export default function WebAuthScreen() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  
 
-  
   const { signIn, signUp, resetPassword } = useAuth();
 
   const clearMessages = () => {
     setErrorMessage('');
     setSuccessMessage('');
   };
-
-
 
   const validatePassword = (password) => {
     const hasUpperCase = /[A-Z]/.test(password);
@@ -85,21 +81,13 @@ export default function WebAuthScreen() {
     setLoading(true);
 
     try {
-      console.log('Attempting to', isSignUp ? 'sign up' : 'sign in', 'with email:', email);
-      
       const { data, error } = isSignUp 
         ? await signUp(email, password)
         : await signIn(email, password);
 
-      console.log('Auth response:', { data, error });
-
       if (error) {
-        console.error('Auth error:', error);
         setErrorMessage(error.message);
       } else if (isSignUp) {
-        console.log('Signup successful, user:', data?.user);
-        console.log('Session:', data?.session);
-        
         // Check if user needs email confirmation
         if (data?.user && !data?.session) {
           setSuccessMessage('Account Created! Please check your email and click the confirmation link to verify your account. You can then sign in.');
@@ -108,11 +96,9 @@ export default function WebAuthScreen() {
           setSuccessMessage('Account created and signed in successfully!');
         }
       } else {
-        console.log('Sign in successful');
         setSuccessMessage('Signed in successfully!');
       }
     } catch (error) {
-      console.error('Auth exception:', error);
       setErrorMessage('An unexpected error occurred: ' + error.message);
     } finally {
       setLoading(false);
@@ -142,7 +128,6 @@ export default function WebAuthScreen() {
         setIsResetPassword(false);
       }
     } catch (error) {
-      console.error('Reset password exception:', error);
       setErrorMessage('An unexpected error occurred: ' + error.message);
     } finally {
       setLoading(false);
@@ -313,7 +298,6 @@ export default function WebAuthScreen() {
             </>
           )}
         </View>
-
 
       </View>
     </ScrollView>

@@ -54,23 +54,16 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
 
   useEffect(() => {
     if (familyId) {
-      console.log('🚀 CalendarPlanning mounted with familyId:', familyId);
-      console.log('🔐 Checking Supabase auth status...');
-      
       // Check auth status
       supabase.auth.getSession().then(({ data, error }) => {
         if (error) {
-          console.error('❌ Auth error:', error);
         } else {
-          console.log('✅ Auth session:', data.session ? 'Active' : 'No session');
-          console.log('👤 User ID:', data.session?.user?.id);
         }
       });
       
       fetchCurrentAcademicYear();
       fetchTypicalHolidays();
     } else {
-      console.log('⚠️ No familyId provided to CalendarPlanning');
     }
   }, [familyId]);
 
@@ -86,21 +79,13 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
 
   const fetchCurrentAcademicYear = async () => {
     try {
-      console.log('🔍 Fetching academic year for familyId:', familyId);
-      
       // Check if user is authenticated first
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      console.log('🔐 Session check result:', { session: !!session, error: sessionError });
-      
+
       if (sessionError || !session) {
-        console.log('⚠️ User not authenticated, skipping database call');
         return;
       }
-      
-      console.log('👤 User authenticated, attempting database query...');
-      console.log('🔑 User ID:', session.user.id);
-      console.log('📧 User email:', session.user.email);
-      
+
       const { data, error } = await supabase
         .from('family_years')
         .select('*')
@@ -108,44 +93,24 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
         .eq('is_current', true)
         .single();
 
-      console.log('📊 Query result:', { data, error });
-      
       if (error) {
-        console.error('❌ Error fetching academic year:', error);
-        console.log('🔍 Error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        
         if (error.code === '42501') {
-          console.log('🔧 Permission denied - RLS policies need to be fixed');
-          console.log('💡 This is a database configuration issue, not a user issue');
-          console.log('🔗 Try running the SQL fix in Supabase dashboard');
         }
         return;
       }
 
-      console.log('✅ Academic year fetched successfully:', data);
       setCurrentAcademicYear(data);
       if (data) setShowBanner(false);
     } catch (error) {
-      console.error('❌ Exception in fetchCurrentAcademicYear:', error);
     }
   };
 
   const fetchTypicalHolidays = async () => {
     try {
-      console.log('🔍 Fetching typical holidays');
-      
       // Check if user is authenticated first
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      console.log('🔐 Session check for holidays:', { session: !!session, error: sessionError });
-      
+
       if (sessionError || !session) {
-        console.log('⚠️ User not authenticated, using mock data');
-        
         // Mock holiday data for testing
         const mockHolidays = [
           { holiday_name: 'New Year\'s Day', holiday_type: 'fixed', month: 1, day: 1 },
@@ -163,38 +128,20 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
           }
         });
 
-        console.log('📅 Mock holiday dates:', mockHolidayDates);
         setHolidayDates(mockHolidayDates);
         return;
       }
-      
-      console.log('👤 User authenticated for holidays, attempting database query...');
-      
+
       // Use global_official_holidays instead of typical_holidays
       const { data, error } = await supabase
         .from('global_official_holidays')
         .select('id, name, holiday_date');
 
-      console.log('📊 Holidays query result:', { data, error });
-
       if (error) {
-        console.error('❌ Error fetching typical holidays:', error);
-        console.log('🔍 Holiday error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        
         if (error.code === '42501') {
-          console.log('🔧 Holiday permission denied - RLS policies need to be fixed');
-          console.log('💡 This is a database configuration issue, not a user issue');
-          console.log('🔗 Try running the SQL fix in Supabase dashboard');
         }
         return;
       }
-
-      console.log('✅ Global official holidays data:', data);
 
       // Map rows to YYYY-MM-DD: name
       const holidayDates = {};
@@ -203,10 +150,8 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
         holidayDates[dateString] = h.name;
       });
 
-      console.log('📅 Processed holiday dates:', holidayDates);
       setHolidayDates(holidayDates);
     } catch (error) {
-      console.error('❌ Exception in fetchTypicalHolidays:', error);
     }
   };
 
@@ -220,7 +165,6 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
       // Check if user is authenticated first
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       if (sessionError || !session) {
-        console.log('⚠️ User not authenticated, skipping holidays fetch');
         return;
       }
       
@@ -230,7 +174,6 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
         .eq('family_year_id', academicYearId);
 
       if (error) {
-        console.error('Error fetching holidays:', error);
         return;
       }
 
@@ -241,7 +184,6 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
 
       setHolidayDates(holidayDates);
     } catch (error) {
-      console.error('Error fetching holidays:', error);
     }
   };
 
@@ -389,19 +331,8 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
       return;
     }
 
-    console.log('💾 Saving academic year...');
-    console.log('📝 Data to save:', {
-      familyId,
-      yearName,
-      startDate,
-      endDate,
-      totalDays,
-      totalHours,
-      hoursPerDay
-    });
-
     // TEMPORARY: Test save function without database
-    console.log('⚠️ TEMPORARILY SKIPPING DATABASE SAVE - Testing save function');
+
     Alert.alert('Test Save', 'Save function triggered successfully! (Database save disabled for testing)');
     setIsLoading(false);
     // return;
@@ -412,7 +343,6 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
       let academicYearId = currentAcademicYear?.id;
 
       if (!academicYearId) {
-        console.log('🆕 Creating new academic year');
         // Create new academic year
         const { data, error } = await supabase
           .from('family_years')
@@ -429,16 +359,13 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
           .single();
 
         if (error) {
-          console.error('❌ Error creating academic year:', error);
           throw error;
         }
-        
-        console.log('✅ Academic year created:', data);
+
         academicYearId = data.id;
         setCurrentAcademicYear(data);
         setShowBanner(false);
       } else {
-        console.log('🔄 Updating existing academic year:', academicYearId);
         // Update existing academic year
         const { error } = await supabase
           .from('family_years')
@@ -452,16 +379,14 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
           .eq('id', academicYearId);
 
         if (error) {
-          console.error('❌ Error updating academic year:', error);
           throw error;
         }
-        
-        console.log('✅ Academic year updated');
+
         setShowBanner(false);
       }
 
       // Skip saving calendar_days; refresh availability cache instead
-      console.log('🔄 Refreshing calendar availability cache...');
+
       await supabase.rpc('refresh_calendar_days_cache', {
         p_family_id: familyId,
         p_from_date: startDate,
@@ -469,13 +394,11 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
       });
       
       // Save holidays
-      console.log('🎉 Saving holidays...');
+
       await saveHolidays(academicYearId);
 
-      console.log('✅ Academic year saved successfully!');
       Alert.alert('Success', 'Academic year saved successfully!');
     } catch (error) {
-      console.error('❌ Error saving academic year:', error);
       Alert.alert('Error', 'Failed to save academic year: ' + error.message);
     } finally {
       setIsLoading(false);

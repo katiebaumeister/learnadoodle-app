@@ -47,7 +47,6 @@ export default function MasteryCharts({ childId, subjectId = null, unitId = null
       if (error) throw error;
       setMasteryData(data || []);
     } catch (error) {
-      console.error('Error loading mastery data:', error);
     } finally {
       setLoading(false);
     }

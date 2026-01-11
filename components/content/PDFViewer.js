@@ -36,7 +36,6 @@ export default function PDFViewer({ uploadId, familyId, bucket = 'evidence' }) {
         Alert.alert('Error', data.error || 'Failed to extract text from PDF');
       }
     } catch (error) {
-      console.error('Error extracting PDF text:', error);
       Alert.alert('Error', 'Failed to extract text from PDF');
     } finally {
       setLoading(false);
@@ -56,7 +55,6 @@ export default function PDFViewer({ uploadId, familyId, bucket = 'evidence' }) {
         Alert.alert('Info', 'Copy functionality requires clipboard API');
       }
     } catch (error) {
-      console.error('Error copying text:', error);
       Alert.alert('Error', 'Failed to copy text');
     }
   };

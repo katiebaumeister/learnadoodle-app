@@ -7,6 +7,7 @@ import { Upload, FileText, X, CheckCircle, Loader, Calendar, BookOpen, Sparkles,
 import { supabase } from '../../lib/supabase';
 import { apiRequest } from '../../lib/apiClient';
 import SyllabusScanner from '../syllabus/SyllabusScanner';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 
 // Helper function for conditional classes
 const clsx = (...classes) => {
@@ -109,13 +110,14 @@ export default function SyllabusUploadModal({
       setStep('extracting');
       setError(null);
 
-      // 1. Upload file to storage
+      // 1. Upload file to storage (use evidence bucket so it shows in library)
       const fileName = `${familyId}/${Date.now()}_${file.name}`;
       const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('syllabi')
+        .from('evidence')
         .upload(fileName, file, {
           contentType: file.type,
-          upsert: false
+          upsert: false,
+          metadata: { family_id: familyId }
         });
 
       if (uploadError) throw uploadError;
@@ -137,28 +139,23 @@ export default function SyllabusUploadModal({
       if (syllabusError) throw syllabusError;
       setSyllabusId(syllabusData.id);
 
-      // 3. Create upload record
-      const { data: uploadRecord, error: recordError } = await supabase
-        .from('uploads')
-        .insert({
-          family_id: familyId,
-          child_id: selectedChildId,
-          subject_id: selectedSubjectId,
-          storage_path: fileName,
-          filename: file.name,
-          mime: file.type,
-          bytes: file.size,
-          kind: 'syllabus',
-        })
-        .select()
-        .single();
+      // 3. Create file material (replaces uploads table insert)
+      const { createFileMaterial } = await import('../../lib/services/materialsClient');
+      const uploadRecord = await createFileMaterial({
+        familyId,
+        storagePath: fileName,
+        title: file.name,
+        mime: file.type,
+        bytes: file.size,
+        childId: selectedChildId,
+        subjectId: selectedSubjectId,
+        tags: ['role:syllabus'], // Tag as syllabus
+      });
 
-      if (recordError) throw recordError;
-
-      // 4. Update syllabus with upload_id
+      // 4. Update syllabus with material_id (replaces upload_id)
       await supabase
         .from('syllabi')
-        .update({ upload_id: uploadRecord.id })
+        .update({ upload_id: uploadRecord.id }) // Keep upload_id for backward compatibility, but it now points to materials.id
         .eq('id', syllabusData.id);
 
       // 5. Parse syllabus using backend API
@@ -166,7 +163,7 @@ export default function SyllabusUploadModal({
         method: 'POST',
         body: JSON.stringify({
           syllabus_id: syllabusData.id,
-          storage_bucket: 'syllabi',
+          storage_bucket: 'evidence',
           storage_path: fileName,
           family_id: familyId,
           child_id: selectedChildId,
@@ -179,7 +176,6 @@ export default function SyllabusUploadModal({
       setExtractedOutline(parseResult.outline);
       setStep('preview');
     } catch (err) {
-      console.error('Error uploading syllabus:', err);
       setError(err.message || 'Failed to upload and extract syllabus');
       setStep('upload');
     }
@@ -256,7 +252,6 @@ export default function SyllabusUploadModal({
 
       handleClose();
     } catch (err) {
-      console.error('Error converting to plan:', err);
       setError(err.message || 'Failed to convert syllabus to plan');
       setStep('preview');
     }
@@ -321,7 +316,7 @@ export default function SyllabusUploadModal({
               color: '#94a3b8',
               cursor: 'pointer',
               border: 'none',
-              background: 'none',
+              backgroundColor: 'transparent',
               padding: '4px',
             }}
           >

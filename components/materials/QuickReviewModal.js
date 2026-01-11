@@ -17,7 +17,7 @@ import {
 import { X } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
-import { createMaterialReview, linkMaterialToChild, updateMaterialChildStatus } from '../../lib/services/materialsClient';
+import { linkMaterialToChild, updateMaterialChildStatus } from '../../lib/services/materialsClient';
 
 const EMOTIONS = [
   { value: 'loved', label: 'Loved', emoji: '❤️' },
@@ -71,30 +71,25 @@ export default function QuickReviewModal({
 
   const handleSave = async () => {
     if (!materialId || !childId || !familyId) {
-      console.error('Missing required fields:', { materialId, childId, familyId });
       return;
     }
 
     setLoading(true);
     try {
-      // Get current user for created_by
-      const { data: { user } } = await supabase.auth.getUser();
+      // Update material with review fields (single review per material)
+      const { updateMaterial } = await import('../../lib/services/materialsClient');
       
-      // Create review
-      const reviewData = {
-        material_id: materialId,
-        child_id: childId,
-        family_id: familyId,
-        event_id: eventId,
-        rating: rating || null,
-        emotion: emotion || null,
-        pacing_fit: pacingFit || null,
-        difficulty: difficulty || null,
-        notes: notes.trim() || null,
-        created_by: user?.id || null,
+      const reviewUpdates = {
+        review_child_id: childId,
+        review_rating: rating || null,
+        review_emotion: emotion || null,
+        review_pacing_fit: pacingFit || null,
+        review_difficulty: difficulty || null,
+        review_notes: notes.trim() || null,
+        review_updated_at: new Date().toISOString(),
       };
 
-      await createMaterialReview(reviewData);
+      await updateMaterial(materialId, reviewUpdates);
 
       // Update material-child link status to 'completed' if rating is positive
       if (rating && rating >= 4) {
@@ -111,7 +106,6 @@ export default function QuickReviewModal({
       }
       onClose();
     } catch (error) {
-      console.error('Error saving review:', error);
       alert('Failed to save review. Please try again.');
     } finally {
       setLoading(false);

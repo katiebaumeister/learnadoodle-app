@@ -28,12 +28,7 @@ export default function PortfolioTab({ child }) {
 
       if (error) {
         // Log error details for debugging
-        console.error('[PortfolioTab] Error loading uploads:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
+
         if (!shouldSuppressError(error) && error.code !== 'PGRST116') throw error;
       }
 
@@ -84,7 +79,6 @@ export default function PortfolioTab({ child }) {
 
       setItems(formattedItems);
     } catch (error) {
-      console.error('Error fetching portfolio items:', error);
       setItems([]);
     } finally {
       setLoading(false);
@@ -107,8 +101,7 @@ export default function PortfolioTab({ child }) {
           style={styles.addButton}
           onPress={() => {
             // TODO: Open upload modal
-            console.log('Upload work clicked');
-          }}
+}}
         >
           <Plus size={14} color={colors.card} />
           <Text style={styles.addButtonText}>Upload work</Text>
@@ -126,7 +119,16 @@ export default function PortfolioTab({ child }) {
           {items.map((item) => (
             <View key={item.id} style={styles.itemCard}>
               {item.thumbnailUrl ? (
-                <Image source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} />
+                <Image 
+                  source={{ uri: item.thumbnailUrl }} 
+                  style={styles.thumbnail}
+                  onError={(e) => {
+                    // Suppress 404 errors for missing images - they're harmless
+                    if (Platform.OS === 'web' && e.nativeEvent) {
+                      e.preventDefault?.();
+                    }
+                  }}
+                />
               ) : (
                 <View style={styles.thumbnail} />
               )}

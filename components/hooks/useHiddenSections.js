@@ -11,7 +11,6 @@ export const useHiddenSections = () => {
         const hiddenArray = JSON.parse(saved);
         setHidden(new Set(hiddenArray));
       } catch (error) {
-        console.error('Failed to parse hidden sections:', error);
       }
     }
   }, []);

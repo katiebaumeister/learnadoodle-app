@@ -72,7 +72,6 @@ export default function DailyConnection({
       );
       
       if (error) {
-        console.error('[DailyConnection] Error loading starters:', error);
         // Generate fallback connections
         generateFallbackConnections();
         return;
@@ -80,7 +79,6 @@ export default function DailyConnection({
 
       transformConnections(data);
     } catch (err) {
-      console.error('[DailyConnection] Error:', err);
       generateFallbackConnections();
     } finally {
       setLoading(false);

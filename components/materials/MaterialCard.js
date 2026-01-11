@@ -7,6 +7,30 @@ import { View, Text, TouchableOpacity, StyleSheet, Image, Platform } from 'react
 import { BookOpen, Users, Star } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
+import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
+
+// Helper function to check if a URL is from Supabase storage
+const isSupabaseStorageUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  // Check if URL contains Supabase storage path patterns
+  return url.includes('/storage/v1/object/') || url.includes('supabase.co/storage/');
+};
+
+// Helper function to check if a string is just a UUID (not a valid URL)
+const isUUID = (str) => {
+  if (!str || typeof str !== 'string') return false;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidPattern.test(str.trim());
+};
+
+// Helper function to check if a URL is valid for use as an image source
+const isValidImageUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  // Reject if it's just a UUID (not a valid URL)
+  if (isUUID(url)) return false;
+  // Must start with http://, https://, or data:
+  return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:');
+};
 
 const TYPE_LABELS = {
   textbook: 'Textbook',
@@ -28,7 +52,7 @@ const TYPE_COLORS = {
   other: '#6b7280',
 };
 
-export default function MaterialCard({ material, onPress, children = [] }) {
+export default function MaterialCard({ material, onPress, children = [], secondaryLabel = null }) {
   const avgRating = material.material_reviews?.length > 0
     ? material.material_reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / material.material_reviews.length
     : null;
@@ -40,6 +64,10 @@ export default function MaterialCard({ material, onPress, children = [] }) {
     return title.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase().slice(0, 2);
   };
 
+  const role = deriveRoleFromTags(material?.tags);
+  const badgeLabel = role ? roleLabel(role) : (TYPE_LABELS[material.type] || 'Other');
+  const badgeStyle = role ? styles.roleBadge : [styles.typeBadge, { backgroundColor: TYPE_COLORS[material.type] || TYPE_COLORS.other }];
+
   return (
     <TouchableOpacity
       style={styles.card}
@@ -48,11 +76,17 @@ export default function MaterialCard({ material, onPress, children = [] }) {
     >
       {/* Cover Image */}
       <View style={styles.coverContainer}>
-        {material.cover_image_url ? (
+        {material.cover_image_url && isValidImageUrl(material.cover_image_url) && isSupabaseStorageUrl(material.cover_image_url) ? (
           <Image
             source={{ uri: material.cover_image_url }}
             style={styles.coverImage}
             resizeMode="cover"
+            onError={(e) => {
+              // Hide image if it fails to load (prevents 404 errors in console)
+              if (e.nativeEvent?.error) {
+                console.warn('[MaterialCard] Failed to load cover image:', material.cover_image_url);
+              }
+            }}
           />
         ) : (
           <View style={[styles.coverPlaceholder, { backgroundColor: TYPE_COLORS[material.type] || TYPE_COLORS.other }]}>
@@ -60,8 +94,8 @@ export default function MaterialCard({ material, onPress, children = [] }) {
             <Text style={styles.coverInitials}>{getInitials(material.title)}</Text>
           </View>
         )}
-        <View style={[styles.typeBadge, { backgroundColor: TYPE_COLORS[material.type] || TYPE_COLORS.other }]}>
-          <Text style={styles.typeBadgeText}>{TYPE_LABELS[material.type] || 'Other'}</Text>
+        <View style={badgeStyle}>
+          <Text style={role ? styles.roleBadgeText : styles.typeBadgeText}>{badgeLabel}</Text>
         </View>
       </View>
 
@@ -70,6 +104,12 @@ export default function MaterialCard({ material, onPress, children = [] }) {
         <Text style={styles.title} numberOfLines={2}>
           {material.title}
         </Text>
+
+        {secondaryLabel ? (
+          <Text style={styles.secondaryLabel} numberOfLines={1}>
+            {secondaryLabel}
+          </Text>
+        ) : null}
 
         {/* Subject & Grade Range */}
         {(material.subject_key || material.grade_range_min !== null) && (
@@ -183,6 +223,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
   },
+  roleBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: '#ffffff',
+  },
+  roleBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.text,
+  },
   content: {
     padding: 12,
   },
@@ -192,6 +248,13 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: 8,
     minHeight: 40,
+  },
+  secondaryLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.muted,
+    marginTop: -6,
+    marginBottom: 8,
   },
   metaRow: {
     flexDirection: 'row',

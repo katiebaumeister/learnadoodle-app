@@ -19,7 +19,6 @@ export default function LessonPlans({ familyId, initialPlans = [], children = []
       });
       setPlans(data || []);
     } catch (error) {
-      console.error('Error loading lesson plans:', error);
       Alert.alert('Error', 'Failed to load lesson plans');
     } finally {
       setLoading(false);
@@ -54,7 +53,6 @@ export default function LessonPlans({ familyId, initialPlans = [], children = []
       await loadPlans();
       Alert.alert('Success', 'Sample lesson plan created');
     } catch (error) {
-      console.error('Error creating lesson plan:', error);
       Alert.alert('Error', 'Failed to create lesson plan');
     }
   };
@@ -79,7 +77,6 @@ export default function LessonPlans({ familyId, initialPlans = [], children = []
       
       Alert.alert('Success', `Created ${data?.created_events ?? 0} scheduled blocks`);
     } catch (error) {
-      console.error('Error instantiating plan:', error);
       Alert.alert('Error', 'Failed to schedule lesson plan');
     }
   };

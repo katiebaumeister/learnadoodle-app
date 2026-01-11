@@ -8,6 +8,7 @@ import { X, Camera, Upload, Image as ImageIcon, Video } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { submitAssignment } from '../../lib/services/assignmentsClient';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 
 export default function QuickSubmitModal({ visible, assignment, childId, familyId, onClose, onSubmitted }) {
   const [uploading, setUploading] = useState(false);
@@ -78,22 +79,16 @@ export default function QuickSubmitModal({ visible, assignment, childId, familyI
         .from('uploads')
         .getPublicUrl(filePath);
 
-      // Create upload record
-      const { data: recordData, error: recordError } = await supabase
-        .from('uploads')
-        .insert({
-          family_id: familyId,
-          child_id: childId,
-          title: file.name,
-          mime: file.type,
-          storage_path: filePath,
-          storage_url: publicUrl,
-          file_size: file.size,
-        })
-        .select()
-        .single();
-
-      if (recordError) throw recordError;
+      // Create file material (replaces uploads table insert)
+      const recordData = await createFileMaterial({
+        familyId,
+        storagePath: filePath,
+        title: file.name,
+        mime: file.type,
+        bytes: file.size,
+        childId: childId,
+        url: publicUrl,
+      });
 
       // Submit assignment with evidence
       const { error: submitError } = await submitAssignment(assignment.id, recordData.id);
@@ -129,7 +124,6 @@ export default function QuickSubmitModal({ visible, assignment, childId, familyI
 
       onClose();
     } catch (error) {
-      console.error('Error uploading and submitting:', error);
       const errorMessage = error.message || 'Failed to submit assignment';
       if (Platform.OS === 'web') {
         alert(`Error: ${errorMessage}`);

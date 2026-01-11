@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
-import LoadingScreen from './LoadingScreen';
 
 export default function SupabaseReady({ children }) {
   const [isReady, setIsReady] = useState(false);
@@ -11,36 +10,40 @@ export default function SupabaseReady({ children }) {
     let mounted = true;
     let retryCount = 0;
     const maxRetries = 3;
+    let timeoutId = null;
 
     const checkSupabase = async () => {
       try {
-        console.log('SupabaseReady: Checking Supabase connection, attempt:', retryCount + 1);
-        
         // Test the connection by making a simple query
+        // Timeout is handled globally in supabase.js (20 seconds)
         const { data, error } = await supabase
           .from('profiles')
           .select('id')
           .limit(1);
         
         if (error) {
-          console.error('SupabaseReady: Connection test failed:', error);
           throw error;
         }
 
         if (mounted) {
-          console.log('SupabaseReady: Connection successful');
           setIsReady(true);
         }
       } catch (err) {
-        console.error('SupabaseReady: Connection check failed:', err);
+        // Check if it's a timeout error
+        if (err.name === 'AbortError' || err.message?.includes('timeout') || err.message?.includes('aborted')) {
+          if (mounted) {
+            setError('Connection timeout. The database is taking too long to respond. Please check your internet connection and try again.');
+          }
+          return;
+        }
         
         if (retryCount < maxRetries && mounted) {
           retryCount++;
-          console.log(`SupabaseReady: Retrying in 1 second... (${retryCount}/${maxRetries})`);
-          setTimeout(checkSupabase, 1000);
+          
+          setTimeout(checkSupabase, 2000); // Increased retry delay to 2 seconds
         } else if (mounted) {
-          console.error('SupabaseReady: Max retries reached, showing error');
-          setError('Failed to connect to database after multiple attempts');
+          const errorMsg = err.message || 'Failed to connect to database after multiple attempts. Please check your internet connection.';
+          setError(errorMsg);
         }
       }
     };
@@ -68,8 +71,9 @@ export default function SupabaseReady({ children }) {
     );
   }
 
+  // Don't render anything until Supabase is ready - no loading screen
   if (!isReady) {
-    return <LoadingScreen message="Connecting to database" timeout={10000} />;
+    return null;
   }
 
   return children;

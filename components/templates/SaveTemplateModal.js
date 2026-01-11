@@ -59,7 +59,6 @@ export default function SaveTemplateModal({
       
       setAvailableSubjects(subjectsData || []);
     } catch (error) {
-      console.error('Error loading children/subjects:', error);
     }
   };
 
@@ -102,7 +101,6 @@ export default function SaveTemplateModal({
       toast.push('Template saved successfully!', 'success');
       onClose();
     } catch (error) {
-      console.error('Error saving template:', error);
       toast.push('Failed to save template', 'error');
     } finally {
       setLoading(false);

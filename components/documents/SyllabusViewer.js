@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Modal, Alert, Platform } from 'react-native';
 import { BookOpen, Calendar, Clock, Check, X, Sparkles, Edit2 } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -58,9 +58,7 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
       if (!suggestionsError) {
         setSuggestions(suggestionsData || []);
       }
-
-    } catch (err) {
-      console.error('Error loading syllabus:', err);
+} catch (err) {
     } finally {
       setLoading(false);
     }
@@ -72,7 +70,6 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
       const { data, error } = await suggestPlan(syllabusId);
       
       if (error) {
-        console.error('Error generating suggestions:', error);
         Alert.alert('Error', 'Failed to generate plan suggestions');
         return;
       }
@@ -86,7 +83,6 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
         setShowSuggestModal(true);
       }
     } catch (err) {
-      console.error('Error generating suggestions:', err);
       Alert.alert('Error', 'Failed to generate plan suggestions');
     } finally {
       setLoading(false);
@@ -111,7 +107,6 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
       });
       
       if (error) {
-        console.error('Error accepting plan:', error);
         Alert.alert('Error', 'Failed to accept plan');
         return;
       }
@@ -121,7 +116,6 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
       setShowSuggestModal(false);
       loadSyllabus(); // Reload to refresh suggestions
     } catch (err) {
-      console.error('Error accepting plan:', err);
       Alert.alert('Error', 'Failed to accept plan');
     } finally {
       setLoading(false);
@@ -213,8 +207,9 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
               <TouchableOpacity
                 style={styles.primaryButton}
                 onPress={handleSuggestPlan}
+                {...(Platform.OS === 'web' ? { className: 'btnPrimary' } : {})}
               >
-                <Sparkles size={16} color={colors.accentContrast} />
+                <Sparkles size={16} color={Platform.OS === 'web' ? 'white' : colors.accentContrast} />
                 <Text style={styles.primaryButtonText}>Suggest Plan</Text>
               </TouchableOpacity>
             ) : (
@@ -222,15 +217,17 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
                 <TouchableOpacity
                   style={styles.secondaryButton}
                   onPress={() => setShowSuggestModal(true)}
+                  {...(Platform.OS === 'web' ? { className: 'btnSecondary' } : {})}
                 >
-                  <Edit2 size={16} color={colors.accent} />
+                  <Edit2 size={16} color={Platform.OS === 'web' ? 'rgba(17,24,39,.92)' : colors.accent} />
                   <Text style={styles.secondaryButtonText}>Review ({suggestions.length})</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.primaryButton}
                   onPress={handleAcceptPlan}
+                  {...(Platform.OS === 'web' ? { className: 'btnPrimary' } : {})}
                 >
-                  <Check size={16} color={colors.accentContrast} />
+                  <Check size={16} color={Platform.OS === 'web' ? 'white' : colors.accentContrast} />
                   <Text style={styles.primaryButtonText}>Accept Plan</Text>
                 </TouchableOpacity>
               </>
@@ -299,12 +296,14 @@ export default function SyllabusViewer({ syllabusId, onClose, onSuggestPlan, onA
               <TouchableOpacity
                 style={styles.modalButton}
                 onPress={() => setShowSuggestModal(false)}
+                {...(Platform.OS === 'web' ? { className: 'btnSecondary' } : {})}
               >
                 <Text style={styles.modalButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonPrimary]}
                 onPress={handleAcceptPlan}
+                {...(Platform.OS === 'web' ? { className: 'btnPrimary' } : {})}
               >
                 <Text style={[styles.modalButtonText, styles.modalButtonTextPrimary]}>Accept All</Text>
               </TouchableOpacity>
@@ -433,32 +432,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    // On web, btnPrimary class handles styling
+    ...(Platform.OS === 'web' ? {
+      height: 44,
+    } : {
     backgroundColor: colors.accent,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 8,
+      borderRadius: 14,
+    }),
   },
   primaryButtonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
     color: colors.accentContrast,
+    }),
   },
   secondaryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: 'transparent',
+    // On web, btnSecondary class handles styling
+    ...(Platform.OS === 'web' ? {
+      height: 44,
+    } : {
+      backgroundColor: 'white',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 8,
+      borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
+    }),
   },
   secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
     color: colors.accent,
+    }),
   },
   modalOverlay: {
     flex: 1,

@@ -17,7 +17,6 @@ export default function BlackoutDialog({
   const [endsOn, setEndsOn] = useState('');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
-  console.log('BlackoutDialog rendered, visible:', visible);
 
   const handleSubmit = async () => {
     if (!startsOn || !endsOn) {
@@ -70,7 +69,6 @@ export default function BlackoutDialog({
       onBlackoutCreated?.(data);
       onClose();
     } catch (err) {
-      console.error('Error creating blackout:', err);
       const errorMessage = err?.message || err?.error || 'Failed to create blackout';
       Alert.alert('Error', errorMessage);
     } finally {

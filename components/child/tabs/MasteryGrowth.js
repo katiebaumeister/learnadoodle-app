@@ -91,7 +91,6 @@ export default function MasteryGrowth({ childId }) {
         });
       }
     } catch (err) {
-      console.error('Error loading growth data:', err);
       setError(err.message || 'Failed to load growth data');
     } finally {
       setLoading(false);

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { StickyNote } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -35,13 +35,11 @@ export default function NotePreviewTooltip({ eventId, familyId, visible, positio
         .limit(3); // Show max 3 notes in preview
 
       if (error) {
-        console.error('Error loading notes for preview:', error);
         setNotes([]);
       } else {
         setNotes(data || []);
       }
     } catch (err) {
-      console.error('Exception loading notes for preview:', err);
       setNotes([]);
     } finally {
       setLoading(false);
@@ -106,11 +104,18 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.15)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 8,
+      },
+    }),
     minWidth: 200,
     maxWidth: 300,
     zIndex: 10000,

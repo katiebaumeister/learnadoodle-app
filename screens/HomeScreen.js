@@ -84,8 +84,7 @@ export default function HomeScreen({ navigation, route }) {
 
       setTodaysLearning(learningByChild || [])
     } catch (error) {
-      console.error('Error fetching today\'s learning:', error)
-    } finally {
+      } finally {
       setLoadingLearning(false)
     }
   }
@@ -133,15 +132,11 @@ export default function HomeScreen({ navigation, route }) {
           })
         })
       }
-
-    } catch (error) {
-      console.error('Error fetching calendar events:', error)
-    }
+} catch (error) {
+      }
 
     return events
   }
-
-
 
   const handleSignOut = async () => {
     setSigningOut(true)
@@ -189,8 +184,6 @@ export default function HomeScreen({ navigation, route }) {
             <Text style={styles.featureText}>• Manage your profile</Text>
           </View>
         </View>
-
-
 
         {/* Today's Events Section */}
         <View style={styles.todaysLearningSection}>

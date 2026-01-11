@@ -314,7 +314,6 @@ export default function PortfolioTimeline({ familyId }) {
       setUploads(filteredUploads);
       setGrades(filteredGrades);
     } catch (error) {
-      console.error('Error loading timeline data:', error);
       setEvents([]);
       setUploads([]);
       setGrades([]);

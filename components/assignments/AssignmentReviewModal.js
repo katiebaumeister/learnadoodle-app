@@ -41,13 +41,11 @@ export default function AssignmentReviewModal({
         .single();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Error loading rubric:', error);
       } else if (data) {
         setRubric(data);
         setUseRubric(true);
       }
     } catch (error) {
-      console.error('Error loading rubric:', error);
     }
   };
 
@@ -81,7 +79,6 @@ export default function AssignmentReviewModal({
         Alert.alert('Error', result.error || 'Failed to submit review');
       }
     } catch (error) {
-      console.error('Error submitting review:', error);
       Alert.alert('Error', 'Failed to submit review');
     } finally {
       setSubmitting(false);

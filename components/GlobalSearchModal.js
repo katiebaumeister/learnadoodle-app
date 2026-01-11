@@ -27,7 +27,6 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
           setFamilyId(profileData.family_id);
         }
       } catch (error) {
-        console.error('Error fetching family_id:', error);
       }
     };
     fetchFamilyId();
@@ -87,7 +86,6 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
 
         // Fallback to API endpoint if direct query fails
         if (childrenError) {
-          console.warn('[GlobalSearchModal] Direct Supabase query failed, trying API endpoint:', childrenError);
           try {
             const apiResult = await getChildren();
             if (apiResult.data && !apiResult.error) {
@@ -97,25 +95,14 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
                 first_name: child.name || child.first_name || ''
               }));
               childrenError = null;
-              console.log('[GlobalSearchModal] Successfully fetched children via API:', childrenData.length);
-            } else {
-              console.error('[GlobalSearchModal] API endpoint also failed:', apiResult.error);
+} else {
             }
           } catch (apiErr) {
-            console.error('[GlobalSearchModal] Error calling API endpoint:', apiErr);
           }
         }
 
         if (childrenError && !childrenData) {
-          console.error('Error fetching children for search:', childrenError);
         }
-
-        console.log('[GlobalSearchModal] Children query result:', { 
-          data: childrenData, 
-          error: childrenError, 
-          count: childrenData?.length || 0,
-          familyId 
-        });
 
         const childrenMap = {};
         if (childrenData) {
@@ -139,16 +126,6 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
           const matchingChildren = childrenData.filter((child) => {
             const firstName = (child.first_name || '').toLowerCase();
             return firstName.includes(searchLower);
-          });
-
-          console.log('[GlobalSearchModal] Matching children for query:', {
-            query: searchLower,
-            totalChildren: childrenData.length,
-            matchingCount: matchingChildren.length,
-            matches: matchingChildren.map(c => ({ 
-              id: c.id, 
-              first_name: c.first_name
-            }))
           });
 
           matchingChildren.forEach((child) => {
@@ -289,13 +266,13 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
             subtitle: 'Daily insights and headlines',
             payload: { kind: 'navigate', href: '/' },
           },
-          {
-            id: 'cmd-explore',
-            type: 'function',
-            title: 'Go to Explore',
-            subtitle: 'Browse external courses',
-            payload: { kind: 'navigate', href: '/explore' },
-          },
+          // { // Archived - explore page removed
+          //   id: 'cmd-explore',
+          //   type: 'function',
+          //   title: 'Go to Explore',
+          //   subtitle: 'Browse external courses',
+          //   payload: { kind: 'navigate', href: '/explore' },
+          // },
           {
             id: 'cmd-records',
             type: 'function',
@@ -311,16 +288,6 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
         );
         results.push(...cmdMatches);
 
-        console.log('[GlobalSearchModal] Final results before setting:', {
-          totalResults: results.length,
-          byType: results.reduce((acc, r) => {
-            acc[r.type] = (acc[r.type] || 0) + 1;
-            return acc;
-          }, {}),
-          childResults: results.filter(r => r.type === 'child' || r.type === 'child-section').length,
-          sampleResults: results.slice(0, 5).map(r => ({ id: r.id, type: r.type, title: r.title }))
-        });
-
         // Cache results for instant future searches
         searchCache.current.set(cacheKey, results);
         // Limit cache size to 50 entries
@@ -331,7 +298,6 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
 
         setResults(results);
       } catch (e) {
-        console.error('search failed', e);
         setResults([]);
       } finally {
         setLoading(false);
@@ -377,7 +343,7 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
       } else if (r.type === 'note') {
         key = 'Notes';
       } else if (r.type === 'course') {
-        key = 'Explore Courses';
+        // key = 'Explore Courses'; // Archived - explore page removed
       } else if (r.type === 'child' || r.type === 'child-section') {
         key = 'Children';
       } else if (r.type === 'subject') {
@@ -386,14 +352,6 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
       if (!groups[key]) groups[key] = [];
       groups[key].push(r);
     }
-    console.log('[GlobalSearchModal] Grouped results:', {
-      groupKeys: Object.keys(groups),
-      groupCounts: Object.entries(groups).reduce((acc, [k, v]) => {
-        acc[k] = v.length;
-        return acc;
-      }, {}),
-      childrenGroup: groups['Children']?.slice(0, 3).map(r => ({ id: r.id, type: r.type, title: r.title }))
-    });
     return groups;
   }, [results]);
 
@@ -458,8 +416,8 @@ export default function GlobalSearchModal({ onClose, onNavigate }) {
         const path = payload.href.replace(/^\//, '');
         if (path === 'planner' || path.startsWith('planner')) {
           navHandler('planner');
-        } else if (path === 'explore' || path.startsWith('explore')) {
-          navHandler('explore');
+        // } else if (path === 'explore' || path.startsWith('explore')) { // Archived - explore page removed
+        //   navHandler('explore');
         } else if (path === 'records' || path.startsWith('records')) {
           navHandler('records');
         } else {
@@ -620,7 +578,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     height: 40,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#e5e7eb',
     borderRadius: 8,
     paddingHorizontal: 12,
     color: '#111827',
@@ -637,7 +595,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
     borderColor: '#d1d5db',
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#d1d5db',
   },
   shortcutText: {
     fontSize: 11,
@@ -680,7 +638,7 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
   resultItemActive: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#e5e7eb',
   },
   resultTitle: {
     fontSize: 14,

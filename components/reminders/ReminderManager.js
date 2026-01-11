@@ -47,13 +47,11 @@ export default function ReminderManager({ visible, childId, familyId, assignment
       const { data, error } = await getReminders(childId, familyId, 'pending');
 
       if (error) {
-        console.error('Error loading reminders:', error);
         setReminders([]);
       } else {
         setReminders(data || []);
       }
     } catch (error) {
-      console.error('Error loading reminders:', error);
       setReminders([]);
     } finally {
       setLoading(false);
@@ -116,7 +114,6 @@ export default function ReminderManager({ visible, childId, familyId, assignment
 
       Alert.alert('Success', 'Reminder created successfully!');
     } catch (error) {
-      console.error('Error creating reminder:', error);
       Alert.alert('Error', 'Failed to create reminder. Please try again.');
     } finally {
       setCreating(false);
@@ -129,7 +126,6 @@ export default function ReminderManager({ visible, childId, familyId, assignment
       if (error) throw error;
       await loadReminders();
     } catch (error) {
-      console.error('Error dismissing reminder:', error);
       Alert.alert('Error', 'Failed to dismiss reminder.');
     }
   };
@@ -149,7 +145,6 @@ export default function ReminderManager({ visible, childId, familyId, assignment
               if (error) throw error;
               await loadReminders();
             } catch (error) {
-              console.error('Error deleting reminder:', error);
               Alert.alert('Error', 'Failed to delete reminder.');
             }
           },

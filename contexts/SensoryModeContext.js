@@ -39,7 +39,6 @@ export function SensoryModeProvider({ children }) {
         // For now, just use default
       }
     } catch (error) {
-      console.error('Error loading sensory mode:', error);
     } finally {
       setLoading(false);
     }
@@ -47,7 +46,6 @@ export function SensoryModeProvider({ children }) {
 
   const setMode = (newMode) => {
     if (!['pastel', 'low', 'contrast'].includes(newMode)) {
-      console.warn(`Invalid sensory mode: ${newMode}, using default`);
       newMode = DEFAULT_MODE;
     }
     
@@ -59,7 +57,6 @@ export function SensoryModeProvider({ children }) {
         localStorage.setItem(STORAGE_KEY, newMode);
       }
     } catch (error) {
-      console.error('Error saving sensory mode:', error);
     }
   };
 
@@ -75,4 +72,20 @@ export function SensoryModeProvider({ children }) {
     </SensoryModeContext.Provider>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

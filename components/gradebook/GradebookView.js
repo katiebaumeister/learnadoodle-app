@@ -47,16 +47,12 @@ export default function GradebookView({ childId, subjectId = null, termLabel = n
       
       // Log errors but don't crash
       if (catsResult?.error) {
-        console.warn('Error loading categories:', catsResult.error);
       }
       if (rubricsResult?.error) {
-        console.warn('Error loading rubrics:', rubricsResult.error);
       }
       if (gradeResult?.error) {
-        console.warn('Error loading gradebook data:', gradeResult.error);
       }
     } catch (error) {
-      console.error('Exception loading gradebook data:', error);
       // Set empty arrays on error to prevent crashes
       setCategories([]);
       setRubrics([]);

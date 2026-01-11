@@ -54,7 +54,6 @@ export default function DigitalBinder({ childId, familyId }) {
 
       setItems(grouped);
     } catch (error) {
-      console.error('Error loading binder:', error);
       Alert.alert('Error', 'Failed to load binder');
     } finally {
       setLoading(false);
@@ -79,7 +78,6 @@ export default function DigitalBinder({ childId, familyId }) {
       setShowAddModal(false);
       Alert.alert('Success', 'Item added to binder');
     } catch (error) {
-      console.error('Error adding to binder:', error);
       Alert.alert('Error', 'Failed to add item');
     }
   };
@@ -93,7 +91,6 @@ export default function DigitalBinder({ childId, familyId }) {
 
       await loadBinder();
     } catch (error) {
-      console.error('Error removing from binder:', error);
       Alert.alert('Error', 'Failed to remove item');
     }
   };

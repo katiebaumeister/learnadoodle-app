@@ -59,7 +59,7 @@ export default function AcademicCoverageMap({ childId, academicYear = null, onNa
         // If it's a 500 error and we haven't retried too many times, retry
         if (apiError.status === 500 && retryCountRef.current < maxRetries) {
           retryCountRef.current += 1;
-          console.warn(`Coverage map error, retrying (${retryCountRef.current}/${maxRetries})...`);
+          
           // Wait a bit before retrying (exponential backoff)
           await new Promise(resolve => setTimeout(resolve, 1000 * retryCountRef.current));
           return loadCoverageWithRetry();
@@ -76,14 +76,12 @@ export default function AcademicCoverageMap({ childId, academicYear = null, onNa
       setCoverage(data);
       setError(null);
     } catch (err) {
-      console.error('Error loading coverage map:', err);
       const errorMessage = err.message || err.detail || 'Failed to load coverage map';
       setError(errorMessage);
       
       // If we have cached data, use it even if stale
       const cached = coverageCache.get(cacheKey);
       if (cached) {
-        console.warn('Using stale cached coverage data due to error');
         setCoverage(cached.data);
       }
     } finally {

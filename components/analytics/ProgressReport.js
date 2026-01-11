@@ -48,7 +48,6 @@ export default function ProgressReport({ familyId, childId, children = [], onClo
       
       setData(result.data);
     } catch (err) {
-      console.error('[ProgressReport] Error:', err);
       setError(err.message || 'Failed to load report data');
     } finally {
       setLoading(false);

@@ -135,7 +135,6 @@ export function ColorModeProvider({ children, childId }) {
         setColorPreferences(profile.color_preferences || {});
       }
     } catch (error) {
-      console.error('Error loading color mode:', error);
       // On error, keep defaults
       setColorMode('default');
       setColorPreferences({});
@@ -162,7 +161,6 @@ export function ColorModeProvider({ children, childId }) {
       try {
         await updateSupportProfile(childId, newMode, preferences);
       } catch (error) {
-        console.error('Error saving color mode:', error);
       }
     }
   };

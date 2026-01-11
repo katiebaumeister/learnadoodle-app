@@ -38,30 +38,20 @@ export default function WebRouter() {
                           window.location.hash.includes('type=recovery');
       
       if (hasResetToken || isResetPath || hasResetHash) {
-        console.log('Password reset flow detected:');
-        console.log('- URL params:', Object.fromEntries(urlParams.entries()));
-        console.log('- Hash:', window.location.hash);
-        console.log('- Path:', window.location.pathname);
-        
         // Only set reset flow if not already set
         if (!isPasswordResetFlow) {
           setIsPasswordResetFlow(true);
           setResetFlowStartTime(Date.now());
-          console.log('Reset flow activated');
-        }
+}
         
         // If we have reset tokens in the hash, try to manually process them
         if (hasResetHash) {
-          console.log('Reset tokens in hash detected, attempting to manually process...');
-          
           // Parse the tokens from the hash and try to establish the session
           const hashParams = new URLSearchParams(window.location.hash.substring(1));
           const accessToken = hashParams.get('access_token');
           const refreshToken = hashParams.get('refresh_token');
           
           if (accessToken) {
-            console.log('Found access token, attempting to establish session...');
-            
             // Try to trigger the auth state change by updating the URL and reloading
             // This should allow Supabase to process the tokens properly
             const cleanUrl = window.location.origin + '/';
@@ -69,7 +59,6 @@ export default function WebRouter() {
             
             // Force a reload to trigger auth state re-evaluation
             setTimeout(() => {
-              console.log('Reloading to process reset tokens...');
               window.location.reload();
             }, 1000);
           }
@@ -90,11 +79,9 @@ export default function WebRouter() {
       // Check auth state every 5 seconds during reset flow
       const interval = setInterval(() => {
         const elapsed = Date.now() - resetFlowStartTime;
-        console.log(`Reset flow check: ${elapsed}ms elapsed, user: ${user?.email || 'none'}`);
-        
+
         // If user gets authenticated, clear reset flow immediately
         if (user) {
-          console.log('User authenticated during reset flow, clearing reset flow');
           setIsPasswordResetFlow(false);
           setResetFlowStartTime(null);
           return;
@@ -102,7 +89,7 @@ export default function WebRouter() {
         
         // If timeout reached, clear reset flow
         if (elapsed > 60000) { // 60 seconds - give much more time for auth state to update
-          console.log('Reset flow timeout reached, clearing reset flow');
+
           setIsPasswordResetFlow(false);
           setResetFlowStartTime(null);
         }
@@ -125,17 +112,9 @@ export default function WebRouter() {
     }
     
     // Debug: Log the current state
-    console.log('Reset flow state:', { 
-      isPasswordResetFlow, 
-      user: user?.email, 
-      loading, 
-      resetFlowStartTime,
-      timeElapsed: resetFlowStartTime ? Date.now() - resetFlowStartTime : 0
-    });
-    
+
     // If user is now authenticated, they don't need the reset page
     if (user) {
-      console.log('User is authenticated in reset flow, redirecting to main app');
       setIsPasswordResetFlow(false);
       setResetFlowStartTime(null);
       return <WebLayout user={user} />;
@@ -146,7 +125,6 @@ export default function WebRouter() {
                           window.location.hash.includes('type=recovery');
     
     if (!hasValidTokens) {
-      console.log('No valid tokens found, clearing reset flow');
       setIsPasswordResetFlow(false);
       setResetFlowStartTime(null);
       // Show expired token message
@@ -180,7 +158,6 @@ export default function WebRouter() {
       <ChildInvitePage
         token={childInviteToken}
         onComplete={(data) => {
-          console.log('Child invite accepted:', data);
           // Redirect handled by component
         }}
       />
@@ -198,8 +175,7 @@ export default function WebRouter() {
         onAcceptComplete={(data) => {
           // After accepting, redirect based on role
           // The component handles the redirect, but we can also handle it here
-          console.log('Invite accepted:', data);
-        }}
+}}
       />
     );
   }

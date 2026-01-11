@@ -137,7 +137,6 @@ export default function YearTimeline({ familyId, childId = null, year = null }) 
       items.sort((a, b) => b.date - a.date);
       setTimelineData(items);
     } catch (error) {
-      console.error('Error loading timeline data:', error);
     } finally {
       setLoading(false);
     }

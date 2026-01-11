@@ -74,7 +74,6 @@ const AttendanceDashboard = ({ visible, onClose, childId, familyId }) => {
       }));
       setAttendanceData(mapped);
     } catch (error) {
-      console.error('Error loading attendance data:', error);
     } finally {
       setLoading(false);
     }
@@ -94,7 +93,6 @@ const AttendanceDashboard = ({ visible, onClose, childId, familyId }) => {
       if (error) throw error;
       setCreditData(data || []);
     } catch (error) {
-      console.error('Error loading credit data:', error);
     }
   };
 
@@ -112,7 +110,6 @@ const AttendanceDashboard = ({ visible, onClose, childId, familyId }) => {
       if (error) throw error;
       setCoverageData(data || []);
     } catch (error) {
-      console.error('Error loading coverage data:', error);
     }
   };
 

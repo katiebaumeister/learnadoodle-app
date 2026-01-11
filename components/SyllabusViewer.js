@@ -16,7 +16,6 @@ const SyllabusViewer = ({ onClose, onEditSyllabus }) => {
       const loadedSyllabi = await getAllSyllabi();
       setSyllabi(loadedSyllabi);
     } catch (error) {
-      console.error('Error loading syllabi:', error);
       Alert.alert('Error', 'Failed to load syllabi');
     } finally {
       setLoading(false);
@@ -41,7 +40,6 @@ const SyllabusViewer = ({ onClose, onEditSyllabus }) => {
       );
       onClose(); // Close the viewer to return to calendar
     } catch (error) {
-      console.error('Error adding to calendar:', error);
       Alert.alert('Error', 'Failed to add lessons to calendar');
     }
   };

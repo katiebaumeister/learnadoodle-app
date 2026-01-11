@@ -64,14 +64,12 @@ export default function RebalanceModal({
       } else if (event.data?.start_ts) {
         eventStart = new Date(event.data.start_ts);
       } else {
-        console.error('[RebalanceModal] No valid start time found in event:', event);
         Alert.alert('Error', 'Event start time not found');
         return;
       }
       
       // Validate date
       if (isNaN(eventStart.getTime())) {
-        console.error('[RebalanceModal] Invalid date:', event.start_ts || event.start_at || event.start);
         Alert.alert('Error', 'Invalid event date');
         return;
       }
@@ -91,7 +89,6 @@ export default function RebalanceModal({
   const checkConflict = async (eventId, childId, newStart, newEnd) => {
     try {
       if (!childId) {
-        console.warn('[RebalanceModal] No childId provided for conflict check');
         return null;
       }
       
@@ -114,7 +111,6 @@ export default function RebalanceModal({
         .lte('end_ts', queryEnd.toISOString());
       
       if (error) {
-        console.error('[RebalanceModal] Error checking conflicts:', error);
         return null; // Don't block on error, but log it
       }
       
@@ -134,7 +130,6 @@ export default function RebalanceModal({
       
       return null; // No conflict
     } catch (err) {
-      console.error('[RebalanceModal] Exception checking conflicts:', err);
       return null;
     }
   };
@@ -150,27 +145,18 @@ export default function RebalanceModal({
 
     try {
       const newStart = new Date(`${newStartDate}T${newStartTime}:00`);
-      console.log('[RebalanceModal] Preview request:', {
-        yearPlanId,
-        eventId: event.id,
-        newStart: newStart.toISOString()
-      });
-      
+
       const { data, error } = await previewRebalance(
         yearPlanId,
         event.id,
         newStart.toISOString()
       );
 
-      console.log('[RebalanceModal] Preview response:', { data, error });
-
       if (error) {
-        console.error('[RebalanceModal] Preview error:', error);
         throw error;
       }
 
       if (data && data.ok) {
-        console.log('[RebalanceModal] Setting moves:', data.moves);
         setMoves(data.moves || []);
         // Reset skip/edit state when new preview is loaded
         setSkippedMoves(new Set());
@@ -181,11 +167,9 @@ export default function RebalanceModal({
           Alert.alert('No moves', 'No future events found to rebalance for this subject.');
         }
       } else {
-        console.error('[RebalanceModal] Preview failed:', data);
         Alert.alert('Error', data?.error || 'Failed to preview rebalance');
       }
     } catch (err) {
-      console.error('[RebalanceModal] Preview error:', err);
       Alert.alert('Error', err.message || 'Failed to preview rebalance moves');
     } finally {
       setPreviewing(false);
@@ -216,11 +200,8 @@ export default function RebalanceModal({
     }
 
     if (!confirmed) {
-      console.log('[RebalanceModal] User cancelled apply');
       return;
     }
-    
-    console.log('[RebalanceModal] User confirmed apply');
 
     setApplying(true);
     setAppliedCount(0);
@@ -288,28 +269,20 @@ export default function RebalanceModal({
         setApplying(false);
         return;
       }
-      
-      console.log('[RebalanceModal] Starting apply with', movesToApply.length, 'moves (skipped', skippedMoves.size, ')');
-      
+
       // Progress callback to update UI in real-time
       const onProgress = (applied, total) => {
-        console.log('[RebalanceModal] Progress update:', applied, '/', total);
         setAppliedCount(applied);
       };
       
       const result = await applyRebalanceMoves(movesToApply, onProgress);
-      
-      console.log('[RebalanceModal] Apply result:', result);
-      
+
       if (result.error) {
-        console.error('[RebalanceModal] Apply returned error:', result.error);
         throw result.error;
       }
 
       const successCount = result.data?.applied || 0;
       const skippedCount = result.data?.skipped || 0;
-
-      console.log('[RebalanceModal] Apply complete - applied:', successCount, 'skipped:', skippedCount);
 
       setAppliedCount(successCount);
 
@@ -340,7 +313,6 @@ export default function RebalanceModal({
         }
       }
     } catch (err) {
-      console.error('[RebalanceModal] Apply error:', err);
       Alert.alert(
         'Error',
         `Failed to apply moves: ${err.message || 'Unknown error'}. ${appliedCount > 0 ? `${appliedCount} move(s) were applied before the error.` : ''}`

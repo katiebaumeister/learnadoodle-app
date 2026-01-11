@@ -47,7 +47,6 @@ export default function MaterialsTab({ child, familyId }) {
       const data = await getMaterialsByChild(familyId, child.id);
       setMaterials(data);
     } catch (error) {
-      console.error('Error loading materials:', error);
     } finally {
       setLoading(false);
     }

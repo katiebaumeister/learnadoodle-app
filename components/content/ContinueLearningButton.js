@@ -42,7 +42,6 @@ export default function ContinueLearningButton({
         setResumePoint({ lesson_id: lessonId });
       }
     } catch (error) {
-      console.error('Error loading resume point:', error);
       // Fallback: use lessonId if provided
       if (lessonId) {
         setResumePoint({ lesson_id: lessonId });
@@ -80,7 +79,6 @@ export default function ContinueLearningButton({
           setDeepLink(result.data.deep_link);
         }
       } catch (err) {
-        console.error('Error generating deep link:', err);
       }
     }
     

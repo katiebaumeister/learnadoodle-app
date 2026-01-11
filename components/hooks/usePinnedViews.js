@@ -12,7 +12,6 @@ export const usePinnedViews = () => {
         const parsedViews = JSON.parse(saved);
         setPinnedViews(parsedViews);
       } catch (error) {
-        console.error('Failed to parse pinned views:', error);
       }
     }
   }, []);

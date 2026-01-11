@@ -68,7 +68,6 @@ export default function TranscriptsTab({
         .filter(g => !isNaN(g));
       setGpa(gpas.length > 0 ? (gpas.reduce((a, b) => a + b, 0) / gpas.length).toFixed(2) : null);
     } catch (error) {
-      console.error('Error loading credits data:', error);
       setCreditsData([]);
       setGpa(null);
     } finally {
@@ -78,8 +77,7 @@ export default function TranscriptsTab({
 
   const handleRowClick = (subject) => {
     // TODO: Open modal with evidence summary, linked assignments, etc.
-    console.log('Open details for:', subject);
-  };
+};
 
   const handleGenerateTranscript = async (childId) => {
     try {
@@ -96,7 +94,6 @@ export default function TranscriptsTab({
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error generating transcript:', error);
       alert('Failed to generate transcript. Please try again.');
     }
   };

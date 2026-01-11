@@ -22,7 +22,6 @@ const ConflictsList = ({ conflicts, onConflictResolved, familyId }) => {
       
       onConflictResolved();
     } catch (error) {
-      console.error('Error resolving conflict:', error);
       showAlert('Error', 'Failed to resolve conflict');
     } finally {
       setResolving(prev => ({ ...prev, [conflictId]: false }));

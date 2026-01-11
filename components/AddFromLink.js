@@ -52,13 +52,6 @@ export default function AddFromLink({ familyId, children = [], onCreated }) {
       });
 
       if (error) {
-        console.error('Error adding from link:', error);
-        console.error('Error details:', {
-          message: error.message,
-          detail: error.detail,
-          status: error.status,
-          fullError: error
-        });
         // Extract detailed error message
         let errorMsg = 'Failed to add from link';
         if (error.detail) {
@@ -101,7 +94,6 @@ export default function AddFromLink({ familyId, children = [], onCreated }) {
         onCreated({ course_id: data.item_id || data.id, ...data });
       }
     } catch (err) {
-      console.error('Error in handleSubmit:', err);
       toast.push('Failed to add from link', 'error');
     } finally {
       setLoading(false);

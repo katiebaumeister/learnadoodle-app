@@ -40,7 +40,6 @@ export default function SmartSuggestionsList({
       const { data, error } = await getActiveSuggestions(familyId, childId);
       
       if (error) {
-        console.error('Error loading suggestions:', error);
         setSuggestions([]);
         return;
       }
@@ -81,7 +80,6 @@ export default function SmartSuggestionsList({
       
       setSuggestions(combined.slice(0, maxSuggestions));
     } catch (error) {
-      console.error('Error loading suggestions:', error);
       setSuggestions([]);
     } finally {
       setLoading(false);
@@ -106,7 +104,6 @@ export default function SmartSuggestionsList({
         s.id !== suggestionId && !s.originalIds?.includes(suggestionId)
       ));
     } catch (error) {
-      console.error('Error dismissing suggestion:', error);
     } finally {
       setDismissing(prev => {
         const next = new Set(prev);

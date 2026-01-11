@@ -3,7 +3,7 @@
  * Shows extracted tasks/assignments for review before creating backlog items
  */
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Checkbox } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Checkbox, Platform } from 'react-native';
 import { X, CheckCircle, Circle, BookOpen, FileText } from 'lucide-react';
 import { colors } from '../../theme/colors';
 
@@ -50,7 +50,6 @@ export default function SyllabusTaskReviewModal({
       }
       onClose();
     } catch (error) {
-      console.error('Error creating tasks:', error);
     } finally {
       setIsCreating(false);
     }
@@ -194,10 +193,18 @@ const styles = StyleSheet.create({
     width: '90%',
     maxWidth: 600,
     maxHeight: '80%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.3)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+      },
+    }),
     elevation: 8,
   },
   header: {

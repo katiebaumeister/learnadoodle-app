@@ -32,14 +32,12 @@ export default function ConversationStarters({
       );
       
       if (error) {
-        console.error('[ConversationStarters] Error loading starters:', error);
         setStarters([]);
       } else {
         // Backend now returns one per child, so we can use all of them
         setStarters(data || []);
       }
     } catch (err) {
-      console.error('[ConversationStarters] Error:', err);
       setStarters([]);
     } finally {
       setLoading(false);

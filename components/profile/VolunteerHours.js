@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, 
 import { Plus, Calendar, Clock, MapPin, X, Save, Edit, Trash2 } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
+import { designTokens } from '../../theme/designTokens';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import GeistCard from '../GeistCard';
@@ -424,10 +425,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
     marginBottom: spacing.xs,
   },
   subtitle: {
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
   },
   addButton: {
     flexDirection: 'row',
@@ -440,6 +443,7 @@ const styles = StyleSheet.create({
   addButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   summaryCard: {
     marginBottom: spacing.md,
@@ -454,19 +458,23 @@ const styles = StyleSheet.create({
   },
   totalLabel: {
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     marginBottom: spacing.xs,
   },
   totalValue: {
     fontSize: 32,
     fontWeight: '700',
+    fontFamily: designTokens.fonts.display,
   },
   loading: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   emptyText: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   tableCard: {
     padding: 0,
@@ -481,6 +489,7 @@ const styles = StyleSheet.create({
   tableHeaderText: {
     fontSize: 12,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.sans,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -497,6 +506,7 @@ const styles = StyleSheet.create({
   },
   tableCell: {
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     paddingRight: spacing.sm,
   },
   modalOverlay: {
@@ -526,6 +536,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   modalBody: {
     flex: 1,
@@ -541,6 +552,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     marginBottom: spacing.xs,
   },
   input: {
@@ -548,12 +560,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
   },
   textArea: {
     borderWidth: 1,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     minHeight: 100,
     textAlignVertical: 'top',
   },
@@ -574,6 +588,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   saveButton: {
     flexDirection: 'row',
@@ -586,5 +601,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
 });

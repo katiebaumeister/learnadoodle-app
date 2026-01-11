@@ -4,6 +4,7 @@ import { Upload, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
 import { colors, shadows } from '../../theme/colors';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 
 export default function Uploads({ familyId, initialChildren = [] }) {
   const [items, setItems] = useState([]);
@@ -26,22 +27,71 @@ export default function Uploads({ familyId, initialChildren = [] }) {
         setChildren(kids || []);
       }
 
-      // Load uploads
-      const { data, error: rpcError } = await supabase.rpc('get_uploads', {
-        _family: familyId,
-        _q: q || null,
-        _child_ids: childIds
-      });
+      // Load file-based materials (replaces uploads)
+      // Handle child filter via material_children junction table
+      let materialIds = null;
       
-      if (rpcError && !shouldSuppressError(rpcError)) {
-        console.error('Error loading uploads:', rpcError);
-        Alert.alert('Error', 'Failed to load uploads');
+      if (childIds && childIds.length > 0) {
+        const { data: mcData } = await supabase
+          .from('material_children')
+          .select('material_id')
+          .in('child_id', childIds)
+          .eq('family_id', familyId);
+        materialIds = mcData?.map(mc => mc.material_id) || [];
+        if (materialIds.length === 0) {
+          setItems([]);
+          return;
+        }
       }
       
-      setItems(data || []);
+      let query = supabase
+        .from('materials')
+        .select('id, title, filename, storage_path, created_at, mime, bytes, tags, subject_id, event_id')
+        .eq('family_id', familyId)
+        .is('deleted_at', null)
+        .not('storage_path', 'is', null) // Only file-based materials
+        .order('created_at', { ascending: false });
+      
+      if (materialIds) {
+        query = query.in('id', materialIds);
+      }
+      
+      if (q) {
+        query = query.or(`title.ilike.%${q}%,filename.ilike.%${q}%,storage_path.ilike.%${q}%`);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error && !shouldSuppressError(error)) {
+        Alert.alert('Error', 'Failed to load files');
+      }
+      
+      // Get child_ids from material_children for display
+      if (data && data.length > 0) {
+        const ids = data.map(m => m.id);
+        const { data: mcData } = await supabase
+          .from('material_children')
+          .select('material_id, child_id')
+          .in('material_id', ids);
+        
+        const childIdMap = new Map();
+        (mcData || []).forEach(mc => {
+          if (!childIdMap.has(mc.material_id)) {
+            childIdMap.set(mc.material_id, mc.child_id);
+          }
+        });
+        
+        const itemsWithChildId = (data || []).map(m => ({
+          ...m,
+          child_id: childIdMap.get(m.id) || null,
+        }));
+        
+        setItems(itemsWithChildId);
+      } else {
+        setItems(data || []);
+      }
     } catch (error) {
       if (!shouldSuppressError(error)) {
-        console.error('Error loading uploads:', error);
         Alert.alert('Error', 'Failed to load uploads');
       }
     } finally {
@@ -76,38 +126,29 @@ export default function Uploads({ familyId, initialChildren = [] }) {
         return;
       }
 
-      // Create upload record
-      const { data: uploadRecord, error: recordError } = await supabase.rpc('create_upload_record', {
-        _family: familyId,
-        _child: null,
-        _subject: null,
-        _event: null,
-        _path: uploadData?.path,
-        _mime: file.type || 'application/octet-stream',
-        _bytes: file.size,
-        _title: file.name,
-        _tags: [],
-        _notes: null
+      // Create file material (replaces uploads table insert)
+      const uploadRecord = await createFileMaterial({
+        familyId,
+        storagePath: uploadData?.path,
+        title: file.name,
+        mime: file.type || 'application/octet-stream',
+        bytes: file.size,
       });
 
-      if (recordError) throw recordError;
-
       // Get upload ID and file URL for auto-captioning
-      const uploadId = uploadRecord?.id || uploadRecord?.ok ? uploadRecord.id : null;
+      const uploadId = uploadRecord?.id;
       const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(uploadData?.path);
       const fileUrl = urlData?.publicUrl;
 
       // Trigger auto-captioning (non-blocking)
       if (uploadId && fileUrl) {
         autoCaptionOnUpload(uploadId, file.type, fileUrl, file.name).catch(err => {
-          console.log('Auto-captioning failed (non-critical):', err);
         });
       }
 
       await loadData();
       Alert.alert('Success', 'File uploaded successfully');
     } catch (error) {
-      console.error('Error uploading file:', error);
       Alert.alert('Error', 'Failed to upload file');
     }
   };
@@ -274,7 +315,6 @@ function SignedImage({ path }) {
           .createSignedUrl(path, 60);
         setUrl(data?.signedUrl || null);
       } catch (error) {
-        console.error('Error getting signed URL:', error);
       }
     };
 

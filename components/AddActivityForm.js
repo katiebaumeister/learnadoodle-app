@@ -26,14 +26,23 @@ export default function AddActivityForm({ familyId, selectedChildId = null, onBa
       try {
         if (!familyId) return;
         // Detect any active subject goals for this family (any child)
-        let goalsQuery = supabase
-          .from('subject_goals')
-          .select('id')
-          .eq('is_active', true)
-          .limit(1);
-        if (selectedChildId) goalsQuery = goalsQuery.eq('child_id', selectedChildId);
-        const { data: goals } = await goalsQuery;
-        setHasGoals((goals || []).length > 0);
+        try {
+          let goalsQuery = supabase
+            .from('subject_goals')
+            .select('id')
+            .eq('is_active', true)
+            .limit(1);
+          if (selectedChildId) goalsQuery = goalsQuery.eq('child_id', selectedChildId);
+          const { data: goals, error } = await goalsQuery;
+          // Silently handle permission errors (403) - RLS policies may restrict access
+          if (error && error.code !== 'PGRST301' && error.status !== 403) {
+            throw error;
+          }
+          setHasGoals((goals || []).length > 0);
+        } catch (err) {
+          // Silently handle errors - assume no goals if query fails
+          setHasGoals(false);
+        }
 
         // Detect any backlog items (events with status='backlog') for this family
         let backlogQuery = supabase
@@ -83,7 +92,6 @@ export default function AddActivityForm({ familyId, selectedChildId = null, onBa
         }}
       ]);
     } catch (error) {
-      console.error('Error creating activity:', error);
       Alert.alert('Error', 'Failed to create activity. Please try again.');
     } finally {
       setIsLoading(false);

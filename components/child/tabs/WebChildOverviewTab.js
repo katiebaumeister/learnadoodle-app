@@ -46,7 +46,6 @@ export default function WebChildOverviewTab({ childId, familyId, onNavigate }) {
         }
       } catch (err) {
         if (!cancelled) {
-          console.error('Error fetching child:', err);
         }
       }
     }

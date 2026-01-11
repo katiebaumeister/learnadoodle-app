@@ -45,13 +45,12 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         .single();
 
       if (error && error.code !== 'PGRST116') { // PGRST116 = no rows
-        console.error('Error loading cascade setting:', error);
+
         return;
       }
 
       setSpecificityCascade(data?.specificity_cascade || false);
     } catch (error) {
-      console.error('Error loading cascade setting:', error);
     }
   };
 
@@ -82,7 +81,6 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
       
       showAlert('Success', 'Specificity policy updated');
     } catch (error) {
-      console.error('Error toggling cascade:', error);
       showAlert('Error', 'Failed to update specificity policy');
     }
   };
@@ -91,9 +89,7 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
     try {
       setLoading(true);
       const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
-      
-      console.log('Loading rules for:', { selectedScope, scopeId, familyId, selectedChildId });
-      
+
       const { data, error } = await supabase
         .from('schedule_rules')
         .select('*')
@@ -103,17 +99,13 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error('Error loading rules:', error);
-        console.error('Error details:', { code: error.code, message: error.message, details: error.details });
         // For now, set empty array to prevent UI errors
         setRules([]);
         return;
       }
-      
-      console.log('Loaded rules:', data);
+
       setRules(data || []);
     } catch (error) {
-      console.error('Error loading rules:', error);
       setRules([]);
     } finally {
       setLoading(false);
@@ -138,14 +130,12 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         .order('date', { ascending: true });
 
       if (error) {
-        console.log('Error loading overrides:', error);
         // For now, set empty array to prevent UI errors
         setOverrides([]);
         return;
       }
       setOverrides(data || []);
     } catch (error) {
-      console.error('Error loading overrides:', error);
     }
   };
 
@@ -168,7 +158,6 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
         setPreviewData(data || []);
       }
     } catch (error) {
-      console.error('Error loading preview data:', error);
     }
   };
 

@@ -20,15 +20,20 @@ export default function AppContainer({
   children, 
   fullWidth = false,
   noPadding = false,
-  paddingVertical = 24, // py-6
+  paddingVertical = 24, // Uses --layout-page-padding (24px)
 }) {
+  const containerClassName = Platform.OS === 'web' ? 'layout-container' : undefined;
+  
   return (
-    <View style={[
+    <View 
+      style={[
       styles.container,
       fullWidth && styles.fullWidth,
       noPadding && styles.noPadding,
       { paddingVertical },
-    ]}>
+      ]}
+      {...(Platform.OS === 'web' && containerClassName && !noPadding ? { className: containerClassName } : {})}
+    >
       {children}
     </View>
   );
@@ -40,7 +45,10 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 1280, // max-w-screen-xl
     marginHorizontal: 'auto',
-    paddingHorizontal: 24, // px-6
+    // On web, let CSS handle padding via layout-container class
+    ...(Platform.OS === 'web' ? {} : {
+      paddingHorizontal: 24, // Uses --layout-page-padding (24px)
+    }),
     backgroundColor: colors.background,
     ...(Platform.OS === 'web' && {
       boxSizing: 'border-box',

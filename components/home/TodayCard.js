@@ -125,11 +125,17 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: 2,
     lineHeight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   bodyText: {
     fontSize: 12,
     color: '#475569', // slate-600
     lineHeight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   dismissButton: {
     width: 20,

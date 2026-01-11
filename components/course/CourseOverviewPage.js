@@ -118,7 +118,6 @@ export default function CourseOverviewPage({
         },
       });
     } catch (err) {
-      console.error('[CourseOverviewPage] Error:', err);
       setError(err.message || 'Failed to load course data');
     } finally {
       setLoading(false);

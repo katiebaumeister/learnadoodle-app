@@ -125,7 +125,6 @@ export default function RubricBuilder({ familyId, rubric = null, onSave, onCance
         onSave(result);
       }
     } catch (error) {
-      console.error('Error saving rubric:', error);
       Alert.alert('Error', 'Failed to save rubric. Please try again.');
     } finally {
       setLoading(false);

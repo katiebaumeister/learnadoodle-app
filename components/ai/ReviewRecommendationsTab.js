@@ -82,13 +82,11 @@ export default function ReviewRecommendationsTab({ familyId, children = [] }) {
       );
 
       if (error) {
-        console.error('Error loading recommendations:', error);
         return;
       }
 
       setRecommendations(data || []);
     } catch (err) {
-      console.error('Exception loading recommendations:', err);
     } finally {
       setLoading(false);
     }
@@ -102,13 +100,11 @@ export default function ReviewRecommendationsTab({ familyId, children = [] }) {
       const { data, error } = await generateReviewRecommendations(selectedChildId);
 
       if (error) {
-        console.error('Error generating recommendations:', error);
         return;
       }
 
       await loadRecommendations();
     } catch (err) {
-      console.error('Exception generating recommendations:', err);
     } finally {
       setGenerating(false);
     }

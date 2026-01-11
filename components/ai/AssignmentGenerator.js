@@ -40,7 +40,6 @@ export default function AssignmentGenerator({ visible, childId, familyId, subjec
       if (error) throw error;
       setSyllabusSections(data || []);
     } catch (error) {
-      console.error('Error loading syllabus sections:', error);
     } finally {
       setLoadingSyllabus(false);
     }
@@ -70,7 +69,6 @@ export default function AssignmentGenerator({ visible, childId, familyId, subjec
 
       setGeneratedAssignment(result.assignment || result);
     } catch (error) {
-      console.error('Error generating assignment:', error);
       Alert.alert('Error', `Failed to generate assignment: ${error.message || 'Unknown error'}`);
     } finally {
       setGenerating(false);
@@ -95,7 +93,6 @@ export default function AssignmentGenerator({ visible, childId, familyId, subjec
 
       handleClose();
     } catch (error) {
-      console.error('Error approving assignment:', error);
       Alert.alert('Error', `Failed to create assignment: ${error.message || 'Unknown error'}`);
     }
   };

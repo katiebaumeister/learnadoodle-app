@@ -84,7 +84,6 @@ export default function TermForecastingDashboard({
         setSelectedTerm(currentTerm || data?.[0] || null);
       }
     } catch (error) {
-      console.error('Error loading terms:', error);
     } finally {
       setLoading(false);
     }
@@ -211,7 +210,6 @@ export default function TermForecastingDashboard({
           }
         }
       } catch (err) {
-        console.warn('Error loading pace data:', err);
       }
 
       setForecastData({
@@ -241,7 +239,6 @@ export default function TermForecastingDashboard({
 
       setBottlenecks(detectedBottlenecks);
     } catch (error) {
-      console.error('Error loading forecast data:', error);
     } finally {
       setLoading(false);
     }

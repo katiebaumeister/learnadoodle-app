@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Sparkles, ChevronDown, Zap, Calendar, HelpCircle, Target } from 'lucide-react';
+import { Sparkles, ChevronDown, Zap, Calendar, HelpCircle, Target, Link } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { checkFeatureFlags } from '../../lib/services/yearClient';
+import AddFromLinkModal from './AddFromLinkModal';
 
 export default function AIActions({ 
   onPackThisWeek,
@@ -10,9 +11,13 @@ export default function AIActions({
   onWhatIf,
   onPlanYear,
   onWeeklyReshuffle,
-  disabled = false
+  disabled = false,
+  familyId,
+  children = [],
+  onLinkAdded,
 }) {
   const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
+  const [showAddFromLinkModal, setShowAddFromLinkModal] = useState(false);
   
   useEffect(() => {
     checkFeatureFlags().then(flags => {
@@ -150,11 +155,18 @@ export default function AIActions({
         borderWidth: 1,
         borderColor: '#e1e5e9',
         zIndex: 9999999,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+        ...Platform.select({
+          web: {
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          },
+          default: {
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 12,
+            elevation: 8,
+          },
+        }),
       }}
     >
       <TouchableOpacity
@@ -206,6 +218,21 @@ export default function AIActions({
           </View>
         </TouchableOpacity>
       )}
+
+      <TouchableOpacity
+        style={styles.menuItem}
+        onPress={() => {
+          setShowMenu(false);
+          setShowAddFromLinkModal(true);
+        }}
+        activeOpacity={0.7}
+      >
+        <Link size={16} color="#374151" />
+        <View style={styles.menuItemContent}>
+          <Text style={styles.menuItemTitle}>Add from Link</Text>
+          <Text style={styles.menuItemDesc}>Turn YouTube, Khan Academy, or Coursera links into lessons</Text>
+        </View>
+      </TouchableOpacity>
     </View>
   );
 
@@ -293,8 +320,37 @@ export default function AIActions({
               </View>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              setShowMenu(false);
+              setShowAddFromLinkModal(true);
+            }}
+            activeOpacity={0.7}
+          >
+            <Link size={16} color="#374151" />
+            <View style={styles.menuItemContent}>
+              <Text style={styles.menuItemTitle}>Add from Link</Text>
+              <Text style={styles.menuItemDesc}>Turn YouTube, Khan Academy, or Coursera links into lessons</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       )}
+
+      {/* Add from Link Modal */}
+      <AddFromLinkModal
+        visible={showAddFromLinkModal}
+        onClose={() => setShowAddFromLinkModal(false)}
+        familyId={familyId}
+        children={children}
+        onCreated={(data) => {
+          if (onLinkAdded) {
+            onLinkAdded(data);
+          }
+          setShowAddFromLinkModal(false);
+        }}
+      />
     </>
   );
 }
@@ -331,19 +387,22 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e1e5e9',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-    } : {
-      position: 'absolute',
-      top: '100%',
-      left: 0,
-      marginTop: 8,
-      zIndex: 1001,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 8,
+        position: 'absolute',
+        top: '100%',
+        left: 0,
+        marginTop: 8,
+        zIndex: 1001,
+      },
     }),
   },
   menuItem: {
@@ -372,4 +431,3 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
 });
-

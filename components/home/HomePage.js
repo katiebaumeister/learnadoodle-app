@@ -121,7 +121,6 @@ const HomePage = ({ firstName = 'there' }) => {
                   key={item.id}
                     onPress={() => {
                       if (item.href) {
-                        console.log('Navigate to:', item.href);
                       }
                     }}
                     variant="default"

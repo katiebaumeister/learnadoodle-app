@@ -109,7 +109,6 @@ export default function YearPlannerWizard({
         alert('Error creating year: ' + (data.error || 'Unknown error'));
       }
     } catch (err) {
-      console.error('Error creating year:', err);
       alert('Failed to create year');
     } finally {
       setLoading(false);

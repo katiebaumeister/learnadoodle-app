@@ -45,7 +45,6 @@ export default function SkillStrengthsWeaknesses({ childId, subjectId = null, on
       if (result.error) throw result.error;
       setSkills(result.data || []);
     } catch (err) {
-      console.error('Error loading strengths/weaknesses:', err);
       setError(err.message || 'Failed to load strengths and weaknesses');
       setSkills([]);
     } finally {

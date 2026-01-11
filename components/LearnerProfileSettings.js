@@ -94,7 +94,6 @@ export default function LearnerProfileSettings({ childId, childName, familyId })
         setMotivationFactors(learnerData.motivation_factors || []);
       }
     } catch (error) {
-      console.error('Error loading profiles:', error);
       toast.push('Failed to load profile settings', 'error');
     } finally {
       setLoading(false);
@@ -113,7 +112,6 @@ export default function LearnerProfileSettings({ childId, childName, familyId })
       await refreshColorMode();
       toast.push('Color mode saved successfully', 'success');
     } catch (error) {
-      console.error('Error saving color mode:', error);
       toast.push('Failed to save color mode', 'error');
     } finally {
       setSaving(false);
@@ -134,7 +132,6 @@ export default function LearnerProfileSettings({ childId, childName, familyId })
       });
       toast.push('Learner profile saved successfully', 'success');
     } catch (error) {
-      console.error('Error saving learner profile:', error);
       toast.push('Failed to save learner profile', 'error');
     } finally {
       setSaving(false);

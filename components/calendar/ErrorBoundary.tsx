@@ -12,8 +12,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(err: any) {
     // Optional: log to Sentry etc.
-    console.error("Sidebar error:", err);
-  }
+}
 
   render() {
     if (this.state.hasError) {

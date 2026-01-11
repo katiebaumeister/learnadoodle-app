@@ -40,8 +40,6 @@ export default function BacklogDrawer({
   const [selectedTag, setSelectedTag] = useState(null);
   const [allTags, setAllTags] = useState([]);
 
-  console.log('BacklogDrawer rendered, open:', open);
-
   useEffect(() => {
     if (open) {
       if (activeTab === 'flexible' && familyId) {
@@ -82,7 +80,6 @@ export default function BacklogDrawer({
 
       setItems(filtered);
     } catch (error) {
-      console.error('Error loading flexible backlog:', error);
     } finally {
       setLoading(false);
     }
@@ -97,7 +94,6 @@ export default function BacklogDrawer({
       });
       
       if (error) {
-        console.error('Error loading suggestions:', error);
         setSuggestions([]);
         setLoading(false);
         return;
@@ -113,7 +109,6 @@ export default function BacklogDrawer({
 
       setSuggestions(filtered);
     } catch (error) {
-      console.error('Error loading suggestions:', error);
     } finally {
       setLoading(false);
     }
@@ -171,9 +166,7 @@ export default function BacklogDrawer({
         }
       });
       setAllTags(Array.from(tags));
-
-    } catch (error) {
-      console.error('Error loading backlog:', error);
+} catch (error) {
     } finally {
       setLoading(false);
     }
@@ -315,7 +308,6 @@ export default function BacklogDrawer({
                 onAutoPlace={async (item) => {
                   try {
                     if (!familyId) {
-                      console.error('No familyId for auto-place');
                       return;
                     }
                     
@@ -327,7 +319,6 @@ export default function BacklogDrawer({
                     });
                     
                     if (error) {
-                      console.error('Error finding slot:', error);
                       Alert.alert('Error', 'Could not find a slot for this task');
                       return;
                     }
@@ -342,7 +333,6 @@ export default function BacklogDrawer({
                       });
                       
                       if (scheduleError) {
-                        console.error('Error scheduling:', scheduleError);
                         Alert.alert('Error', 'Failed to schedule task');
                         return;
                       }
@@ -354,7 +344,6 @@ export default function BacklogDrawer({
                       Alert.alert('No Slot Found', 'Could not find an available time slot for this task');
                     }
                   } catch (err) {
-                    console.error('Error auto-placing:', err);
                     Alert.alert('Error', 'Failed to auto-place task');
                   }
                 }}
@@ -391,7 +380,6 @@ export default function BacklogDrawer({
                             // Reload backlog
                             loadFlexibleBacklog();
                           } catch (err) {
-                            console.error('Error deleting task:', err);
                             Alert.alert('Error', 'Failed to delete task');
                           }
                         },
@@ -410,13 +398,11 @@ export default function BacklogDrawer({
                       startTs: item.suggested_start_ts || new Date().toISOString(),
                     });
                     if (error) {
-                      console.error('Error accepting suggestion:', error);
                       return;
                     }
                     // Reload suggestions
                     loadSuggestions();
                   } catch (err) {
-                    console.error('Error in acceptSuggestion:', err);
                   }
                 }}
                 onDismiss={async (id) => {
@@ -428,7 +414,6 @@ export default function BacklogDrawer({
                     if (error) throw error;
                     loadSuggestions();
                   } catch (err) {
-                    console.error('Error dismissing suggestion:', err);
                   }
                 }}
               />

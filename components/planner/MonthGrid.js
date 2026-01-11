@@ -1,7 +1,26 @@
-import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { View, Text, TouchableOpacity, Platform, Alert } from 'react-native';
 import { eachDayMatrix, isSameMonth, isToday, formatDayNum } from './utils/date';
 import EventChip from '../calendar/EventChip';
+import { rescheduleEvent } from '../../lib/services/plannerClientWithOffline';
+
+// For web portal rendering
+let ReactDOM;
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
+  try {
+    ReactDOM = require('react-dom');
+  } catch (e) {
+    console.warn('ReactDOM not available for portal rendering');
+  }
+}
+
+// Pastel colors for week row backgrounds (very faint tint - alternating for visual separation)
+const WEEK_PASTEL_COLORS = [
+  'rgba(245, 243, 255, 0.04)', // Week 1: faint lavender (slightly more visible)
+  'rgba(250, 250, 250, 0.02)', // Week 2: very faint neutral (alternating pattern)
+  'rgba(240, 253, 244, 0.04)', // Week 3: faint mint (slightly more visible)
+  'rgba(250, 250, 250, 0.02)', // Week 4: very faint neutral (alternating pattern)
+];
 
 // Helper to filter out text nodes from children
 const filterTextNodes = (children) => {
@@ -14,24 +33,796 @@ const filterTextNodes = (children) => {
   });
 };
 
-export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [] }) {
+export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [], children = [], onSwitchToBoardView, familyId = null }) {
+  // Validate date prop before using it
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+    console.error('[MonthGrid] Invalid date prop:', date);
+    // Return a fallback date (current month)
+    const fallbackDate = new Date();
+    fallbackDate.setDate(1); // First day of current month
+    const matrix = eachDayMatrix(fallbackDate);
+    return <View><Text>Invalid date</Text></View>; // Simple error display
+  }
+  
   const matrix = eachDayMatrix(date);
+  const weekRowRefs = useRef({});
+  const dayCellRefs = useRef({});
+  const [draggedEventId, setDraggedEventId] = useState(null);
+  const [dragOverDay, setDragOverDay] = useState(null);
+  const dragRef = useRef(null);
+  const dragStateRef = useRef(new Map()); // Track drag state per event
+  
+  // Apply week backgrounds via DOM manipulation for web
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      Object.keys(weekRowRefs.current).forEach((weekIndex) => {
+        const element = weekRowRefs.current[weekIndex];
+        if (element) {
+          const weekColorIndex = parseInt(weekIndex) % WEEK_PASTEL_COLORS.length;
+          const weekBackgroundColor = WEEK_PASTEL_COLORS[weekColorIndex];
+          // Try multiple ways to access the DOM node
+          let domNode = element._nativeNode || element;
+          if (domNode && domNode.firstChild) {
+            domNode = domNode.firstChild;
+          }
+          if (domNode && domNode.style) {
+            domNode.style.backgroundColor = weekBackgroundColor;
+            domNode.style.setProperty('background-color', weekBackgroundColor, 'important');
+          }
+        }
+      });
+      
+      // Apply day-of-week backgrounds via DOM manipulation to override week backgrounds
+      Object.keys(dayCellRefs.current).forEach((cellKey) => {
+        const { element, isWeekend, isSel, isBlackout, dayOfWeek } = dayCellRefs.current[cellKey];
+        if (element && !isSel && !isBlackout && dayOfWeek !== undefined) {
+          let domNode = element._nativeNode || element;
+          if (domNode && domNode.style) {
+            // Day-of-week color palette (4% opacity - less opaque)
+            const dayPastels = {
+              0: 'rgba(255, 245, 245, 0.04)', // Sunday: Warmer peach tone
+              1: 'rgba(240, 249, 255, 0.04)', // Monday: Sky blue
+              2: 'rgba(245, 243, 255, 0.04)', // Tuesday: Lavender
+              3: 'rgba(254, 252, 232, 0.04)', // Wednesday: Yellow
+              4: 'rgba(240, 253, 244, 0.04)', // Thursday: Mint
+              5: 'rgba(240, 249, 255, 0.04)', // Friday: Sky blue
+              6: 'rgba(255, 245, 245, 0.04)', // Saturday: Warmer peach tone
+            };
+            const bgColor = dayPastels[dayOfWeek] || 'transparent';
+            domNode.style.setProperty('background-color', bgColor, 'important');
+          }
+        }
+      });
+    }
+  }, [matrix.length, selectedDate]);
+  
+  // Handle mouse-based drag start for events
+  const handleMouseDragStart = useCallback((e, eventId) => {
+    if (typeof window === 'undefined' || Platform.OS !== 'web') return;
+    
+    console.log('[MonthGrid] handleMouseDragStart called for event:', eventId, 'target:', e.currentTarget);
+    
+    // Don't prevent default immediately - let the drag start naturally
+    // Only prevent if we're actually dragging (not just clicking)
+    const isDraggingRef = { current: false };
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const originalTarget = e.currentTarget;
+    
+    // Mark this event as potentially being dragged
+    dragStateRef.current.set(eventId, { wasDragged: false });
+    
+    // Add mouse move handler immediately to detect drag
+    const handleMouseMove = (moveEvent) => {
+      // Check if mouse has moved enough to consider it a drag (not just a click)
+      const deltaX = Math.abs(moveEvent.clientX - startX);
+      const deltaY = Math.abs(moveEvent.clientY - startY);
+      
+      if (deltaX > 5 || deltaY > 5) {
+        // This is a drag, not a click
+        if (!isDraggingRef.current) {
+          console.log('[MonthGrid] Drag detected! deltaX:', deltaX, 'deltaY:', deltaY);
+          isDraggingRef.current = true;
+          moveEvent.preventDefault();
+          moveEvent.stopPropagation();
+          console.log('[MonthGrid] Setting draggedEventId to:', eventId);
+          setDraggedEventId(eventId);
+          dragRef.current = originalTarget;
+          
+          // Force a visual update by directly manipulating the DOM element
+          // Find the actual DOM node (React Native Web wraps it)
+          let domNode = originalTarget;
+          if (domNode._nativeNode) {
+            domNode = domNode._nativeNode;
+          }
+          if (domNode && domNode.firstChild) {
+            // Sometimes the View is wrapped, get the actual element
+            const actualElement = domNode.firstChild || domNode;
+            if (actualElement.style) {
+              domNode = actualElement;
+            }
+          }
+          
+          if (domNode && domNode.style) {
+            // Clone the element and append to body to avoid clipping by parent containers
+            const clonedNode = domNode.cloneNode(true);
+            clonedNode.id = `drag-ghost-${eventId}`;
+            clonedNode.style.position = 'fixed';
+            clonedNode.style.pointerEvents = 'none';
+            clonedNode.style.opacity = '0.8';
+            clonedNode.style.transform = 'scale(1.1) rotate(2deg)';
+            clonedNode.style.zIndex = '99999';
+            clonedNode.style.cursor = 'grabbing';
+            clonedNode.style.boxShadow = '0 8px 16px rgba(0, 0, 0, 0.2)';
+            clonedNode.style.width = domNode.offsetWidth + 'px';
+            clonedNode.style.height = domNode.offsetHeight + 'px';
+            
+            // Position it at the mouse cursor (center it on cursor)
+            const rect = domNode.getBoundingClientRect();
+            clonedNode.style.left = (moveEvent.clientX - rect.width / 2) + 'px';
+            clonedNode.style.top = (moveEvent.clientY - rect.height / 2) + 'px';
+            
+            // Hide the original element
+            domNode.style.opacity = '0.3';
+            domNode.style.pointerEvents = 'none';
+            
+            // Append to body
+            document.body.appendChild(clonedNode);
+            
+            console.log('[MonthGrid] Created drag ghost element and appended to body');
+            
+            // Store references
+            originalTarget._dragDomNode = domNode;
+            originalTarget._dragGhost = clonedNode;
+          }
+          
+          console.log('[MonthGrid] draggedEventId set, current state will update on next render');
+          
+          // Mark that we dragged to prevent click
+          const state = dragStateRef.current.get(eventId);
+          if (state) {
+            state.wasDragged = true;
+          }
+          
+          console.log('[MonthGrid] Drag started for event:', eventId, 'draggedEventId state:', draggedEventId);
+        }
+      }
+      
+      // Only show visual feedback if we're actually dragging
+      if (isDraggingRef.current) {
+        // Update the dragged element's position to follow the cursor
+        if (originalTarget && originalTarget._dragGhost) {
+          const ghost = originalTarget._dragGhost;
+          const rect = ghost.getBoundingClientRect();
+          ghost.style.left = (moveEvent.clientX - rect.width / 2) + 'px';
+          ghost.style.top = (moveEvent.clientY - rect.height / 2) + 'px';
+        }
+        
+        // Find which day cell we're over for visual feedback
+        const elementBelow = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+        if (elementBelow) {
+          let dayCell = elementBelow.closest('[data-day-date]');
+          if (!dayCell) {
+            let parent = elementBelow.parentElement;
+            let depth = 0;
+            while (parent && parent !== document.body && depth < 10) {
+              if (parent.getAttribute && parent.getAttribute('data-day-date')) {
+                dayCell = parent;
+                break;
+              }
+              parent = parent.parentElement;
+              depth++;
+            }
+          }
+          
+          if (dayCell) {
+            const targetDateIso = dayCell.getAttribute('data-day-date');
+            setDragOverDay(targetDateIso);
+          } else {
+            setDragOverDay(null);
+          }
+        }
+      }
+    };
+    
+    // Store handlers to remove them later
+    const mouseMoveHandler = handleMouseMove;
+    
+    const handleMouseUp = async (upEvent) => {
+      document.removeEventListener('mousemove', mouseMoveHandler);
+      document.removeEventListener('mouseup', handleMouseUp);
+      
+      // If it was just a click (not a drag), trigger click manually
+      if (!isDraggingRef.current) {
+        console.log('[MonthGrid] MouseUp - was just a click, not a drag');
+        setDragOverDay(null);
+        // Clear the drag flag immediately
+        dragStateRef.current.delete(eventId);
+        
+        // Remove drag ghost and restore original element
+        if (originalTarget) {
+          if (originalTarget._dragGhost && originalTarget._dragGhost.parentNode) {
+            originalTarget._dragGhost.parentNode.removeChild(originalTarget._dragGhost);
+            delete originalTarget._dragGhost;
+          }
+          if (originalTarget._dragDomNode && originalTarget._dragDomNode.style) {
+            originalTarget._dragDomNode.style.opacity = '';
+            originalTarget._dragDomNode.style.pointerEvents = '';
+          }
+          delete originalTarget._dragDomNode;
+        }
+        
+        // Trigger click on the original target if we have onEventPress
+        // Use requestAnimationFrame to ensure it happens after React has processed the state update
+        if (originalTarget && onEventPress) {
+          const event = events.find(ev => ev.id === eventId);
+          if (event) {
+            // Use requestAnimationFrame to ensure state is cleared first
+            requestAnimationFrame(() => {
+              setTimeout(() => {
+                console.log('[MonthGrid] Triggering onEventPress for event:', event.id);
+                if (onEventPress) {
+                  onEventPress(event);
+                }
+              }, 20);
+            });
+          }
+        }
+        return;
+      }
+      
+      console.log('[MonthGrid] MouseUp - was a drag, handling drop');
+      
+      // Remove drag ghost and restore original element before drop
+      if (originalTarget) {
+        if (originalTarget._dragGhost && originalTarget._dragGhost.parentNode) {
+          originalTarget._dragGhost.parentNode.removeChild(originalTarget._dragGhost);
+          delete originalTarget._dragGhost;
+        }
+        if (originalTarget._dragDomNode && originalTarget._dragDomNode.style) {
+          originalTarget._dragDomNode.style.opacity = '';
+          originalTarget._dragDomNode.style.pointerEvents = '';
+        }
+        delete originalTarget._dragDomNode;
+      }
+      
+      // This was a drag - handle the drop
+      // Find which day cell we're over
+      const elementBelow = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+      console.log('[MonthGrid] Element below cursor:', elementBelow);
+      
+      if (!elementBelow) {
+        console.log('[MonthGrid] No element below cursor, canceling drag');
+        setDragOverDay(null);
+        setDraggedEventId(null);
+        dragRef.current = null;
+        // Clear the drag flag
+        setTimeout(() => {
+          dragStateRef.current.delete(eventId);
+        }, 100);
+        return;
+      }
+      
+      // Find the day cell (look for data-day-date or data-day-key attribute)
+      let dayCell = null;
+      let targetDateIso = null;
+      
+      // First try closest with data-day-date
+      dayCell = elementBelow.closest('[data-day-date]');
+      
+      // If not found, walk up the DOM tree looking for data-day-date or data-day-key
+      if (!dayCell) {
+        let parent = elementBelow;
+        let depth = 0;
+        while (parent && parent !== document.body && depth < 15) {
+          if (parent.getAttribute) {
+            const dayDate = parent.getAttribute('data-day-date');
+            const dayKey = parent.getAttribute('data-day-key');
+            
+            if (dayDate) {
+              dayCell = parent;
+              targetDateIso = dayDate;
+              console.log('[MonthGrid] Found day cell at depth', depth, 'with date:', dayDate);
+              break;
+            } else if (dayKey) {
+              // Found day key, look up the date from cellRefs
+              const refData = dayCellRefs.current[dayKey];
+              if (refData && refData.element) {
+                // Get the date from the matrix
+                const [weekIndex, dayIndex] = dayKey.split('-').map(Number);
+                if (matrix[weekIndex] && matrix[weekIndex][dayIndex]) {
+                  const day = matrix[weekIndex][dayIndex];
+                  targetDateIso = day.toISOString().split('T')[0];
+                  dayCell = parent;
+                  console.log('[MonthGrid] Found day cell by key at depth', depth, 'with date:', targetDateIso);
+                  break;
+                }
+              }
+            }
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+      } else {
+        targetDateIso = dayCell.getAttribute('data-day-date');
+      }
+      
+      // If still not found, try to match by DOM element using cellRefs
+      if (!dayCell && dayCellRefs.current) {
+        for (const [key, refData] of Object.entries(dayCellRefs.current)) {
+          if (refData && refData.element) {
+            let refElement = refData.element;
+            // Get the actual DOM node
+            if (refElement._nativeNode) refElement = refElement._nativeNode;
+            if (refElement.firstChild) {
+              const firstChild = refElement.firstChild;
+              if (firstChild === elementBelow || firstChild.contains(elementBelow) || elementBelow.contains(firstChild) || 
+                  refElement === elementBelow || refElement.contains(elementBelow) || elementBelow.contains(refElement)) {
+                // Found matching cell, get the date
+                const [weekIndex, dayIndex] = key.split('-').map(Number);
+                if (matrix[weekIndex] && matrix[weekIndex][dayIndex]) {
+                  const day = matrix[weekIndex][dayIndex];
+                  targetDateIso = day.toISOString().split('T')[0];
+                  dayCell = refElement;
+                  console.log('[MonthGrid] Found day cell by DOM match with date:', targetDateIso);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      console.log('[MonthGrid] Day cell found:', dayCell);
+      console.log('[MonthGrid] Target date ISO:', targetDateIso);
+      
+      if (dayCell && targetDateIso) {
+        // Find the event being dragged
+        const event = events.find(ev => ev.id === eventId);
+        console.log('[MonthGrid] Event found:', event);
+        
+        if (event) {
+          // Get original event times - prefer start_ts/end_ts as they are guaranteed ISO strings
+          const startTs = event.start_ts || event.start;
+          const endTs = event.end_ts || event.end;
+          
+          if (!startTs || !endTs) {
+            console.error('[MonthGrid] Event missing start_ts or end_ts:', event);
+            return;
+          }
+          
+          // Parse original times as UTC ISO strings
+          const originalStart = new Date(startTs);
+          const originalEnd = new Date(endTs);
+          
+          if (isNaN(originalStart.getTime()) || isNaN(originalEnd.getTime())) {
+            console.error('[MonthGrid] Invalid event timestamps:', { startTs, endTs });
+            return;
+          }
+          
+          const durationMs = originalEnd.getTime() - originalStart.getTime();
+          
+          // Extract LOCAL time components from original start (not UTC)
+          // This preserves the displayed time, not the UTC time
+          const originalHours = originalStart.getHours();
+          const originalMinutes = originalStart.getMinutes();
+          const originalSeconds = originalStart.getSeconds();
+          const originalMilliseconds = originalStart.getMilliseconds();
+          
+          console.log('[MonthGrid] Time preservation:', {
+            startTs,
+            originalStartISO: originalStart.toISOString(),
+            originalLocalHours: originalHours,
+            originalLocalMinutes: originalMinutes,
+            originalUTCHours: originalStart.getUTCHours(),
+            originalUTCMinutes: originalStart.getUTCMinutes(),
+            targetDateIso,
+            timezoneOffset: originalStart.getTimezoneOffset()
+          });
+          
+          // Parse destination date and create new date with preserved local time
+          // Use Date constructor with explicit local time components (most reliable)
+          const [year, month, day] = targetDateIso.split('-').map(Number);
+          
+          // Create date using local time constructor: new Date(year, month, day, hours, minutes, seconds, ms)
+          // This explicitly creates a date in the local timezone
+          const newStart = new Date(year, month - 1, day, originalHours, originalMinutes, originalSeconds, originalMilliseconds);
+          
+          if (isNaN(newStart.getTime())) {
+            console.error('[MonthGrid] Invalid destination date:', targetDateIso);
+            return;
+          }
+          
+            // Mark drag-and-drop time FIRST to prevent immediate refreshes
+            // This must happen before any event dispatches or API calls
+            if (typeof window !== 'undefined') {
+              if (window.__lastDragDropTime !== undefined) {
+                window.__lastDragDropTime = Date.now();
+                console.log('[MonthGrid] Marked drag-and-drop time to prevent immediate refresh');
+              }
+            }
+            
+          console.log('[MonthGrid] New time set:', {
+            newStartISO: newStart.toISOString(),
+            newStartLocalHours: newStart.getHours(),
+            newStartLocalMinutes: newStart.getMinutes(),
+            newStartUTCHours: newStart.getUTCHours(),
+            newStartUTCMinutes: newStart.getUTCMinutes(),
+            preservedLocalTime: `${originalHours}:${originalMinutes}`,
+            targetDateIso
+          });
+            
+            // Compute new end time: add original duration
+            const newEnd = new Date(newStart.getTime() + durationMs);
+            
+            // Get familyId from event if not provided
+            const eventFamilyId = familyId || event.family_id || event.familyId;
+            
+            // Optimistically update the event in the local events array
+            // This makes the UI update immediately without waiting for the API call
+            // CRITICAL: Set date_local to the new date so the event appears in the correct day
+            const newDateLocal = targetDateIso; // Use the target date ISO string (YYYY-MM-DD)
+          
+          // Format local time strings for display (HH:MM format)
+          // CRITICAL: Use getHours() and getMinutes() which return LOCAL time components
+          // These are already in the user's local timezone because we created newStart using local time constructor
+          const localStartHours = String(newStart.getHours()).padStart(2, '0');
+          const localStartMinutes = String(newStart.getMinutes()).padStart(2, '0');
+          const localEndHours = String(newEnd.getHours()).padStart(2, '0');
+          const localEndMinutes = String(newEnd.getMinutes()).padStart(2, '0');
+          const startLocalTime = `${localStartHours}:${localStartMinutes}`;
+          const endLocalTime = `${localEndHours}:${localEndMinutes}`;
+          
+            const updatedEvent = {
+              ...event,
+            start_ts: newStart.toISOString(), // UTC ISO string for API
+            end_ts: newEnd.toISOString(), // UTC ISO string for API
+              start: newStart.toISOString(),
+              end: newEnd.toISOString(),
+            start_local: startLocalTime, // Local time string (HH:MM) for display - CRITICAL for EventChip
+            end_local: endLocalTime, // Local time string (HH:MM) for display
+              date_local: newDateLocal, // CRITICAL: Set date_local to new date
+            // Ensure child_id is preserved (may be nested or have different name)
+            child_id: event.child_id || event.childId || event.student_id,
+            // Also set time property for backward compatibility
+            time: startLocalTime,
+          };
+          
+          // Log only if there's a potential issue with time preservation
+          if (newStart.getHours() !== originalHours || newStart.getMinutes() !== originalMinutes) {
+            console.warn('[MonthGrid] Time mismatch detected:', {
+              eventId: updatedEvent.id,
+              originalHours,
+              originalMinutes,
+              newStartLocalHours: newStart.getHours(),
+              newStartLocalMinutes: newStart.getMinutes(),
+              start_local: updatedEvent.start_local,
+            });
+          }
+            
+            // Update the event in the parent component's state immediately
+            // This is done by triggering a custom event with the updated event
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                detail: { eventId, updatedEvent }
+              }));
+            }
+            
+            // Call API to reschedule in the background (don't await)
+            // The rescheduleEvent function already does optimistic updates via instantSync
+            rescheduleEvent(
+              eventId,
+              newStart.toISOString(),
+              newEnd.toISOString(),
+              'drag_drop',
+              'manual move',
+              eventFamilyId
+            ).then((result) => {
+            console.log('[MonthGrid] Reschedule result:', { 
+              hasError: !!(result && result.error), 
+              error: result?.error,
+              errorStatus: result?.error?.status,
+              errorMessage: result?.error?.message,
+              targetDateIso,
+              originalDate: event.start_ts || event.start || event.start_local
+            });
+            
+              if (result && result.error) {
+              // Check if it's a conflict error specifically
+              const errorMessage = result.error.message || '';
+              const errorStatus = result.error.status;
+              
+              // Check if this is a drag to the same day (likely a conflict if 500 error)
+              const originalDateStr = (event.start_ts || event.start || event.start_local || '').split('T')[0];
+              const isSameDay = targetDateIso === originalDateStr;
+              
+              // Check if error message contains permission error (might mask overlap)
+              const isPermissionError = errorMessage.toLowerCase().includes('permission') || 
+                                       errorMessage.toLowerCase().includes('42501');
+              
+              const isConflict = result.error.isConflict || 
+                                errorStatus === 409 ||
+                                errorMessage.toLowerCase().includes('overlap') ||
+                                errorMessage.toLowerCase().includes('conflict') ||
+                                errorMessage.toLowerCase().includes('exclusion') ||
+                                (errorStatus === 500 && (isSameDay || isPermissionError)); // Treat 500 on same day or permission error as potential conflict
+              
+              console.log('[MonthGrid] Error analysis:', {
+                isConflict,
+                errorStatus,
+                errorMessage,
+                hasIsConflictFlag: result.error.isConflict,
+                isSameDay,
+                targetDateIso,
+                originalDateStr
+              });
+              
+              if (isConflict) {
+                console.log('[MonthGrid] Conflict detected - keeping optimistic update, conflict banner will appear');
+                // Dispatch eventRescheduled to trigger conflict detection in WebContent
+                // This will check for actual overlaps even if API failed
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                    detail: { eventId, updatedEvent, apiError: result.error }
+                  }));
+                }
+                // DO NOT revert optimistic update or force refresh here for conflicts
+              } else {
+                // For non-conflict errors, still try to detect conflicts in case error is masking an overlap
+                // This is especially important for permission errors that might hide actual conflicts
+                if (errorStatus === 500 && isSameDay) {
+                  console.log('[MonthGrid] 500 error on same day - checking for conflicts anyway');
+                  // Dispatch eventRescheduled to trigger conflict detection
+                  // Pass apiError so conflict detection can revert if no conflicts found
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                      detail: { eventId, updatedEvent, apiError: result.error }
+                    }));
+                  }
+                  // Don't revert yet - let conflict detection decide
+                } else {
+                  // For 500 errors (likely backend/permission issues), keep optimistic update visible
+                  // and let WebContent handle it (it will show error message but keep update visible)
+                  if (errorStatus === 500) {
+                    console.log('[MonthGrid] 500 error - keeping optimistic update visible, letting WebContent handle error');
+                    // Dispatch eventRescheduled with apiError so WebContent can show error but keep update visible
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                        detail: { eventId, updatedEvent, apiError: result.error }
+                      }));
+                    }
+                    // Don't revert - let WebContent handle it
+                  } else if (errorStatus === 400) {
+                    // For 400 errors, check if it's outside_availability or a conflict
+                    // Let WebContent run conflict detection first before reverting
+                    const errorMessage = result.error?.message || '';
+                    if (errorMessage.includes('outside_availability')) {
+                      console.log('[MonthGrid] Outside availability error - showing message and letting WebContent handle');
+                      // Show user-friendly message
+                      if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof Alert !== 'undefined') {
+                        Alert.alert(
+                          'Cannot Move Event',
+                          'The selected time is outside the available time blocks for this child on this date. Please choose a different time.',
+                          [{ text: 'OK' }]
+                        );
+                      }
+                    }
+                    // Dispatch eventRescheduled to trigger conflict detection
+                    // WebContent will decide whether to keep the optimistic update or revert
+                    console.log('[MonthGrid] 400 error - dispatching eventRescheduled for conflict detection');
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                        detail: { eventId, updatedEvent, apiError: result.error }
+                      }));
+                    }
+                    // Don't revert immediately - let conflict detection decide
+                  } else {
+                    // For other errors (not found, etc.), revert the optimistic update
+                    console.error('[MonthGrid] Non-conflict error - reverting optimistic update:', result.error);
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('eventRescheduleError', {
+                        detail: { eventId, originalEvent: event, error: result.error }
+                      }));
+                      // Force a refresh to revert the optimistic update
+                      window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                    }
+                  }
+                }
+                }
+              } else {
+                // Sync completed successfully - trigger conflict detection
+                // Even though the save succeeded, there might be conflicts that need to be shown
+                console.log('[MonthGrid] Reschedule SUCCESS - event saved:', {
+                  eventId,
+                  targetDate: targetDateIso,
+                  hasData: !!result?.data,
+                  data: result?.data
+                });
+                
+                // Dispatch eventRescheduled to trigger conflict detection in WebContent
+                // Pass no apiError since the save succeeded, but conflicts might still exist
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                    detail: { eventId, updatedEvent, apiError: null }
+                  }));
+                }
+                
+                // Trigger a lightweight refresh after a delay
+                // The optimistic update is already visible, so we can wait longer
+                if (typeof window !== 'undefined') {
+                  // Delay the refresh significantly to let users see the immediate update
+                  // The optimistic update makes the UI feel instant
+                  setTimeout(() => {
+                    // Refresh both the old month and new month to ensure consistency
+                    const oldDate = new Date(event.start_ts || event.start || event.start_local);
+                    const newDate = newStart;
+                    const oldMonth = oldDate.getMonth();
+                    const oldYear = oldDate.getFullYear();
+                    const newMonth = newDate.getMonth();
+                    const newYear = newDate.getFullYear();
+                    
+                    // Refresh new month first (where the event moved to)
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', {
+                      detail: {
+                        skipHomeRefresh: true,
+                        targetMonth: newMonth,
+                        targetYear: newYear,
+                        eventId: eventId, // Include eventId to prevent immediate refresh
+                      }
+                    }));
+                    
+                    // If moved to a different month, also refresh the old month
+                    if (oldMonth !== newMonth || oldYear !== newYear) {
+                      setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('refreshCalendar', {
+                          detail: {
+                            skipHomeRefresh: true,
+                            targetMonth: oldMonth,
+                            targetYear: oldYear,
+                            eventId: eventId,
+                          }
+                        }));
+                      }, 500);
+                    }
+                  }, 2000); // 2 second delay - optimistic update is already visible, refresh is just for sync
+                }
+              }
+            }).catch((err) => {
+              console.error('[MonthGrid] Error rescheduling event:', err);
+              // For 500 errors (likely backend/permission issues), keep optimistic update visible
+              // and let WebContent handle it
+              const errorStatus = err?.status || 500;
+              if (errorStatus === 500) {
+                console.log('[MonthGrid] 500 error in catch - keeping optimistic update visible, letting WebContent handle error');
+                // Dispatch eventRescheduled with apiError so WebContent can show error but keep update visible
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                    detail: { eventId, updatedEvent, apiError: err }
+                  }));
+                }
+              } else {
+                // For other errors, revert the optimistic update
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('eventRescheduleError', {
+                    detail: { eventId, originalEvent: event, error: err }
+                  }));
+                  // Force a refresh to revert
+                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                }
+              }
+            });
+        }
+      }
+      
+      // Clear drag over state
+      setDragOverDay(null);
+      setDraggedEventId(null);
+      dragRef.current = null;
+      
+      // Clear the drag flag
+      setTimeout(() => {
+        dragStateRef.current.delete(eventId);
+      }, 100);
+    };
+    
+    // Add event listeners
+    console.log('[MonthGrid] Adding event listeners for drag');
+    document.addEventListener('mousemove', mouseMoveHandler, { passive: false });
+    document.addEventListener('mouseup', handleMouseUp, { once: false });
+    
+    console.log('[MonthGrid] Event listeners added. mousemove handler:', typeof mouseMoveHandler, 'mouseup handler:', typeof handleMouseUp);
+  }, [events, familyId, onEventPress]);
   
   // Convert blackout dates to Set for fast lookup
   const blackoutDatesSet = new Set(blackoutDates.map(d => {
     if (typeof d === 'string') return d;
     return d.toISOString().split('T')[0];
   }));
-  
-  console.log('[MonthGrid] Received blackoutDates:', blackoutDates, 'Set:', Array.from(blackoutDatesSet));
+
+  // Expand Project events to show on all days they span (if within a week)
+  const expandedEvents = useMemo(() => {
+    const expanded = [];
+    const seenIds = new Set();
+    
+    for (const ev of events) {
+      if (!ev || !ev.id) continue;
+      if (seenIds.has(ev.id)) continue;
+      seenIds.add(ev.id);
+      
+      // Check if this is a Project event with start and end dates
+      if (ev.event_type === 'Project' && ev.start_ts && ev.end_ts) {
+        const startDate = new Date(ev.start_ts);
+        const endDate = new Date(ev.end_ts);
+        
+        if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+          // Calculate days difference - use date-only comparison to get accurate day count
+          const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+          const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+          const daysDiff = Math.round((endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24));
+          
+          console.log('[MonthGrid] Project event found:', {
+            id: ev.id,
+            title: ev.title,
+            start_ts: ev.start_ts,
+            end_ts: ev.end_ts,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            startDateOnly: startDateOnly.toISOString(),
+            endDateOnly: endDateOnly.toISOString(),
+            daysDiff,
+            startDateOnlyTime: startDateOnly.getTime(),
+            endDateOnlyTime: endDateOnly.getTime(),
+            timeDifference: endDateOnly.getTime() - startDateOnly.getTime(),
+            timeDifferenceDays: (endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24)
+          });
+          
+          // If project spans within a week (7 days or less), expand it
+          if (daysDiff >= 0 && daysDiff <= 7) {
+            const totalDays = daysDiff + 1; // Include both start and end days
+            console.log('[MonthGrid] Expanding project across', totalDays, 'days (from day 0 to day', daysDiff, ')');
+            // Create a copy for each day from start to end (inclusive)
+            for (let i = 0; i <= daysDiff; i++) {
+              const dayDate = new Date(startDateOnly);
+              dayDate.setDate(startDateOnly.getDate() + i);
+              
+              // Create expanded event with date_local set to the specific day
+              const year = dayDate.getFullYear();
+              const month = String(dayDate.getMonth() + 1).padStart(2, '0');
+              const day = String(dayDate.getDate()).padStart(2, '0');
+              const dateLocal = `${year}-${month}-${day}`;
+              
+              console.log('[MonthGrid] Creating expanded event for day', i, ':', dateLocal);
+              
+              const expandedEvent = {
+                ...ev,
+                id: `${ev.id}-day-${i}`, // Unique ID for each day instance
+                _originalId: ev.id, // Keep reference to original
+                _dayIndex: i,
+                date_local: dateLocal, // Set date_local for the specific day
+              };
+              expanded.push(expandedEvent);
+            }
+            console.log('[MonthGrid] Created', expanded.length, 'expanded events for project');
+            continue; // Skip adding the original event
+          } else if (daysDiff > 7) {
+            console.log('[MonthGrid] Project spans more than 7 days (', daysDiff + 1, 'days), not expanding');
+          }
+        }
+      }
+      
+      // For non-Project events or Projects outside the week range, add as-is
+      expanded.push(ev);
+    }
+    
+    return expanded;
+  }, [events]);
 
   // Event bucketing by day with deduplication
   const byDay = new Map();
   const seenIds = new Set();
-  console.log('[MonthGrid] Processing', events.length, 'events for date:', date.toISOString());
   
-  // Deduplicate events by ID first
-  const uniqueEvents = events.filter(ev => {
+  // Deduplicate events by ID first (using expanded events)
+  const uniqueEvents = expandedEvents.filter(ev => {
     if (!ev || !ev.id) return false;
     if (seenIds.has(ev.id)) {
       console.warn('[MonthGrid] Duplicate event ID:', ev.id, ev.title);
@@ -42,65 +833,146 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
   });
   
   for (const ev of uniqueEvents) {
-    // Try multiple date fields
-    const eventDateStr = ev.start || ev.start_ts || ev.start_at || ev.start_local;
-    if (!eventDateStr) {
-      console.warn('[MonthGrid] Event missing start date:', ev.id, ev.title);
-      continue;
+    // Use date_local if available (from SQL query, format: "YYYY-MM-DD")
+    // This avoids timezone issues when grouping events by day
+    let d;
+    if (ev.date_local) {
+      // Parse date_local as local date (YYYY-MM-DD format)
+      const [year, month, day] = ev.date_local.split('-').map(Number);
+      d = new Date(year, month - 1, day); // month is 0-indexed
+    } else {
+      // Fallback to timestamp fields
+      const eventDateStr = ev.start || ev.start_ts || ev.start_at || ev.start_local;
+      if (!eventDateStr) {
+        console.warn('[MonthGrid] Event missing start date:', ev.id, ev.title);
+        continue;
+      }
+      d = new Date(eventDateStr);
     }
-    const d = new Date(eventDateStr);
+    
     if (Number.isNaN(d.getTime())) {
-      console.warn('[MonthGrid] Invalid date for event:', ev.id, eventDateStr);
+      console.warn('[MonthGrid] Invalid date for event:', ev.id, ev.date_local || ev.start || ev.start_ts);
       continue;
     }
     const key = d.toDateString();
+    
+    // Removed verbose logging - only log warnings/errors
+    // Debug logging for ELA events
+    // if (ev.title && ev.title.toLowerCase().includes('ela')) {
+    //   const today = new Date();
+    //   const todayKey = today.toDateString();
+    //   console.log('[MonthGrid] ELA event found:', {
+    //     id: ev.id,
+    //     title: ev.title,
+    //     status: ev.status,
+    //     date_local: ev.date_local,
+    //     start_ts: ev.start_ts,
+    //     parsedDate: d.toISOString(),
+    //     dateKey: key,
+    //     todayKey: todayKey,
+    //     matchesToday: key === todayKey,
+    //     child_id: ev.child_id || ev.childId || ev.student_id,
+    //     subject: ev.subject_name || ev.subjectName || ev.subject,
+    //     willBeAddedToDay: key
+    //   });
+    // }
+    
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key).push(ev);
+    
+    // Debug logging for Project events
+    if (ev.event_type === 'Project' || ev._originalId) {
+      console.log('[MonthGrid] Adding event to day bucket:', {
+        eventId: ev.id,
+        originalId: ev._originalId,
+        title: ev.title,
+        date_local: ev.date_local,
+        dayKey: key,
+        dayDate: d.toISOString()
+      });
+    }
   }
-  console.log('[MonthGrid] Bucketed', uniqueEvents.length, 'unique events into', byDay.size, 'days');
 
   return (
     <View style={{ 
       flex: 1,
-      backgroundColor: 'white',
+      backgroundColor: 'transparent',
       overflow: 'hidden', 
-      borderRadius: 12, 
-      borderWidth: 1, 
-      borderColor: '#eef2f7',
-      margin: 16
+      borderRadius: 0, // No rounded corners
+      // No outer border - only grid lines visible
+      margin: 0,
+      ...(Platform.OS === 'web' && {
+        isolation: 'isolate',
+      }),
     }}>
       {/* Day Headers */}
-      <View style={{ flexDirection: 'row', backgroundColor: '#fafbfc', borderBottomWidth: 1, borderBottomColor: '#eef2f7' }}>
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, index) => (
-          <View key={d} style={{ 
-            flex: 1, 
-            borderRightWidth: index < 6 ? 1 : 0,
-            borderRightColor: '#eef2f7',
-            paddingHorizontal: 12, 
-            paddingVertical: 8 
-          }}>
-            <Text style={{ 
-              fontSize: 12, 
-              color: '#6b7280', 
-              textAlign: 'center',
-              fontWeight: '600'
-            }}>{d.toUpperCase()}</Text>
-          </View>
-        ))}
+      <View style={{ flexDirection: 'row', backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, index) => {
+          return (
+            <View key={d} style={{ 
+              flex: 1, 
+              borderRightWidth: index < 6 ? 1 : 0,
+              borderRightColor: '#F3F4F6', // Hairline grid
+              paddingHorizontal: 16, 
+              paddingVertical: 12,
+              backgroundColor: 'transparent',
+            }}>
+              <Text style={{ 
+                fontSize: 10, 
+                fontWeight: '500',
+                color: '#6B7280', 
+                textAlign: 'center',
+                textTransform: 'uppercase',
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  letterSpacing: '0.1em', // More spacing
+                }),
+              }}>{d.toUpperCase()}</Text>
+            </View>
+          );
+        })}
       </View>
       
       {/* Calendar Grid */}
-      <View style={{ backgroundColor: 'white' }}>
+      <View style={{ 
+        flex: 1,
+        backgroundColor: 'transparent',
+        ...(Platform.OS === 'web' && {
+          isolation: 'isolate',
+        }),
+      }}>
         {matrix.map((week, i) => {
           // Safety: Filter out any invalid weeks
           if (!week || !Array.isArray(week)) return null;
+          // Rotate through pastel colors for each week
+          const weekColorIndex = i % WEEK_PASTEL_COLORS.length;
+          const weekBackgroundColor = WEEK_PASTEL_COLORS[weekColorIndex];
+          const weekRowRef = (ref) => {
+            if (ref) {
+              weekRowRefs.current[i] = ref;
+            }
+          };
+          
           return (
-            <View key={i} style={{ 
-              flexDirection: 'row',
-              borderBottomWidth: i < 5 ? 1 : 0,
-              borderBottomColor: '#eef2f7'
-            }}>
+            <View 
+              ref={weekRowRef}
+              key={i} 
+              style={{ 
+                flex: 1,
+                flexDirection: 'row',
+                backgroundColor: weekBackgroundColor,
+                position: 'relative',
+                minHeight: 0,
+                paddingBottom: i < matrix.length - 1 ? 4 : 0, // Extra vertical spacing between weeks
+              }}
+            >
               {week.map((day, j) => {
+              // Validate day is a valid date before using date methods
+              if (!day || !(day instanceof Date) || isNaN(day.getTime())) {
+                console.error('[MonthGrid] Invalid day in matrix:', day);
+                return null; // Skip invalid days
+              }
+              
               const inMonth = isSameMonth(day, date);
               const k = day.toDateString();
               // Use local date components to avoid timezone shifts
@@ -110,33 +982,169 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               const dayDateStr = `${year}-${month}-${dayNum}`;
               const isBlackout = blackoutDatesSet.has(dayDateStr);
               const dayEvents = isBlackout ? [] : (byDay.get(k) ?? []); // No events on blackout days
-              const isSel = selectedDate && day.toDateString() === selectedDate.toDateString();
               
-              // Filter valid events and limit to 4 for display
-              const validEvents = dayEvents
-                .filter(ev => ev.title && ev.title !== 'undefined' && ev.title !== 'null')
-                .slice(0, 4);
-              const remainingCount = dayEvents.length - validEvents.length;
+              // Removed verbose logging - only log warnings/errors
+              // Debug: Log if this is today and we have events
+              // if (isToday(day) && dayEvents.length > 0) {
+              //   console.log('[MonthGrid] Today has events:', {
+              //     dayKey: k,
+              //     dayDateStr,
+              //     eventCount: dayEvents.length,
+              //     events: dayEvents.map(e => ({ id: e.id, title: e.title, date_local: e.date_local }))
+              //   });
+              // }
+              const isSel = selectedDate && selectedDate instanceof Date && !isNaN(selectedDate.getTime()) && day.toDateString() === selectedDate.toDateString();
+              const isFirstDayOfMonth = day.getDate() === 1;
+              const dayOfWeek = day.getDay(); // 0 = Sunday, 6 = Saturday
+              const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday (0) or Saturday (6)
+              
+              // Event density scaling logic
+              const validEvents = dayEvents.filter(ev => ev.title && ev.title !== 'undefined' && ev.title !== 'null');
+              const eventCount = validEvents.length;
+              
+              // Show up to 3 events, then "+X more" if needed
+              const maxEventsToShow = 3;
+              const eventsToShow = validEvents.slice(0, maxEventsToShow);
+              const remainingCount = eventCount > maxEventsToShow ? eventCount - maxEventsToShow : 0;
+              
+              const isTodayDay = isToday(day);
+              
+              // Day-of-week color coding (5-8% opacity)
+              // Day of week: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat (already declared above)
+              let backgroundColor = 'transparent';
+              let borderColor = 'transparent';
+              let hoverBackgroundColor = 'transparent';
+              
+              // Day-of-week color palette (4% opacity - less opaque)
+              const dayPastels = {
+                0: 'rgba(255, 245, 245, 0.04)', // Sunday: Warmer peach tone
+                1: 'rgba(240, 249, 255, 0.04)', // Monday: Sky blue
+                2: 'rgba(245, 243, 255, 0.04)', // Tuesday: Lavender
+                3: 'rgba(254, 252, 232, 0.04)', // Wednesday: Yellow
+                4: 'rgba(240, 253, 244, 0.04)', // Thursday: Mint
+                5: 'rgba(240, 249, 255, 0.04)', // Friday: Sky blue
+                6: 'rgba(255, 245, 245, 0.04)', // Saturday: Warmer peach tone
+              };
+              
+              // Hover state: slightly brighter version of day color (6% opacity)
+              const dayHoverColors = {
+                0: 'rgba(255, 245, 245, 0.06)', // Sunday hover
+                1: 'rgba(240, 249, 255, 0.06)', // Monday hover
+                2: 'rgba(245, 243, 255, 0.06)', // Tuesday hover
+                3: 'rgba(254, 252, 232, 0.06)', // Wednesday hover
+                4: 'rgba(240, 253, 244, 0.06)', // Thursday hover
+                5: 'rgba(240, 249, 255, 0.06)', // Friday hover
+                6: 'rgba(255, 245, 245, 0.06)', // Saturday hover
+              };
+              
+              if (isTodayDay) {
+                // Today: bold border around the cell
+                backgroundColor = 'transparent';
+                borderColor = '#111827'; // Bold dark border
+                hoverBackgroundColor = 'rgba(15, 23, 42, 0.02)'; // Subtle hover
+              } else if (isBlackout) {
+                // Blackout: keep red background
+                backgroundColor = '#fef2f2';
+                hoverBackgroundColor = '#fef2f2';
+              } else {
+                // Apply day-of-week color coding
+                backgroundColor = dayPastels[dayOfWeek] || 'transparent';
+                hoverBackgroundColor = dayHoverColors[dayOfWeek] || backgroundColor;
+              }
+              
+              const cellKey = `${i}-${j}`;
+              const cellRef = (ref) => {
+                if (ref && Platform.OS === 'web') {
+                  dayCellRefs.current[cellKey] = {
+                    element: ref,
+                    isWeekend,
+                    isSel,
+                    isBlackout,
+                    dayOfWeek,
+                  };
+                }
+              };
+              
+              const dayDateIso = day.toISOString().split('T')[0]; // YYYY-MM-DD format
+              const isDragOver = dragOverDay === dayDateIso;
               
               return (
                 <TouchableOpacity
-                  key={`${i}-${j}`}
-                  onPress={() => onSelectDate && onSelectDate(day)}
+                  key={cellKey}
+                  ref={cellRef}
+                  onPress={() => {
+                    // Only call onSelectDate if the day is in the current month
+                    // This prevents jumping to a different month when clicking on days from adjacent months
+                    if (onSelectDate && inMonth) {
+                      onSelectDate(day);
+                    }
+                  }}
+                  {...(Platform.OS === 'web' && {
+                    'data-day-date': dayDateIso,
+                    'data-day-key': cellKey,
+                  })}
                   style={{ 
                     flex: 1, 
-                    height: 120, 
-                    borderRightWidth: j < 6 ? 1 : 0, 
-                    borderRightColor: '#eef2f7', 
-                    padding: 4,
-                    backgroundColor: isSel ? '#eef6ff' : (isBlackout ? '#fef2f2' : 'transparent'),
-                    opacity: isBlackout ? 0.5 : 1
+                    height: '100%',
+                    borderRightWidth: j < 6 ? 1 : 0, // Hairline grid
+                    borderRightColor: '#F3F4F6', // Subtle border
+                    borderBottomWidth: i < matrix.length - 1 ? 1 : 0,
+                    borderBottomColor: '#F3F4F6',
+                    borderTopWidth: 0,
+                    borderTopColor: 'transparent',
+                    borderLeftWidth: 0,
+                    borderLeftColor: 'transparent',
+                    padding: 8,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    backgroundColor: isDragOver ? 'rgba(79, 70, 229, 0.1)' : backgroundColor,
+                    borderWidth: isDragOver ? 2 : (isTodayDay ? 2 : 0),
+                    borderColor: isDragOver ? '#4F46E5' : (isTodayDay ? borderColor : 'transparent'),
+                    opacity: isBlackout ? 0.5 : 1,
+                    overflow: 'hidden',
+                    position: 'relative',
+                    zIndex: isSel ? 2 : 1,
+                    minHeight: 114, // Increased by 14% from 100
+                    borderRadius: 0, // No rounded corners
+                    ...(Platform.OS === 'web' && {
+                      // Transition removed - CSS-only property not supported in React Native
+                      cursor: 'pointer',
+                    }),
                   }}
+                  {...(Platform.OS === 'web' && {
+                    onMouseEnter: (e) => {
+                      if (!isToday(day) && !isSel && !isBlackout) {
+                        // Hover: very subtle (1-2% opacity change)
+                        e.currentTarget.style.backgroundColor = hoverBackgroundColor;
+                      }
+                    },
+                    onMouseLeave: (e) => {
+                      if (!isToday(day) && !isSel && !isBlackout) {
+                        e.currentTarget.style.backgroundColor = backgroundColor;
+                      }
+                    },
+                  })}
                 >
                   <Text style={{ 
-                    marginBottom: 2, 
-                    fontSize: 12, 
-                    color: !inMonth ? '#d1d5db' : (isToday(day) ? '#0ea5e9' : (isBlackout ? '#ef4444' : '#374151')),
-                    fontWeight: isToday(day) ? '600' : 'normal'
+                    marginBottom: 4,
+                    paddingTop: 2, // Soft top padding under date number
+                    fontSize: 16, 
+                    color: isTodayDay
+                      ? '#FFFFFF'
+                      : (!inMonth ? '#9CA3AF' : (isBlackout ? '#DC2626' : '#111827')),
+                    fontWeight: '400',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      letterSpacing: '-0.02em', // Tighter, more editorial
+                    }),
+                    ...(isTodayDay && {
+                      backgroundColor: '#111827',
+                      borderRadius: 999,
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      overflow: 'hidden',
+                      alignSelf: 'flex-start',
+                    }),
                   }}>
                     {formatDayNum(day)}
                   </Text>
@@ -164,45 +1172,174 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                   {/* Event Chips Container */}
                   <View style={{ 
                     flexDirection: 'column',
-                    flex: 1,
                     justifyContent: 'flex-start',
-                    gap: 1
+                    gap: 0,
+                    minHeight: 0,
+                    marginTop: 6, // Events start slightly lower in the cell
                   }}>
-                    {/* Show up to 4 ultra-compact full-width event chips */}
-                    {validEvents
-                      .filter(ev => ev && typeof ev === 'object' && ev !== null)
-                      .map((ev, index) => (
-                        <EventChip 
-                          key={ev.id || `event-${index}`} 
-                          ev={ev} 
-                          compact={true}
-                          fullWidth={true}
-                          onPress={onEventPress ? () => onEventPress(ev) : undefined}
-                          onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
-                          onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
-                          showCheckmark={true}
-                        />
-                      ))}
+                    {/* Show events that fit */}
+                    {(() => {
+                      // Debug: Log if we have events to show but they're not rendering
+                      if (eventsToShow.length > 0 && isToday(day)) {
+                        // Removed verbose logging - only log warnings/errors
+                        // console.log('[MonthGrid] Rendering events for today:', {
+                        //   dayKey: k,
+                        //   eventsToShowCount: eventsToShow.length,
+                        //   events: eventsToShow.map(e => ({ id: e.id, title: e.title }))
+                        // });
+                      }
+                      return eventsToShow
+                        .filter(ev => ev && typeof ev === 'object' && ev !== null)
+                        .map((ev, index) => {
+                        const isDragging = draggedEventId === ev.id;
+                        if (isDragging) {
+                          console.log('[MonthGrid] Rendering event as dragging:', ev.id, 'draggedEventId:', draggedEventId);
+                        }
+                        const canDrag = ev.status !== 'done' && !isBlackout;
+                        
+                        if (Platform.OS === 'web' && canDrag) {
+                          // Web: Use View with web-specific drag handlers
+                          return (
+                            <View
+                              key={ev.id || `event-${index}`}
+                              {...(Platform.OS === 'web' && {
+                                onMouseDown: (e) => {
+                                  // Only start drag on left mouse button
+                                  if (e.button === 0) {
+                                    console.log('[MonthGrid] MouseDown on event:', ev.id);
+                                    handleMouseDragStart(e, ev.id);
+                                  }
+                                },
+                                onClick: (e) => {
+                                  // Handle click directly - check if it was a drag first
+                                  const dragState = dragStateRef.current.get(ev.id);
+                                  if (!dragState || !dragState.wasDragged) {
+                                    // This was a click, not a drag
+                                    e.stopPropagation();
+                                    if (onEventPress) {
+                                      console.log('[MonthGrid] onClick handler triggered for event:', ev.id);
+                                      onEventPress(ev);
+                                    }
+                                  } else {
+                                    // Was a drag, clear the state
+                                    dragStateRef.current.delete(ev.id);
+                                  }
+                                },
+                                onContextMenu: (e) => {
+                                  if (onEventRightClick) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const nativeEvent = e.nativeEvent || e;
+                                    onEventRightClick(ev, nativeEvent);
+                                  }
+                                },
+                                // Prevent text selection during potential drag
+                                onSelectStart: (e) => {
+                                  if (canDrag) {
+                                    e.preventDefault();
+                                  }
+                                },
+                              })}
+                              style={{
+                                position: 'relative',
+                                opacity: isDragging ? 0.5 : 1,
+                                transform: isDragging ? [{ scale: 1.05 }] : [{ scale: 1 }],
+                                ...(Platform.OS === 'web' && {
+                                  cursor: isDragging ? 'grabbing' : 'pointer',
+                                  zIndex: isDragging ? 1000 : 1,
+                                  userSelect: 'none', // Prevent text selection during drag
+                                  WebkitUserSelect: 'none',
+                                  MozUserSelect: 'none',
+                                  msUserSelect: 'none',
+                                }),
+                              }}
+                            >
+                              <EventChip 
+                                ev={ev} 
+                                compact={true}
+                                fullWidth={true}
+                                disableTouchable={true}
+                                onPress={undefined}
+                                onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
+                                onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
+                                showCheckmark={true}
+                                children={children}
+                                hideDoneStyling={true}
+                                allDayEvents={eventsToShow}
+                              />
+                            </View>
+                          );
+                        }
+                        
+                        // Native: Regular View (no drag on native)
+                        return (
+                          <View 
+                            key={ev.id || `event-${index}`} 
+                            style={{ 
+                              position: 'relative',
+                            }}
+                          >
+                            <EventChip 
+                              ev={ev} 
+                              compact={true}
+                              fullWidth={true}
+                              onPress={onEventPress ? () => onEventPress(ev) : undefined}
+                              onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
+                              onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
+                              showCheckmark={true}
+                              children={children}
+                              hideDoneStyling={true}
+                              allDayEvents={eventsToShow}
+                            />
+                          </View>
+                        );
+                      });
+                    })()}
                     
                     {/* Show remaining count if there are more events */}
                     {remainingCount > 0 && (
-                      <View style={{
-                        backgroundColor: 'rgba(156, 163, 175, 0.2)',
-                        borderRadius: 6,
-                        paddingHorizontal: 4,
-                        paddingVertical: 1,
-                        marginTop: 1,
-                        alignSelf: 'flex-start'
-                      }}>
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          if (onSwitchToBoardView) {
+                            onSwitchToBoardView();
+                          }
+                        }}
+                        style={{
+                          backgroundColor: 'rgba(156, 163, 175, 0.2)',
+                          borderRadius: 4,
+                          paddingHorizontal: 4,
+                          paddingVertical: 2,
+                          marginTop: 0,
+                          alignSelf: 'flex-start',
+                          flexShrink: 0,
+                          ...(Platform.OS === 'web' && {
+                            cursor: 'pointer',
+                          }),
+                        }}
+                        {...(Platform.OS === 'web' && {
+                          onMouseEnter: (e) => {
+                            if (e.currentTarget) {
+                              e.currentTarget.style.backgroundColor = 'rgba(156, 163, 175, 0.3)';
+                            }
+                          },
+                          onMouseLeave: (e) => {
+                            if (e.currentTarget) {
+                              e.currentTarget.style.backgroundColor = 'rgba(156, 163, 175, 0.2)';
+                            }
+                          },
+                        })}
+                      >
                         <Text style={{ 
-                          fontSize: 8, 
+                          fontSize: 9, 
                           color: '#9ca3af',
                           fontWeight: '500',
-                          textAlign: 'left'
+                          textAlign: 'left',
+                          lineHeight: 12,
                         }}>
-                          +{remainingCount} more
+                          +{remainingCount} {remainingCount === 1 ? 'more' : 'more'}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                     )}
                   </View>
                 </TouchableOpacity>

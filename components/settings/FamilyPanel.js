@@ -4,15 +4,21 @@ import { AlertTriangle } from 'lucide-react';
 import { getFamilyMembers } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
+import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
+import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import EditChildModal from '../EditChildModal';
 
 export default function FamilyPanel({ user }) {
+  const { mode } = useSensoryMode();
+  const tokens = getModeTokens(mode);
   const [family, setFamily] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [editingChild, setEditingChild] = useState(null);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [familyId, setFamilyId] = useState(null);
+
+  const styles = createStyles(tokens);
 
   useEffect(() => {
     const loadFamily = async () => {
@@ -42,7 +48,6 @@ export default function FamilyPanel({ user }) {
           setFamilyId(effectiveFamilyId);
         }
       } catch (err) {
-        console.error('Error loading family:', err);
         setError(err.message || 'Failed to load family info');
       } finally {
         setLoading(false);
@@ -56,7 +61,7 @@ export default function FamilyPanel({ user }) {
       <View>
         <Text style={styles.sectionTitle}>Family & Members</Text>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="small" color="#3b82f6" />
+          <ActivityIndicator size="small" color={tokens.accent} />
           <Text style={styles.loadingText}>Loading family info...</Text>
         </View>
       </View>
@@ -197,7 +202,6 @@ export default function FamilyPanel({ user }) {
                 setFamily(data);
               }
             } catch (err) {
-              console.error('Error reloading family:', err);
             }
           };
           loadFamily();
@@ -211,7 +215,6 @@ export default function FamilyPanel({ user }) {
                 setFamily(data);
               }
             } catch (err) {
-              console.error('Error reloading family:', err);
             }
           };
           loadFamily();
@@ -221,241 +224,266 @@ export default function FamilyPanel({ user }) {
   );
 }
 
-const styles = StyleSheet.create({
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 16,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 8,
-  },
-  loadingText: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  errorContainer: {
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 8,
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#dc2626',
-  },
-  familyNameCard: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    padding: 12,
-    marginBottom: 16,
-  },
-  familyNameLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#6b7280',
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  familyName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  membersList: {
-    gap: 16,
-  },
-  membersSectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  memberItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginBottom: 8,
-    ...Platform.select({
-      web: {
-        cursor: 'pointer',
-      },
-    }),
-  },
-  memberName: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  memberEmail: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  memberScope: {
-    fontSize: 11,
-    color: '#059669',
-    fontStyle: 'italic',
-  },
-  emptyText: {
-    fontSize: 12,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-  },
-  childHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  childInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  archivedBadge: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#6b7280',
-    backgroundColor: '#f3f4f6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  editHint: {
-    fontSize: 11,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-  },
-  dangerZone: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: colors.redSoft || '#fef2f2',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: (colors.redBold || '#dc2626') + '40',
-  },
-  dangerZoneHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
-  },
-  dangerZoneTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.redBold || '#dc2626',
-  },
-  dangerSection: {
-    backgroundColor: '#ffffff',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    padding: 12,
-    marginBottom: 8,
-  },
-  dangerSectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  dangerSectionDescription: {
-    fontSize: 11,
-    color: '#6b7280',
-    lineHeight: 16,
-    marginBottom: 12,
-  },
-  bold: {
-    fontWeight: '600',
-  },
-  dangerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  dangerButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#ffffff',
-  },
-  dangerButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  inputLabel: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  dangerInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 12,
-    color: '#111827',
-    backgroundColor: '#ffffff',
-    marginBottom: 12,
-  },
-  deleteButton: {
-    backgroundColor: colors.redBold || '#dc2626',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  deleteButtonDisabled: {
-    backgroundColor: colors.redSoft || '#fef2f2',
-    opacity: 0.5,
-  },
-  deleteButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-});
+function createStyles(tokens) {
+  return StyleSheet.create({
+    sectionTitle: {
+      fontSize: 14,
+      fontWeight: typography.weights.semibold,
+      fontFamily: typography.fonts.display,
+      color: tokens.text,
+      marginBottom: 4,
+    },
+    sectionSubtitle: {
+      fontSize: 12,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+      marginBottom: 16,
+    },
+    loadingContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 8,
+    },
+    loadingText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+    },
+    errorContainer: {
+      backgroundColor: '#fef2f2',
+      borderWidth: 1,
+      borderColor: '#fecaca',
+      borderRadius: 8,
+      padding: 12,
+      marginTop: 8,
+    },
+    errorText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.sans,
+      color: '#dc2626',
+    },
+    familyNameCard: {
+      backgroundColor: tokens.bgSubtle,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: tokens.border,
+      padding: 12,
+      marginBottom: 16,
+    },
+    familyNameLabel: {
+      fontSize: 11,
+      fontWeight: typography.weights.medium,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+      marginBottom: 4,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    familyName: {
+      fontSize: 16,
+      fontWeight: typography.weights.semibold,
+      fontFamily: typography.fonts.display,
+      color: tokens.text,
+    },
+    membersList: {
+      gap: 16,
+    },
+    membersSectionTitle: {
+      fontSize: 12,
+      fontWeight: typography.weights.semibold,
+      fontFamily: typography.fonts.display,
+      color: tokens.text,
+      marginTop: 8,
+      marginBottom: 8,
+    },
+    memberItem: {
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      backgroundColor: tokens.bgSubtle,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: tokens.border,
+      marginBottom: 8,
+      ...Platform.select({
+        web: {
+          cursor: 'pointer',
+        },
+      }),
+    },
+    memberName: {
+      fontSize: 12,
+      fontWeight: typography.weights.medium,
+      fontFamily: typography.fonts.sans,
+      color: tokens.text,
+      marginBottom: 4,
+    },
+    memberEmail: {
+      fontSize: 11,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+      marginBottom: 4,
+    },
+    memberScope: {
+      fontSize: 11,
+      fontFamily: typography.fonts.sans,
+      color: '#059669',
+      fontStyle: 'italic',
+    },
+    emptyText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textMuted,
+      fontStyle: 'italic',
+    },
+    childHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    childInfo: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    archivedBadge: {
+      fontSize: 10,
+      fontWeight: typography.weights.medium,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+      backgroundColor: tokens.bgSubtle,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+    },
+    editHint: {
+      fontSize: 11,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textMuted,
+      fontStyle: 'italic',
+    },
+    dangerZone: {
+      marginTop: 12,
+      padding: 12,
+      backgroundColor: colors.redSoft || '#fef2f2',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: (colors.redBold || '#dc2626') + '40',
+    },
+    dangerZoneHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 12,
+    },
+    dangerZoneTitle: {
+      fontSize: 12,
+      fontWeight: typography.weights.semibold,
+      fontFamily: typography.fonts.display,
+      color: colors.redBold || '#dc2626',
+    },
+    dangerSection: {
+      backgroundColor: tokens.card,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: tokens.border,
+      padding: 12,
+      marginBottom: 8,
+    },
+    dangerSectionTitle: {
+      fontSize: 13,
+      fontWeight: typography.weights.semibold,
+      fontFamily: typography.fonts.display,
+      color: tokens.text,
+      marginBottom: 4,
+    },
+    dangerSectionDescription: {
+      fontSize: 11,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+      lineHeight: 16,
+      marginBottom: 12,
+    },
+    bold: {
+      fontWeight: typography.weights.semibold,
+    },
+    dangerActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    dangerButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: tokens.border,
+      backgroundColor: tokens.card,
+    },
+    dangerButtonText: {
+      fontSize: 12,
+      fontWeight: typography.weights.medium,
+      fontFamily: typography.fonts.sans,
+      color: tokens.text,
+    },
+    inputLabel: {
+      fontSize: 11,
+      fontFamily: typography.fonts.sans,
+      color: tokens.textSecondary,
+      marginBottom: 4,
+    },
+    dangerInput: {
+      borderWidth: 1,
+      borderColor: tokens.border,
+      borderRadius: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      fontSize: 12,
+      fontFamily: typography.fonts.sans,
+      color: tokens.text,
+      backgroundColor: tokens.card,
+      marginBottom: 12,
+    },
+    deleteButton: {
+      backgroundColor: colors.redBold || '#dc2626',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 6,
+      alignItems: 'center',
+    },
+    deleteButtonDisabled: {
+      backgroundColor: colors.redSoft || '#fef2f2',
+      opacity: 0.5,
+    },
+    deleteButtonText: {
+      fontSize: 13,
+      fontWeight: typography.weights.semibold,
+      fontFamily: typography.fonts.display,
+      color: '#ffffff',
+    },
+  });
+}
 
 function ChildManagementItem({ child, familyId, onEdit }) {
+  const { mode } = useSensoryMode();
+  const tokens = getModeTokens(mode);
+  const childStyles = createStyles(tokens);
   const childName = child.name || child.first_name || 'Child';
 
   return (
     <TouchableOpacity 
-      style={styles.memberItem}
+      style={childStyles.memberItem}
       onPress={onEdit}
       activeOpacity={0.7}
     >
-      <View style={styles.childHeader}>
-        <View style={styles.childInfo}>
-          <Text style={styles.memberName}>{childName}</Text>
+      <View style={childStyles.childHeader}>
+        <View style={childStyles.childInfo}>
+          <Text style={childStyles.memberName}>{childName}</Text>
           {child.archived && (
-            <Text style={styles.archivedBadge}>Archived</Text>
+            <Text style={childStyles.archivedBadge}>Archived</Text>
           )}
         </View>
-        <Text style={styles.editHint}>Tap to edit</Text>
+        <Text style={childStyles.editHint}>Tap to edit</Text>
       </View>
     </TouchableOpacity>
   );

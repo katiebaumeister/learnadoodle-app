@@ -98,7 +98,6 @@ export default function EvidenceDrawer({
         setImageUrl(null);
       }
     } catch (err) {
-      console.warn('Error loading image preview:', err);
       setImageUrl(null);
     }
   };
@@ -108,7 +107,6 @@ export default function EvidenceDrawer({
     try {
       const { data: assignments, error } = await getAssignments(childId);
       if (error) {
-        console.error('Error loading assignments:', error);
         return;
       }
 
@@ -122,7 +120,6 @@ export default function EvidenceDrawer({
 
       setLinkedAssignments(linked);
     } catch (err) {
-      console.error('Error loading linked assignments:', err);
     }
   };
 

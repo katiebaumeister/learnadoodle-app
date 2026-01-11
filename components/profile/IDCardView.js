@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, Platform } from 'react-native';
-import { Download, Edit, Camera } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
 import { supabase } from '../../lib/supabase';
@@ -34,32 +33,10 @@ export default function IDCardView({ child, familyId }) {
     }
   };
 
-  const handlePrint = () => {
-    if (Platform.OS === 'web') {
-      window.print();
-    }
-  };
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={[styles.title, { color: tokens.text }]}>Student ID Card</Text>
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.actionButton, { borderColor: tokens.border }]}
-            onPress={() => {}}
-          >
-            <Edit size={16} color={tokens.iconMuted} />
-            <Text style={[styles.actionText, { color: tokens.textSecondary }]}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { borderColor: tokens.border }]}
-            onPress={handlePrint}
-          >
-            <Download size={16} color={tokens.iconMuted} />
-            <Text style={[styles.actionText, { color: tokens.textSecondary }]}>Print</Text>
-          </TouchableOpacity>
-        </View>
       </View>
 
       <GeistCard variant="large" style={[styles.idCard, { backgroundColor: tokens.surface, borderColor: tokens.border }]}>
@@ -73,8 +50,17 @@ export default function IDCardView({ child, familyId }) {
           {/* ID Card Body */}
           <View style={styles.idBody}>
             <View style={styles.idLeft}>
-              {child.avatar_url ? (
-                <Image source={{ uri: child.avatar_url }} style={styles.avatar} />
+              {child.avatar_url && (child.avatar_url.startsWith('http://') || child.avatar_url.startsWith('https://') || child.avatar_url.startsWith('data:')) ? (
+                <Image 
+                  source={{ uri: child.avatar_url }} 
+                  style={styles.avatar}
+                  onError={(e) => {
+                    // Suppress 404 errors for missing avatars - they're harmless
+                    if (Platform.OS === 'web' && e.nativeEvent) {
+                      e.preventDefault?.();
+                    }
+                  }}
+                />
               ) : (
                 <View style={[styles.avatarPlaceholder, { backgroundColor: tokens.bgSubtle }]}>
                   <Text style={[styles.avatarInitials, { color: tokens.text }]}>
@@ -131,23 +117,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '600',
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-  },
-  actionText: {
-    fontSize: 13,
-    fontWeight: '500',
   },
   idCard: {
     maxWidth: 600,
@@ -226,4 +195,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
+
+
+
+
+
+
+
+
+
 

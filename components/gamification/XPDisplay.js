@@ -32,7 +32,6 @@ export default function XPDisplay({ childId, familyId, compact = false }) {
         .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Error loading gamification:', error);
       } else {
         setGamification(data);
         if (data) {
@@ -40,7 +39,6 @@ export default function XPDisplay({ childId, familyId, compact = false }) {
         }
       }
     } catch (error) {
-      console.error('Error loading gamification:', error);
     } finally {
       setLoading(false);
     }
@@ -66,7 +64,6 @@ export default function XPDisplay({ childId, familyId, compact = false }) {
       
       setProgressPercentage(percentage);
     } catch (error) {
-      console.error('Error calculating level progress:', error);
     }
   };
 

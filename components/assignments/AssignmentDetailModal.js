@@ -9,6 +9,7 @@ import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
 import { colors } from '../../theme/colors';
 import EvidenceUploadModal from '../records/EvidenceUploadModal';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 
 export default function AssignmentDetailModal({
   visible,
@@ -53,14 +54,12 @@ export default function AssignmentDetailModal({
           .in('id', assignment.linked_evidence_ids);
         
         if (evidenceError && !shouldSuppressError(evidenceError)) {
-          console.error('Error loading linked evidence:', evidenceError);
         }
         
         setLinkedEvidence(evidence || []);
       }
     } catch (error) {
       if (!shouldSuppressError(error)) {
-        console.error('Error loading linked data:', error);
       }
     } finally {
       setLoading(false);
@@ -114,34 +113,23 @@ export default function AssignmentDetailModal({
         return;
       }
 
-      // Create upload record
-      const { data: recordData, error: recordError } = await supabase
-        .from('uploads')
-        .insert({
-          family_id: familyId,
-          child_id: childId,
-          storage_path: uploadData.path,
-          title: file.name,
-          mime: file.type || 'application/octet-stream',
-          bytes: file.size,
-        })
-        .select()
-        .single();
+      // Create file material (replaces uploads table insert)
+      const recordData = await createFileMaterial({
+        familyId,
+        storagePath: uploadData.path,
+        title: file.name,
+        mime: file.type || 'application/octet-stream',
+        bytes: file.size,
+        childId: childId,
+      });
 
-      if (recordError) {
-        Alert.alert('Error', 'Failed to create upload record: ' + recordError.message);
-        setLoading(false);
-        return;
-      }
-
-      // Get file URL for auto-captioning
+      // Get file URL for auto-captioning (if needed)
       const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(uploadData.path);
       const fileUrl = urlData?.publicUrl;
 
-      // Trigger auto-captioning (non-blocking)
-      if (recordData?.id && fileUrl) {
+      // Trigger auto-captioning (non-blocking) - if function exists
+      if (recordData?.id && fileUrl && typeof autoCaptionOnUpload !== 'undefined') {
         autoCaptionOnUpload(recordData.id, file.type, fileUrl, file.name).catch(err => {
-          console.log('Auto-captioning failed (non-critical):', err);
         });
       }
 
@@ -163,7 +151,6 @@ export default function AssignmentDetailModal({
         }
       }
     } catch (error) {
-      console.error('Error uploading file:', error);
       Alert.alert('Error', 'Failed to upload file');
     } finally {
       setLoading(false);

@@ -46,7 +46,6 @@ const ScheduleRulesView = ({ familyId, children, hideHeader = false }) => {
     }
   };
 
-
   if (!familyId) {
     return (
       <View style={styles.container}>

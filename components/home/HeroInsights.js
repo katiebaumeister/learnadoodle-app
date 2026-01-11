@@ -78,16 +78,6 @@ export default function HeroInsights({
         )}
       </View>
 
-      {onViewFull && (
-        <TouchableOpacity
-          style={styles.viewLink}
-          onPress={onViewFull}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.viewLinkText}>{cta}</Text>
-          <ArrowRight size={14} color={colors.accent} />
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -95,10 +85,12 @@ export default function HeroInsights({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
+    marginTop: 52,
     marginBottom: 24,
+    paddingHorizontal: 24,
   },
   heroCard: {
-    backgroundColor: '#F5F3FF',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
@@ -132,18 +124,23 @@ const styles = StyleSheet.create({
     borderColor: '#E9D5FF',
   },
   heroLabel: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     color: '#8B7CF6',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   heroText: {
     fontSize: 18,
     fontWeight: '600',
     color: colors.text,
     lineHeight: 26,
-    fontFamily: Platform.OS === 'web' ? 'Inter, sans-serif' : undefined,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   layersContainer: {
     flexDirection: 'row',
@@ -195,12 +192,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   layerText: {
     fontSize: 13,
     color: colors.text,
     lineHeight: 18,
-    fontFamily: Platform.OS === 'web' ? 'Inter, sans-serif' : undefined,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   viewLink: {
     flexDirection: 'row',
@@ -216,6 +218,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.accent,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
 

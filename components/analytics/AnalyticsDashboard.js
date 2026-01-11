@@ -46,7 +46,6 @@ export default function AnalyticsDashboard({ familyId, childId, children = [], o
       
       setData(result.data);
     } catch (err) {
-      console.error('[AnalyticsDashboard] Error:', err);
       setError(err.message || 'Failed to load analytics');
     } finally {
       setLoading(false);

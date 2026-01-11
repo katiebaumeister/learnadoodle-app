@@ -43,8 +43,20 @@ export default function PageHeader({
         <View style={styles.titleRow}>
           {Icon && <Icon size={24} color={iconColor} style={styles.titleIcon} />}
           <View style={styles.titleTextContainer}>
-            <Text style={styles.title}>{title}</Text>
-            {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+            <Text 
+              style={styles.title}
+              {...(Platform.OS === 'web' ? { className: 'typography-title' } : {})}
+            >
+              {title}
+            </Text>
+            {subtitle && (
+              <Text 
+                style={styles.subtitle}
+                {...(Platform.OS === 'web' ? { className: 'typography-secondary' } : {})}
+              >
+                {subtitle}
+              </Text>
+            )}
           </View>
         </View>
       </View>
@@ -62,6 +74,9 @@ export default function PageHeader({
               ]}
               onPress={action.onPress}
               disabled={action.disabled}
+              {...(Platform.OS === 'web' ? {
+                className: action.primary ? 'btnPrimary' : (action.secondary ? 'btnSecondary' : 'btnSecondary')
+              } : {})}
             >
               {action.icon && (
                 <action.icon 
@@ -89,10 +104,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    paddingHorizontal: 24, // px-6
-    paddingTop: 24, // pt-6
-    paddingBottom: 16, // pb-4
-    borderBottomWidth: 1,
+    // Uses strict spacing scale: 24px (--layout-page-padding), 16px (--spacing-base)
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1, // Hairline border
     borderBottomColor: colors.border,
     backgroundColor: colors.card,
     ...(Platform.OS === 'web' && {
@@ -139,16 +155,24 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   title: {
-    fontSize: 24, // text-2xl
+    // On web, typography-title class handles styling
+    ...(Platform.OS === 'web' ? {} : {
+      fontSize: 28, // typography-title: 28-32px
     fontWeight: '700',
     color: colors.text,
-    marginBottom: 4, // mb-1
-    lineHeight: 32,
+      lineHeight: 33.6, // 1.2 line-height
+    }),
+    marginBottom: 4, // Uses spacing scale: 4px
   },
   subtitle: {
+    // On web, typography-secondary class handles styling
+    ...(Platform.OS === 'web' ? {} : {
     fontSize: 14,
+      fontWeight: '400',
     color: colors.muted,
-    lineHeight: 20,
+      lineHeight: 19.6, // 1.4 line-height
+      opacity: 0.8,
+    }),
   },
   actions: {
     flexDirection: 'row',

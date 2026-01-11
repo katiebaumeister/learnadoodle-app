@@ -89,7 +89,6 @@ export default function AttendanceLogsTab({
       const summaries = calculateWeeklySummaries(mapped);
       setWeeklySummaries(summaries);
     } catch (error) {
-      console.error('Error loading attendance data:', error);
       setAttendanceLogs([]);
       setWeeklySummaries([]);
     } finally {

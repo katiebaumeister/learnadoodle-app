@@ -104,6 +104,9 @@ events AS (
     e.start_ts,
     e.end_ts,
     e.year_plan_id,
+    e.recurrence_rule,  -- ADDED: Include recurrence_rule for recurring events
+    e.parent_event_id,  -- ADDED: Include parent_event_id for recurring instances
+    e.recurrence_id,  -- ADDED: Include recurrence_id for recurring series
     EXTRACT(EPOCH FROM (e.end_ts - e.start_ts)) / 60 AS duration_minutes,
     TO_CHAR((e.start_ts AT TIME ZONE (SELECT timezone FROM fam)), 'HH24:MI') AS start_local,
     TO_CHAR((e.end_ts AT TIME ZONE (SELECT timezone FROM fam)), 'HH24:MI') AS end_local,
@@ -151,7 +154,10 @@ SELECT jsonb_build_object(
     'date_local', e.date_local,
     'source', e.source,
     'family_id', e.family_id,
-    'pattern_day', e.pattern_day -- ADDED: Include pattern_day in events
+    'pattern_day', e.pattern_day, -- ADDED: Include pattern_day in events
+    'recurrence_rule', e.recurrence_rule, -- ADDED: Include recurrence_rule for recurring events
+    'parent_event_id', e.parent_event_id, -- ADDED: Include parent_event_id for recurring instances
+    'recurrence_id', e.recurrence_id -- ADDED: Include recurrence_id for recurring series
   )) FROM events e), '[]'::jsonb)
 );
 $$;

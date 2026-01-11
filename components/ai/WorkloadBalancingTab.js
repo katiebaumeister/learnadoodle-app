@@ -50,13 +50,11 @@ export default function WorkloadBalancingTab({ familyId, children = [] }) {
       );
 
       if (error) {
-        console.error('Error analyzing workload:', error);
         return;
       }
 
       setBalanceData(data);
     } catch (err) {
-      console.error('Exception analyzing workload:', err);
     } finally {
       setLoading(false);
     }
@@ -70,13 +68,11 @@ export default function WorkloadBalancingTab({ familyId, children = [] }) {
       const { data, error } = await analyzeCognitivePatterns(selectedChildId, 30);
 
       if (error) {
-        console.error('Error analyzing patterns:', error);
         return;
       }
 
       setPatterns(data);
     } catch (err) {
-      console.error('Exception analyzing patterns:', err);
     } finally {
       setAnalyzing(false);
     }
@@ -95,14 +91,12 @@ export default function WorkloadBalancingTab({ familyId, children = [] }) {
       );
 
       if (error) {
-        console.error('Error optimizing schedule:', error);
         return;
       }
 
       // Reload balance data
       await handleAnalyze();
     } catch (err) {
-      console.error('Exception optimizing schedule:', err);
     } finally {
       setOptimizing(false);
     }

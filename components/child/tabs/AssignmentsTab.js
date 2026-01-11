@@ -30,14 +30,12 @@ export default function AssignmentsTab({ child, familyId }) {
       const { data, error } = await getAssignments(child.id);
 
       if (error) {
-        console.error('Error fetching assignments:', error);
         setAssignments([]);
         return;
       }
 
       setAssignments(data || []);
     } catch (error) {
-      console.error('Error fetching assignments:', error);
       setAssignments([]);
     } finally {
       setLoading(false);

@@ -8,7 +8,6 @@ import { GlobalSearchProvider } from './contexts/GlobalSearchContext';
 import AuthScreen from './screens/AuthScreen';
 import HomeScreen from './screens/HomeScreen';
 import EditChildScreen from './screens/EditChildScreen';
-import LoadingScreen from './components/LoadingScreen';
 import SupabaseReady from './components/SupabaseReady';
 import WebInitializer from './components/WebInitializer';
 import WebLayout from './components/WebLayout';
@@ -21,8 +20,9 @@ const Stack = createStackNavigator();
 function AppContent() {
   const { user, loading } = useAuth();
 
+  // Don't render anything until auth is ready - no loading screen
   if (loading) {
-    return <LoadingScreen message="Initializing app" timeout={8000} />;
+    return null;
   }
 
   // Render different layouts based on platform

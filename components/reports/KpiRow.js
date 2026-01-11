@@ -59,7 +59,6 @@ export default function KpiRow({ familyId, childId, onNavigate }) {
         capacity: capacityResult.data,
       });
     } catch (err) {
-      console.error('Error loading KPIs:', err);
     } finally {
       setLoading(false);
     }

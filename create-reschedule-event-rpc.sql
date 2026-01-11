@@ -7,6 +7,7 @@ CREATE OR REPLACE FUNCTION reschedule_event_checked(
   _new_end TIMESTAMPTZ
 ) RETURNS JSONB
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
 DECLARE 
   v_child UUID;

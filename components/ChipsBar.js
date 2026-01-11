@@ -3,6 +3,22 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react
 import { COMMON_LABELS } from '../lib/toolTypes';
 import { User, Package, FileText, BookOpen } from 'lucide-react';
 
+// Helper to validate if avatar is a valid URL (not just a UUID)
+const isValidAvatarUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  
+  // Check if it's just a UUID (invalid URL format)
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidPattern.test(trimmed)) {
+    return false; // It's just a UUID, not a valid URL
+  }
+  
+  // Valid URLs must start with http://, https://, or data:
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:');
+};
+
 const LABEL_ICONS = {
   projects: Package,
   homework: FileText,
@@ -60,8 +76,14 @@ export default function ChipsBar({
     return colors[index];
   };
 
+  // Apply chipTray class on web
+  const containerClassName = Platform.OS === 'web' ? 'chipTray' : undefined;
+
   return (
-    <View style={styles.container}>
+    <View 
+      style={styles.container}
+      {...(Platform.OS === 'web' && containerClassName ? { className: containerClassName } : {})}
+    >
       {/* Child Chips */}
       {childrenList.length > 0 && (
         <View style={styles.chipGroup}>
@@ -69,9 +91,13 @@ export default function ChipsBar({
           <TouchableOpacity
             style={[styles.chip, styles.allChip, allChildrenSelected && styles.chipActive]}
             onPress={handleToggleAll}
+            {...(Platform.OS === 'web' ? { 
+              'data-active': allChildrenSelected ? 'true' : 'false',
+              className: 'chip'
+            } : {})}
           >
             <View style={[styles.avatar, styles.allAvatar, allChildrenSelected && { backgroundColor: '#e6eaff', borderColor: '#6d8bff' }]}>
-              <User size={12} color={allChildrenSelected ? '#6d8bff' : '#6b7280'} />
+              <User size={12} color={Platform.OS === 'web' && allChildrenSelected ? 'white' : (allChildrenSelected ? '#6d8bff' : '#6b7280')} />
             </View>
             <Text style={[styles.chipText, allChildrenSelected && styles.chipTextActive]}>
               All children
@@ -90,18 +116,34 @@ export default function ChipsBar({
                   styles.chip, 
                   styles.childChip,
                   isActive && styles.chipActive,
-                  isActive && { backgroundColor: avatarColor, borderColor: borderColor }
+                  // Only apply custom colors on native, web uses CSS classes
+                  Platform.OS !== 'web' && isActive && { backgroundColor: avatarColor, borderColor: borderColor }
                 ]}
                 onPress={() => onToggleChild?.(child.id)}
+                {...(Platform.OS === 'web' ? { 
+                  'data-active': isActive ? 'true' : 'false',
+                  className: 'chip'
+                } : {})}
               >
-                {child.avatar ? (
+                {child.avatar && isValidAvatarUrl(child.avatar) ? (
                   <Image 
                     source={{ uri: child.avatar }} 
-                    style={[styles.avatar, styles.avatarImage, isActive && { borderColor: borderColor }]} 
+                    style={[styles.avatar, styles.avatarImage, isActive && { borderColor: borderColor }]}
+                    onError={(e) => {
+                      // Suppress 404 errors for missing avatars - they're harmless
+                      if (Platform.OS === 'web' && e.nativeEvent) {
+                        e.preventDefault?.();
+                      }
+                    }}
                   />
                 ) : (
                   <View style={[styles.avatar, { backgroundColor: avatarColor, borderColor: isActive ? borderColor : 'transparent' }]}>
-                    <Text style={[styles.avatarText, isActive && { color: borderColor }]}>
+                    <Text style={[
+                      styles.avatarText, 
+                      isActive && { 
+                        color: Platform.OS === 'web' ? 'white' : borderColor 
+                      }
+                    ]}>
                       {(child.first_name || child.name || '?')[0].toUpperCase()}
                     </Text>
                   </View>
@@ -123,11 +165,21 @@ export default function ChipsBar({
           return (
             <TouchableOpacity
               key={label}
-              style={[styles.chip, styles.labelChip, isActive && styles.chipActive, isActive && styles.labelChipActive]}
+              style={[
+                styles.chip, 
+                styles.labelChip, 
+                isActive && styles.chipActive, 
+                // Only apply custom colors on native, web uses CSS classes
+                Platform.OS !== 'web' && isActive && styles.labelChipActive
+              ]}
               onPress={() => onToggleLabel?.(label)}
+              {...(Platform.OS === 'web' ? { 
+                'data-active': isActive ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               {LabelIcon && (
-                <LabelIcon size={12} color={isActive ? '#4f46e5' : '#6b7280'} style={{ marginRight: 4 }} />
+                <LabelIcon size={12} color={Platform.OS === 'web' && isActive ? 'white' : (isActive ? '#4f46e5' : '#6b7280')} style={{ marginRight: 4 }} />
               )}
               <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
                 {label}
@@ -149,8 +201,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingVertical: 8,
     paddingHorizontal: 12,
+    // On web, let CSS chipTray class handle background
+    ...(Platform.OS === 'web' ? {} : {
     backgroundColor: 'rgba(249, 250, 251, 0.5)',
     borderRadius: 8,
+    }),
     marginHorizontal: -4,
   },
   chipGroup: {
@@ -164,14 +219,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 9999,
+    // On web, let CSS chip class handle styling
+    ...(Platform.OS === 'web' ? {
+      height: 32,
+    } : {
     backgroundColor: '#f3f4f6',
     borderWidth: 1,
     borderColor: 'transparent',
+    }),
     ...(Platform.OS === 'web' && {
-      transition: 'all 0.2s ease',
-      ':hover': {
-        backgroundColor: 'rgba(229, 231, 235, 0.7)',
-      },
+      transition: 'all 0.15s ease',
     }),
   },
   allChip: {
@@ -181,18 +238,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   chipActive: {
+    // On web, let CSS handle active state
+    ...(Platform.OS === 'web' ? {} : {
     borderWidth: 1.5,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
     }),
   },
   labelChip: {
-    backgroundColor: '#f9fafb',
     gap: 4,
+    // On web, let CSS handle background
+    ...(Platform.OS === 'web' ? {} : {
+      backgroundColor: '#f9fafb',
+    }),
   },
   labelChipActive: {
+    // On web, let CSS handle active state
+    ...(Platform.OS === 'web' ? {} : {
     backgroundColor: '#eef2ff', // Pastel purple
     borderColor: '#6366f1',
+    }),
   },
   avatar: {
     width: 20,
@@ -217,11 +280,17 @@ const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 13,
-    color: '#4b5563',
     fontWeight: '500',
+    // On web, let CSS handle colors
+    ...(Platform.OS === 'web' ? {} : {
+      color: '#4b5563',
+    }),
   },
   chipTextActive: {
+    // On web, let CSS handle active colors
+    ...(Platform.OS === 'web' ? {} : {
     color: '#4f46e5',
     fontWeight: '600',
+    }),
   },
 });

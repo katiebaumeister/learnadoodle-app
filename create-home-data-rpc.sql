@@ -39,19 +39,42 @@ today_events AS (
     e.start_ts, 
     e.end_ts,
     e.description,
-    TO_CHAR((e.start_ts AT TIME ZONE (SELECT timezone FROM fam)), 'HH24:MI') AS start_local,
-    TO_CHAR((e.end_ts AT TIME ZONE (SELECT timezone FROM fam)), 'HH24:MI') AS end_local,
+    e.event_type,
+    TO_CHAR((e.start_ts AT TIME ZONE f.timezone), 'HH24:MI') AS start_local,
+    TO_CHAR((e.end_ts AT TIME ZONE f.timezone), 'HH24:MI') AS end_local,
     EXTRACT(EPOCH FROM (e.end_ts - e.start_ts)) / 60 AS duration_minutes
   FROM events e
-  LEFT JOIN subject s ON s.id = e.subject_id,
-  bounds b
+  LEFT JOIN subject s ON s.id = e.subject_id
+  CROSS JOIN bounds b
+  CROSS JOIN fam f
   WHERE e.family_id = _family_id
-    AND e.status IN ('scheduled', 'done', 'in_progress')
-    -- Use family-local boundaries
-    AND (e.start_ts AT TIME ZONE (SELECT timezone FROM fam))::date = (b.d0)
+    -- Show all scheduled events regardless of status (scheduled, done, in_progress, etc.)
+    -- Only exclude canceled and soft-deleted events
+    AND (e.deleted_at IS NULL)
+    AND (e.canceled_at IS NULL)
+    AND COALESCE(e.status, 'scheduled') != 'canceled'
+    -- Use family-local timezone for date comparison to ensure correct day
+    -- For multi-day events, check if target date falls within the event's date range
+    -- For single-day events, check if start date matches target date
+    -- Cast timestamp after timezone conversion directly to date (simpler and more reliable)
+    AND (
+      -- Multi-day events: check if target date is within start and end dates (inclusive)
+      -- Check if event spans multiple days by comparing start and end dates
+      (e.end_ts IS NOT NULL AND
+       (e.start_ts AT TIME ZONE f.timezone)::date < (e.end_ts AT TIME ZONE f.timezone)::date AND
+       (e.start_ts AT TIME ZONE f.timezone)::date <= b.d0 AND
+       (e.end_ts AT TIME ZONE f.timezone)::date >= b.d0)
+      OR
+      -- Single-day events: check if start date matches target date
+      -- This includes events where start and end are on the same day, or events without end_ts
+      ((e.end_ts IS NULL OR
+        (e.start_ts AT TIME ZONE f.timezone)::date = (e.end_ts AT TIME ZONE f.timezone)::date)
+       AND (e.start_ts AT TIME ZONE f.timezone)::date = b.d0)
+    )
+    -- Include all event types (no filtering by event_type)
   ORDER BY e.start_ts
 ),
-tasks_today AS (
+backlog_tasks AS (
   SELECT 
     e.id, 
     e.title, 
@@ -59,15 +82,37 @@ tasks_today AS (
     e.status, 
     e.start_ts,
     e.description,
-    TO_CHAR((e.start_ts AT TIME ZONE (SELECT timezone FROM fam)), 'HH24:MI') AS due_time
-  FROM events e, bounds b
+    e.due_ts,
+    e.estimated_minutes,
+    -- Format due_ts if available: show date if not today, "Today" if today, otherwise null
+    CASE 
+      WHEN e.due_ts IS NOT NULL THEN 
+        CASE
+          WHEN (e.due_ts AT TIME ZONE (SELECT timezone FROM fam))::date = _date THEN
+            'Today'
+          WHEN (e.due_ts AT TIME ZONE (SELECT timezone FROM fam))::date = _date + 1 THEN
+            'Tomorrow'
+          WHEN (e.due_ts AT TIME ZONE (SELECT timezone FROM fam))::date < _date THEN
+            'Overdue'
+          ELSE
+            TO_CHAR((e.due_ts AT TIME ZONE (SELECT timezone FROM fam)), 'Mon, MMM DD')
+        END
+      ELSE NULL
+    END AS due_time
+  FROM events e
   WHERE e.family_id = _family_id
-    AND e.status = 'scheduled'
-    -- Same family-local boundaries
-    AND (e.start_ts AT TIME ZONE (SELECT timezone FROM fam))::date = (b.d0)
-    -- Mark as task if duration < 30 min
-    AND EXTRACT(EPOCH FROM (e.end_ts - e.start_ts)) / 60 < 30
-  ORDER BY e.start_ts
+    -- Fetch backlog events (not scheduled on calendar)
+    AND COALESCE(e.is_backlog, false) = true
+    -- Exclude completed and canceled events (handle NULL status)
+    AND COALESCE(e.status, 'scheduled') NOT IN ('done', 'canceled')
+    -- Exclude soft-deleted events
+    AND (e.deleted_at IS NULL)
+    AND (e.canceled_at IS NULL)
+  ORDER BY 
+    -- Order by due_ts if available (overdue first), then by created_at
+    CASE WHEN e.due_ts IS NOT NULL AND e.due_ts < NOW() THEN 0 ELSE 1 END,
+    COALESCE(e.due_ts, e.created_at) ASC
+  LIMIT 50
 ),
 big_events AS (
   SELECT 
@@ -234,12 +279,19 @@ SELECT JSONB_BUILD_OBJECT(
       JSONB_BUILD_OBJECT(
         'id', te.id,
         'child_id', te.child_id,
+        'title', te.title,
         'subject', COALESCE(te.subject, te.title),
         'topic', COALESCE(NULLIF(te.title, ''), te.subject),
         'start', te.start_local,
+        'start_local', te.start_local,
         'end', te.end_local,
+        'end_local', te.end_local,
+        'start_ts', te.start_ts,
+        'end_ts', te.end_ts,
         'status', te.status,
-        'duration_minutes', te.duration_minutes
+        'event_type', COALESCE(te.event_type, 'Other'),
+        'duration_minutes', te.duration_minutes,
+        'description', te.description
       ) ORDER BY te.start_ts
     ), '[]'::jsonb) 
     FROM today_events te
@@ -247,15 +299,17 @@ SELECT JSONB_BUILD_OBJECT(
   'tasks', (
     SELECT COALESCE(JSONB_AGG(
       JSONB_BUILD_OBJECT(
-        'id', t.id,
-        'title', t.title,
-        'child_id', t.child_id,
-        'status', t.status,
-        'due_time', t.due_time,
-        'description', t.description
-      ) ORDER BY t.start_ts
+        'id', bt.id,
+        'title', bt.title,
+        'child_id', bt.child_id,
+        'status', bt.status,
+        'due_time', bt.due_time,
+        'description', bt.description,
+        'due_ts', bt.due_ts,
+        'estimated_minutes', bt.estimated_minutes
+      )
     ), '[]'::jsonb) 
-    FROM tasks_today t
+    FROM backlog_tasks bt
   ),
   'events', (
     SELECT COALESCE(JSONB_AGG(

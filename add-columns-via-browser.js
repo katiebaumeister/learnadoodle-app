@@ -7,11 +7,8 @@ async function addMissingColumns() {
     const supabase = window.supabase || window.supabaseClient;
     
     if (!supabase) {
-      console.error('Supabase client not found. Make sure you\'re logged into your app.');
       return;
     }
-
-    console.log('Adding missing columns to activities table...');
 
     // Add due column
     const { error: dueError } = await supabase.rpc('exec_sql', {
@@ -19,9 +16,7 @@ async function addMissingColumns() {
     });
     
     if (dueError) {
-      console.log('Due column error (might already exist):', dueError);
     } else {
-      console.log('✅ Due column added successfully');
     }
 
     // Add minutes column
@@ -30,9 +25,7 @@ async function addMissingColumns() {
     });
     
     if (minutesError) {
-      console.log('Minutes column error (might already exist):', minutesError);
     } else {
-      console.log('✅ Minutes column added successfully');
     }
 
     // Add assignee column if it doesn't exist
@@ -41,16 +34,9 @@ async function addMissingColumns() {
     });
     
     if (assigneeError) {
-      console.log('Assignee column error (might already exist):', assigneeError);
     } else {
-      console.log('✅ Assignee column added successfully');
     }
-
-    console.log('🎉 Column addition complete! Refresh your app to test the new fields.');
-    
-  } catch (error) {
-    console.error('Error adding columns:', error);
-    console.log('You may need to add these columns manually in your Supabase dashboard.');
+} catch (error) {
   }
 }
 
@@ -60,7 +46,6 @@ async function addColumnsDirect() {
     const supabase = window.supabase || window.supabaseClient;
     
     if (!supabase) {
-      console.error('Supabase client not found.');
       return;
     }
 
@@ -77,30 +62,17 @@ async function addColumnsDirect() {
       .select();
 
     if (error && error.code === '42703') {
-      console.log('❌ Columns are missing. You need to add them manually in Supabase dashboard.');
-      console.log('Required columns: due (BOOLEAN), minutes (INTEGER), assignee (TEXT)');
     } else if (error && error.code === '23505') {
-      console.log('✅ Columns exist! Deleting test record...');
       // Delete the test record
       await supabase
         .from('activities')
         .delete()
         .eq('name', 'TEST_COLUMN_CHECK');
     } else {
-      console.log('Test result:', { data, error });
     }
-    
-  } catch (error) {
-    console.error('Error checking columns:', error);
+} catch (error) {
   }
 }
 
 // Run the appropriate function
-console.log('Choose one:');
-console.log('1. addMissingColumns() - Try to add columns via RPC');
-console.log('2. addColumnsDirect() - Check if columns exist');
-console.log('');
-console.log('If columns are missing, you\'ll need to add them manually in your Supabase dashboard:');
-console.log('- due: BOOLEAN DEFAULT FALSE');
-console.log('- minutes: INTEGER');
-console.log('- assignee: TEXT');
+

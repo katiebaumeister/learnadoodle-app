@@ -47,7 +47,6 @@ export default function NotesTab({
         setSubjects(data);
       }
     } catch (error) {
-      console.error('Error loading subjects:', error);
     }
   };
 
@@ -104,7 +103,6 @@ export default function NotesTab({
       
       setNotes(mapped);
     } catch (error) {
-      console.error('Error loading notes:', error);
       setNotes([]);
     } finally {
       setLoading(false);
@@ -172,7 +170,6 @@ export default function NotesTab({
       setEditingNote(null);
       loadNotes();
     } catch (error) {
-      console.error('Error saving note:', error);
       alert('Failed to save note. Please try again.');
     }
   };
@@ -185,7 +182,6 @@ export default function NotesTab({
       await deleteNote(noteId);
       loadNotes();
     } catch (error) {
-      console.error('Error deleting note:', error);
       alert('Failed to delete note. Please try again.');
     }
   };
@@ -246,6 +242,10 @@ export default function NotesTab({
           <TouchableOpacity
             onPress={() => setFilters(prev => ({ ...prev, child: null }))}
             style={[styles.filterChip, !filters.child && styles.filterChipActive]}
+            {...(Platform.OS === 'web' ? {
+              'data-active': !filters.child ? 'true' : 'false',
+              className: 'chip'
+            } : {})}
           >
             <Text style={[styles.filterChipText, !filters.child && styles.filterChipTextActive]}>
               All Children
@@ -256,6 +256,10 @@ export default function NotesTab({
               key={child.id}
               onPress={() => setFilters(prev => ({ ...prev, child: prev.child === child.id ? null : child.id }))}
               style={[styles.filterChip, filters.child === child.id && styles.filterChipActive]}
+              {...(Platform.OS === 'web' ? {
+                'data-active': filters.child === child.id ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               <Text style={[styles.filterChipText, filters.child === child.id && styles.filterChipTextActive]}>
                 {child.first_name || child.name}
@@ -269,6 +273,10 @@ export default function NotesTab({
           <TouchableOpacity
             onPress={() => setFilters(prev => ({ ...prev, type: null }))}
             style={[styles.filterChip, !filters.type && styles.filterChipActive]}
+            {...(Platform.OS === 'web' ? {
+              'data-active': !filters.type ? 'true' : 'false',
+              className: 'chip'
+            } : {})}
           >
             <Text style={[styles.filterChipText, !filters.type && styles.filterChipTextActive]}>
               All Types
@@ -279,6 +287,10 @@ export default function NotesTab({
               key={type}
               onPress={() => setFilters(prev => ({ ...prev, type: prev.type === type ? null : type }))}
               style={[styles.filterChip, filters.type === type && styles.filterChipActive]}
+              {...(Platform.OS === 'web' ? {
+                'data-active': filters.type === type ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               <Text style={[styles.filterChipText, filters.type === type && styles.filterChipTextActive]}>
                 {type.charAt(0).toUpperCase() + type.slice(1)}
@@ -293,6 +305,10 @@ export default function NotesTab({
             <TouchableOpacity
               onPress={() => setFilters(prev => ({ ...prev, subject: null }))}
               style={[styles.filterChip, !filters.subject && styles.filterChipActive]}
+              {...(Platform.OS === 'web' ? {
+                'data-active': !filters.subject ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               <Text style={[styles.filterChipText, !filters.subject && styles.filterChipTextActive]}>
                 All Subjects
@@ -303,6 +319,10 @@ export default function NotesTab({
                 key={subject.id}
                 onPress={() => setFilters(prev => ({ ...prev, subject: prev.subject === subject.id ? null : subject.id }))}
                 style={[styles.filterChip, filters.subject === subject.id && styles.filterChipActive]}
+                {...(Platform.OS === 'web' ? {
+                  'data-active': filters.subject === subject.id ? 'true' : 'false',
+                  className: 'chip'
+                } : {})}
               >
                 <Text style={[styles.filterChipText, filters.subject === subject.id && styles.filterChipTextActive]}>
                   {subject.name}
@@ -318,6 +338,10 @@ export default function NotesTab({
             <TouchableOpacity
               onPress={() => setFilters(prev => ({ ...prev, tag: null }))}
               style={[styles.filterChip, !filters.tag && styles.filterChipActive]}
+              {...(Platform.OS === 'web' ? {
+                'data-active': !filters.tag ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               <Text style={[styles.filterChipText, !filters.tag && styles.filterChipTextActive]}>
                 All Tags
@@ -328,6 +352,10 @@ export default function NotesTab({
                 key={tag}
                 onPress={() => setFilters(prev => ({ ...prev, tag: prev.tag === tag ? null : tag }))}
                 style={[styles.filterChip, filters.tag === tag && styles.filterChipActive]}
+                {...(Platform.OS === 'web' ? {
+                  'data-active': filters.tag === tag ? 'true' : 'false',
+                  className: 'chip'
+                } : {})}
               >
                 <Text style={[styles.filterChipText, filters.tag === tag && styles.filterChipTextActive]}>
                   {tag}
@@ -348,8 +376,9 @@ export default function NotesTab({
               setEditorContent('');
               setShowEditor(true);
             }}
+            {...(Platform.OS === 'web' ? { className: 'btnPrimary' } : {})}
           >
-            <Plus size={16} color={colors.white} />
+            <Plus size={16} color={Platform.OS === 'web' ? 'white' : colors.white} />
             <Text style={styles.addButtonText}>Add Note</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -701,25 +730,46 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   filterChip: {
+    // On web, chip class handles styling
+    ...(Platform.OS === 'web' ? {
+      height: 32,
+      marginRight: 8,
+      backgroundColor: '#ffffff',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 9999,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    } : {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: colors.panel,
+      borderRadius: 9999,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: colors.border,
     marginRight: 8,
+    }),
   },
   filterChipActive: {
-    backgroundColor: colors.indigo,
-    borderColor: colors.indigo,
+    // On web, CSS handles active state
+    ...(Platform.OS === 'web' ? {} : {
+      backgroundColor: 'rgba(17,24,39,.92)',
+      borderColor: 'transparent',
+    }),
   },
   filterChipText: {
-    fontSize: 12,
-    color: colors.text,
+    fontSize: 13,
     fontWeight: '500',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
+      color: colors.text,
+    }),
   },
   filterChipTextActive: {
+    // On web, CSS handles active color
+    ...(Platform.OS === 'web' ? {} : {
     color: colors.white,
+    }),
   },
   actionsRow: {
     flexDirection: 'row',
@@ -728,15 +778,24 @@ const styles = StyleSheet.create({
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    padding: 12,
-    backgroundColor: colors.indigo,
-    borderRadius: 8,
+    gap: 8, // --spacing-sm (strict spacing: 8px)
+    // On web, btnPrimary class handles styling
+    ...(Platform.OS === 'web' ? {
+      height: 44,
+    } : {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 14,
+      backgroundColor: 'rgba(17,24,39,.92)',
+    }),
   },
   addButtonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
     color: colors.white,
+    }),
   },
   exportButton: {
     flexDirection: 'row',

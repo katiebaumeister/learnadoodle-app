@@ -42,21 +42,39 @@ async def get_file_text_from_storage(bucket: str, path: str) -> str:
         data: bytes = res
         _log("storage.download.success", byte_length=len(data))
         
-        # Try UTF-8 first (for text files)
-        try:
-            return data.decode("utf-8", errors="ignore")
-        except Exception:
-            # Handle PDFs
+        # Check if it's a PDF by magic bytes or path
+        is_pdf = data[:4] == b'%PDF' or path.lower().endswith('.pdf')
+        
+        if is_pdf:
+            # Extract text from PDF
+            _log("storage.pdf_extraction.start", path=path)
             try:
                 from pypdf import PdfReader
                 text = []
                 reader = PdfReader(io.BytesIO(data))
                 for page in reader.pages:
-                    text.append(page.extract_text() or "")
-                return "\n".join(text)
+                    page_text = page.extract_text() or ""
+                    text.append(page_text)
+                extracted = "\n".join(text)
+                _log("storage.pdf_extraction.success", text_length=len(extracted), preview=extracted[:100] if extracted else "empty")
+                return extracted
             except ImportError:
                 _log("storage.download.error", error="pypdf missing")
                 raise ImportError("pypdf required for PDF extraction. Install with: pip install pypdf")
+            except Exception as pdf_err:
+                _log("storage.pdf_extraction.error", error=str(pdf_err))
+                raise ValueError(f"Failed to extract PDF text: {pdf_err}")
+        else:
+            # Try UTF-8 for text files
+            try:
+                decoded = data.decode("utf-8")
+                _log("storage.text_extraction.success", text_length=len(decoded))
+                return decoded
+            except UnicodeDecodeError:
+                # Try latin-1 as fallback
+                decoded = data.decode("latin-1", errors="ignore")
+                _log("storage.text_extraction.fallback", text_length=len(decoded))
+                return decoded
     except Exception as e:
         _log("storage.download.exception", error=str(e))
         raise ValueError(f"Failed to fetch file from storage: {e}")
@@ -106,9 +124,49 @@ def _build_week_view_fallback(
         ).eq("family_id", family_id).gte("date", str(start_date)).lte("date", str(end_date)).execute()
         cache_rows = cache_res.data or []
         _log("fallback.cache.success", count=len(cache_rows))
+        
+        # If cache is empty, try to refresh it
+        if len(cache_rows) == 0:
+            _log("fallback.cache.empty", message="cache is empty, attempting refresh")
+            try:
+                supa.rpc(
+                    "refresh_calendar_days_cache",
+                    {
+                        "p_family_id": family_id,
+                        "p_from_date": str(start_date),
+                        "p_to_date": str(end_date)
+                    }
+                ).execute()
+                _log("fallback.cache.refresh.triggered", message="cache refresh RPC called")
+                # Re-query after refresh (though it may not be immediate)
+                try:
+                    cache_res = supa.table("calendar_days_cache").select(
+                        "child_id, date, day_status, first_block_start, last_block_end"
+                    ).eq("family_id", family_id).gte("date", str(start_date)).lte("date", str(end_date)).execute()
+                    cache_rows = cache_res.data or []
+                    _log("fallback.cache.after_refresh", count=len(cache_rows))
+                except:
+                    pass  # If re-query fails, continue with empty cache
+            except Exception as refresh_error:
+                _log("fallback.cache.refresh.error", error=str(refresh_error))
+                # Continue with empty cache
     except Exception as e:
         _log("fallback.cache.error", error=str(e))
         _log("fallback.cache.fallback", message="proceeding with empty availability due to RLS")
+        # Try to refresh cache even if query failed
+        try:
+            _log("fallback.cache.refresh.attempt", message="attempting cache refresh after RLS error")
+            supa.rpc(
+                "refresh_calendar_days_cache",
+                {
+                    "p_family_id": family_id,
+                    "p_from_date": str(start_date),
+                    "p_to_date": str(end_date)
+                }
+            ).execute()
+            _log("fallback.cache.refresh.triggered", message="cache refresh RPC called after RLS error")
+        except Exception as refresh_error:
+            _log("fallback.cache.refresh.error", error=str(refresh_error))
     cache_map = {
         (row["child_id"], row["date"]): row
         for row in cache_rows
@@ -258,9 +316,10 @@ async def load_planning_context(
         raise ValueError(f"Failed to query blackout_periods: {e}") from e
 
     # Get availability and events from get_week_view RPC (with fallback)
+    # Note: supa is already get_admin_client() which bypasses RLS
     _log("planning.week_view.skip", reason="bypass schedule_overrides RLS")
     week_view_data = _build_week_view_fallback(
-        supa=supa,
+        supa=supa,  # Admin client bypasses RLS for calendar_days_cache
         family_id=family_id,
         start_date=ws,
         end_date=we,
@@ -336,13 +395,14 @@ async def load_planning_context(
     velocities = velocities_res.data or []
     _log("planning.velocity.success", count=len(velocities))
     
-    # Get recent struggles from outcomes (last 30 days) to inform scheduling
+    # Get recent struggles and performance data from outcomes (last 30 days) to inform scheduling
     _log("planning.struggles.query")
     struggles_by_child_subject = {}
+    performance_by_child_subject = {}  # New: track ratings and grades per child/subject
     try:
         thirty_days_ago = (ws - dt.timedelta(days=30)).isoformat()
         outcomes_res = supa.table("event_outcomes").select(
-            "child_id, subject_id, struggles"
+            "child_id, subject_id, struggles, rating, grade, strengths"
         ).eq("family_id", family_id).in_("child_id", child_ids).gte(
             "created_at", thirty_days_ago
         ).execute()
@@ -351,17 +411,57 @@ async def load_planning_context(
             child_id = outcome.get("child_id")
             subject_id = outcome.get("subject_id")
             struggles = outcome.get("struggles", [])
-            if struggles and child_id:
+            rating = outcome.get("rating")
+            grade = outcome.get("grade")
+            strengths = outcome.get("strengths", [])
+            
+            if child_id:
                 key = f"{child_id}:{subject_id or 'none'}"
-                if key not in struggles_by_child_subject:
-                    struggles_by_child_subject[key] = []
-                struggles_by_child_subject[key].extend(struggles)
+                
+                # Track struggles
+                if struggles:
+                    if key not in struggles_by_child_subject:
+                        struggles_by_child_subject[key] = []
+                    struggles_by_child_subject[key].extend(struggles)
+                
+                # Track performance metrics
+                if key not in performance_by_child_subject:
+                    performance_by_child_subject[key] = {
+                        "ratings": [],
+                        "grades": [],
+                        "strengths": [],
+                        "struggles": []
+                    }
+                
+                if rating is not None:
+                    performance_by_child_subject[key]["ratings"].append(rating)
+                if grade:
+                    performance_by_child_subject[key]["grades"].append(grade)
+                if strengths:
+                    performance_by_child_subject[key]["strengths"].extend(strengths)
+                if struggles:
+                    performance_by_child_subject[key]["struggles"].extend(struggles)
         
         # Deduplicate struggles per child/subject
         for key in struggles_by_child_subject:
             struggles_by_child_subject[key] = list(set(struggles_by_child_subject[key]))
         
+        # Calculate average ratings and performance summaries
+        for key, perf in performance_by_child_subject.items():
+            ratings = perf["ratings"]
+            if ratings:
+                perf["avg_rating"] = sum(ratings) / len(ratings)
+                perf["rating_count"] = len(ratings)
+            else:
+                perf["avg_rating"] = None
+                perf["rating_count"] = 0
+            
+            # Deduplicate strengths/struggles
+            perf["strengths"] = list(set(perf["strengths"]))
+            perf["struggles"] = list(set(perf["struggles"]))
+        
         _log("planning.struggles.success", count=len(struggles_by_child_subject))
+        _log("planning.performance.success", count=len(performance_by_child_subject))
     except Exception as e:
         _log("planning.struggles.error", error=str(e))
         # Non-critical, continue without struggles data
@@ -455,6 +555,7 @@ async def load_planning_context(
         "required_minutes": required_minutes,
         "velocities": velocities,
         "recent_struggles": struggles_by_child_subject,
+        "performance_by_subject": performance_by_child_subject,  # New: performance metrics (ratings, grades) per child/subject
         "standards_gaps": standards_gaps_by_child,  # New: standards gaps per child
         "support_profiles": support_profiles_by_child,  # New: support profiles per child
         "max_minutes_per_day": max_minutes_per_day,

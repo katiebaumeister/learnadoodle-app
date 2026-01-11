@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   text: {
     fontSize: 13,
     lineHeight: 18,
-    fontFamily: Platform.OS === 'web' ? 'Inter, sans-serif' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt, sans-serif' : undefined,
   },
   input: {
     flex: 1,
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     paddingTop: 20,
     textAlignVertical: 'top',
-    fontFamily: Platform.OS === 'web' ? 'Inter, sans-serif' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt, sans-serif' : undefined,
   },
 });
 

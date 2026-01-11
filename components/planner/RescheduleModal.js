@@ -119,7 +119,6 @@ export default function RescheduleModal({
       onApplied?.(data);
       onClose();
     } catch (err) {
-      console.error('Error applying plan:', err);
       Alert.alert('Error', err.message || 'Failed to apply plan');
     } finally {
       setApplying(false);

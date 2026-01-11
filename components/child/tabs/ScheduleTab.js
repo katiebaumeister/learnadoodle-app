@@ -87,7 +87,6 @@ export default function ScheduleTab({ child }) {
 
       setWeekData(Array.from(daysMap.values()));
     } catch (error) {
-      console.error('Error fetching schedule:', error);
       setWeekData([]);
     } finally {
       setLoading(false);

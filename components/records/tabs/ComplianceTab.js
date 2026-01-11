@@ -80,13 +80,10 @@ export default function ComplianceTab({
         window.URL.revokeObjectURL(url);
       } else if (type === 'compliance') {
         // TODO: Implement compliance packet export
-        console.log('Export compliance packet');
-      } else if (type === 'portfolio') {
+} else if (type === 'portfolio') {
         // TODO: Implement portfolio ZIP export
-        console.log('Export portfolio ZIP');
-      }
+}
     } catch (error) {
-      console.error('Error exporting:', error);
       alert('Failed to export. Please try again.');
     }
   };
@@ -115,7 +112,6 @@ export default function ComplianceTab({
         alert('Year-end summary generated successfully');
       }
     } catch (error) {
-      console.error('Error generating year-end summary:', error);
       alert(`Failed to generate year-end summary: ${error.message || 'Unknown error'}`);
     }
   };

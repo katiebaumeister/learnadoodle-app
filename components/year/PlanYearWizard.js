@@ -139,6 +139,7 @@ export default function PlanYearWizard({
   const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [error, setError] = useState(null);
+  const [showMultiYearWizard, setShowMultiYearWizard] = useState(false);
   
   // Step 0: Students & Scope
   const [selectedChildren, setSelectedChildren] = useState([]);
@@ -199,7 +200,7 @@ export default function PlanYearWizard({
   useEffect(() => {
     if (startDate && endDate && step === 4) {
       // Generate immediately when on milestones step
-      console.log('[PlanYearWizard] Generating milestones for step 4, dates:', startDate, endDate);
+
       generateMilestones();
     }
   }, [startDate, endDate, step]);
@@ -207,7 +208,6 @@ export default function PlanYearWizard({
   // Also generate milestones when dates are first set (pre-generate)
   useEffect(() => {
     if (startDate && endDate && milestones.length === 0) {
-      console.log('[PlanYearWizard] Pre-generating milestones when dates set, dates:', startDate, endDate);
       generateMilestones();
     }
   }, [startDate, endDate]);
@@ -224,7 +224,6 @@ export default function PlanYearWizard({
     }
   }, [selectedChildren, step]);
 
-  
   const loadChildren = async () => {
     if (!familyId) return;
     const { data } = await supabase
@@ -241,28 +240,20 @@ export default function PlanYearWizard({
   
   const loadPrefillData = async (childId) => {
     try {
-      console.log('[PlanYearWizard] Loading prefill data for child:', childId);
       const { data, error } = await getPrefillData(childId);
       
       if (error) {
-        console.error('[PlanYearWizard] Prefill error:', error);
         return;
       }
       
       if (!data) {
-        console.log('[PlanYearWizard] No prefill data returned');
         return;
       }
       
       // Deep clone the data to ensure mutability
       const clonedSubjects = JSON.parse(JSON.stringify(data.subjects || []));
       const clonedHours = JSON.parse(JSON.stringify(data.hoursPerWeek || {}));
-      
-      console.log('[PlanYearWizard] Prefill data loaded:', {
-        subjectsCount: clonedSubjects.length,
-        hoursKeys: Object.keys(clonedHours).length
-      });
-      
+
       // Update state with cloned data
       setChildSubjects(prev => {
         const newState = { ...prev };
@@ -278,21 +269,16 @@ export default function PlanYearWizard({
         newState[childId] = clonedHours;
         return newState;
       });
-      
-      console.log('[PlanYearWizard] Prefill data applied successfully');
-    } catch (err) {
-      console.error('[PlanYearWizard] Error loading prefill data:', err);
+} catch (err) {
     }
   };
   
   const generateMilestones = () => {
     if (!startDate || !endDate) {
-      console.log('[PlanYearWizard] Cannot generate milestones - missing dates:', { startDate, endDate });
       return;
     }
     
     try {
-      console.log('[PlanYearWizard] Starting milestone generation...');
       // Parse dates as strings first, then create Date objects
       const startStr = String(startDate);
       const endStr = String(endDate);
@@ -300,7 +286,6 @@ export default function PlanYearWizard({
       const end = new Date(endStr);
       
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        console.error('[PlanYearWizard] Invalid date values:', { startDate, endDate });
         return;
       }
       
@@ -334,15 +319,11 @@ export default function PlanYearWizard({
         currentTimestamp += weekMs;
         weekNum++;
       }
-      
-      console.log('[PlanYearWizard] Generated', weeks.length, 'milestones');
-      
+
       // Deep clone the array to ensure it's completely mutable
       const clonedWeeks = JSON.parse(JSON.stringify(weeks));
       setMilestones(clonedWeeks);
-      console.log('[PlanYearWizard] Milestones set in state:', clonedWeeks.length);
-    } catch (err) {
-      console.error('[PlanYearWizard] Error generating milestones:', err);
+} catch (err) {
       setMilestones([]);
     }
   };
@@ -418,7 +399,6 @@ export default function PlanYearWizard({
         Alert.alert('Info', data?.message || 'No holidays found or already synced.');
       }
     } catch (err) {
-      console.error('[PlanYearWizard] Sync blackouts error:', err);
       Alert.alert(
         'Error',
         `Failed to sync state holidays: ${err.message || 'Unknown error'}. Please check that the state_blackouts bucket exists and contains ${state}/${year}.json`
@@ -427,8 +407,7 @@ export default function PlanYearWizard({
       setSyncingBlackouts(false);
     }
   };
-  
-  
+
   const canProceed = () => {
     if (step === 1) return selectedChildren.length > 0;
     if (step === 2) return startDate && endDate && startDate < endDate;
@@ -476,21 +455,7 @@ export default function PlanYearWizard({
         breaks,
         children: childrenData,
       };
-      
-      console.log('[PlanYearWizard] Submitting year plan:', {
-        familyId,
-        scope,
-        startDate,
-        endDate,
-        breaksCount: breaks.length,
-        childrenCount: childrenData.length,
-        children: childrenData.map(c => ({
-          childId: c.childId,
-          subjectsCount: c.subjects.length,
-          subjects: c.subjects
-        }))
-      });
-      
+
       const { data, error: createError } = await createYearPlan(input);
       
       if (createError) {
@@ -503,8 +468,6 @@ export default function PlanYearWizard({
         // Generate terms if configured
         if (termType !== 'none') {
           try {
-            console.log('[PlanYearWizard] Generating terms for year plan:', yearPlanId);
-            
             if (termType === 'custom') {
               // Insert custom terms
               for (const term of customTerms) {
@@ -519,7 +482,6 @@ export default function PlanYearWizard({
                   });
                 
                 if (termError) {
-                  console.error('[PlanYearWizard] Error creating custom term:', termError);
                 }
               }
             } else {
@@ -532,13 +494,10 @@ export default function PlanYearWizard({
               });
               
               if (termGenError) {
-                console.error('[PlanYearWizard] Error generating terms:', termGenError);
               } else {
-                console.log('[PlanYearWizard] Terms generated successfully');
               }
             }
           } catch (termErr) {
-            console.error('[PlanYearWizard] Exception generating terms:', termErr);
             // Continue - terms are optional
           }
         }
@@ -548,11 +507,9 @@ export default function PlanYearWizard({
         setError(null);
         
         try {
-          console.log('[PlanYearWizard] Seeding events for year plan:', yearPlanId);
           const { data: seedData, error: seedError } = await seedYearPlanEvents(yearPlanId);
           
           if (seedError) {
-            console.error('[PlanYearWizard] Seed error:', seedError);
             // Show warning but don't fail - plan was created successfully
             Alert.alert(
               'Plan Created',
@@ -560,7 +517,6 @@ export default function PlanYearWizard({
               [{ text: 'OK' }]
             );
           } else {
-            console.log('[PlanYearWizard] Seed success:', seedData);
             const eventsCreated = seedData?.events_created || 0;
             const eventsSkipped = seedData?.events_skipped || 0;
             
@@ -570,7 +526,6 @@ export default function PlanYearWizard({
             );
           }
         } catch (seedErr) {
-          console.error('[PlanYearWizard] Seed exception:', seedErr);
           Alert.alert(
             'Plan Created',
             'Year plan created successfully, but scheduling encountered an error. You can manually add events or try seeding again later.'
@@ -583,7 +538,6 @@ export default function PlanYearWizard({
         handleClose();
       }
     } catch (err) {
-      console.error('Error creating year plan:', err);
       setError(err.message || 'Failed to create year plan');
     } finally {
       setSaving(false);
@@ -819,7 +773,6 @@ export default function PlanYearWizard({
       />
     </View>
   );
-  
 
   const addSubject = (childId) => {
     setChildSubjects(prev => {
@@ -928,8 +881,6 @@ export default function PlanYearWizard({
   };
   
   const renderMilestones = () => {
-    console.log('[PlanYearWizard] Rendering milestones step, milestones count:', milestones.length);
-    
     return (
       <View style={styles.stepContent}>
         <Text style={styles.stepTitle}>Weekly Milestones</Text>
@@ -1045,6 +996,19 @@ export default function PlanYearWizard({
             >
               <X size={20} color={colors.text} />
             </TouchableOpacity>
+          </View>
+          
+          {/* Description Section */}
+          <View style={styles.descriptionSection}>
+            <Text style={styles.descriptionText}>
+              Build a year-long curriculum plan with subjects, milestones, breaks, and weekly targets.
+            </Text>
+            <Text style={styles.descriptionSubtext}>
+              This wizard will guide you through: Setting term dates and breaks • Defining subjects and weekly targets • Planning major milestones • Seeding your calendar
+            </Text>
+            <Text style={styles.descriptionSubtext}>
+              Time needed: ~10 minutes
+            </Text>
           </View>
           
           {/* Stepper */}
@@ -1175,6 +1139,26 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     padding: 4,
+  },
+  descriptionSection: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  descriptionText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.text,
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  descriptionSubtext: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 18,
+    marginTop: 4,
   },
   stepper: {
     flexDirection: 'row',

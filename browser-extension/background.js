@@ -3,10 +3,8 @@
 // Listen for extension installation
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    console.log('Hi World extension installed');
     // Could open welcome page here
   } else if (details.reason === 'update') {
-    console.log('Hi World extension updated');
   }
 });
 

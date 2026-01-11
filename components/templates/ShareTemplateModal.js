@@ -46,7 +46,6 @@ export default function ShareTemplateModal({
       setMarketplaceTags([]);
       setTagInput('');
     } catch (error) {
-      console.error('Error sharing template:', error);
       toast.push('Failed to share template to marketplace', 'error');
     } finally {
       setSharing(false);

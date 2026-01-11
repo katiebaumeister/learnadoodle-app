@@ -97,7 +97,6 @@ export default function ProjectsTab({ child }) {
 
       setProjects(formattedProjects);
     } catch (error) {
-      console.error('Error fetching projects:', error);
       setProjects([]);
     } finally {
       setLoading(false);
@@ -120,8 +119,7 @@ export default function ProjectsTab({ child }) {
           style={styles.addButton}
           onPress={() => {
             // TODO: Open add project modal
-            console.log('Add project clicked');
-          }}
+}}
         >
           <Plus size={14} color={colors.card} />
           <Text style={styles.addButtonText}>Add project</Text>

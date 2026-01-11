@@ -67,6 +67,87 @@ class AutoScheduleCourseInput(BaseModel):
     strategy: str = Field("even", description="Strategy: 'even' (evenly distribute) or 'use_target_dates'")
 
 
+# Quick Reschedule Models
+class QuickRescheduleChangeInput(BaseModel):
+    type: str = Field(..., description="Change type: moved_event, canceled_event, new_event, shortened_day, kid_unavailable")
+    event_id: Optional[str] = Field(None, description="Event ID (for moved/canceled)")
+    new_start: Optional[str] = Field(None, description="New start time (for moved_event)")
+    new_end: Optional[str] = Field(None, description="New end time (for moved_event)")
+    child_unavailable: Optional[bool] = Field(None, description="Child unavailable flag")
+    notes: Optional[str] = Field(None, description="Additional notes")
+
+
+class QuickRescheduleConstraintsInput(BaseModel):
+    lock_fixed: bool = Field(True, description="Keep fixed classes locked")
+    only_flexible: bool = Field(True, description="Only move flexible items")
+    max_moves: int = Field(6, ge=1, le=20, description="Maximum number of events to move")
+    prefer_same_day: bool = Field(True, description="Prefer same-day moves")
+
+
+class QuickRescheduleInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    children: List[str] = Field(..., description="Child IDs")
+    time_window: Dict[str, str] = Field(..., description="Time window with start_date and end_date")
+    change: QuickRescheduleChangeInput = Field(..., description="Change information")
+    constraints: QuickRescheduleConstraintsInput = Field(..., description="Rescheduling constraints")
+    notes: Optional[str] = Field(None, description="Additional notes")
+
+
+class QuickRescheduleApplyInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    run_id: str = Field(..., description="Run ID from preview")
+    proposed_events_patch: List[Dict[str, Any]] = Field(..., description="Proposed events patch to apply")
+
+
+# Plan Week Models
+class PlanWeekOptionsInput(BaseModel):
+    focus: Optional[List[str]] = Field(default_factory=list, description="Focus options")
+    intensity: str = Field("normal", description="Intensity: light, normal, ambitious")
+    max_daily_minutes_per_child: int = Field(180, description="Max daily minutes per child")
+    weekend_mode: str = Field("light", description="Weekend mode: light, normal, full")
+
+
+class PlanWeekInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    week_start: str = Field(..., description="Week start date (YYYY-MM-DD, must be Monday)")
+    child_ids: List[str] = Field(..., description="Child IDs")
+    options: PlanWeekOptionsInput = Field(default_factory=PlanWeekOptionsInput, description="Planning options")
+
+
+class PlanWeekApplyInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    run_id: str = Field(..., description="Run ID from preview")
+    patch: Dict[str, Any] = Field(..., description="Patch with create/move/update/delete arrays")
+
+
+# Resolve Conflicts Models
+class ResolveConflictsRangeInput(BaseModel):
+    start: str = Field(..., description="Start date (YYYY-MM-DD)")
+    end: str = Field(..., description="End date (YYYY-MM-DD)")
+
+
+class ResolveConflictsConstraintsInput(BaseModel):
+    hard_blocks: Optional[bool] = Field(True, description="Respect hard blocks")
+    keep_fixed: Optional[bool] = Field(True, description="Keep fixed events locked")
+    allow_spillover: Optional[bool] = Field(False, description="Allow moves to next day")
+    allow_splitting: Optional[bool] = Field(True, description="Allow splitting events")
+
+
+class ResolveConflictsPreviewInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    child_ids: List[str] = Field(..., description="Child IDs")
+    range: ResolveConflictsRangeInput = Field(..., description="Date range")
+    constraints: Optional[ResolveConflictsConstraintsInput] = Field(default_factory=ResolveConflictsConstraintsInput, description="Resolution constraints")
+
+
+class ResolveConflictsApplyInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    child_ids: List[str] = Field(..., description="Child IDs")
+    range: ResolveConflictsRangeInput = Field(..., description="Date range")
+    constraints: Optional[ResolveConflictsConstraintsInput] = Field(default_factory=ResolveConflictsConstraintsInput, description="Resolution constraints")
+    proposed_changes: List[Dict[str, Any]] = Field(..., description="Proposed changes to apply")
+
+
 # --- Helper Functions ---
 
 async def verify_event_family_access(event_id: str, family_id: str) -> dict:
@@ -130,23 +211,86 @@ async def reschedule_event(
         
         supabase = get_admin_client()
         
-        # Update event
+        # Call the RPC function to reschedule with conflict checking
+        try:
+            rpc_result = supabase.rpc(
+                'reschedule_event_checked',
+                {
+                    '_event_id': event_id,
+                    '_new_start': new_start_dt.isoformat(),
+                    '_new_end': new_end_dt.isoformat()
+                }
+            ).execute()
+        except Exception as rpc_exception:
+            # RPC call itself failed (network, connection, etc.)
+            log_event("reschedule_event.rpc_exception", event_id=event_id, error=str(rpc_exception))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"RPC call failed: {str(rpc_exception)}"
+            )
+
+        # Check for RPC errors in response (using hasattr to avoid AttributeError)
+        if hasattr(rpc_result, 'error') and rpc_result.error:
+            log_event("reschedule_event.rpc_error", event_id=event_id, error=str(rpc_result.error))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"RPC error: {str(rpc_result.error)}"
+            )
+
+        # Check RPC result data
+        if not rpc_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No data returned from reschedule_event_checked RPC"
+            )
+        
+        # Handle different response formats (array or single object)
+        rpc_response = None
+        if isinstance(rpc_result.data, list):
+            if len(rpc_result.data) > 0:
+                rpc_response = rpc_result.data[0]
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="RPC returned empty array"
+                )
+        elif isinstance(rpc_result.data, dict):
+            rpc_response = rpc_result.data
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unexpected RPC response format: {type(rpc_result.data)}"
+            )
+        
+        if not rpc_response.get('ok'):
+            reason = rpc_response.get('reason', 'unknown')
+            detail_msg = rpc_response.get('detail', '')
+            status_code = status.HTTP_409_CONFLICT if reason == 'overlap' else status.HTTP_400_BAD_REQUEST
+            error_message = f"Error rescheduling event: {reason}"
+            if detail_msg:
+                error_message += f" - {detail_msg}"
+            raise HTTPException(
+                status_code=status_code,
+                detail=error_message
+            )
+        
+        # Fetch the updated event to return
+        updated_event_res = supabase.table("events").select("*").eq("id", event_id).single().execute()
+        if not updated_event_res.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch updated event"
+            )
+        
+        updated_event = updated_event_res.data
+        
+        # Update reschedule metadata
         update_data = {
-            "start_ts": new_start_dt.isoformat(),
-            "end_ts": new_end_dt.isoformat(),
             "reschedule_origin": body.origin or "manual",
             "reschedule_reason": body.reason or f"Rescheduled to {new_start_dt.date()}"
         }
-        
-        update_res = supabase.table("events").update(update_data).eq("id", event_id).execute()
-        
-        if not update_res.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update event"
-            )
-        
-        updated_event = update_res.data[0]
+        supabase.table("events").update(update_data).eq("id", event_id).execute()
+        updated_event.update(update_data)
         
         # Refresh calendar cache for affected days (old date and new date)
         old_date = datetime.fromisoformat(event["start_ts"].replace("Z", "+00:00")).date()
@@ -1149,6 +1293,1221 @@ async def get_weekly_packet(
     except Exception as e:
         log_event("weekly_packet.error", child_id=child_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Error generating weekly packet: {str(e)}")
+
+
+# --- Quick Reschedule Endpoints ---
+
+@router.post("/quick_reschedule")
+async def quick_reschedule(
+    body: QuickRescheduleInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Micro-rescheduler for last-minute changes.
+    Generates minimal-diff schedule updates.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        supabase = get_admin_client()
+        
+        # Validate children belong to family
+        for child_id in body.children:
+            if not child_belongs_to_family(child_id, family_id):
+                raise HTTPException(status_code=403, detail=f"Child {child_id} not found")
+        
+        # Parse time window
+        start_date = date.fromisoformat(body.time_window["start_date"])
+        end_date = date.fromisoformat(body.time_window["end_date"])
+        
+        # Load existing events for the time window
+        start_ts = datetime.combine(start_date, datetime.min.time()).isoformat()
+        end_ts = datetime.combine(end_date, datetime.max.time()).isoformat()
+        
+        events_res = supabase.table("events").select("*").eq(
+            "family_id", family_id
+        ).in_("child_id", body.children).gte(
+            "start_ts", start_ts
+        ).lte("start_ts", end_ts).neq(
+            "status", "canceled"
+        ).is_("deleted_at", None).order("start_ts").execute()
+        
+        existing_events = events_res.data or []
+        
+        # Initialize change: apply the user's change first
+        moved = []
+        dropped = []
+        conflicts_resolved = 0
+        
+        # Handle the initial change
+        change = body.change
+        change_type = change.type
+        
+        if change_type == "moved_event" and change.event_id:
+            # Find the event and apply the move
+            event_id = change.event_id
+            new_start = change.new_start
+            new_end = change.new_end
+            
+            for event in existing_events:
+                if event["id"] == event_id:
+                    moved.append({
+                        "event_id": event_id,
+                        "title": event.get("title", "Event"),
+                        "child_ids": [event.get("child_id")],
+                        "old_start": event["start_ts"],
+                        "old_end": event["end_ts"],
+                        "new_start": new_start,
+                        "new_end": new_end,
+                        "reason": "User-initiated move"
+                    })
+                    # Update the event in our list to reflect the move
+                    event["start_ts"] = new_start
+                    event["end_ts"] = new_end
+                    break
+        
+        elif change_type == "canceled_event" and change.event_id:
+            # Mark event as canceled (remove from consideration)
+            event_id = change.event_id
+            for event in existing_events:
+                if event["id"] == event_id:
+                    dropped.append({
+                        "event_id": event_id,
+                        "title": event.get("title", "Event"),
+                        "child_ids": [event.get("child_id")],
+                        "reason": "User-initiated cancellation"
+                    })
+                    # Remove from existing_events
+                    existing_events = [e for e in existing_events if e["id"] != event_id]
+                    break
+        
+        elif change_type == "kid_unavailable" and change.child_unavailable:
+            # This will be handled by blocking availability windows
+            # For now, we'll note it in the constraints
+            pass
+        
+        # Filter events based on constraints
+        events_to_consider = []
+        for event in existing_events:
+            is_fixed = event.get("is_fixed", False) or event.get("event_type") in ["Fixed Class", "Appointment"]
+            is_flexible = event.get("is_flexible", True) and not is_fixed
+            
+            if body.constraints.lock_fixed and is_fixed:
+                continue  # Skip fixed events
+            
+            if body.constraints.only_flexible and not is_flexible:
+                continue  # Skip non-flexible events
+            
+            events_to_consider.append(event)
+        
+        # Limit to max_moves (excluding already moved events)
+        # Note: moved events from user change don't count toward max_moves limit
+        events_to_consider = events_to_consider[:body.constraints.max_moves]
+        
+        # Load availability windows
+        from routers.util import load_planning_context
+        context = await load_planning_context(
+            family_id=family_id,
+            week_start=body.time_window["start_date"],
+            child_ids=body.children,
+            horizon_weeks=1
+        )
+        
+        # Use micro-rescheduler logic or LLM to propose minimal changes
+        # For now, implement a simple heuristic-based approach
+        # In production, this would call the micro_rescheduler module
+        
+        # moved, dropped, conflicts_resolved already initialized above if user change was applied
+        available_windows = []
+        for avail_entry in context.get("availability", []):
+            windows = avail_entry.get("windows", [])
+            for window in windows:
+                available_windows.append({
+                    "child_id": avail_entry.get("child_id"),
+                    "date": avail_entry.get("date"),
+                    "start": window.get("start"),
+                    "end": window.get("end"),
+                })
+        
+        # Detect conflicts and propose moves
+        # Simple conflict detection: check for overlapping events per child
+        processed_events = set()
+        
+        for event1 in events_to_consider:
+            if event1["id"] in processed_events:
+                continue
+            
+            event1_start = datetime.fromisoformat(event1["start_ts"].replace("Z", "+00:00"))
+            event1_end = datetime.fromisoformat(event1["end_ts"].replace("Z", "+00:00"))
+            duration = (event1_end - event1_start).total_seconds() / 60
+            child_id = event1.get("child_id")
+            event_date = event1_start.date()
+            
+            # Find overlapping events for this child
+            overlaps = []
+            for event2 in existing_events:
+                if event1["id"] == event2["id"] or event2.get("child_id") != child_id:
+                    continue
+                
+                event2_start = datetime.fromisoformat(event2["start_ts"].replace("Z", "+00:00"))
+                event2_end = datetime.fromisoformat(event2["end_ts"].replace("Z", "+00:00"))
+                
+                if event1_start < event2_end and event2_start < event1_end:
+                    overlaps.append(event2)
+            
+            if overlaps:
+                # Skip if this event was already moved by user
+                if event1["id"] in [m["event_id"] for m in moved]:
+                    continue
+                
+                # Try to find a new slot
+                found_slot = False
+                for window in available_windows:
+                    if window["child_id"] != child_id:
+                        continue
+                    
+                    window_start = datetime.fromisoformat(window["start"].replace("Z", "+00:00"))
+                    window_end = datetime.fromisoformat(window["end"].replace("Z", "+00:00"))
+                    window_date = window_start.date()
+                    
+                    # Check if window fits
+                    window_duration = (window_end - window_start).total_seconds() / 60
+                    if window_duration < duration:
+                        continue
+                    
+                    # Check date preference
+                    if body.constraints.prefer_same_day and window_date != event_date:
+                        continue
+                    
+                    # Check if this window conflicts with already moved events
+                    conflicts_with_moved = False
+                    for moved_event in moved:
+                        moved_start = datetime.fromisoformat(moved_event["new_start"].replace("Z", "+00:00"))
+                        moved_end = datetime.fromisoformat(moved_event["new_end"].replace("Z", "+00:00"))
+                        if (moved_event["child_ids"] and child_id in moved_event["child_ids"] and
+                            window_start < moved_end and moved_start < window_end):
+                            conflicts_with_moved = True
+                            break
+                    
+                    if conflicts_with_moved:
+                        continue
+                    
+                    # Propose move
+                    new_start = window_start
+                    new_end = new_start + timedelta(minutes=duration)
+                    
+                    moved.append({
+                        "event_id": event1["id"],
+                        "title": event1.get("title", "Event"),
+                        "child_ids": [child_id],
+                        "old_start": event1["start_ts"],
+                        "old_end": event1["end_ts"],
+                        "new_start": new_start.isoformat(),
+                        "new_end": new_end.isoformat(),
+                        "reason": f"Moved to resolve conflict"
+                    })
+                    conflicts_resolved += 1
+                    processed_events.add(event1["id"])
+                    found_slot = True
+                    break
+                
+                if not found_slot:
+                    dropped.append({
+                        "event_id": event1["id"],
+                        "title": event1.get("title", "Event"),
+                        "child_ids": [child_id],
+                        "reason": "No available slot found"
+                    })
+        
+        run_id = f"qr_{family_id}_{int(datetime.now().timestamp())}"
+        
+        return {
+            "preview": {
+                "moved": moved,
+                "dropped": dropped,
+                "conflicts_resolved": conflicts_resolved
+            },
+            "proposed_events_patch": moved,  # Simplified - in production would be full patch
+            "meta": {
+                "run_id": run_id,
+                "reasoning_summary": f"Resolved {conflicts_resolved} conflicts by moving {len(moved)} events"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("quick_reschedule.error", family_id=body.family_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error in quick reschedule: {str(e)}")
+
+
+@router.post("/quick_reschedule/apply")
+async def apply_quick_reschedule(
+    body: QuickRescheduleApplyInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Apply quick reschedule changes.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        supabase = get_admin_client()
+        
+        applied_count = 0
+        
+        # Apply proposed changes
+        # The proposed_events_patch format: [{event_id, title, child_ids, old_start, old_end, new_start, new_end, reason}]
+        for change in body.proposed_events_patch:
+            event_id = change.get("event_id")
+            new_start = change.get("new_start")
+            new_end = change.get("new_end")
+            
+            if event_id and new_start and new_end:
+                try:
+                    update_res = supabase.table("events").update({
+                        "start_ts": new_start,
+                        "end_ts": new_end,
+                        "reschedule_origin": "quick_reschedule",
+                        "reschedule_reason": change.get("reason", "Quick reschedule")
+                    }).eq("id", event_id).eq("family_id", family_id).execute()
+                    
+                    if update_res.data:
+                        applied_count += 1
+                except Exception as e:
+                    log_event("apply_quick_reschedule.event_update_error", event_id=event_id, error=str(e))
+        
+        # Refresh calendar cache
+        try:
+            # Determine date range from changes
+            dates = []
+            for change in body.proposed_events_patch:
+                if change.get("old_start"):
+                    dates.append(datetime.fromisoformat(change["old_start"].replace("Z", "+00:00")).date())
+                if change.get("new_start"):
+                    dates.append(datetime.fromisoformat(change["new_start"].replace("Z", "+00:00")).date())
+            
+            if dates:
+                min_date = min(dates)
+                max_date = max(dates)
+                supabase.rpc(
+                    "refresh_calendar_days_cache",
+                    {
+                        "p_family_id": family_id,
+                        "p_from_date": str(min_date),
+                        "p_to_date": str(max_date + timedelta(days=1))
+                    }
+                ).execute()
+        except Exception as cache_error:
+            log_event("apply_quick_reschedule.cache_refresh_error", error=str(cache_error))
+        
+        log_event("quick_reschedule.applied", family_id=family_id, run_id=body.run_id, applied_count=applied_count)
+        
+        return {
+            "applied": True,
+            "applied_count": applied_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("apply_quick_reschedule.error", family_id=body.family_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error applying quick reschedule: {str(e)}")
+
+
+# --- Plan Week Endpoints ---
+
+@router.post("/plan_week")
+async def plan_week_endpoint(
+    body: PlanWeekInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Generate a constraint-aware weekly plan.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        # Validate week_start is a Monday
+        week_start_date = date.fromisoformat(body.week_start)
+        if week_start_date.weekday() != 0:  # Monday is 0
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="week_start must be a Monday"
+            )
+        
+        supabase = get_admin_client()
+        
+        # Validate children belong to family
+        for child_id in body.child_ids:
+            if not child_belongs_to_family(child_id, family_id):
+                raise HTTPException(status_code=403, detail=f"Child {child_id} not found")
+        
+        # Load planning context
+        from routers.util import load_planning_context
+        context = await load_planning_context(
+            family_id=family_id,
+            week_start=body.week_start,
+            child_ids=body.child_ids,
+            horizon_weeks=1
+        )
+        
+        # Build planner context JSON for LLM
+        planner_context = {
+            "week_start": body.week_start,
+            "timezone": "America/New_York",  # TODO: Get from family settings
+            "children": [],
+            "fixed_events": [],
+            "blocked_times": [],
+            "existing_movable_items": [],
+            "options": body.options.dict() if hasattr(body.options, 'dict') else {
+                "focus": body.options.focus or [],
+                "intensity": body.options.intensity,
+                "max_daily_minutes_per_child": body.options.max_daily_minutes_per_child,
+                "weekend_mode": body.options.weekend_mode,
+            }
+        }
+        
+        # Get children data
+        children_res = supabase.table("children").select(
+            "id, first_name, age, learning_style, interests, daily_max_minutes"
+        ).in_("id", body.child_ids).execute()
+        
+        for child in (children_res.data or []):
+            child_data = {
+                "child_id": child["id"],
+                "name": child.get("first_name", "Child"),
+                "age": child.get("age"),
+                "learning_style": child.get("learning_style") or [],
+                "interests": child.get("interests") or [],
+                "daily_max_minutes": child.get("daily_max_minutes") or body.options.max_daily_minutes_per_child,
+                "active_sequences": [],  # TODO: Load from sequences
+                "recent_progress": {}  # TODO: Load from progress data
+            }
+            planner_context["children"].append(child_data)
+        
+        # Get fixed events
+        week_end_date = week_start_date + timedelta(days=6)
+        start_ts = datetime.combine(week_start_date, datetime.min.time()).isoformat()
+        end_ts = datetime.combine(week_end_date, datetime.max.time()).isoformat()
+        
+        fixed_events_res = supabase.table("events").select("*").eq(
+            "family_id", family_id
+        ).in_("child_id", body.child_ids).gte(
+            "start_ts", start_ts
+        ).lte("start_ts", end_ts).eq(
+            "is_fixed", True
+        ).neq("status", "canceled").is_("deleted_at", None).execute()
+        
+        for event in (fixed_events_res.data or []):
+            planner_context["fixed_events"].append({
+                "id": event["id"],
+                "child_ids": [event.get("child_id")],
+                "start": event["start_ts"],
+                "end": event["end_ts"],
+                "title": event.get("title", "Event")
+            })
+        
+        # Get movable items
+        movable_events_res = supabase.table("events").select("*").eq(
+            "family_id", family_id
+        ).in_("child_id", body.child_ids).gte(
+            "start_ts", start_ts
+        ).lte("start_ts", end_ts).eq(
+            "is_flexible", True
+        ).neq("status", "canceled").is_("deleted_at", None).execute()
+        
+        for event in (movable_events_res.data or []):
+            planner_context["existing_movable_items"].append({
+                "id": event["id"],
+                "child_ids": [event.get("child_id")],
+                "start": event["start_ts"],
+                "end": event["end_ts"],
+                "title": event.get("title", "Event"),
+                "type": event.get("event_type", "practice")
+            })
+        
+        # Call LLM to generate plan
+        try:
+            from llm import llm_plan_week
+        except ImportError:
+            llm_plan_week = None
+        
+        if not llm_plan_week:
+            # Fallback: return empty plan
+            return {
+                "summary": {
+                    "week_start": body.week_start,
+                    "children": [{"child_id": cid, "planned_minutes": 0} for cid in body.child_ids],
+                    "conflicts_resolved": 0,
+                    "new_items": 0,
+                    "moved_items": 0
+                },
+                "patch": {
+                    "create": [],
+                    "move": [],
+                    "update": [],
+                    "delete": []
+                },
+                "notes": [],
+                "run_id": f"pw_{family_id}_{int(datetime.now().timestamp())}"
+            }
+        
+        # Call LLM
+        import json
+        llm_result = await llm_plan_week(json.dumps(planner_context))
+        
+        # Validate and structure response
+        patch = llm_result.get("patch", {})
+        summary = llm_result.get("summary", {})
+        notes = llm_result.get("notes", [])
+        
+        run_id = f"pw_{family_id}_{int(datetime.now().timestamp())}"
+        
+        return {
+            "summary": summary,
+            "patch": patch,
+            "notes": notes,
+            "run_id": run_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("plan_week.error", family_id=body.family_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error planning week: {str(e)}")
+
+
+@router.post("/plan_week/apply")
+async def apply_plan_week(
+    body: PlanWeekApplyInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Apply weekly plan patch to calendar.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        supabase = get_admin_client()
+        
+        patch = body.patch
+        created_count = 0
+        moved_count = 0
+        updated_count = 0
+        deleted_count = 0
+        
+        # Apply create operations
+        for item in patch.get("create", []):
+            try:
+                child_ids = item.get("child_ids", [])
+                if not child_ids:
+                    continue
+                
+                # Create event for each child
+                for child_id in child_ids:
+                    event_data = {
+                        "family_id": family_id,
+                        "child_id": child_id,
+                        "subject_id": item.get("subject_id"),
+                        "title": item.get("title", "Lesson"),
+                        "start_ts": item.get("start"),
+                        "end_ts": item.get("end"),
+                        "status": "scheduled",
+                        "source": "ai_plan",
+                        "event_type": item.get("type", "lesson"),
+                    }
+                    
+                    # Add metadata if available
+                    if item.get("source"):
+                        event_data["metadata"] = item.get("source")
+                    
+                    insert_res = supabase.table("events").insert(event_data).execute()
+                    if insert_res.data:
+                        created_count += 1
+            except Exception as e:
+                log_event("apply_plan_week.create_error", error=str(e), item=item)
+        
+        # Apply move operations
+        for item in patch.get("move", []):
+            try:
+                event_id = item.get("event_id")
+                if not event_id:
+                    continue
+                
+                update_data = {
+                    "start_ts": item.get("new_start") or item.get("to", {}).get("start_at"),
+                    "end_ts": item.get("new_end") or item.get("to", {}).get("end_at"),
+                    "reschedule_origin": "plan_week",
+                    "reschedule_reason": item.get("reason", "Weekly plan")
+                }
+                
+                update_res = supabase.table("events").update(update_data).eq(
+                    "id", event_id
+                ).eq("family_id", family_id).execute()
+                
+                if update_res.data:
+                    moved_count += 1
+            except Exception as e:
+                log_event("apply_plan_week.move_error", error=str(e), item=item)
+        
+        # Apply update operations
+        for item in patch.get("update", []):
+            try:
+                event_id = item.get("event_id")
+                if not event_id:
+                    continue
+                
+                update_res = supabase.table("events").update(item.get("updates", {})).eq(
+                    "id", event_id
+                ).eq("family_id", family_id).execute()
+                
+                if update_res.data:
+                    updated_count += 1
+            except Exception as e:
+                log_event("apply_plan_week.update_error", error=str(e), item=item)
+        
+        # Apply delete operations (rare in beta)
+        for item in patch.get("delete", []):
+            try:
+                event_id = item.get("event_id")
+                if not event_id:
+                    continue
+                
+                # Soft delete
+                delete_res = supabase.table("events").update({
+                    "deleted_at": datetime.now().isoformat()
+                }).eq("id", event_id).eq("family_id", family_id).execute()
+                
+                if delete_res.data:
+                    deleted_count += 1
+            except Exception as e:
+                log_event("apply_plan_week.delete_error", error=str(e), item=item)
+        
+        # Refresh calendar cache for the week
+        try:
+            # Extract week_start from run_id or use current week
+            week_start_date = date.today()
+            # Find Monday
+            days_since_monday = week_start_date.weekday()
+            week_start_date = week_start_date - timedelta(days=days_since_monday)
+            week_end_date = week_start_date + timedelta(days=7)
+            
+            supabase.rpc(
+                "refresh_calendar_days_cache",
+                {
+                    "p_family_id": family_id,
+                    "p_from_date": str(week_start_date),
+                    "p_to_date": str(week_end_date)
+                }
+            ).execute()
+        except Exception as cache_error:
+            log_event("apply_plan_week.cache_refresh_error", error=str(cache_error))
+        
+        log_event(
+            "plan_week.applied",
+            family_id=family_id,
+            run_id=body.run_id,
+            created=created_count,
+            moved=moved_count,
+            updated=updated_count,
+            deleted=deleted_count
+        )
+        
+        return {
+            "applied": True,
+            "created": created_count,
+            "moved": moved_count,
+            "updated": updated_count,
+            "deleted": deleted_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("apply_plan_week.error", family_id=body.family_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error applying plan: {str(e)}")
+
+
+# --- Resolve Conflicts Endpoints ---
+
+@router.post("/resolve_conflicts/preview")
+async def preview_resolve_conflicts(
+    body: ResolveConflictsPreviewInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Preview conflict resolution proposals.
+    Detects conflicts and generates resolution proposals.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        supabase = get_admin_client()
+        
+        # Validate children belong to family
+        for child_id in body.child_ids:
+            if not child_belongs_to_family(child_id, family_id):
+                raise HTTPException(status_code=403, detail=f"Child {child_id} not found")
+        
+        # Parse date range
+        start_date = date.fromisoformat(body.range.start)
+        end_date = date.fromisoformat(body.range.end)
+        
+        # Load events for the date range
+        start_ts = datetime.combine(start_date, datetime.min.time()).isoformat()
+        end_ts = datetime.combine(end_date, datetime.max.time()).isoformat()
+        
+        events_res = supabase.table("events").select("*").eq(
+            "family_id", family_id
+        ).in_("child_id", body.child_ids).gte(
+            "start_ts", start_ts
+        ).lte("start_ts", end_ts).neq(
+            "status", "canceled"
+        ).is_("deleted_at", None).order("start_ts").execute()
+        
+        existing_events = events_res.data or []
+        
+        # Normalize events for conflict detection
+        normalized_events = []
+        for event in existing_events:
+            # Get child_ids as array
+            child_ids = [event.get("child_id")] if event.get("child_id") else []
+            
+            normalized_events.append({
+                "id": event["id"],
+                "title": event.get("title", "Event"),
+                "start_at": event["start_ts"],
+                "end_at": event["end_ts"],
+                "child_ids": child_ids,
+                "is_fixed": event.get("is_fixed", False) or event.get("event_type") in ["Fixed Class", "Appointment"],
+                "is_flexible": event.get("is_flexible", True) and not (event.get("is_fixed", False) or event.get("event_type") in ["Fixed Class", "Appointment"]),
+                "priority": event.get("priority", "med"),
+            })
+        
+        # Detect conflicts
+        conflicts = []
+        conflicts_by_key = {}
+        
+        # Group events by child and date
+        events_by_child_date = {}
+        for event in normalized_events:
+            event_date = datetime.fromisoformat(event["start_at"].replace("Z", "+00:00")).date()
+            for child_id in event["child_ids"]:
+                key = f"{child_id}_{event_date.isoformat()}"
+                if key not in events_by_child_date:
+                    events_by_child_date[key] = []
+                events_by_child_date[key].append(event)
+        
+        # Detect overlaps
+        for key, day_events in events_by_child_date.items():
+            # Sort by start time
+            sorted_events = sorted(day_events, key=lambda e: datetime.fromisoformat(e["start_at"].replace("Z", "+00:00")))
+            
+            # Check for overlaps
+            for i, event1 in enumerate(sorted_events):
+                event1_start = datetime.fromisoformat(event1["start_at"].replace("Z", "+00:00"))
+                event1_end = datetime.fromisoformat(event1["end_at"].replace("Z", "+00:00"))
+                
+                for j, event2 in enumerate(sorted_events[i+1:], start=i+1):
+                    event2_start = datetime.fromisoformat(event2["start_at"].replace("Z", "+00:00"))
+                    event2_end = datetime.fromisoformat(event2["end_at"].replace("Z", "+00:00"))
+                    
+                    # Check for overlap
+                    if event1_start < event2_end and event2_start < event1_end:
+                        # Conflict found
+                        conflict_key = f"{min(event1['id'], event2['id'])}_{max(event1['id'], event2['id'])}"
+                        if conflict_key not in conflicts_by_key:
+                            # Determine severity
+                            is_fixed1 = event1.get("is_fixed", False)
+                            is_fixed2 = event2.get("is_fixed", False)
+                            
+                            if is_fixed1 or is_fixed2:
+                                severity = "high"
+                            elif not event1.get("is_flexible", True) or not event2.get("is_flexible", True):
+                                severity = "med"
+                            else:
+                                severity = "low"
+                            
+                            conflict = {
+                                "conflict_id": conflict_key,
+                                "date": event1_start.date().isoformat(),
+                                "type": "overlap",
+                                "child_ids": list(set(event1["child_ids"] + event2["child_ids"])),
+                                "event_ids": [event1["id"], event2["id"]],
+                                "window": {
+                                    "start_at": max(event1_start, event2_start).isoformat(),
+                                    "end_at": min(event1_end, event2_end).isoformat(),
+                                },
+                                "severity": severity,
+                                "reason": f"Overlap between '{event1['title']}' and '{event2['title']}'"
+                            }
+                            conflicts.append(conflict)
+                            conflicts_by_key[conflict_key] = conflict
+        
+        # Generate resolution proposals
+        proposals = []
+        constraints = body.constraints or ResolveConflictsConstraintsInput()
+        
+        # Load availability windows for finding gaps
+        from routers.util import load_planning_context
+        context = await load_planning_context(
+            family_id=family_id,
+            week_start=body.range.start,
+            child_ids=body.child_ids,
+            horizon_weeks=1
+        )
+        
+        available_windows = []
+        for avail_entry in context.get("availability", []):
+            windows = avail_entry.get("windows", [])
+            for window in windows:
+                available_windows.append({
+                    "child_id": avail_entry.get("child_id"),
+                    "date": avail_entry.get("date"),
+                    "start": window.get("start"),
+                    "end": window.get("end"),
+                })
+        
+        # Generate proposals for each conflict
+        for conflict in conflicts:
+            event_ids = conflict["event_ids"]
+            conflict_events = [e for e in normalized_events if e["id"] in event_ids]
+            
+            # Find which event is flexible and can be moved
+            flexible_event = None
+            fixed_event = None
+            
+            for event in conflict_events:
+                if constraints.keep_fixed and event.get("is_fixed", False):
+                    fixed_event = event
+                elif event.get("is_flexible", True):
+                    flexible_event = event
+            
+            if not flexible_event:
+                # Both are fixed or no flexible event found - flag it
+                proposals.append({
+                    "type": "flag",
+                    "event_id": conflict["event_ids"][0],
+                    "rationale": f"Cannot resolve: {conflict['reason']} (both events are fixed)",
+                    "affected_child_ids": conflict["child_ids"]
+                })
+                continue
+            
+            # Try to find a new slot for the flexible event
+            event_start = datetime.fromisoformat(flexible_event["start_at"].replace("Z", "+00:00"))
+            event_end = datetime.fromisoformat(flexible_event["end_at"].replace("Z", "+00:00"))
+            duration = (event_end - event_start).total_seconds() / 60
+            event_date = event_start.date()
+            child_id = flexible_event["child_ids"][0] if flexible_event["child_ids"] else None
+            
+            if not child_id:
+                proposals.append({
+                    "type": "flag",
+                    "event_id": flexible_event["id"],
+                    "rationale": f"Cannot resolve: No child ID for event",
+                    "affected_child_ids": []
+                })
+                continue
+            
+            # Find available window
+            found_slot = False
+            for window in available_windows:
+                if window["child_id"] != child_id:
+                    continue
+                
+                window_start = datetime.fromisoformat(window["start"].replace("Z", "+00:00"))
+                window_end = datetime.fromisoformat(window["end"].replace("Z", "+00:00"))
+                window_date = window_start.date()
+                
+                # Check date preference
+                if not constraints.allow_spillover and window_date != event_date:
+                    continue
+                
+                # Check if window fits
+                window_duration = (window_end - window_start).total_seconds() / 60
+                if window_duration >= duration:
+                    # Propose move
+                    new_start = window_start
+                    new_end = new_start + timedelta(minutes=duration)
+                    
+                    proposals.append({
+                        "type": "move",
+                        "event_id": flexible_event["id"],
+                        "from": {
+                            "start_at": flexible_event["start_at"],
+                            "end_at": flexible_event["end_at"]
+                        },
+                        "to": {
+                            "start_at": new_start.isoformat(),
+                            "end_at": new_end.isoformat()
+                        },
+                        "rationale": f"Move '{flexible_event['title']}' to resolve conflict",
+                        "affected_child_ids": [child_id]
+                    })
+                    found_slot = True
+                    break
+            
+            if not found_slot:
+                # Try splitting if allowed
+                if constraints.allow_splitting and duration > 30:
+                    # Split into two parts
+                    part1_duration = duration / 2
+                    part2_duration = duration - part1_duration
+                    
+                    # Find two slots
+                    slots_found = []
+                    for window in available_windows:
+                        if window["child_id"] != child_id:
+                            continue
+                        
+                        window_start = datetime.fromisoformat(window["start"].replace("Z", "+00:00"))
+                        window_end = datetime.fromisoformat(window["end"].replace("Z", "+00:00"))
+                        window_duration = (window_end - window_start).total_seconds() / 60
+                        
+                        if window_duration >= part1_duration and len(slots_found) == 0:
+                            slots_found.append({
+                                "start_at": window_start.isoformat(),
+                                "end_at": (window_start + timedelta(minutes=part1_duration)).isoformat()
+                            })
+                        elif window_duration >= part2_duration and len(slots_found) == 1:
+                            slots_found.append({
+                                "start_at": window_start.isoformat(),
+                                "end_at": (window_start + timedelta(minutes=part2_duration)).isoformat()
+                            })
+                        
+                        if len(slots_found) == 2:
+                            break
+                    
+                    if len(slots_found) == 2:
+                        proposals.append({
+                            "type": "split",
+                            "event_id": flexible_event["id"],
+                            "from": {
+                                "start_at": flexible_event["start_at"],
+                                "end_at": flexible_event["end_at"]
+                            },
+                            "parts": slots_found,
+                            "rationale": f"Split '{flexible_event['title']}' into two parts to resolve conflict",
+                            "affected_child_ids": [child_id]
+                        })
+                    else:
+                        proposals.append({
+                            "type": "flag",
+                            "event_id": flexible_event["id"],
+                            "rationale": f"Cannot resolve: No available slots found for '{flexible_event['title']}'",
+                            "affected_child_ids": [child_id]
+                        })
+                else:
+                    proposals.append({
+                        "type": "flag",
+                        "event_id": flexible_event["id"],
+                        "rationale": f"Cannot resolve: No available slots found for '{flexible_event['title']}'",
+                        "affected_child_ids": [child_id]
+                    })
+        
+        # Build resolution plan
+        moved_count = len([p for p in proposals if p["type"] == "move"])
+        split_count = len([p for p in proposals if p["type"] == "split"])
+        unresolved_count = len([p for p in proposals if p["type"] == "flag"])
+        
+        plan_id = f"rc_{family_id}_{int(datetime.now().timestamp())}"
+        
+        return {
+            "plan_id": plan_id,
+            "conflicts": conflicts,
+            "proposals": proposals,
+            "stats": {
+                "moved_count": moved_count,
+                "split_count": split_count,
+                "unresolved_count": unresolved_count,
+                "total_conflicts": len(conflicts)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("resolve_conflicts_preview.error", family_id=body.family_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error previewing conflict resolution: {str(e)}")
+
+
+@router.post("/resolve_conflicts/apply")
+async def apply_resolve_conflicts(
+    body: ResolveConflictsApplyInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Apply conflict resolution changes.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        supabase = get_admin_client()
+        
+        applied_count = 0
+        
+        # Apply proposed changes
+        for change in body.proposed_changes:
+            change_type = change.get("type")
+            event_id = change.get("event_id")
+            
+            if not event_id:
+                continue
+            
+            try:
+                if change_type == "move":
+                    to = change.get("to", {})
+                    new_start = to.get("start_at")
+                    new_end = to.get("end_at")
+                    
+                    if new_start and new_end:
+                        update_res = supabase.table("events").update({
+                            "start_ts": new_start,
+                            "end_ts": new_end,
+                            "reschedule_origin": "resolve_conflicts",
+                            "reschedule_reason": change.get("rationale", "Conflict resolution")
+                        }).eq("id", event_id).eq("family_id", family_id).execute()
+                        
+                        if update_res.data:
+                            applied_count += 1
+                
+                elif change_type == "split":
+                    parts = change.get("parts", [])
+                    if len(parts) >= 2:
+                        # Get original event
+                        event_res = supabase.table("events").select("*").eq("id", event_id).eq("family_id", family_id).single().execute()
+                        if event_res.data:
+                            original = event_res.data
+                            
+                            # Create new events for each part
+                            for idx, part in enumerate(parts):
+                                supabase.table("events").insert({
+                                    "family_id": family_id,
+                                    "child_id": original.get("child_id"),
+                                    "subject_id": original.get("subject_id"),
+                                    "title": f"{original.get('title', 'Event')} (Part {idx + 1})",
+                                    "start_ts": part.get("start_at"),
+                                    "end_ts": part.get("end_at"),
+                                    "status": "scheduled",
+                                    "source": "resolve_conflicts",
+                                }).execute()
+                            
+                            # Soft delete original
+                            supabase.table("events").update({
+                                "deleted_at": datetime.now().isoformat()
+                            }).eq("id", event_id).execute()
+                            
+                            applied_count += 1
+                
+                # Note: "flag" type changes are not applied, they're just informational
+                
+            except Exception as e:
+                log_event("apply_resolve_conflicts.change_error", event_id=event_id, error=str(e))
+                # Continue with other changes
+        
+        # Refresh calendar cache
+        try:
+            start_date = date.fromisoformat(body.range.start)
+            end_date = date.fromisoformat(body.range.end)
+            
+            supabase.rpc(
+                "refresh_calendar_days_cache",
+                {
+                    "p_family_id": family_id,
+                    "p_from_date": str(start_date),
+                    "p_to_date": str(end_date + timedelta(days=1))
+                }
+            ).execute()
+        except Exception as cache_error:
+            log_event("apply_resolve_conflicts.cache_refresh_error", error=str(cache_error))
+        
+        log_event("resolve_conflicts.applied", family_id=family_id, applied_count=applied_count)
+        
+        return {
+            "applied": True,
+            "applied_count": applied_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("apply_resolve_conflicts.error", family_id=body.family_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error applying conflict resolution: {str(e)}")
+
+
+# --- AI Chat Endpoint ---
+
+class AIChatInput(BaseModel):
+    family_id: str = Field(..., description="Family ID")
+    selected_children: List[str] = Field(..., description="Array of child IDs")
+    timeframe_start: str = Field(..., description="Start date (ISO 8601)")
+    timeframe_end: str = Field(..., description="End date (ISO 8601)")
+    messages: List[Dict[str, str]] = Field(..., description="Chat message history [{ role: 'user'|'assistant', content: string }]")
+
+
+@router.post("/ai_chat")
+async def ai_chat_endpoint(
+    body: AIChatInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    AI chat endpoint for Intelligence Hub.
+    Uses child data from onboarding, progress on events, upcoming events/assignments, and general education recommendations.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        
+        supabase = get_admin_client()
+        
+        # Validate children belong to family
+        for child_id in body.selected_children:
+            if not child_belongs_to_family(child_id, family_id):
+                raise HTTPException(status_code=403, detail=f"Child {child_id} not found")
+        
+        # Parse timeframe
+        timeframe_start = datetime.fromisoformat(body.timeframe_start.replace("Z", "+00:00"))
+        timeframe_end = datetime.fromisoformat(body.timeframe_end.replace("Z", "+00:00"))
+        
+        # Build context for LLM
+        context = {
+            "family_id": family_id,
+            "user_id": user["id"],
+            "selected_children": body.selected_children,
+            "timeframe_start": body.timeframe_start,
+            "timeframe_end": body.timeframe_end,
+            "conversation_history": body.messages[-10:],  # Last 10 messages
+        }
+        
+        # Get child data from onboarding (children table)
+        children_data = []
+        for child_id in body.selected_children:
+            child_result = supabase.table("children").select("*").eq("id", child_id).single().execute()
+            if child_result.data:
+                children_data.append(child_result.data)
+        context["children_info"] = children_data
+        
+        # Get progress on events (events with status and outcomes)
+        events_query = supabase.table("events").select(
+            "id, title, start_ts, end_ts, subject_id, status, child_id"
+        ).eq("family_id", family_id).in_("child_id", body.selected_children)
+        
+        if body.timeframe_start:
+            events_query = events_query.gte("start_ts", body.timeframe_start)
+        if body.timeframe_end:
+            events_query = events_query.lte("start_ts", body.timeframe_end)
+        
+        events_result = events_query.order("start_ts", desc=True).limit(50).execute()
+        context["recent_events"] = events_result.data or []
+        
+        # Get event outcomes for progress tracking
+        if events_result.data:
+            event_ids = [e["id"] for e in events_result.data]
+            outcomes_result = supabase.table("event_outcomes").select(
+                "id, event_id, child_id, rating, strengths, struggles, note"
+            ).in_("event_id", event_ids).order("created_at", desc=True).limit(100).execute()
+            context["event_outcomes"] = outcomes_result.data or []
+        
+        # Get upcoming events
+        upcoming_events_query = supabase.table("events").select(
+            "id, title, start_ts, end_ts, subject_id, status, child_id"
+        ).eq("family_id", family_id).in_("child_id", body.selected_children).gte(
+            "start_ts", datetime.now().isoformat()
+        ).order("start_ts", desc=False).limit(30).execute()
+        context["upcoming_events"] = upcoming_events_query.data or []
+        
+        # Get assignments
+        assignments_query = supabase.table("assignments").select(
+            "id, title, due_date, status, child_id, related_subject"
+        ).eq("family_id", family_id).in_("child_id", body.selected_children)
+        
+        if body.timeframe_start:
+            assignments_query = assignments_query.gte("due_date", body.timeframe_start.split("T")[0])
+        if body.timeframe_end:
+            assignments_query = assignments_query.lte("due_date", body.timeframe_end.split("T")[0])
+        
+        assignments_result = assignments_query.order("due_date", desc=False).limit(50).execute()
+        context["assignments"] = assignments_result.data or []
+        
+        # Get general education recommendations (from recommendations table if it exists)
+        # For now, we'll include this in the LLM context
+        context["recommendations_context"] = "General education recommendations based on child progress and learning patterns"
+        
+        # Call LLM for response
+        from llm import llm_coach_conversation
+        
+        # Adapt context for llm_coach_conversation (it expects single child_id, but we can adapt)
+        # For multiple children, we'll create a combined context
+        llm_context = {
+            "family_id": family_id,
+            "user_id": user["id"],
+            "child_id": body.selected_children[0] if len(body.selected_children) == 1 else None,
+            "session_type": "parent",
+            "conversation_history": body.messages[-10:],
+            "context_data": {
+                "selected_children": body.selected_children,
+                "timeframe": {
+                    "start": body.timeframe_start,
+                    "end": body.timeframe_end
+                },
+                "children_info": children_data,
+                "recent_events": context["recent_events"],
+                "event_outcomes": context.get("event_outcomes", []),
+                "upcoming_events": context["upcoming_events"],
+                "assignments": context["assignments"],
+            },
+            "goals": [],
+        }
+        
+        # If multiple children, include all child info
+        if len(children_data) > 0:
+            llm_context["child_info"] = children_data[0]  # Primary child for compatibility
+            llm_context["all_children_info"] = children_data
+        
+        try:
+            coach_response = await llm_coach_conversation(llm_context)
+        except Exception as e:
+            log_event("planner.ai_chat.llm_error", user_id=user["id"], family_id=family_id, error=str(e))
+            raise HTTPException(status_code=500, detail=f"AI service unavailable: {str(e)}")
+        
+        # Format response
+        response_text = coach_response.get("response", "I've analyzed your question based on the available data.")
+        recommendations = coach_response.get("recommendations", [])
+        
+        return {
+            "assistant_message": response_text,
+            "response": response_text,  # Alias for compatibility
+            "recommendations": recommendations,
+            "proposed_changes": [],  # Can be populated if LLM suggests schedule changes
+            "insights": recommendations,  # Use recommendations as insights
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("planner.ai_chat.error", family_id=body.family_id if 'body' in locals() else None, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error processing AI chat: {str(e)}")
 
 
 # Export both routers

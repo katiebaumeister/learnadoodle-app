@@ -1,5 +1,6 @@
 -- Update refresh_calendar_days_cache to include pattern_day
 -- This ensures pattern days are stored in the cache for quick lookup
+-- Safely handles case where get_pattern_day_for_date function doesn't exist yet
 
 CREATE OR REPLACE FUNCTION refresh_calendar_days_cache(
   p_family_id UUID,
@@ -10,7 +11,18 @@ RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
+DECLARE
+  v_pattern_function_exists BOOLEAN;
 BEGIN
+  -- Check if get_pattern_day_for_date function exists
+  SELECT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND p.proname = 'get_pattern_day_for_date'
+      AND pg_get_function_arguments(p.oid) LIKE '%uuid%date%uuid%'
+  ) INTO v_pattern_function_exists;
+  
   -- Update cache by applying schedule_overrides (including day_off blackouts)
   -- Only update days that have overrides, preserve existing cache for other days
   
@@ -20,7 +32,11 @@ BEGIN
     day_status = NULL, -- Reset to NULL so it can be recalculated from rules
     first_block_start = NULL::TIME,
     last_block_end = NULL::TIME,
-    pattern_day = get_pattern_day_for_date(p_family_id, cdc.date, cdc.child_id), -- Update pattern day
+    pattern_day = CASE 
+      WHEN v_pattern_function_exists THEN 
+        get_pattern_day_for_date(p_family_id, cdc.date, cdc.child_id)
+      ELSE NULL
+    END,
     source_summary = jsonb_build_object('source', 'refresh_cache', 'cleared_blackout', true),
     generated_at = NOW()
   WHERE cdc.family_id = p_family_id
@@ -44,7 +60,11 @@ BEGIN
     day_status = 'off',
     first_block_start = NULL::TIME,
     last_block_end = NULL::TIME,
-    pattern_day = get_pattern_day_for_date(p_family_id, cdc.date, cdc.child_id), -- Update pattern day
+    pattern_day = CASE 
+      WHEN v_pattern_function_exists THEN 
+        get_pattern_day_for_date(p_family_id, cdc.date, cdc.child_id)
+      ELSE NULL
+    END,
     source_summary = jsonb_build_object('source', 'refresh_cache', 'has_override', true),
     generated_at = NOW()
   WHERE cdc.family_id = p_family_id
@@ -60,13 +80,15 @@ BEGIN
         )
     );
   
-  -- Update pattern_day for all cache entries in date range
-  UPDATE calendar_days_cache cdc
-  SET 
-    pattern_day = get_pattern_day_for_date(p_family_id, cdc.child_id, cdc.date),
-    generated_at = NOW()
-  WHERE cdc.family_id = p_family_id
-    AND cdc.date BETWEEN p_from_date AND p_to_date;
+  -- Update pattern_day for all cache entries in date range (only if function exists)
+  IF v_pattern_function_exists THEN
+    UPDATE calendar_days_cache cdc
+    SET 
+      pattern_day = get_pattern_day_for_date(p_family_id, cdc.date, cdc.child_id),
+      generated_at = NOW()
+    WHERE cdc.family_id = p_family_id
+      AND cdc.date BETWEEN p_from_date AND p_to_date;
+  END IF;
   
   -- Insert new cache entries for child-specific overrides that don't exist in cache yet
   INSERT INTO calendar_days_cache (
@@ -86,7 +108,11 @@ BEGIN
     'off' AS day_status,
     NULL::TIME AS first_block_start,
     NULL::TIME AS last_block_end,
-    get_pattern_day_for_date(p_family_id, o.date, o.scope_id) AS pattern_day,
+    CASE 
+      WHEN v_pattern_function_exists THEN 
+        get_pattern_day_for_date(p_family_id, o.date, o.scope_id)
+      ELSE NULL
+    END AS pattern_day,
     jsonb_build_object('source', 'refresh_cache', 'has_override', true)
   FROM schedule_overrides o
   WHERE o.date BETWEEN p_from_date AND p_to_date
@@ -120,7 +146,11 @@ BEGIN
     'off' AS day_status,
     NULL::TIME AS first_block_start,
     NULL::TIME AS last_block_end,
-    get_pattern_day_for_date(p_family_id, o.date, c.id) AS pattern_day,
+    CASE 
+      WHEN v_pattern_function_exists THEN 
+        get_pattern_day_for_date(p_family_id, o.date, c.id)
+      ELSE NULL
+    END AS pattern_day,
     jsonb_build_object('source', 'refresh_cache', 'has_override', true)
   FROM schedule_overrides o
   CROSS JOIN children c
@@ -140,7 +170,11 @@ BEGIN
     day_status = 'off',
     first_block_start = NULL::TIME,
     last_block_end = NULL::TIME,
-    pattern_day = get_pattern_day_for_date(p_family_id, c.id, o.date),
+    pattern_day = CASE 
+      WHEN v_pattern_function_exists THEN 
+        get_pattern_day_for_date(p_family_id, EXCLUDED.date, EXCLUDED.child_id)
+      ELSE NULL
+    END,
     source_summary = jsonb_build_object('source', 'refresh_cache', 'has_override', true),
     generated_at = NOW();
 END;

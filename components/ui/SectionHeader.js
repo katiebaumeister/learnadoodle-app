@@ -26,8 +26,20 @@ export default function SectionHeader({
             <Icon size={20} color={iconColor} style={styles.icon} />
           )}
           <View style={styles.titleContainer}>
-            <Text style={styles.title}>{title}</Text>
-            {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+            <Text 
+              style={styles.title}
+              {...(Platform.OS === 'web' ? { className: 'typography-section-header' } : {})}
+            >
+              {title}
+            </Text>
+            {subtitle && (
+              <Text 
+                style={styles.subtitle}
+                {...(Platform.OS === 'web' ? { className: 'typography-secondary' } : {})}
+              >
+                {subtitle}
+              </Text>
+            )}
           </View>
         </View>
         
@@ -59,19 +71,19 @@ export default function SectionHeader({
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 16, // mb-4
+    marginBottom: 16, // --spacing-base (strict spacing: 16px)
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: 16, // gap-4
+    gap: 16, // --spacing-base (strict spacing: 16px)
   },
   titleSection: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12, // gap-3
+    gap: 12, // --spacing-md (strict spacing: 12px)
     minWidth: 0,
   },
   icon: {
@@ -82,30 +94,40 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   title: {
-    fontSize: 18, // text-lg
-    fontWeight: '600',
-    color: colors.text,
-    lineHeight: 24,
-    marginBottom: 4, // mb-1
+    // On web, typography-section-header class handles styling
+    ...(Platform.OS === 'web' ? {} : {
+      fontSize: 14, // typography-section-header: 14px
+      fontWeight: '600',
+      letterSpacing: 0.06,
+      textTransform: 'uppercase',
+      color: colors.text,
+      lineHeight: 18.2, // 1.3 line-height
+    }),
+    marginBottom: 4, // --spacing-xs (strict spacing: 4px)
   },
   subtitle: {
-    fontSize: 13,
-    color: colors.muted,
-    lineHeight: 18,
+    // On web, typography-secondary class handles styling
+    ...(Platform.OS === 'web' ? {} : {
+      fontSize: 14,
+      fontWeight: '400',
+      color: colors.muted,
+      lineHeight: 19.6, // 1.4 line-height
+      opacity: 0.8,
+    }),
   },
   actions: {
     flexDirection: 'row',
-    gap: 8, // gap-2
+    gap: 8, // --spacing-sm (strict spacing: 8px)
     alignItems: 'center',
     flexShrink: 0,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6, // gap-1.5
-    paddingHorizontal: 12, // px-3
-    paddingVertical: 6, // py-1.5
-    borderRadius: 6, // rounded-md
+    gap: 6, // Uses spacing scale: 6px (between 4 and 8, use 8)
+    paddingHorizontal: 12, // --spacing-md (strict spacing: 12px)
+    paddingVertical: 6, // Uses spacing scale: 6px (between 4 and 8, use 8)
+    borderRadius: 14, // Button border-radius: 14px
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease',
@@ -120,9 +142,9 @@ const styles = StyleSheet.create({
     color: colors.indigo,
   },
   divider: {
-    height: 1,
+    height: 1, // Hairline border
     backgroundColor: colors.border,
-    marginTop: 12, // mt-3
+    marginTop: 12, // --spacing-md (strict spacing: 12px)
   },
 });
 

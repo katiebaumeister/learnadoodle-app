@@ -76,13 +76,11 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
         } else if (error?.status !== 404) {
           // Only log non-404 errors (404 means endpoint doesn't exist yet)
           if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-            console.warn('[ComplianceDashboard] API readiness error, trying fallback:', error);
           }
         }
       } catch (apiErr) {
         // API unavailable, try fallback
         if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-          console.warn('[ComplianceDashboard] API unavailable, using Supabase fallback');
         }
       }
       
@@ -101,7 +99,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
                                  readinessError.message?.includes('permission') ||
                                  readinessError.message?.includes('RLS');
           if (!isExpectedError && (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production')) {
-            console.warn('[ComplianceDashboard] Readiness query error (non-fatal):', readinessError);
           }
         // Don't throw - just set to null and continue
         setReadiness(null);
@@ -141,13 +138,11 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
         } else if (apiError?.status !== 404) {
           // Only log non-404 errors
           if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-            console.warn('[ComplianceDashboard] API checklist error, trying fallback:', apiError);
           }
         }
       } catch (apiErr) {
         // API unavailable, try fallback
         if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-          console.warn('[ComplianceDashboard] API unavailable, using Supabase fallback');
         }
       }
       
@@ -189,13 +184,12 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
               }
             } catch (reqErr) {
               // Silently ignore requirement fetch errors
-              console.warn('Failed to load requirements separately:', reqErr);
-            }
+}
           }
         }
       } catch (err) {
         // If query fails completely, just set empty array
-        console.warn('Checklist query failed (non-fatal):', err);
+        
         checklistData = [];
         checklistError = err;
       }
@@ -213,7 +207,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
         
         // Only log unexpected errors in development
         if (!isPermissionError && __DEV__) {
-          console.warn('[ComplianceDashboard] Checklist error (non-fatal):', checklistError);
         }
         setChecklist([]);
       } else {
@@ -226,11 +219,7 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
           created_at: item.created_at,
           status: item.status
         }));
-        console.log('[ComplianceDashboard] Raw checklist data:', {
-          count: checklistData?.length || 0,
-          items: rawItems
-        });
-        }
+}
         
         // Deduplicate checklist items by title (since same requirements can have different IDs)
         // Use a Map for O(1) lookup and keep the most recent one if duplicates exist
@@ -273,19 +262,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
             const itemDate = new Date(item.created_at || 0);
             
             if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-            console.warn(`[ComplianceDashboard] Duplicate found at index ${index}:`, {
-              key,
-              normalized_title: normalizedTitle,
-              requirement_id: item.requirement_id,
-              existing_requirement_id: existing.requirement_id,
-              title: requirementTitle,
-              existing_id: existing.id,
-              new_id: item.id,
-              existing_date: existing.created_at,
-              new_date: item.created_at,
-              keeping: itemDate > existingDate ? 'new' : 'existing',
-              all_items_for_key: keyToItems[key]
-            });
             }
             
             if (itemDate > existingDate) {
@@ -302,23 +278,8 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
         if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
         const duplicatesFound = Object.entries(duplicateCounts).filter(([_, count]) => count > 1);
         if (duplicatesFound.length > 0) {
-          console.warn('[ComplianceDashboard] Found duplicates:', duplicatesFound.map(([key, count]) => ({
-            key,
-            count,
-            items: keyToItems[key] || []
-          })));
         }
-        console.log('[ComplianceDashboard] Deduplicated checklist:', {
-          original_count: checklistData?.length || 0,
-          deduplicated_count: deduplicated.length,
-          duplicates_removed: (checklistData?.length || 0) - deduplicated.length,
-          deduplicated_items: deduplicated.map(item => ({
-            id: item.id,
-            requirement_id: item.requirement_id,
-            title: item.requirement?.requirement_title || item.title || 'N/A'
-          }))
-        });
-        }
+}
         
         setChecklist(deduplicated);
         
@@ -345,7 +306,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
                              error.message?.includes('RLS') ||
                              error.message?.includes('not found');
       if (!isExpectedError) {
-        console.error('[ComplianceDashboard] Error loading compliance data:', error);
       // Only show toast for unexpected errors, not for missing data
       if (error.message && !error.message.includes('permission') && !error.message.includes('not found')) {
         toast.push('Failed to load compliance data', 'error');
@@ -371,7 +331,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
       
       // If check fails due to permissions, skip initialization
       if (checkError) {
-        console.warn('Cannot check for existing items (non-fatal):', checkError);
         return;
       }
       
@@ -423,7 +382,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
         }
       }
     } catch (error) {
-      console.error('Error initializing checklist:', error);
       // Don't show error to user - just log it
     }
   };
@@ -447,7 +405,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
       toast.push('Checklist updated', 'success');
       loadComplianceData();
     } catch (error) {
-      console.error('Error updating checklist:', error);
       toast.push('Failed to update checklist', 'error');
     }
   };
@@ -460,7 +417,6 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
       toast.push('Export feature coming soon', 'info');
       // TODO: Implement export packet generation
     } catch (error) {
-      console.error('Error exporting:', error);
       toast.push('Failed to export', 'error');
     } finally {
       setExporting(false);

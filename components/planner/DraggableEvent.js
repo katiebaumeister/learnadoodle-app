@@ -73,7 +73,6 @@ function getChildColorsFromAvatar(avatar) {
   if (!avatar) {
     // Debug: log when avatar is missing
     if (typeof window !== 'undefined' && window.console && process.env.NODE_ENV === 'development') {
-      console.log('No avatar provided, using default colors');
     }
     return {
       solid: '#E5E7EB',
@@ -101,7 +100,6 @@ function getChildColorsFromAvatar(avatar) {
   if (!baseColor) {
     // Debug: log when avatar doesn't match
     if (typeof window !== 'undefined' && window.console && process.env.NODE_ENV === 'development') {
-      console.log('Avatar not found in color map:', { original: avatar, normalized: avatarKey, available: Object.keys(AVATAR_COLORS) });
     }
     // Default if avatar not found
     return {
@@ -219,7 +217,6 @@ function getChildAvatar(childId, children) {
   // Debug logging (remove in production)
   if (typeof window !== 'undefined' && window.console && process.env.NODE_ENV === 'development') {
     if (!avatar && child) {
-      console.log('Child found but no avatar:', { childId, childName: child.name || child.first_name, child });
     }
   }
   
@@ -256,13 +253,11 @@ function EventNoteBadge({ eventId, familyId }) {
         .eq('linked_event_id', eventId);
 
       if (error) {
-        console.error('Error loading note count:', error);
         setNoteCount(0);
       } else {
         setNoteCount(count || 0);
       }
     } catch (err) {
-      console.error('Exception loading note count:', err);
       setNoteCount(0);
     } finally {
       setLoading(false);
@@ -313,7 +308,7 @@ function getEventColors(ev, children, isBlackoutDay) {
   if (isBlackoutDay) {
     return {
       topBar: '#EF4444',
-      background: 'rgba(239, 68, 68, 0.1)',
+      backgroundColor: 'rgba(239, 68, 68, 0.1)',
       whiteOverlay: 'rgba(255, 255, 255, 0.6)',
       border: '#EF4444',
       text: '#EF4444',
@@ -326,12 +321,6 @@ function getEventColors(ev, children, isBlackoutDay) {
   // Debug logging
   if (typeof window !== 'undefined' && window.console && process.env.NODE_ENV === 'development') {
     if (!childAvatar) {
-      console.log('No avatar found for event:', { 
-        eventId: ev.id, 
-        childId: ev.child_id, 
-        childrenCount: children?.length,
-        children: children?.map(c => ({ id: c.id, name: c.name, avatar: c.avatar }))
-      });
     }
   }
   
@@ -341,7 +330,7 @@ function getEventColors(ev, children, isBlackoutDay) {
   // Keep vivid color for top bar and border only
   return {
     topBar: childColors.solid, // Vivid color for top bar
-    background: hexToRgba(childColors.solid, 0.1), // 10% opacity fill
+    backgroundColor: hexToRgba(childColors.solid, 0.1), // 10% opacity fill
     whiteOverlay: 'rgba(255, 255, 255, 0.6)', // White tint overlay for softness
     border: childColors.solid, // Vivid color for border (can be subtle)
     text: '#374151',
@@ -396,7 +385,6 @@ export default function DraggableEvent({
             }
           }
         } catch (err) {
-          console.error('Error loading note preview:', err);
         }
       }, 500); // 500ms delay before showing tooltip
     } else {
@@ -507,7 +495,6 @@ export default function DraggableEvent({
           // Don't prevent default on mousedown - let drag-drop library handle it
           // Only handle right-click if not wrapped
           if (!isWrapped && e.button === 2 && onRightClick) {
-            console.log('[DraggableEvent] Right-click detected, calling onRightClick');
             e.preventDefault();
             e.stopPropagation();
             // Pass the native event for position access
@@ -517,8 +504,6 @@ export default function DraggableEvent({
         }}
         onContextMenu={(e) => {
           if (!isWrapped && onRightClick) {
-            console.log('[DraggableEvent] ContextMenu event, onRightClick:', !!onRightClick);
-            console.log('[DraggableEvent] ContextMenu - calling onRightClick');
             e.preventDefault();
             e.stopPropagation();
             e.nativeEvent?.stopPropagation?.(); // Also stop on native event if available
@@ -699,7 +684,7 @@ export default function DraggableEvent({
 const styles = StyleSheet.create({
   subjectName: {
     fontSize: 9,
-    fontWeight: '600',
+    fontWeight: '400',
     color: '#374151',
     lineHeight: 10,
     margin: 0,
@@ -728,7 +713,7 @@ const styles = StyleSheet.create({
   },
   blackoutBadge: {
     fontSize: 7,
-    fontWeight: '600',
+    fontWeight: '400',
     color: colors.redBold,
     marginTop: 2,
     padding: 0,

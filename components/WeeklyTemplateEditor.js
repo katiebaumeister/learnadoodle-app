@@ -124,7 +124,6 @@ const WeeklyTemplateEditor = ({
       
       onRuleSaved();
     } catch (error) {
-      console.error('Error saving rule:', error);
       showAlert('Error', 'Failed to save schedule rule');
     } finally {
       setSaving(false);
@@ -141,7 +140,6 @@ const WeeklyTemplateEditor = ({
       if (error) throw error;
       onRuleSaved();
     } catch (error) {
-      console.error('Error deleting rule:', error);
       showAlert('Error', 'Failed to delete schedule rule');
     }
   };

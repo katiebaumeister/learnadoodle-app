@@ -41,7 +41,6 @@ export default function SkillGraph({ childId, subjectId = null, daysBack = 365 }
       if (result.error) throw result.error;
       setSkills(result.data || []);
     } catch (err) {
-      console.error('Error loading skill graph:', err);
       setError(err.message || 'Failed to load skill graph');
       setSkills([]);
     } finally {

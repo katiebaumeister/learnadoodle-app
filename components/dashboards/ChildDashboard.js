@@ -76,7 +76,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
         setProgress(data.progress || {});
       }
     } catch (error) {
-      console.error('Error loading child overview:', error);
       toast.push('Failed to load dashboard', 'error');
     } finally {
       setLoading(false);
@@ -91,7 +90,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
         setApprovedSuggestions(data);
       }
     } catch (error) {
-      console.error('Error loading suggestions:', error);
     }
   };
 
@@ -118,7 +116,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
         setDailyFocusItems(events);
       }
     } catch (error) {
-      console.error('Error loading daily focus:', error);
     }
   };
 
@@ -156,7 +153,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
 
       setPendingReflections(pendingEvents);
     } catch (error) {
-      console.error('Error loading pending reflections:', error);
     }
   };
 
@@ -165,7 +161,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
     try {
       const { data, error } = await getAssignments(childId);
       if (error) {
-        console.error('Error loading assignments:', error);
         return;
       }
 
@@ -187,7 +182,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
 
       setAssignmentsDueSoon(dueSoon);
     } catch (error) {
-      console.error('Error loading assignments due soon:', error);
     }
   };
 
@@ -253,7 +247,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
         setShowReflectionModal(true);
       }
     } catch (error) {
-      console.error('Error completing event:', error);
       toast.push('Failed to mark event as complete', 'error');
     }
   };
@@ -299,7 +292,6 @@ export default function ChildDashboard({ childId, childName, familyId: propFamil
       setSelectedEventForReflection(null);
       loadPendingReflections();
     } catch (error) {
-      console.error('Error saving reflection:', error);
       toast.push('Failed to save reflection', 'error');
     }
   };

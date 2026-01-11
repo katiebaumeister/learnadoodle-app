@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#0f172a',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   sectionDivider: {
     flex: 1,
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#0f172a',
-    fontFamily: Platform.OS === 'web' ? 'Outfit' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Plus Jakarta Sans' : undefined,
   },
   labelApplied: {
     color: '#047857',
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
   moveChipText: {
     fontSize: 11,
     color: '#2563eb',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   emptyContainer: {
     alignItems: 'center',

@@ -13,16 +13,5 @@ export default function CalendarExample() {
       <ErrorBoundary fallback={<View style={{ width: 280 }} />}>
         <Sidebar
           childrenList={childrenList}
-          onOpenScheduling={() => console.log("Open scheduling modal")}
-          onDateChange={(d) => console.log("date", d)}
-          onFiltersChange={(f) => console.log("filters", f)}
-        />
-      </ErrorBoundary>
-
-      {/* Right side content area */}
-      <View style={{ flex: 1, backgroundColor: "white" }}>
-        {/* render your main calendar / agenda here */}
-      </View>
-    </View>
-  );
+          onOpenScheduling={() => 
 }

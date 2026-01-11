@@ -9,6 +9,7 @@ import { uploadEvidence } from '../../lib/services/recordsClient';
 import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
 import { colors } from '../../theme/colors';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 
 export default function EvidenceUploadModal({
   visible,
@@ -121,7 +122,6 @@ export default function EvidenceUploadModal({
         // Trigger auto-captioning (non-blocking)
         if (recordData?.id && fileUrl) {
           autoCaptionOnUpload(recordData.id, selectedFile.type, fileUrl, title || selectedFile.name).catch(err => {
-            console.log('Auto-captioning failed (non-critical):', err);
           });
         }
 
@@ -137,7 +137,6 @@ export default function EvidenceUploadModal({
         handleClose();
       }
     } catch (error) {
-      console.error('Error uploading evidence:', error);
       Alert.alert('Error', 'Failed to upload file');
     } finally {
       setUploading(false);

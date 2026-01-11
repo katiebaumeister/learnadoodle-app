@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect } from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text, ScrollView, Platform } from 'react-native';
 import { startOfWeek, addDays, format, isSameDay, isToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 
@@ -38,24 +38,93 @@ const getTimePeriod = (event) => {
   return 'morning'; // Default fallback
 };
 
-export default function BoardView({ weekAnchor, events = [], onEventPress, onEventRightClick, onEventComplete }) {
+export default function BoardView({ weekAnchor, events = [], onEventPress, onEventRightClick, onEventComplete, children = [] }) {
   const scrollViewRef = useRef(null);
-  const weekStart = startOfWeek(weekAnchor); // Monday start
+  const hasScrolledToToday = useRef(false);
+  const weekStart = startOfWeek(weekAnchor); // Sunday start
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   
   // Auto-scroll to today's column on mount or when weekAnchor changes
   useEffect(() => {
-    const today = new Date();
-    const todayIndex = days.findIndex(d => isSameDay(d, today));
+    // Reset scroll flag when weekAnchor changes
+    hasScrolledToToday.current = false;
     
-    if (todayIndex >= 0 && scrollViewRef.current) {
-      // Scroll to today's column (280px width + 12px gap)
-      const scrollPosition = todayIndex * (280 + 12);
-      setTimeout(() => {
-        scrollViewRef.current?.scrollTo({ x: scrollPosition, animated: true });
-      }, 100);
-    }
+    // Compute days inside useEffect to ensure we have the latest values
+    const weekStart = startOfWeek(weekAnchor);
+    const daysArray = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    
+    const scrollToToday = () => {
+      if (!scrollViewRef.current || hasScrolledToToday.current) return;
+      
+      const today = new Date();
+      const todayIndex = daysArray.findIndex(d => isSameDay(d, today));
+      
+      if (todayIndex >= 0) {
+        // Scroll to today's column (280px width + 8px gap = 288px per column)
+        const scrollPosition = todayIndex * 288;
+        
+        scrollViewRef.current.scrollTo({ x: scrollPosition, animated: false });
+        hasScrolledToToday.current = true;
+      }
+    };
+    
+    // Try scrolling with multiple attempts to ensure layout is ready
+    requestAnimationFrame(() => {
+      scrollToToday();
+      setTimeout(scrollToToday, 50);
+      setTimeout(scrollToToday, 200);
+      setTimeout(scrollToToday, 500);
+    });
   }, [weekAnchor]);
+
+  // Expand Project events to show on all days they span (if within a week)
+  const expandedEvents = useMemo(() => {
+    const expanded = [];
+    const seenIds = new Set();
+    
+    for (const e of events) {
+      // Check if this is a Project event with start and end dates
+      if (e.event_type === 'Project' && e.start_ts && e.end_ts) {
+        const startDate = new Date(e.start_ts);
+        const endDate = new Date(e.end_ts);
+        
+        if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+          // Calculate days difference
+          const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          // If project spans within a week (7 days or less), expand it
+          if (daysDiff <= 7) {
+            // Create a copy for each day from start to end
+            for (let i = 0; i <= daysDiff; i++) {
+              const dayDate = new Date(startDate);
+              dayDate.setDate(startDate.getDate() + i);
+              
+              // Only include days that are in the current week view
+              const dayKey = dayDate.toDateString();
+              if (days.some(d => d.toDateString() === dayKey)) {
+                const expandedEvent = {
+                  ...e,
+                  id: `${e.id}-day-${i}`, // Unique ID for each day instance
+                  _originalId: e.id, // Keep reference to original
+                  _dayIndex: i,
+                };
+                expanded.push(expandedEvent);
+              }
+            }
+            continue; // Skip adding the original event
+          }
+        }
+      }
+      
+      // For non-Project events or Projects outside the week range, add as-is
+      if (!seenIds.has(e.id)) {
+        expanded.push(e);
+        seenIds.add(e.id);
+      }
+    }
+    
+    return expanded;
+  }, [events, days]);
 
   // Bucket events by day and time period
   const byDayAndPeriod = useMemo(() => {
@@ -72,11 +141,21 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
     }
     
     // Add events to their respective days and time periods
-    for (const e of events) {
-      const startTime = e.start || e.start_ts || e.start_local;
-      if (!startTime) continue;
+    for (const e of expandedEvents) {
+      // For expanded Project events, use the day from the expansion
+      let eventDate;
+      if (e._dayIndex !== undefined && e._originalId) {
+        // This is an expanded Project event - calculate the date for this day
+        const originalStart = new Date(e.start_ts);
+        eventDate = new Date(originalStart);
+        eventDate.setDate(originalStart.getDate() + e._dayIndex);
+      } else {
+        // Regular event - use its start time
+        const startTime = e.start || e.start_ts || e.start_local;
+        if (!startTime) continue;
+        eventDate = new Date(startTime);
+      }
       
-      const eventDate = new Date(startTime);
       if (Number.isNaN(eventDate.getTime())) continue;
       
       const dayKey = eventDate.toDateString();
@@ -106,16 +185,47 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
   }, [events, days]);
 
   return (
+    <View style={{ 
+      flex: 1, 
+      margin: 8,
+      ...(Platform.OS === 'web' && {
+        width: 'calc(100% - 16px)',
+        maxWidth: 'calc(100% - 16px)',
+      }),
+    }}>
+      <View style={{
+        flex: 1,
+        backgroundColor: 'transparent',
+        overflow: 'visible',
+        borderRadius: 0,
+        borderWidth: 0,
+        borderColor: 'transparent',
+        ...(Platform.OS === 'web' && {
+          width: '100%',
+          maxWidth: '100%',
+        }),
+      }}>
     <ScrollView
       ref={scrollViewRef}
       horizontal
-      style={{ flex: 1, backgroundColor: 'white' }}
-      contentContainerStyle={{ padding: 12, gap: 12 }}
+          style={{ 
+            flex: 1, 
+            backgroundColor: 'transparent',
+            ...(Platform.OS === 'web' && {
+              width: '100%',
+              maxWidth: '100%',
+              overflowY: 'hidden',
+              overflowX: 'auto',
+              minHeight: 0,
+            }),
+          }}
+      contentContainerStyle={{ padding: 8, gap: 8 }}
       showsHorizontalScrollIndicator={true}
     >
       {days.map(d => {
         const key = d.toDateString();
         const dayPeriods = byDayAndPeriod.get(key) ?? new Map();
+        const isWeekend = d.getDay() === 0 || d.getDay() === 6; // Sunday (0) or Saturday (6)
         
         // Check if day has any events
         const hasEvents = Array.from(dayPeriods.values()).some(events => events.length > 0);
@@ -125,17 +235,22 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
             key={key}
             style={{
               width: 280,
-              backgroundColor: '#f8fafc',
+              backgroundColor: 'transparent',
               borderRadius: 16,
               borderWidth: 1,
               borderColor: '#e5e7eb',
               padding: 12,
-              minHeight: 400
+              minHeight: 400,
+              ...(Platform.OS === 'web' && {
+                flexShrink: 0,
+                overflow: 'hidden',
+                maxHeight: '100%',
+              }),
             }}
           >
             {/* Column header */}
             <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600', marginBottom: 4 }}>
+              <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '700', marginBottom: 4 }}>
                 {format(d, 'EEEE')}
               </Text>
               <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f141a' }}>
@@ -151,7 +266,7 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                   borderWidth: 1,
                   borderColor: '#e5e7eb',
                   borderRadius: 12,
-                  backgroundColor: 'white',
+                  backgroundColor: 'transparent',
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}
@@ -196,16 +311,21 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                       </View>
                       
                       {/* Events in this period */}
-                      <View style={{ gap: 8 }}>
+                      <View style={{ gap: 4 }}>
                         {periodEvents.map(ev => (
                           <EventChip
                             key={ev.id}
                             ev={ev}
+                            compact={true}
                             fullWidth={true}
+                            hideTime={false}
                             onPress={onEventPress ? () => onEventPress(ev) : undefined}
                             onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
                             onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
                             showCheckmark={true}
+                            children={children}
+                            titleFontSize={13}
+                            timeFontSize={11}
                           />
                         ))}
                       </View>
@@ -218,6 +338,8 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         );
       })}
     </ScrollView>
+      </View>
+    </View>
   );
 }
 

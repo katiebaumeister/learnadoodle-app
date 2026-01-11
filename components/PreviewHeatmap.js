@@ -84,7 +84,6 @@ const PreviewHeatmap = ({ previewData, selectedChildId, selectedScope }) => {
 
       setHeatmapData(formattedData);
     } catch (error) {
-      console.error('Error loading heatmap data:', error);
     } finally {
       setLoading(false);
     }
@@ -121,7 +120,6 @@ const PreviewHeatmap = ({ previewData, selectedChildId, selectedScope }) => {
       
       Alert.alert('Success', 'Cache refreshed successfully!');
     } catch (error) {
-      console.error('Error refreshing cache:', error);
       Alert.alert('Error', 'Failed to refresh cache. Please try again.');
     } finally {
       setLoading(false);

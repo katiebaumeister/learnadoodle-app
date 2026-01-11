@@ -60,7 +60,6 @@ const ConflictBubble = ({
         onResolve?.(conflict);
       }
     } catch (error) {
-      console.error('Error applying quick fix:', error);
     }
   };
 
@@ -89,7 +88,6 @@ const ConflictBubble = ({
         onResolve?.(conflict);
       }
     } catch (error) {
-      console.error('Error moving event:', error);
       showAlert('Error', 'Failed to move event. Please try again.');
     }
   };

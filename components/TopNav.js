@@ -71,9 +71,18 @@ export default function TopNav({
           top: 0,
         }
       : {
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 4,
+          ...Platform.select({
+            web: {
+              boxShadow: '0 1px 4px rgba(0, 0, 0, 0.05)',
+            },
+            default: {
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.05,
+              shadowRadius: 4,
+              elevation: 2,
+            },
+          }),
           elevation: 2,
           position: 'relative',
         }
@@ -119,16 +128,26 @@ export default function TopNav({
                     handleSearch();
                   }
                 }}
-                style={{
-                  flex: 1,
-                  fontSize: 14,
-                  borderWidth: 0,
-                  outline: 'none',
-                  outlineStyle: 'none',
-                  color: tokens.text,
-                  backgroundColor: 'transparent',
-                  fontFamily: 'inherit',
-                }}
+                style={Platform.select({
+                  web: {
+                    flex: 1,
+                    fontSize: 14,
+                    borderWidth: 0,
+                    outline: 'none',
+                    outlineStyle: 'none',
+                    color: tokens.text,
+                    backgroundColor: 'transparent',
+                    fontFamily: 'inherit',
+                  },
+                  default: {
+                    flex: 1,
+                    fontSize: 14,
+                    borderWidth: 0,
+                    color: tokens.text,
+                    backgroundColor: 'transparent',
+                    fontFamily: 'inherit',
+                  },
+                })}
               />
             ) : (
               <TextInput
@@ -221,10 +240,16 @@ export default function TopNav({
             accessibilityRole="button"
             accessibilityLabel="Account and settings"
           >
-            {user.avatar_url ? (
+            {user.avatar_url && (user.avatar_url.startsWith('http://') || user.avatar_url.startsWith('https://') || user.avatar_url.startsWith('data:')) ? (
               <Image
                 source={{ uri: user.avatar_url }}
                 style={[styles.avatar, { borderColor: tokens.border }]}
+                onError={(e) => {
+                  // Suppress 404 errors for missing avatars - they're harmless
+                  if (Platform.OS === 'web' && e.nativeEvent) {
+                    e.preventDefault?.();
+                  }
+                }}
               />
             ) : (
               <View style={[styles.avatar, styles.avatarPlaceholder, { borderColor: tokens.border, backgroundColor: tokens.accentSoft }]}>

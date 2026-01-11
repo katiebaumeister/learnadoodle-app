@@ -132,7 +132,6 @@ export default function WebChildRecordsTab({ childId, familyId, childName, onNav
           setComplianceStatus(complianceResult.data);
         }
       } catch (err) {
-        console.error('Error loading records summary:', err);
         setSummaryError(err.message);
       } finally {
         setSummaryLoading(false);
@@ -167,7 +166,7 @@ export default function WebChildRecordsTab({ childId, familyId, childName, onNav
       onOpenPlanner: () => onNavigate?.('planner'),
       onOpenAnalytics: () => onNavigate?.('intelligence'),
       onOpenPortfolio: () => onNavigate?.('portfolio'),
-      onOpenExplore: () => onNavigate?.('explore'),
+      // onOpenExplore: () => onNavigate?.('explore'), // Archived - explore page removed
       onUploadEvidence: () => {
         // Handle evidence upload
       },

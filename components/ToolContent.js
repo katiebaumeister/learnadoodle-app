@@ -71,13 +71,11 @@ async function addSuggestionToCalendar(suggestion, familyId) {
       .single();
 
     if (error) {
-      console.error('Error adding suggestion to calendar:', error);
       throw error;
     }
 
     return { data, error: null };
   } catch (error) {
-    console.error('Error in addSuggestionToCalendar:', error);
     return { data: null, error };
   }
 }
@@ -250,7 +248,6 @@ export default function ToolContent({
         refresh();
       }
     } catch (error) {
-      console.error('Error accepting suggestion:', error);
       toast.push('Failed to add to calendar', 'error');
     }
   }, [familyId, toast, toolKey, refresh]);
@@ -328,7 +325,6 @@ export default function ToolContent({
       
       return suggestions;
     } catch (err) {
-      console.error('Rebalance error:', err);
       throw new Error('Failed to rebalance schedule');
     }
   }, [familyId, activeChildIds, effectiveChildren]);
@@ -410,7 +406,6 @@ export default function ToolContent({
       
       return suggestions;
     } catch (err) {
-      console.error('What-if error:', err);
       // Return empty array instead of throwing for what-if (it's exploratory)
       return [];
     }
@@ -462,23 +457,19 @@ export default function ToolContent({
           onOpenKanban={onOpenKanban}
           onAddTask={() => {
             // TODO: Open add task modal
-            console.log('Add task');
-          }}
+}}
           onSearchTasks={() => {
             // TODO: Focus search or open search pane
-            console.log('Search tasks');
-          }}
+}}
           onEditTask={(task) => {
             // TODO: Open edit task modal
-            console.log('Edit task:', task);
-          }}
+}}
           onViewTask={(task) => {
             // TODO: Open task details
-            console.log('View task:', task);
-          }}
+}}
           onMarkComplete={(task) => {
             // TODO: Mark task as complete
-            console.log('Mark complete:', task);
+
             refresh();
           }}
         />
@@ -490,7 +481,6 @@ export default function ToolContent({
           familyId={familyId}
           children={children}
           onEventSelect={(event) => {
-            console.log('Event selected:', event);
           }}
           onClose={onClose}
         />
@@ -514,21 +504,20 @@ export default function ToolContent({
             }}
             onEditTask={(task) => {
               // TODO: Open edit task modal
-              console.log('Edit backlog task:', task);
-            }}
+}}
             onMoveTask={(task, fromColumn, toColumn) => {
               // TODO: Move task between columns
-              console.log('Move task:', task, fromColumn, toColumn);
+
               refresh();
             }}
             onUpdateTaskStatus={(task, newStatus) => {
               // TODO: Update task status
-              console.log('Update task status:', task, newStatus);
+
               refresh();
             }}
             onDeleteTask={(task) => {
               // TODO: Delete task
-              console.log('Delete task:', task);
+
               refresh();
             }}
           />
@@ -552,21 +541,20 @@ export default function ToolContent({
           }}
           onEditTask={(task) => {
             // TODO: Open edit task modal
-            console.log('Edit backlog task:', task);
-          }}
+}}
           onMoveToSchedule={(task) => {
             // TODO: Move task to schedule
-            console.log('Move to schedule:', task);
+
             refresh();
           }}
           onMarkReady={(task) => {
             // TODO: Mark task as ready
-            console.log('Mark ready:', task);
+
             refresh();
           }}
           onDeleteTask={(task) => {
             // TODO: Delete task
-            console.log('Delete task:', task);
+
             refresh();
           }}
         />
@@ -745,7 +733,6 @@ export default function ToolContent({
               try {
                 await handleAIAccept(suggestion);
               } catch (err) {
-                console.error('Error accepting suggestion:', err);
               }
             }
           }}
@@ -828,9 +815,7 @@ export default function ToolContent({
       );
 
     case TOOL_KEYS.SETTINGS:
-      console.log('[ToolContent] Rendering Settings panel, subtab:', settingsSubtab);
-      console.log('[ToolContent] Settings props - familyId:', familyId, 'children:', effectiveChildren?.length);
-      
+
       // Determine header title based on active subtab
       const getSettingsHeaderTitle = () => {
         switch (settingsSubtab) {
@@ -897,7 +882,6 @@ export default function ToolContent({
               <TouchableOpacity
                 style={[styles.subtab, settingsSubtab === 'schedule_rules' && styles.subtabActive]}
                 onPress={() => {
-                  console.log('[ToolContent] Settings tab clicked: schedule_rules');
                   setSettingsSubtab('schedule_rules');
                 }}
               >
@@ -908,7 +892,6 @@ export default function ToolContent({
               <TouchableOpacity
                 style={[styles.subtab, settingsSubtab === 'calendar' && styles.subtabActive]}
                 onPress={() => {
-                  console.log('[ToolContent] Settings tab clicked: calendar');
                   setSettingsSubtab('calendar');
                 }}
               >
@@ -919,7 +902,6 @@ export default function ToolContent({
               <TouchableOpacity
                 style={[styles.subtab, settingsSubtab === 'objectives' && styles.subtabActive]}
                 onPress={() => {
-                  console.log('[ToolContent] Settings tab clicked: objectives');
                   setSettingsSubtab('objectives');
                 }}
               >
@@ -930,7 +912,6 @@ export default function ToolContent({
               <TouchableOpacity
                 style={[styles.subtab, settingsSubtab === 'email' && styles.subtabActive]}
                 onPress={() => {
-                  console.log('[ToolContent] Settings tab clicked: email');
                   setSettingsSubtab('email');
                 }}
               >
@@ -941,7 +922,6 @@ export default function ToolContent({
               <TouchableOpacity
                 style={[styles.subtab, settingsSubtab === 'coaching' && styles.subtabActive]}
                 onPress={() => {
-                  console.log('[ToolContent] Settings tab clicked: coaching');
                   setSettingsSubtab('coaching');
                 }}
               >
@@ -953,41 +933,7 @@ export default function ToolContent({
           </View>
           <View style={styles.settingsContent}>
             {settingsSubtab === 'schedule_rules' && (
-              <>
-                {console.log('[ToolContent] Rendering ScheduleRulesView')}
-                <ScheduleRulesView 
-                  familyId={familyId} 
-                  children={effectiveChildren}
-                  hideHeader={true}
-                />
-              </>
-            )}
-            {settingsSubtab === 'calendar' && (
-              <>
-                {console.log('[ToolContent] Rendering Calendar Integrations')}
-                <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-                  <View style={styles.integrationStack}>
-                    <GoogleCalendarConnect
-                      familyId={familyId}
-                      onConnected={() => {
-                        toast.push('Google Calendar ready. Run a sync to push upcoming events.', 'success');
-                      }}
-                    />
-                    <View style={styles.integrationCard}>
-                      <Text style={styles.integrationTitle}>Apple Calendar</Text>
-                      <Text style={styles.integrationDescription}>
-                        Subscribe to your Learnadoodle planner via ICS. Copy the link below into Apple Calendar.
-                      </Text>
-                      <TouchableOpacity style={styles.disabledButton} disabled>
-                        <Text style={styles.disabledButtonText}>Copy ICS Link</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.helperText}>
-                        ICS subscriptions are coming soon. For now, you can manually download your schedule from the Planner.
-                      </Text>
-                    </View>
-                  </View>
-                </ScrollView>
-              </>
+              <ScheduleRulesView familyId={familyId} children={effectiveChildren} />
             )}
             {settingsSubtab === 'email' && (
               <WeeklyOverviewEmailModal
@@ -1006,30 +952,27 @@ export default function ToolContent({
               />
             )}
             {settingsSubtab === 'objectives' && (
-              <>
-                {console.log('[ToolContent] Rendering Weekly Objectives')}
-                <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-                  <View style={styles.objectivesList}>
-                    {objectives.map((obj, idx) => (
-                      <View key={idx} style={styles.objectiveItem}>
-                        <Text style={styles.objectiveText}>{obj}</Text>
-                        <TouchableOpacity
-                          style={styles.objectiveDelete}
-                          onPress={() => {
-                            setObjectives((prev) => prev.filter((_, i) => i !== idx));
-                            toast.push('Objective removed', 'info');
-                          }}
-                        >
-                          <X size={16} color="#6b7280" />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                    {objectives.length === 0 && (
-                      <Text style={styles.emptyText}>No objectives set. Click "+ Add" to create one.</Text>
-                    )}
-                  </View>
-                </ScrollView>
-              </>
+              <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+                <View style={styles.objectivesList}>
+                  {objectives.map((obj, idx) => (
+                    <View key={idx} style={styles.objectiveItem}>
+                      <Text style={styles.objectiveText}>{obj}</Text>
+                      <TouchableOpacity
+                        style={styles.objectiveDelete}
+                        onPress={() => {
+                          setObjectives((prev) => prev.filter((_, i) => i !== idx));
+                          toast.push('Objective removed', 'info');
+                        }}
+                      >
+                        <X size={16} color="#6b7280" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  {objectives.length === 0 && (
+                    <Text style={styles.emptyText}>No objectives set. Click "+ Add" to create one.</Text>
+                  )}
+                </View>
+              </ScrollView>
             )}
           </View>
         </View>
@@ -1487,11 +1430,18 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#e5e7eb',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+      },
+    }),
   },
   superpowerCardContent: {
     padding: 24,

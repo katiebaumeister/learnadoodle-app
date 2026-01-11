@@ -37,7 +37,6 @@ export default function OfflineStoragePanel({ familyId }) {
             failedCount: 0 // This would need to be tracked separately
           });
         } catch (error) {
-          console.error('Error getting sync status:', error);
         }
         
         // Check if offline mode is enabled (could be stored in user preferences)
@@ -53,11 +52,9 @@ export default function OfflineStoragePanel({ familyId }) {
             setOfflineEnabled(prefs?.offline_mode_enabled || false);
           }
         } catch (error) {
-          console.error('Error checking offline mode setting:', error);
         }
       }
     } catch (error) {
-      console.error('Error checking storage status:', error);
     } finally {
       setLoading(false);
     }

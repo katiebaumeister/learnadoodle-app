@@ -109,10 +109,7 @@ export default function AIToolsModal({
   ], [onPlanYear, onHeatmap, onPackWeek, onCatchUp, onSummarizeProgress, onAnalytics, onWhatIfAnalysis]);
 
   const runRebalance = useCallback(async () => {
-    console.log('[runRebalance] Starting...', { familyId, activeChildIds, childrenCount: children.length });
-    
     if (!familyId) {
-      console.log('[runRebalance] No familyId, returning empty array');
       return [];
     }
     
@@ -120,23 +117,12 @@ export default function AIToolsModal({
     const childIdsToUse = activeChildIds.length > 0 
       ? activeChildIds 
       : children.map(c => c.id).filter(Boolean);
-    
-    console.log('[runRebalance] Child IDs to use:', childIdsToUse);
-    
+
     if (childIdsToUse.length === 0) {
-      console.error('[runRebalance] No children available');
       throw new Error('No children available for scheduling');
     }
     
     try {
-      console.log('[runRebalance] Calling proposeReschedule API...', {
-        familyId,
-        weekStart: new Date().toISOString(),
-        childIds: childIdsToUse,
-        horizonWeeks: 2,
-        reason: 'rebalance',
-      });
-      
       const apiStartTime = Date.now();
       const result = await proposeReschedule({
         familyId,
@@ -147,23 +133,14 @@ export default function AIToolsModal({
       });
       
       const apiDuration = Date.now() - apiStartTime;
-      console.log('[runRebalance] API call completed in', apiDuration, 'ms');
-      
+
       if (result.error) throw result.error;
       
       // Transform API response to suggestion format
       // API returns: { proposal: { adds: [], moves: [], deletes: [] }, changes: [...] }
       const proposal = result.data?.proposal || {};
       const persistedChanges = result.data?.changes || [];
-      
-      console.log('[Rebalance] API Response:', {
-        proposal,
-        changesCount: persistedChanges.length,
-        addsCount: proposal.adds?.length || 0,
-        movesCount: proposal.moves?.length || 0,
-        persistedChangesSample: persistedChanges[0],
-      });
-      
+
       const suggestions = [];
       
       // Transform persisted changes directly (more reliable than matching with proposal)
@@ -208,11 +185,9 @@ export default function AIToolsModal({
           });
         }
       });
-      
-      console.log('[Rebalance] Transformed suggestions:', suggestions.length, suggestions);
+
       return suggestions;
     } catch (err) {
-      console.error('Rebalance error:', err);
       // Provide more helpful error messages
       if (err.message?.includes('rate_limit') || err.message?.includes('429')) {
         throw new Error('OpenAI rate limit reached. Please wait a moment and try again.');
@@ -294,19 +269,16 @@ export default function AIToolsModal({
       
       return suggestions;
     } catch (err) {
-      console.error('What-if error:', err);
       return [];
     }
   }, [familyId, activeChildIds, children]);
 
   const handleModeClick = (superpower, mode) => {
-    console.log('[AIToolsModal] handleModeClick:', mode.id);
     // Don't close the main modal - open the tool modal on top
     // Handle different mode types
     if (mode.id === 'pack-week' && onPackWeek) {
       setShowPackWeekModal(true);
     } else if (mode.id === 'rebalance' || mode.id === 'catch-up' || mode.id === 'what-if') {
-      console.log('[AIToolsModal] Opening AI modal for mode:', mode.id);
       setSelectedMode(mode);
       setAiModalKey(mode.id);
       setShowAIModal(true);
@@ -327,8 +299,7 @@ export default function AIToolsModal({
 
   const handleAIAccept = async (suggestion) => {
     // Handle AI accept - this would typically add to calendar
-    console.log('AI suggestion accepted:', suggestion);
-  };
+};
 
   // Memoize catch-up runner
   const runCatchUp = useCallback(async () => {
@@ -403,7 +374,6 @@ export default function AIToolsModal({
       
       return suggestions;
     } catch (err) {
-      console.error('Catch-up error:', err);
       throw new Error('Failed to generate catch-up plan');
     }
   }, [familyId, activeChildIds, children]);

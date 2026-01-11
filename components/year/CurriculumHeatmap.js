@@ -31,7 +31,6 @@ export default function CurriculumHeatmap({ familyId, startDate, endDate, onClos
         loadHeatmapData();
       }
     }).catch(err => {
-      console.error('[CurriculumHeatmap] Error checking feature flags:', err);
       setHeatmapEnabled(false);
     });
   }, [familyId, startDate, endDate]);
@@ -55,7 +54,6 @@ export default function CurriculumHeatmap({ familyId, startDate, endDate, onClos
       
       setHeatmapData(data || []);
     } catch (err) {
-      console.error('[CurriculumHeatmap] Error loading heatmap:', err);
       setError(err.message || 'Failed to load heatmap data');
     } finally {
       setLoading(false);

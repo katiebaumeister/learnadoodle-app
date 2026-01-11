@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
 import { Calendar, Sparkles, List, Lock, Unlock, Printer } from 'lucide-react';
 // Using native HTML5 drag-and-drop instead of @hello-pangea/dnd for React Native Web compatibility
 import { supabase } from '../../lib/supabase';
@@ -13,6 +13,7 @@ import RescheduleModal from './RescheduleModal';
 import WeeklyReshuffleModal from './WeeklyReshuffleModal';
 import { proposeReschedule, getWeekStart, freezeWeek, getWeeklyPacket } from '../../lib/apiClient';
 import { rescheduleEvent, createEvent as createEventWithOffline, deleteEvent as deleteEventWithOffline } from '../../lib/services/plannerClientWithOffline';
+import * as offlineStorage from '../../lib/services/offlineStorage';
 import PlanYearWizard from '../year/PlanYearWizard';
 import SaveTemplateModal from '../templates/SaveTemplateModal';
 import { Save } from 'lucide-react';
@@ -23,8 +24,8 @@ import NoteEditorModal from '../records/NoteEditorModal';
 // Helper functions
 function startOfWeek(d) {
   const x = new Date(d);
-  const day = (x.getDay() + 6) % 7; // Monday=0
-  x.setDate(x.getDate() - day);
+  const day = x.getDay(); // Sunday=0, Monday=1, ..., Saturday=6
+  x.setDate(x.getDate() - day); // Subtract to get Sunday
   x.setHours(0, 0, 0, 0);
   return x;
 }
@@ -53,17 +54,14 @@ function getLocalDateString(d) {
 
 function minutesSinceMidnight(hhmm) {
   if (!hhmm || typeof hhmm !== 'string') {
-    console.warn('Invalid time format:', hhmm);
     return 0; // Default to midnight
   }
   const parts = hhmm.split(':');
   if (parts.length < 2) {
-    console.warn('Invalid time format (missing colon):', hhmm);
     return 0;
   }
   const [h, m] = parts.map(Number);
   if (isNaN(h) || isNaN(m)) {
-    console.warn('Invalid time format (non-numeric):', hhmm);
     return 0;
   }
   return h * 60 + m;
@@ -86,7 +84,6 @@ function useWeekData(weekStart, childIds, familyId) {
     if (typeof window === 'undefined') return;
     
     const handleRefresh = () => {
-      console.log('[PlannerWeek] Refresh event received, triggering refetch');
       setRefreshTrigger(prev => prev + 1);
     };
     
@@ -125,7 +122,6 @@ function useWeekData(weekStart, childIds, familyId) {
       });
 
       if (error) {
-        console.error('get_week_view error', error);
         if (shouldShowLoading) {
           setLoading(false);
         }
@@ -135,12 +131,45 @@ function useWeekData(weekStart, childIds, familyId) {
       
       // Debug: Log the raw RPC response to check avatar field
       if (typeof window !== 'undefined' && window.console && process.env.NODE_ENV === 'development') {
-        console.log('RPC response children:', res?.children?.map(c => ({ id: c.id, name: c.name, avatar: c.avatar })));
       }
       
+      // Helper to validate avatar URLs
+      const validateAvatarUrl = (url) => {
+        if (!url || typeof url !== 'string') return null;
+        const trimmed = url.trim();
+        if (!trimmed) return null;
+        
+        // Check if it's just a UUID (invalid URL format)
+        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidPattern.test(trimmed)) {
+          return null; // It's just a UUID, not a valid URL
+        }
+        
+        // Valid URLs must start with http://, https://, or data:
+        if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+          return trimmed;
+        }
+        
+        // If it's a known avatar key (like "prof1"), it's valid
+        const knownAvatarKeys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
+        if (knownAvatarKeys.includes(trimmed.toLowerCase())) {
+          return trimmed;
+        }
+        
+        // Otherwise, it's not a valid URL
+        return null;
+      };
+
+      // Validate and clean children avatar URLs from RPC response
+      const cleanedChildren = (res?.children || []).map(child => ({
+        ...child,
+        avatar: validateAvatarUrl(child.avatar) || child.avatar, // Keep original if validation fails
+        avatar_url: validateAvatarUrl(child.avatar_url || child.avatar) || null
+      }));
+
       // Always write a new object when updating state (spread to guarantee new refs)
       setData({
-        children: res?.children ? [...res.children] : [],
+        children: cleanedChildren,
         avail: res?.avail ? [...res.avail] : [],
         events: res?.events ? [...res.events] : []
       });
@@ -274,7 +303,6 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                     key={ev.id}
                     onMouseDown={(e) => {
                       if (canDrag && onMouseDragStart) {
-                        console.log('[DayColumn] MouseDown on draggable event:', ev.id);
                         onMouseDragStart(e, ev.id);
                       }
                     }}
@@ -501,12 +529,10 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
 
   // Handle drag end - reschedule event to new day/time
   const handleDragEnd = useCallback(async (result) => {
-    console.log('[PlannerWeek] handleDragEnd called:', result);
     const { destination, source, draggableId } = result;
     
     // If no destination, do nothing (drag cancelled)
     if (!destination) {
-      console.log('[PlannerWeek] Drag cancelled - no destination');
       setDraggedEventId(null);
       return;
     }
@@ -523,7 +549,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     const event = allEvents.find(e => e.id === eventId);
     
     if (!event) {
-      console.error('Event not found for drag:', eventId);
       setDraggedEventId(null);
       return;
     }
@@ -536,7 +561,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     // Parse destination date (droppableId is ISO date string)
     const destDate = new Date(destination.droppableId);
     if (isNaN(destDate.getTime())) {
-      console.error('Invalid destination date:', destination.droppableId);
       setDraggedEventId(null);
       return;
     }
@@ -574,7 +598,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       
       if (error) {
         // Revert optimistic update on error
-        console.error('Reschedule error:', error);
+
         setLocalEvents(prev => {
           const next = { ...prev };
           delete next[eventId]; // Remove optimistic update
@@ -607,7 +631,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       }
     } catch (err) {
       // Revert optimistic update on exception
-      console.error('Reschedule exception:', err);
+
       setLocalEvents(prev => {
         const next = { ...prev };
         delete next[eventId];
@@ -682,7 +706,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       });
       setShowRescheduleModal(true);
     } catch (err) {
-      console.error('Error proposing reschedule:', err);
       Alert.alert('Error', err.message || 'Failed to propose reschedule');
     } finally {
       setLoadingReschedule(false);
@@ -716,7 +739,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       const { data, error } = await query;
 
       if (error) {
-        console.error('Error checking blackouts:', error);
         return;
       }
 
@@ -753,7 +775,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
 
   const handleRepeatNextWeek = async (event) => {
     if (!event || !event.id) {
-      console.warn('No event provided to repeat');
       return;
     }
 
@@ -806,15 +827,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
 
       if (rpcError || !rpcData) {
         const errorMsg = rpcError?.message || 'Failed to repeat event';
-        console.error('Error repeating event:', errorMsg);
+
         if (typeof window !== 'undefined' && window.alert) {
           window.alert(`Failed to repeat event: ${errorMsg}`);
         }
         return;
       }
 
-      console.log('Event repeated successfully for next week');
-      
       // Refresh week data
       handleWeekStartChange(new Date(weekStart));
 
@@ -822,7 +841,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         window.alert('Event repeated for next week successfully');
       }
     } catch (error) {
-      console.error('Error repeating event:', error);
       if (typeof window !== 'undefined' && window.alert) {
         window.alert('Error repeating event: ' + error.message);
       }
@@ -831,7 +849,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
 
   const handleCopyToNextYear = async (event) => {
     if (!event || !event.id) {
-      console.warn('No event provided to copy');
       return;
     }
 
@@ -884,15 +901,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
 
       if (rpcError || !rpcData) {
         const errorMsg = rpcError?.message || 'Failed to copy event';
-        console.error('Error copying event to next year:', errorMsg);
+
         if (typeof window !== 'undefined' && window.alert) {
           window.alert(`Failed to copy event: ${errorMsg}`);
         }
         return;
       }
 
-      console.log('Event copied successfully to next year');
-      
       // Refresh week data
       handleWeekStartChange(new Date(weekStart));
 
@@ -900,7 +915,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         window.alert('Event copied to next year successfully');
       }
     } catch (error) {
-      console.error('Error copying event to next year:', error);
       if (typeof window !== 'undefined' && window.alert) {
         window.alert('Error copying event: ' + error.message);
       }
@@ -908,7 +922,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   };
 
   const handleEventRightClick = (event, nativeEvent) => {
-    console.log('[PlannerWeek] handleEventRightClick called with event:', event?.title, 'nativeEvent:', nativeEvent);
     // Use the same handler from WebContent if available
     // For now, we'll create a simple context menu
     if (typeof window !== 'undefined' && nativeEvent) {
@@ -921,21 +934,299 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       // For React Native Web, the event might be the synthetic event itself
       const clientX = nativeEvent.clientX || (nativeEvent.nativeEvent && nativeEvent.nativeEvent.clientX) || (typeof window !== 'undefined' && window.event && window.event.clientX) || 0;
       const clientY = nativeEvent.clientY || (nativeEvent.nativeEvent && nativeEvent.nativeEvent.clientY) || (typeof window !== 'undefined' && window.event && window.event.clientY) || 0;
-      
-      console.log('[PlannerWeek] Context menu position:', clientX, clientY);
-      
+
       // Create context menu directly in DOM (same pattern as WebContent)
       const existingMenu = document.getElementById('context-menu');
       if (existingMenu) {
         existingMenu.remove();
       }
       
+      // For project events that may have been expanded, use the original ID
+      // Check for _originalId, originalId, or extract from expanded ID format (id-day-X)
+      let eventId = event._originalId || event.originalId || event.id;
+      
+      // If the ID contains '-day-', it's an expanded project event - extract the original ID
+      if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
+        eventId = eventId.split('-day-')[0];
+      }
+      
+      const menuItems = [];
+      
+      menuItems.push({ text: 'Edit Event', action: () => handleEventClick(event) });
+      
+      // Check if event is recurring
+      const isRecurringEvent = event.recurrence_rule || event.recurrence_id || event.parent_event_id;
+      
+      if (isRecurringEvent) {
+        // Show options for recurring events
+        menuItems.push({ 
+          text: 'Delete This Event', 
+          action: async () => {
+            if (window.confirm('Are you sure you want to delete only this occurrence?')) {
+              try {
+                // Extract original ID if it's an expanded event (must be done BEFORE RPC call)
+                let cleanEventId = eventId;
+                if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
+                  cleanEventId = eventId.split('-day-')[0];
+                }
+                
+                // Validate UUID format
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (!uuidRegex.test(cleanEventId)) {
+                  console.error('[PlannerWeek] Invalid UUID format:', cleanEventId);
+                  throw new Error(`Invalid event ID format: ${cleanEventId}`);
+                }
+                
+                console.log('[PlannerWeek] Deleting recurring event occurrence:', { 
+                  cleanEventId, 
+                  originalEventId: eventId,
+                  eventType: event.event_type, 
+                  originalId: event._originalId, 
+                  eventIdFromEvent: event.id 
+                });
+                
+                // Use RPC function for reliable deletion (bypasses RLS with SECURITY DEFINER)
+                const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', {
+                  _event_id: cleanEventId,
+                  _family_id: familyId
+                });
+                
+                console.log('[PlannerWeek] RPC delete response:', { rpcData, rpcError });
+                
+                if (rpcError) {
+                  console.warn('[PlannerWeek] RPC delete failed, falling back to deleteEventWithOffline:', rpcError);
+                  // Fall back to offline delete
+                  const result = await deleteEventWithOffline(cleanEventId, familyId);
+                  if (result?.error) {
+                    throw new Error(result.error.message || 'Failed to delete event');
+                  }
+                } else if (!rpcData?.success) {
+                  console.warn('[PlannerWeek] RPC delete returned failure:', rpcData);
+                  // Fall back to offline delete
+                  const result = await deleteEventWithOffline(cleanEventId, familyId);
+                  if (result?.error) {
+                    throw new Error(result.error.message || 'Failed to delete event');
+                  }
+                } else {
+                  console.log('[PlannerWeek] RPC delete succeeded (soft delete):', rpcData);
+                  
+                  // Verify the soft delete actually worked (wait a bit for DB to update)
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                  const { data: verifyData } = await supabase
+                    .from('events')
+                    .select('deleted_at')
+                    .eq('id', cleanEventId)
+                    .maybeSingle();
+                  
+                  if (verifyData?.deleted_at) {
+                    console.log('[PlannerWeek] Delete verified - deleted_at is set');
+                  } else {
+                    console.warn('[PlannerWeek] Delete verification failed - deleted_at not set yet');
+                  }
+                }
+                
+                handleEventDeleted(cleanEventId);
+                // Trigger refresh
+                handleWeekStartChange(new Date(weekStart));
+              } catch (err) {
+                console.error('[PlannerWeek] Delete error:', err);
+                Alert.alert('Error', `Failed to delete event: ${err.message || 'Unknown error'}`);
+              }
+            }
+          }, 
+          isDelete: true 
+        });
+        menuItems.push({ 
+          text: 'Delete All in Series', 
+          action: async () => {
+            if (window.confirm('Are you sure you want to delete all occurrences in this series?')) {
+              try {
+                // Clean the eventId first (remove -day-X suffix if present)
+                let cleanEventId = eventId;
+                if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
+                  cleanEventId = eventId.split('-day-')[0];
+                }
+                
+                // Find the master event ID (the root of the recurrence series)
+                // For instances: parent_event_id or recurrence_id points to the master
+                // For master events: parent_event_id and recurrence_id are set to its own ID
+                let masterEventId = event.parent_event_id || event.recurrence_id;
+                
+                // Clean masterEventId if it has -day-X suffix
+                if (masterEventId && typeof masterEventId === 'string' && masterEventId.includes('-day-')) {
+                  masterEventId = masterEventId.split('-day-')[0];
+                }
+                
+                // If this is a master event (has recurrence_rule), use its own ID
+                if (event.recurrence_rule && !masterEventId) {
+                  masterEventId = cleanEventId;
+                }
+                
+                // Fallback to cleanEventId if we still don't have a master ID
+                if (!masterEventId) {
+                  masterEventId = cleanEventId;
+                }
+                
+                console.log('[PlannerWeek] Deleting all in series:', { 
+                  cleanEventId, 
+                  masterEventId,
+                  originalEventId: eventId,
+                  eventType: event.event_type
+                });
+                
+                // Soft delete all events in the series using deleted_at timestamp
+                // 1. The master event (id = masterEventId)
+                // 2. All instances (parent_event_id = masterEventId OR recurrence_id = masterEventId)
+                const { error: seriesError } = await supabase
+                  .from('events')
+                  .update({ deleted_at: new Date().toISOString() })
+                  .or(`id.eq.${masterEventId},parent_event_id.eq.${masterEventId},recurrence_id.eq.${masterEventId}`)
+                  .is('deleted_at', null); // Only update if not already deleted
+                
+                if (seriesError) {
+                  console.warn('[PlannerWeek] Error deleting series, falling back to single delete:', seriesError);
+                  // Fall back to single delete using RPC
+                  const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', {
+                    _event_id: cleanEventId,
+                    _family_id: familyId
+                  });
+                  
+                  if (rpcError || !rpcData?.success) {
+                    // Final fallback to offline delete
+                    await deleteEventWithOffline(cleanEventId, familyId);
+                  }
+                } else {
+                  console.log('[PlannerWeek] Series soft delete succeeded');
+                }
+                
+                handleEventDeleted(cleanEventId);
+                // Trigger refresh
+                handleWeekStartChange(new Date(weekStart));
+              } catch (err) {
+                console.error('[PlannerWeek] Delete series error:', err);
+                Alert.alert('Error', `Failed to delete event series: ${err.message || 'Unknown error'}`);
+              }
+            }
+          }, 
+          isDelete: true 
+        });
+      } else {
+        // Regular delete for non-recurring events
+        menuItems.push({ text: 'Delete Event', action: async () => {
+          if (window.confirm('Are you sure you want to delete this event?')) {
+            try {
+              // Validate eventId is a valid UUID (not an expanded ID)
+              if (!eventId || typeof eventId !== 'string') {
+                throw new Error('Invalid event ID');
+              }
+              
+              // Ensure we're using a valid UUID format (remove any -day-X suffix)
+              const cleanEventId = eventId.split('-day-')[0];
+              
+              // Validate UUID format
+              const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+              if (!uuidRegex.test(cleanEventId)) {
+                console.error('[PlannerWeek] Invalid UUID format:', cleanEventId);
+                throw new Error(`Invalid event ID format: ${cleanEventId}`);
+              }
+              
+              console.log('[PlannerWeek] Deleting event:', { 
+                cleanEventId, 
+                originalEventId: eventId,
+                eventType: event.event_type, 
+                originalId: event._originalId, 
+                eventIdFromEvent: event.id 
+              });
+              
+              // Use RPC function for reliable deletion (bypasses RLS with SECURITY DEFINER)
+              // This is especially important for project events - uses soft delete (deleted_at)
+              const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', {
+                _event_id: cleanEventId,
+                _family_id: familyId
+              });
+              
+              console.log('[PlannerWeek] RPC delete response:', { rpcData, rpcError });
+              
+              if (rpcError) {
+                console.error('[PlannerWeek] RPC delete failed:', rpcError);
+                console.warn('[PlannerWeek] RPC delete failed, falling back to deleteEventWithOffline:', rpcError);
+                // Fall back to offline delete
+                const result = await deleteEventWithOffline(cleanEventId, familyId);
+                if (result?.error) {
+                  throw new Error(result.error.message || 'Failed to delete event');
+                }
+              } else if (!rpcData?.success) {
+                console.error('[PlannerWeek] RPC delete returned failure:', rpcData);
+                console.warn('[PlannerWeek] RPC delete returned failure, falling back to deleteEventWithOffline:', rpcData);
+                // Fall back to offline delete
+                const result = await deleteEventWithOffline(cleanEventId, familyId);
+                if (result?.error) {
+                  throw new Error(result.error.message || 'Failed to delete event');
+                }
+              } else {
+                console.log('[PlannerWeek] RPC delete succeeded (soft delete):', rpcData);
+                
+                // Verify the soft delete actually worked (wait a bit for DB to update)
+                await new Promise(resolve => setTimeout(resolve, 300));
+                const { data: verifyData } = await supabase
+                  .from('events')
+                  .select('deleted_at')
+                  .eq('id', cleanEventId)
+                  .maybeSingle();
+                
+                if (verifyData?.deleted_at) {
+                  console.log('[PlannerWeek] Soft delete verified - deleted_at is set:', verifyData.deleted_at);
+                } else {
+                  console.warn('[PlannerWeek] Delete verification failed - deleted_at not set yet');
+                }
+              }
+              
+              handleEventDeleted(cleanEventId);
+              // Trigger refresh
+              handleWeekStartChange(new Date(weekStart));
+            } catch (err) {
+              console.error('[PlannerWeek] Delete error:', err);
+              Alert.alert('Error', `Failed to delete event: ${err.message || 'Unknown error'}`);
+            }
+          }
+        }, isDelete: true });
+      }
+      
+      // Calculate menu height (estimate: ~48px per item + 16px padding)
+      const estimatedMenuHeight = menuItems.length * 48 + 16;
+      const windowHeight = window.innerHeight;
+      
+      // Check if menu would go off bottom of screen
+      // If so, position it above the click point instead
+      let menuTop = clientY;
+      if (clientY + estimatedMenuHeight > windowHeight) {
+        // Position above the click point
+        menuTop = clientY - estimatedMenuHeight;
+        // Ensure it doesn't go off the top either
+        if (menuTop < 0) {
+          menuTop = 8; // Small margin from top
+        }
+      }
+      
+      // Also check if menu would go off right side of screen
+      let menuLeft = clientX;
+      const estimatedMenuWidth = 200; // min-width
+      const windowWidth = window.innerWidth;
+      if (clientX + estimatedMenuWidth > windowWidth) {
+        // Position to the left of the click point
+        menuLeft = clientX - estimatedMenuWidth;
+        // Ensure it doesn't go off the left either
+        if (menuLeft < 0) {
+          menuLeft = 8; // Small margin from left
+        }
+      }
+      
       const menu = document.createElement('div');
       menu.id = 'context-menu';
       menu.style.cssText = `
         position: fixed;
-        top: ${clientY}px;
-        left: ${clientX}px;
+        top: ${menuTop}px;
+        left: ${menuLeft}px;
         background-color: #ffffff;
         border-radius: 12px;
         border: 1px solid #e5e7eb;
@@ -943,64 +1234,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         z-index: 999999;
         min-width: 200px;
         padding: 8px 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family: "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       `;
-      
-      const menuItems = [];
-      
-      menuItems.push({ text: 'Edit Event', action: () => handleEventClick(event) });
-      menuItems.push({ 
-        text: 'Add Note', 
-        action: () => {
-          // Open note editor modal for this event
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('openNoteEditor', {
-              detail: { 
-                eventId: event.id,
-                childId: event.child_id,
-                familyId: familyId,
-              }
-            }));
-          }
-        }
-      });
-      
-      // Add repeat/copy actions for events with start_ts
-      if (event.start_ts || event.start) {
-        menuItems.push(
-          { text: 'Repeat Next Week', action: () => handleRepeatNextWeek(event) },
-          { text: 'Copy to Next Year', action: () => handleCopyToNextYear(event) }
-        );
-      }
-      
-      // Add rebalance option if event has year_plan_id
-      if (event.year_plan_id) {
-        menuItems.push({ 
-          text: 'Rebalance subject from here...', 
-          action: () => {
-            // Dispatch custom event to open rebalance modal
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('openRebalanceModal', {
-                detail: { event, yearPlanId: event.year_plan_id }
-              }));
-            }
-          }
-        });
-      }
-      
-      menuItems.push({ text: 'Delete Event', action: async () => {
-        if (window.confirm('Are you sure you want to delete this event?')) {
-          try {
-            await deleteEventWithOffline(event.id, familyId);
-            handleEventDeleted(event.id);
-            // Trigger refresh
-            handleWeekStartChange(new Date(weekStart));
-          } catch (err) {
-            console.error('Error deleting event:', err);
-            Alert.alert('Error', 'Failed to delete event');
-          }
-        }
-      }, isDelete: true });
       
       menuItems.forEach((item, index) => {
         const div = document.createElement('div');
@@ -1036,9 +1271,15 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         if (!menu.contains(e.target)) {
           menu.remove();
           document.removeEventListener('click', closeMenu);
+          document.removeEventListener('mousedown', closeMenu, true);
+          document.removeEventListener('contextmenu', closeMenu, true);
         }
       };
-      setTimeout(() => document.addEventListener('click', closeMenu), 100);
+      // Use bubble phase for click (so menu item handlers fire first)
+      // Use capture phase for mousedown/contextmenu to catch right-clicks
+      document.addEventListener('click', closeMenu);
+      document.addEventListener('mousedown', closeMenu, true);
+      document.addEventListener('contextmenu', closeMenu, true);
     }
   };
 
@@ -1048,10 +1289,10 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     handleWeekStartChange(new Date(weekStart));
   };
 
-  const handleEventDeleted = (deletedEventId) => {
+  const handleEventDeleted = async (deletedEventId) => {
     // Find the deleted event to get its details for logging
     if (deletedEventId) {
-      const deletedEvent = filtEvents.find(e => e.id === deletedEventId);
+      const deletedEvent = filtEvents.find(e => e.id === deletedEventId || e._originalId === deletedEventId);
       if (deletedEvent) {
         const eventDate = new Date(deletedEvent.start_ts);
         const dateStr = getLocalDateString(eventDate);
@@ -1063,10 +1304,37 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           deletedEvent.child_id
         );
       }
+      
+      // Clear from offline cache immediately
+      try {
+        await offlineStorage.removeEvent(deletedEventId);
+        console.log('[PlannerWeek] Removed event from offline cache:', deletedEventId);
+      } catch (err) {
+        console.warn('[PlannerWeek] Error removing event from offline cache:', err);
+      }
+    }
+    
+    // Remove from local optimistic updates
+    setLocalEvents(prev => {
+      const next = { ...prev };
+      // Remove the deleted event and any expanded versions
+      Object.keys(next).forEach(key => {
+        if (key === deletedEventId || key.startsWith(`${deletedEventId}-day-`)) {
+          delete next[key];
+        }
+      });
+      return next;
+    });
+    
+    // Dispatch refresh event for other components
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+      window.dispatchEvent(new CustomEvent('eventDeleted', { 
+        detail: { eventId: deletedEventId, id: deletedEventId } 
+      }));
     }
     
     // Refetch week data
-    setLocalEvents({});
     handleWeekStartChange(new Date(weekStart));
   };
   
@@ -1157,14 +1425,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           .limit(1);
         
         if (error) {
-          console.warn('Error checking frozen status:', error);
           return;
         }
         
         // Week is frozen if any day in the week is frozen
         setIsWeekFrozen(frozenDays && frozenDays.length > 0);
       } catch (err) {
-        console.warn('Error checking frozen status:', err);
       }
     };
     
@@ -1204,7 +1470,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       setFreezeLoading(false);
     }
   }, [familyId, weekStart, isWeekFrozen, freezeLoading, handleWeekStartChange]);
-  
 
   // Ensure data.avail and data.events are arrays
   const availData = Array.isArray(data.avail) ? data.avail : [];
@@ -1239,7 +1504,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         }
       }
       if (!dateKey) {
-        console.warn('Skipping availability entry with invalid date:', a);
         continue;
       }
       
@@ -1274,7 +1538,44 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     // Process events
     for (const e of filtEvents) {
       // Use local optimistic update if available
-      const event = localEvents[e.id] || e;
+      let event = localEvents[e.id] || e;
+      
+      // WORKAROUND: If start_local is missing but start_ts exists, compute it
+      // This handles cases where cached events don't have start_local
+      if (!event.start_local && event.start_ts) {
+        try {
+          // Convert UTC timestamp to local time (America/New_York)
+          // Note: This is a temporary workaround until cache is fully refreshed
+          const utcDate = new Date(event.start_ts);
+          // Get local time in browser timezone (should match family timezone)
+          const localHours = utcDate.getHours();
+          const localMinutes = utcDate.getMinutes();
+          event = {
+            ...event,
+            start_local: `${String(localHours).padStart(2, '0')}:${String(localMinutes).padStart(2, '0')}`,
+            // Also compute end_local if missing
+            end_local: event.end_local || (event.end_ts ? (() => {
+              const endUtc = new Date(event.end_ts);
+              return `${String(endUtc.getHours()).padStart(2, '0')}:${String(endUtc.getMinutes()).padStart(2, '0')}`;
+            })() : undefined),
+            // Compute date_local if missing
+            date_local: event.date_local || getLocalDateString(utcDate)
+          };
+          
+          if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+            console.warn('[PlannerWeek] ⚠️ Computed start_local from start_ts (workaround):', {
+              eventId: event.id,
+              title: event.title,
+              computedStartLocal: event.start_local,
+              start_ts: event.start_ts,
+              note: 'This is a temporary workaround. Cache should be refreshed to get start_local from RPC.'
+            });
+          }
+        } catch (err) {
+          console.error('[PlannerWeek] Error computing start_local:', err);
+        }
+      }
+      
       // Use date_local from RPC if available (already in family timezone)
       // Otherwise, parse start_ts using local timezone (not UTC)
       let d;
@@ -1293,8 +1594,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       }
       eventsByDateNew[d].push(event);
     }
-    
-    
+
     return { 
       availByDate: availByDateNew, 
       eventsByDate: eventsByDateNew,
@@ -1333,8 +1633,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   // Handle mouse-based drag start
   const handleMouseDragStart = useCallback((e, eventId) => {
     if (typeof window === 'undefined') return;
-    
-    console.log('[PlannerWeek] Mouse drag started:', eventId);
+
     e.preventDefault();
     e.stopPropagation();
     
@@ -1363,8 +1662,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     };
     
     const handleMouseUp = async (upEvent) => {
-      console.log('[PlannerWeek] Mouse drag ended');
-      
       // Find which day column we're over
       const elementBelow = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
       if (!elementBelow) {
@@ -1392,8 +1689,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       
       if (dayColumn) {
         const targetDateIso = dayColumn.getAttribute('data-day-date');
-        console.log('[PlannerWeek] Dropped on date:', targetDateIso);
-        
+
         // Find the event being dragged
         const allEvents = filtEvents;
         const event = allEvents.find(ev => ev.id === eventId);
@@ -1439,7 +1735,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
               
               if (error) {
                 // Revert optimistic update on error
-                console.error('Reschedule error:', error);
+
                 setLocalEvents(prev => {
                   const next = { ...prev };
                   delete next[eventId];
@@ -1455,7 +1751,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
               }
             } catch (err) {
               // Revert optimistic update on exception
-              console.error('Reschedule exception:', err);
+
               setLocalEvents(prev => {
                 const next = { ...prev };
                 delete next[eventId];
@@ -1582,8 +1878,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           familyId={familyId}
           onDayClick={(date, constraint) => {
             // Optional: Handle day click (e.g., open adjustment modal)
-            console.log('Day clicked:', date, constraint);
-          }}
+}}
         />
 
         {/* Week Grid - Fills available space like month grid */}
@@ -1773,7 +2068,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           explanation={rescheduleReport.explanation || ''}
           onApply={async () => {
             // TODO: Implement proposal application
-            console.log('Applying proposals:', rescheduleReport.proposals);
+
             setRescheduleReport(null);
           }}
         />
@@ -1801,14 +2096,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
               
               if (error) {
                 if (error.code !== 'P0004') { // P0004 = function does not exist
-                  console.warn('Cache refresh error:', error);
-                }
+}
               }
             }
           } catch (err) {
             // RPC might not exist, that's okay
-            console.warn('Cache refresh not available:', err.message || err);
-          }
+}
           
           // Invalidate and refetch: Clear local state and force reload
           setLocalEvents({});
@@ -1844,7 +2137,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
               });
               
               if (planError) {
-                console.warn('Failed to auto-propose reschedule:', planError);
                 // Don't show error to user - it's optional
               } else if (planData) {
                 // Use persisted changes from backend if available, otherwise transform proposal
@@ -1881,7 +2173,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 setShowRescheduleModal(true);
               }
             } catch (err) {
-              console.warn('Error auto-proposing reschedule:', err);
               // Silently fail - rescheduling is optional
             } finally {
               setLoadingReschedule(false);
@@ -1902,7 +2193,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         visible={showYearWizard}
         onClose={() => setShowYearWizard(false)}
         onComplete={(yearPlan) => {
-          console.log('Year plan created:', yearPlan);
           Alert.alert('Success', 'Year plan created successfully!');
           // Refresh calendar data
           setLocalEvents({});
@@ -2171,11 +2461,18 @@ const styles = StyleSheet.create({
   },
   viewToggleButtonActive: {
     backgroundColor: colors.card,
-    shadowColor: 'rgba(0, 0, 0, 0.1)',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 1,
-    shadowRadius: 2,
-    elevation: 1,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+      },
+      default: {
+        shadowColor: 'rgba(0, 0, 0, 0.1)',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 1,
+        shadowRadius: 2,
+        elevation: 1,
+      },
+    }),
   },
   viewToggleText: {
     fontSize: 13,
@@ -2259,14 +2556,14 @@ const styles = StyleSheet.create({
   },
   dayHeaderDow: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '400',
     color: '#6b7280',
     textTransform: 'uppercase',
   },
   dayHeaderDate: {
     fontSize: 12,
     color: '#6b7280',
-    fontWeight: '600',
+    fontWeight: '400',
   },
   dayHeaderDateOtherMonth: {
     color: '#d1d5db',
@@ -2281,7 +2578,7 @@ const styles = StyleSheet.create({
   },
   patternDayText: {
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '400',
     color: colors.primary,
     textTransform: 'uppercase',
   },

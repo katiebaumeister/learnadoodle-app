@@ -43,7 +43,6 @@ export default function DailyEmotionalLine({ familyId, learning = [] }) {
 
       setEmotionalLine(line);
     } catch (err) {
-      console.error('[DailyEmotionalLine] Error:', err);
       // Fallback
       setEmotionalLine("Today feels spacious — a good day for gentle learning.");
     } finally {

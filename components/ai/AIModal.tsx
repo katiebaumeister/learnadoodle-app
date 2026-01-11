@@ -90,7 +90,6 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
 
   useEffect(() => {
     if (progressVisible) {
-      console.log('[AIModal] progress animation start');
       progressTranslate.setValue(-120);
       if (progressAnim.current) {
         progressAnim.current.stop();
@@ -105,7 +104,6 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       );
       progressAnim.current.start();
     } else if (progressAnim.current) {
-      console.log('[AIModal] progress animation stop');
       progressAnim.current.stop();
       progressAnim.current = null;
       progressTranslate.setValue(-120);
@@ -124,7 +122,6 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       );
       spinnerAnim.current.start();
     } else {
-      console.log('[AIModal] spinner animation stop');
       if (spinnerAnim.current) {
         spinnerAnim.current.stop();
         spinnerAnim.current = null;
@@ -138,7 +135,6 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
   const busy = status === 'loading' || status === 'applying';
 
   const showToast = useCallback((type: 'info' | 'success' | 'error', message: string, durationMs: number = 2800) => {
-    console.log('[AIModal] toast', type, message);
     if (toastTimer.current) {
       clearTimeout(toastTimer.current);
       toastTimer.current = null;
@@ -163,14 +159,10 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
   }, [toastOpacity]);
 
   useEffect(() => {
-    console.log('[AIModal] busy state changed', busy);
     if (busy) {
-      console.log('[AIModal] progress -> visible');
       setProgressVisible(true);
     } else {
-      console.log('[AIModal] progress -> hiding with delay');
       const timer = setTimeout(() => {
-        console.log('[AIModal] progress -> hidden');
         setProgressVisible(false);
       }, 400);
       return () => clearTimeout(timer);
@@ -199,11 +191,11 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
     setRunState({ result: null });
     setPlanId(null);
     showToast('info', 'Analyzing planner…', 1400);
-    console.log('[AIModal] executeRun -> loading');
+
     try {
       const started = Date.now();
       const result = await run();
-      console.log('[AIModal] run success', result.changeCount);
+
       const elapsed = Date.now() - started;
       if (elapsed < 450) {
         await new Promise(resolve => setTimeout(resolve, 450 - elapsed));
@@ -224,7 +216,7 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       track('ai_modal_run_complete', { change_count: result.changeCount });
     } catch (err) {
       const message = (err as Error).message || 'Failed to run planner';
-      console.log('[AIModal] run error', message);
+
       setRunState({ result: null, error: message });
       setStatus('error');
       showToast('error', message);
@@ -250,12 +242,11 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       return;
     }
 
-    console.log('[AIModal] handleApply start');
     setStatus('applying');
     try {
       const selectedChanges = runState.result.changes.filter(change => selectedIds.includes(change.id)).map(change => ({ ...change, planId: planId || change.planId }));
       const applyResult = await apply(selectedChanges);
-      console.log('[AIModal] apply result', applyResult);
+
       setAppliedIds(applyResult.ids || selectedChanges.map(change => change.id));
       setStatus('applied');
       showToast('success', `Scheduled ${applyResult.applied} change${applyResult.applied === 1 ? '' : 's'}.`);
@@ -267,7 +258,7 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       setRunState(prev => ({ ...prev, error: message }));
       setStatus('error');
       showToast('error', message);
-      console.log('[AIModal] apply error', message);
+
       track('ai_modal_error', { phase: 'apply', message });
     }
   }, [runState.result, selectedIds, apply, planId, executeRun, visibleChanges.length, onClose, showToast]);
@@ -479,7 +470,7 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
         </Animated.View>
       </View>
       {toast && (
-        <Animated.View pointerEvents="none" style={[styles.toast, { opacity: toastOpacity }] }>
+        <Animated.View style={[styles.toast, { opacity: toastOpacity, pointerEvents: 'none' }] }>
           <Text style={[styles.toastText, toast.type === 'success' && styles.toastSuccess, toast.type === 'error' && styles.toastError]}>{toast.message}</Text>
         </Animated.View>
       )}
@@ -544,13 +535,13 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     color: '#0f172a',
-    fontFamily: Platform.OS === 'web' ? 'Outfit' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Plus Jakarta Sans' : undefined,
   },
   subtitle: {
     marginTop: 4,
     fontSize: 13,
     color: '#6b7280',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   stepperContainer: {
     flexDirection: 'row',
@@ -581,7 +572,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 12,
     color: '#94a3b8',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   stepLabelActive: {
     color: '#2563eb',

@@ -91,7 +91,6 @@ export default function AddChildModal({
         onClose();
       }, 500);
     } catch (err) {
-      console.error('Error adding child:', err);
       setError(err.message || 'Failed to add child. Please try again.');
     } finally {
       setIsSubmitting(false);

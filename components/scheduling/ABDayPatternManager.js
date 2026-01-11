@@ -64,7 +64,6 @@ export default function ABDayPatternManager({ familyId, yearPlanId = null, child
 
       setPatterns(data || []);
     } catch (error) {
-      console.error('Error loading patterns:', error);
       Alert.alert('Error', 'Failed to load A/B day patterns');
     } finally {
       setLoading(false);
@@ -130,11 +129,9 @@ export default function ABDayPatternManager({ familyId, yearPlanId = null, child
             _to: endDate,
           });
         } catch (err) {
-          console.warn('Error refreshing calendar cache:', err);
         }
       }
     } catch (error) {
-      console.error('Error saving pattern:', error);
       Alert.alert('Error', 'Failed to save pattern: ' + error.message);
     }
   };
@@ -192,7 +189,6 @@ export default function ABDayPatternManager({ familyId, yearPlanId = null, child
 
               loadPatterns();
             } catch (error) {
-              console.error('Error deleting pattern:', error);
               Alert.alert('Error', 'Failed to delete pattern');
             }
           },

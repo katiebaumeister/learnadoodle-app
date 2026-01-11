@@ -68,7 +68,6 @@ export default function TemplateGenerationTab({ familyId }) {
         setTemplates(data);
       }
     } catch (err) {
-      console.error('Error loading templates:', err);
     } finally {
       setLoading(false);
     }
@@ -81,7 +80,6 @@ export default function TemplateGenerationTab({ familyId }) {
         setQueue(data);
       }
     } catch (err) {
-      console.error('Error loading queue:', err);
     }
   };
 
@@ -108,7 +106,6 @@ export default function TemplateGenerationTab({ familyId }) {
       );
 
       if (error) {
-        console.error('Error generating template:', error);
         return;
       }
 
@@ -120,7 +117,6 @@ export default function TemplateGenerationTab({ familyId }) {
       await loadTemplates();
       await loadQueue();
     } catch (err) {
-      console.error('Exception generating template:', err);
     } finally {
       setGenerating(false);
     }

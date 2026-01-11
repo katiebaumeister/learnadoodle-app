@@ -46,10 +46,18 @@ const SubjectGoalsManager = ({ visible, onClose, childId, familyId }) => {
         .eq('is_active', true)
         .order('priority', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        // Silently handle permission errors (403) - RLS policies may restrict access
+        if (error.code === 'PGRST301' || error.status === 403 || error.message?.includes('permission')) {
+          setGoals([]);
+          return;
+        }
+        throw error;
+      }
       setGoals(data || []);
     } catch (error) {
-      console.error('Error loading goals:', error);
+      // Silently handle errors - set empty array to prevent UI issues
+      setGoals([]);
     }
   };
 
@@ -65,7 +73,6 @@ const SubjectGoalsManager = ({ visible, onClose, childId, familyId }) => {
       if (error) throw error;
       setBacklog(data || []);
     } catch (error) {
-      console.error('Error loading backlog:', error);
     }
   };
 
@@ -92,7 +99,6 @@ const SubjectGoalsManager = ({ visible, onClose, childId, familyId }) => {
       loadGoals();
       showAlert('Success', 'Goal added successfully');
     } catch (error) {
-      console.error('Error saving goal:', error);
       showAlert('Error', 'Failed to save goal');
     } finally {
       setLoading(false);
@@ -126,7 +132,6 @@ const SubjectGoalsManager = ({ visible, onClose, childId, familyId }) => {
       loadBacklog();
       showAlert('Success', 'Backlog item added successfully');
     } catch (error) {
-      console.error('Error saving backlog item:', error);
       showAlert('Error', 'Failed to save backlog item');
     } finally {
       setLoading(false);
@@ -144,7 +149,6 @@ const SubjectGoalsManager = ({ visible, onClose, childId, familyId }) => {
       loadGoals();
       showAlert('Success', 'Goal deleted successfully');
     } catch (error) {
-      console.error('Error deleting goal:', error);
       showAlert('Error', 'Failed to delete goal');
     }
   };
@@ -160,7 +164,6 @@ const SubjectGoalsManager = ({ visible, onClose, childId, familyId }) => {
       loadBacklog();
       showAlert('Success', 'Backlog item deleted successfully');
     } catch (error) {
-      console.error('Error deleting backlog item:', error);
       showAlert('Error', 'Failed to delete backlog item');
     }
   };

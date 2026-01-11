@@ -1,73 +1,100 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { CheckSquare, Square, Plus, ClipboardList, List } from 'lucide-react';
+import { Plus, ClipboardList, List } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 
-export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGenerateTasks, backlogCount = 0, onAddFromBacklog, onViewPlanner }) {
-  const [completedTasks, setCompletedTasks] = useState(new Set());
+export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGenerateTasks, backlogCount = 0, onAddFromBacklog, onViewPlanner, onTaskClick }) {
 
-  const handleToggle = (taskId) => {
-    setCompletedTasks(prev => {
-      const next = new Set(prev);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
-      return next;
-    });
-    onToggleTask?.(taskId);
+  const handleContainerPress = () => {
+    if (onViewPlanner) {
+      onViewPlanner();
+    }
   };
 
-  const incompleteTasks = tasks.filter(t => !completedTasks.has(t.id));
-  const completedTasksList = tasks.filter(t => completedTasks.has(t.id));
+  const handleTaskPress = (task, e) => {
+    if (e && e.stopPropagation) {
+      e.stopPropagation();
+    }
+    if (onTaskClick) {
+      onTaskClick(task);
+    } else if (onViewPlanner) {
+      onViewPlanner();
+    }
+  };
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          {onViewPlanner ? (
-            <TouchableOpacity
-              onPress={onViewPlanner}
-              activeOpacity={0.7}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+  const content = (
+    <>
+      {onViewPlanner ? (
+        <TouchableOpacity
+          style={styles.header}
+          onPress={(e) => {
+            if (e && e.stopPropagation) {
+              e.stopPropagation();
+            }
+            if (onViewPlanner) {
+              onViewPlanner();
+            }
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>Backlog Tasks</Text>
+          </View>
+          {tasks.length === 0 && (
+            <TouchableOpacity 
+              style={styles.addButton}
+              onPress={(e) => {
+                if (e && e.stopPropagation) {
+                  e.stopPropagation();
+                }
+                if (onAddTask) {
+                  onAddTask();
+                }
+              }}
             >
-              <CheckSquare size={16} color={colors.text} />
-              <Text style={styles.title}>Tasks for today</Text>
+              <Plus size={14} color={colors.text} />
+              <Text style={styles.addButtonText}>Log a task</Text>
             </TouchableOpacity>
-          ) : (
-            <>
-          <CheckSquare size={16} color={colors.text} />
-          <Text style={styles.title}>Tasks for today</Text>
-            </>
+          )}
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>Backlog Tasks</Text>
+          </View>
+          {tasks.length === 0 && (
+            <TouchableOpacity 
+              style={styles.addButton}
+              onPress={onAddTask}
+            >
+              <Plus size={14} color={colors.text} />
+              <Text style={styles.addButtonText}>Log a task</Text>
+            </TouchableOpacity>
           )}
         </View>
-        {tasks.length === 0 && (
-          <TouchableOpacity 
-            style={styles.addButton}
-            onPress={onAddTask}
-          >
-            <Plus size={14} color={colors.text} />
-            <Text style={styles.addButtonText}>Log a task</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      )}
 
       {tasks.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconContainer}>
             <ClipboardList size={24} color={colors.muted} strokeWidth={1.5} />
           </View>
-          <Text style={styles.emptyText}>No tasks scheduled</Text>
+          <Text style={styles.emptyText}>No backlog tasks</Text>
           <Text style={styles.emptyHelperText}>
-            You can quickly seed today with suggestions based on your subjects.
+            Backlog tasks are unscheduled items that need to be planned. Add tasks from your subjects or create new ones.
           </Text>
           <View style={styles.emptyActions}>
             {backlogCount > 0 && onAddFromBacklog && (
               <TouchableOpacity 
                 style={styles.addFromBacklogButton}
-                onPress={onAddFromBacklog}
+                onPress={(e) => {
+                  if (e && e.stopPropagation) {
+                    e.stopPropagation();
+                  }
+                  if (onAddFromBacklog) {
+                    onAddFromBacklog();
+                  }
+                }}
                 activeOpacity={0.7}
               >
                 <List size={14} color={colors.text} />
@@ -78,7 +105,14 @@ export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGene
             )}
           <TouchableOpacity 
             style={styles.generateTasksButton}
-            onPress={onGenerateTasks}
+            onPress={(e) => {
+              if (e && e.stopPropagation) {
+                e.stopPropagation();
+              }
+              if (onGenerateTasks) {
+                onGenerateTasks();
+              }
+            }}
               activeOpacity={0.7}
           >
               <Plus size={14} color={colors.text} />
@@ -88,15 +122,14 @@ export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGene
         </View>
       ) : (
         <View style={styles.tasksList}>
-          {/* Incomplete tasks */}
-          {incompleteTasks.map((task) => (
-            <View key={task.id} style={styles.taskItem}>
-              <TouchableOpacity
-                style={styles.checkbox}
-                onPress={() => handleToggle(task.id)}
-              >
-                <Square size={16} color={colors.border} />
-              </TouchableOpacity>
+          {tasks.map((task) => (
+            <TouchableOpacity
+              key={task.id}
+              style={styles.taskItem}
+              onPress={(e) => handleTaskPress(task, e)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.bullet}>•</Text>
               <View style={styles.taskContent}>
                 <Text style={styles.taskTitle}>{task.title}</Text>
                 {task.description && (
@@ -106,28 +139,28 @@ export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGene
                   <Text style={styles.taskDue}>Due {task.due_time}</Text>
                 )}
               </View>
-            </View>
-          ))}
-
-          {/* Completed tasks (with strikethrough) */}
-          {completedTasksList.map((task) => (
-            <View key={task.id} style={[styles.taskItem, styles.completedTask]}>
-              <TouchableOpacity
-                style={styles.checkbox}
-                onPress={() => handleToggle(task.id)}
-              >
-                <CheckSquare size={16} color={colors.greenBold} />
-              </TouchableOpacity>
-              <View style={styles.taskContent}>
-                <Text style={[styles.taskTitle, styles.completedText]}>{task.title}</Text>
-                {task.description && (
-                  <Text style={[styles.taskDescription, styles.completedText]}>{task.description}</Text>
-                )}
-              </View>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
       )}
+    </>
+  );
+
+  if (onViewPlanner && tasks.length > 0) {
+    return (
+      <TouchableOpacity 
+        style={styles.container}
+        onPress={handleContainerPress}
+        activeOpacity={0.95}
+      >
+        {content}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {content}
     </View>
   );
 }
@@ -158,12 +191,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    flex: 0,
+    flex: 1,
   },
   title: {
     fontSize: 15,
     fontWeight: '600',
     color: colors.text,
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      whiteSpace: 'nowrap',
+    }),
   },
   addButton: {
     flexDirection: 'row',
@@ -180,6 +218,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyState: {
     paddingVertical: 20,
@@ -202,6 +243,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
     marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyHelperText: {
     fontSize: 12,
@@ -210,6 +254,9 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 20,
     lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyActions: {
     gap: 8,
@@ -235,6 +282,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   generateTasksButton: {
     flexDirection: 'row',
@@ -255,15 +305,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   tasksList: {
     gap: 8,
   },
   taskItem: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
+    alignItems: 'center',
+    gap: 4,
     paddingVertical: 4,
+  },
+  bullet: {
+    fontSize: 20,
+    color: colors.text,
+    marginRight: 4,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }),
   },
   completedTask: {
     opacity: 0.6,
@@ -273,12 +337,18 @@ const styles = StyleSheet.create({
   },
   taskContent: {
     flex: 1,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   taskTitle: {
     fontSize: 14,
     fontWeight: '500',
     color: colors.text,
     marginBottom: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   completedText: {
     textDecorationLine: 'line-through',
@@ -288,10 +358,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     marginBottom: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   taskDue: {
     fontSize: 11,
     color: colors.muted,
     fontStyle: 'italic',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

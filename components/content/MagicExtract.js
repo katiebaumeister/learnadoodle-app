@@ -33,7 +33,6 @@ export default function MagicExtract({ uploadId, onExtracted }) {
         Alert.alert('Error', data.error || 'Failed to extract content');
       }
     } catch (error) {
-      console.error('Error extracting:', error);
       Alert.alert('Error', 'Failed to extract content from PDF');
     } finally {
       setLoading(false);

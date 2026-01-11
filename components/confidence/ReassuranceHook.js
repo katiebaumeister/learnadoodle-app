@@ -28,7 +28,6 @@ export default function ReassuranceHook({ childId, context = 'general', onDismis
       if (error) throw error;
       setData(result);
     } catch (error) {
-      console.error('Error loading reassurance message:', error);
       // Don't show error toast - this is a background feature
     } finally {
       setLoading(false);

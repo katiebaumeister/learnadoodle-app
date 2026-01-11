@@ -49,7 +49,6 @@ export default function GenerateTemplateModal({
       
       setAvailableSubjects(subjectsData || []);
     } catch (error) {
-      console.error('Error loading subjects:', error);
     }
   };
 
@@ -87,7 +86,6 @@ export default function GenerateTemplateModal({
       onClose();
       resetForm();
     } catch (error) {
-      console.error('Error generating template:', error);
       toast.push('Failed to generate template: ' + (error.message || 'Unknown error'), 'error');
     } finally {
       setGenerating(false);

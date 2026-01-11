@@ -34,8 +34,7 @@ export default function StateRequirementsToggle({ childId, familyId, stateCode, 
         .maybeSingle();
 
       if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
-        console.error('Error loading settings:', error);
-      }
+}
 
       if (data) {
         setSettings(data);
@@ -45,7 +44,6 @@ export default function StateRequirementsToggle({ childId, familyId, stateCode, 
         setTrackingMethod('hours');
       }
     } catch (error) {
-      console.error('Error loading state attendance settings:', error);
     } finally {
       setLoading(false);
     }
@@ -78,7 +76,6 @@ export default function StateRequirementsToggle({ childId, familyId, stateCode, 
         onSettingsChange(method);
       }
     } catch (error) {
-      console.error('Error saving settings:', error);
       alert('Failed to save settings. Please try again.');
     } finally {
       setSaving(false);

@@ -46,7 +46,6 @@ export default function SyllabusList({ familyId, onSelectSyllabus, selectedChild
       if (error) throw error;
       setSyllabi(data || []);
     } catch (err) {
-      console.error('Error loading syllabi:', err);
       setSyllabi([]);
     } finally {
       setLoading(false);

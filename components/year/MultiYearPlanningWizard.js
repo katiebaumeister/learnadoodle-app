@@ -19,7 +19,6 @@ import { X, ChevronRight, ChevronLeft, Check, Calendar, UserCircle, BookOpen, Ta
 import { colors, shadows } from '../../theme/colors';
 import { createYearPlan, checkFeatureFlags } from '../../lib/services/yearClient';
 import { supabase } from '../../lib/supabase';
-import PlanYearWizard from './PlanYearWizard';
 
 export default function MultiYearPlanningWizard({
   familyId,
@@ -92,7 +91,6 @@ export default function MultiYearPlanningWizard({
         setSelectedChildren(data.map(c => c.id));
       }
     } catch (err) {
-      console.error('[MultiYearPlanningWizard] Error loading children:', err);
       setError(err.message || 'Failed to load children');
     }
   };
@@ -163,7 +161,6 @@ export default function MultiYearPlanningWizard({
         [{ text: 'OK', onPress: onClose }]
       );
     } catch (err) {
-      console.error('[MultiYearPlanningWizard] Error creating plans:', err);
       setError(err.message || 'Failed to create year plans');
       Alert.alert('Error', err.message || 'Failed to create year plans');
     } finally {

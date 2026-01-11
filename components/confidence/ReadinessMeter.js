@@ -22,7 +22,6 @@ export default function ReadinessMeter({ childId, childName }) {
       if (error) throw error;
       setData(result);
     } catch (error) {
-      console.error('Error loading readiness meter:', error);
       toast.push('Failed to load readiness data', 'error');
     } finally {
       setLoading(false);

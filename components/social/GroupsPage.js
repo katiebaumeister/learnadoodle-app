@@ -39,7 +39,6 @@ export default function GroupsPage({ familyId }) {
         setGroups(result.groups || []);
       }
     } catch (err) {
-      console.error('Error loading groups:', err);
     } finally {
       setLoading(false);
     }

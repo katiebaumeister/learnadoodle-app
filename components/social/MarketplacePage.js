@@ -34,7 +34,6 @@ export default function MarketplacePage({ familyId }) {
         setListings(result.listings || []);
       }
     } catch (err) {
-      console.error('Error loading marketplace:', err);
     } finally {
       setLoading(false);
     }

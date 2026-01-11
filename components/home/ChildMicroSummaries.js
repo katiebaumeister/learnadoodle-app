@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2E2E2E',
     marginBottom: 12,
-    fontFamily: Platform.OS === 'web' ? 'Inter, sans-serif' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt, sans-serif' : undefined,
   },
   summariesList: {
     gap: 12,

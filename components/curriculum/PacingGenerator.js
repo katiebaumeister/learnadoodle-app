@@ -37,7 +37,6 @@ export default function PacingGenerator({ syllabusId, startDate, endDate, onComp
         setPacing(data);
       }
     } catch (err) {
-      console.error('Error loading pacing:', err);
       setError(err.message || 'Failed to generate pacing');
     } finally {
       setLoading(false);

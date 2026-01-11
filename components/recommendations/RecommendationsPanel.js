@@ -26,13 +26,11 @@ export default function RecommendationsPanel({ childId, familyId, onRecommendati
       const result = await getRecommendations(childId, filterType);
 
       if (result.error) {
-        console.error('Error loading recommendations:', result.error);
         setRecommendations([]);
       } else {
         setRecommendations(result.data || result || []);
       }
     } catch (error) {
-      console.error('Error loading recommendations:', error);
       setRecommendations([]);
     } finally {
       setLoading(false);
@@ -60,7 +58,6 @@ export default function RecommendationsPanel({ childId, familyId, onRecommendati
         onRecommendationAccepted(recommendationId);
       }
     } catch (error) {
-      console.error('Error accepting recommendation:', error);
       alert('Failed to accept recommendation. Please try again.');
     }
   };
@@ -76,7 +73,6 @@ export default function RecommendationsPanel({ childId, familyId, onRecommendati
       // Reload recommendations
       await loadRecommendations();
     } catch (error) {
-      console.error('Error dismissing recommendation:', error);
       alert('Failed to dismiss recommendation. Please try again.');
     }
   };

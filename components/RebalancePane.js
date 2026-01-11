@@ -66,7 +66,6 @@ export default function RebalancePane({
         toast.push('No changes needed', 'info');
       }
     } catch (err) {
-      console.error('Rebalance error:', err);
       setError(err.message || 'Failed to rebalance schedule');
       setLoading(false);
       toast.push('Rebalance failed', 'error');
@@ -82,7 +81,6 @@ export default function RebalancePane({
       setAppliedCount((prev) => prev + 1);
       toast.push('Applied to calendar', 'success');
     } catch (err) {
-      console.error('Accept error:', err);
       toast.push('Failed to apply', 'error');
     }
   }, [onAcceptSuggestion, acceptedIds, toast]);
@@ -102,7 +100,6 @@ export default function RebalancePane({
             successCount++;
           }
         } catch (err) {
-          console.error('Error accepting suggestion:', err);
         }
       }
       
@@ -117,7 +114,6 @@ export default function RebalancePane({
         toast.push('All changes already applied', 'info');
       }
     } catch (err) {
-      console.error('Accept all error:', err);
       toast.push('Failed to apply some changes', 'error');
     }
   }, [onAcceptSuggestion, suggestions, acceptedIds, toast]);

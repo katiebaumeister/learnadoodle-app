@@ -43,7 +43,6 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
         .limit(100);
 
       if (error) {
-        console.error('[PortfolioTab] Error loading uploads:', error);
         if (!shouldSuppressError(error) && error.code !== 'PGRST116') throw error;
       }
 
@@ -84,6 +83,22 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
         });
       }
 
+      // Helper to validate if URL is valid (not just a UUID)
+      const isValidUrl = (url) => {
+        if (!url || typeof url !== 'string') return false;
+        const trimmed = url.trim();
+        if (!trimmed) return false;
+        
+        // Check if it's just a UUID (invalid URL format)
+        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidPattern.test(trimmed)) {
+          return false; // It's just a UUID, not a valid URL
+        }
+        
+        // Valid URLs must start with http://, https://, or data:
+        return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:');
+      };
+
       const formattedItems = uploads.map(upload => {
         const filename = upload.filename || (upload.storage_path ? upload.storage_path.split('/').pop() : '');
         const fileExt = filename?.split('.').pop()?.toLowerCase() || '';
@@ -98,14 +113,18 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
           type = 'Video';
         }
 
+        // Only use upload.url if it's a valid URL (not a UUID)
+        const validUrl = upload.url && isValidUrl(upload.url) ? upload.url : null;
+
         return {
           id: upload.id,
           type,
           subject: upload.subject_id ? (subjectLookup[upload.subject_id] || 'Unassigned') : 'Unassigned',
           title: upload.auto_caption || upload.caption || upload.title || filename || 'Untitled',
           date: new Date(upload.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-          thumbnailUrl: type === 'Photo' ? upload.url : null,
-          url: upload.url,
+          thumbnailUrl: type === 'Photo' ? validUrl : null,
+          url: validUrl,
+          storage_path: upload.storage_path, // Include storage_path for creating signed URLs if needed
           isVoiceNote: upload.is_voice_note,
           voiceDuration: upload.voice_duration_seconds,
           autoTags: upload.auto_tags || [],
@@ -115,7 +134,6 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
 
       setItems(formattedItems);
     } catch (error) {
-      console.error('Error fetching portfolio items:', error);
       setItems([]);
     } finally {
       setLoading(false);
@@ -131,7 +149,6 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
       
       setStandards(data || []);
     } catch (error) {
-      console.error('Error loading standards:', error);
     }
   };
 
@@ -164,7 +181,6 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
       setSelectedStandards([]);
       Alert.alert('Success', 'Standards linked successfully');
     } catch (error) {
-      console.error('Error linking standards:', error);
       Alert.alert('Error', 'Failed to link standards');
     }
   };
@@ -202,7 +218,6 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
               // In a real implementation, this would trigger a background job
               // For now, we'll just mark it as processing
             } catch (error) {
-              console.error('Error creating export:', error);
               Alert.alert('Error', 'Failed to start export');
             }
           },
@@ -226,7 +241,16 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
     return (
       <View key={item.id} style={styles.itemCard}>
         {item.thumbnailUrl ? (
-          <Image source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} />
+          <Image 
+            source={{ uri: item.thumbnailUrl }} 
+            style={styles.thumbnail}
+            onError={(e) => {
+              // Suppress 404 errors for missing images - they're harmless
+              if (Platform.OS === 'web' && e.nativeEvent) {
+                e.preventDefault?.();
+              }
+            }}
+          />
         ) : item.isVoiceNote ? (
           <View style={[styles.thumbnail, styles.voiceThumbnail]}>
             <Mic size={32} color={colors.text} />
@@ -320,8 +344,7 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
             style={styles.addButton}
             onPress={() => {
               // TODO: Open upload modal
-              console.log('Upload work clicked');
-            }}
+}}
           >
             <Plus size={14} color={colors.card} />
             <Text style={styles.addButtonText}>Upload</Text>

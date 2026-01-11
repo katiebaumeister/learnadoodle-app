@@ -48,7 +48,6 @@ export default function ExternalLinksManager({ familyId, childId, subjectId, onL
       if (error) throw error;
       setLinks(data || []);
     } catch (error) {
-      console.error('Error loading links:', error);
     } finally {
       setLoading(false);
     }
@@ -88,7 +87,6 @@ export default function ExternalLinksManager({ familyId, childId, subjectId, onL
 
       Alert.alert('Success', 'Link added successfully');
     } catch (error) {
-      console.error('Error adding link:', error);
       Alert.alert('Error', 'Failed to add link');
     }
   };
@@ -102,7 +100,6 @@ export default function ExternalLinksManager({ familyId, childId, subjectId, onL
 
       await loadLinks();
     } catch (error) {
-      console.error('Error deleting link:', error);
       Alert.alert('Error', 'Failed to delete link');
     }
   };

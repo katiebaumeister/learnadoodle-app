@@ -69,7 +69,6 @@ export default function CreateLessonTemplateModal({
       
       setAvailableSubjects(subjectsData || []);
     } catch (error) {
-      console.error('Error loading subjects:', error);
     }
   };
 
@@ -124,7 +123,6 @@ export default function CreateLessonTemplateModal({
       onSuccess?.();
       onClose();
     } catch (error) {
-      console.error('Error creating template:', error);
       toast.push('Failed to create template', 'error');
     } finally {
       setLoading(false);

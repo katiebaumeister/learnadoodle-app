@@ -79,7 +79,6 @@ const RulesHeatmap = ({ familyId, selectedChildId, selectedScope, style }) => {
 
       setHeatmapData(formattedData);
     } catch (error) {
-      console.error('Error loading heatmap data:', error);
     } finally {
       setLoading(false);
     }

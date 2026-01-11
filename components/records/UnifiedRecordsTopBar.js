@@ -4,7 +4,7 @@
  */
 import React, { useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
-import { Upload, FileText, Download, X, Calendar, Shield, GraduationCap, Clock, BookOpen, StickyNote, BookTemplate, Folder, History } from 'lucide-react';
+import { X, Shield, GraduationCap, Clock, BookOpen, StickyNote, BookTemplate, Folder, History, FileText } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import TabBar from '../ui/TabBar';
 
@@ -36,8 +36,6 @@ export default function UnifiedRecordsTopBar({
   onExportCompliancePacket,
   complianceStatus,
 }) {
-  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
-
   // Handle child toggle
   const handleChildToggle = (childId) => {
     if (selectedChildren === 'all') {
@@ -52,35 +50,6 @@ export default function UnifiedRecordsTopBar({
     }
   };
 
-  // Calculate date range for timeframe options
-  const getDateRangeForTimeframe = (tf) => {
-    const today = new Date();
-    const start = new Date(today);
-    
-    switch (tf) {
-      case 'thisYear':
-        start.setMonth(0);
-        start.setDate(1);
-        return { start, end: today };
-      case 'last90Days':
-        start.setDate(start.getDate() - 90);
-        return { start, end: today };
-      case 'custom':
-        return dateRange || { start, end: today };
-      default:
-        return { start, end: today };
-    }
-  };
-
-  const handleTimeframeSelect = (tf) => {
-    if (tf === 'custom') {
-      setShowCustomDatePicker(true);
-    } else {
-      const range = getDateRangeForTimeframe(tf);
-      onTimeframeChange(tf);
-      onDateRangeChange(range);
-    }
-  };
 
   // Calculate compliance tasks remaining
   const complianceTasksRemaining = useMemo(() => {
@@ -135,32 +104,6 @@ export default function UnifiedRecordsTopBar({
           </ScrollView>
         </View>
 
-        {/* Timeframe Selector */}
-        <View style={styles.timeframeSelector}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-            {[
-              { value: 'thisYear', label: 'This Year' },
-              { value: 'last90Days', label: 'Last 90 Days' },
-              { value: 'custom', label: 'Custom' },
-            ].map(option => (
-              <TouchableOpacity
-                key={option.value}
-                style={[
-                  styles.chip,
-                  timeframe === option.value && styles.chipActive
-                ]}
-                onPress={() => handleTimeframeSelect(option.value)}
-              >
-                <Text style={[
-                  styles.chipText,
-                  timeframe === option.value && styles.chipTextActive
-                ]}>
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
 
         {/* State Indicator */}
         {complianceTasksRemaining > 0 && (
@@ -173,45 +116,10 @@ export default function UnifiedRecordsTopBar({
         )}
       </View>
 
-      {/* Custom Date Picker (shown when Custom is selected) */}
-      {showCustomDatePicker && Platform.OS === 'web' && (
-        <View style={styles.datePickerRow}>
-          <View style={styles.dateInputGroup}>
-            <Text style={styles.dateLabel}>Start:</Text>
-            <input
-              type="date"
-              value={dateRange?.start ? dateRange.start.toISOString().split('T')[0] : ''}
-              onChange={(e) => {
-                const start = new Date(e.target.value);
-                onDateRangeChange({ ...dateRange, start });
-              }}
-              style={styles.dateInput}
-            />
-          </View>
-          <View style={styles.dateInputGroup}>
-            <Text style={styles.dateLabel}>End:</Text>
-            <input
-              type="date"
-              value={dateRange?.end ? dateRange.end.toISOString().split('T')[0] : ''}
-              onChange={(e) => {
-                const end = new Date(e.target.value);
-                onDateRangeChange({ ...dateRange, end });
-              }}
-              style={styles.dateInput}
-            />
-          </View>
-          <TouchableOpacity
-            style={styles.closeDatePicker}
-            onPress={() => setShowCustomDatePicker(false)}
-          >
-            <X size={16} color={colors.text} />
-          </TouchableOpacity>
-        </View>
-      )}
 
-      {/* Row 2: Actions + Tabs */}
+      {/* Row 2: Tabs */}
       <View style={styles.actionsRow}>
-        {/* Tabs (Left) */}
+        {/* Tabs */}
         <View style={styles.tabsContainer}>
           <TabBar
             tabs={TABS.map(tab => ({
@@ -224,43 +132,6 @@ export default function UnifiedRecordsTopBar({
             containerStyle={styles.tabBarContainer}
           />
         </View>
-
-        {/* Action Buttons (Right) */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.actionButtons}
-          contentContainerStyle={styles.actionButtonsContent}
-        >
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={onAddNote}
-          >
-            <StickyNote size={16} color={colors.indigo} />
-            <Text style={styles.actionButtonText}>Add note</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={onUploadEvidence}
-          >
-            <Upload size={16} color={colors.indigo} />
-            <Text style={styles.actionButtonText}>Upload evidence</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={onExportTranscript}
-          >
-            <FileText size={16} color={colors.indigo} />
-            <Text style={styles.actionButtonText}>Export transcript</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={onExportCompliancePacket}
-          >
-            <Download size={16} color={colors.indigo} />
-            <Text style={styles.actionButtonText}>Export compliance packet</Text>
-          </TouchableOpacity>
-        </ScrollView>
       </View>
     </View>
   );
@@ -282,10 +153,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   childSelector: {
-    flex: 1,
-    minWidth: 200,
-  },
-  timeframeSelector: {
     flex: 1,
     minWidth: 200,
   },
@@ -326,45 +193,14 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '500',
   },
-  datePickerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: colors.panel,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  dateInputGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  dateLabel: {
-    fontSize: 12,
-    color: colors.text,
-    marginRight: 8,
-  },
-  dateInput: {
-    padding: 4,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-    fontSize: 12,
-  },
-  closeDatePicker: {
-    padding: 4,
-  },
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    gap: 16,
   },
   tabsContainer: {
     flex: 1,
@@ -373,38 +209,6 @@ const styles = StyleSheet.create({
   tabBarContainer: {
     borderBottomWidth: 0, // TabBar already has border
     backgroundColor: 'transparent', // Inherit from parent
-  },
-  actionButtons: {
-    flexShrink: 0,
-    maxWidth: 600,
-  },
-  actionButtonsContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    minWidth: 140,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  actionButtonText: {
-    fontSize: 13,
-    color: colors.indigo,
-    fontWeight: '600',
   },
 });
 

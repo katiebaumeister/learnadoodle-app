@@ -44,7 +44,6 @@ export default function BehaviorAnalytics({ childId, daysBack = 30 }) {
       if (error) throw error;
       setTrends(data || []);
     } catch (error) {
-      console.error('Error loading behavior trends:', error);
       setTrends([]);
     } finally {
       setLoading(false);

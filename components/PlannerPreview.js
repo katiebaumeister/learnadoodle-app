@@ -63,7 +63,6 @@ const PlannerPreview = ({ visible, onClose, childId, familyId, children }) => {
       setProposal(result);
       setSelectedEvents(new Set(result.events.map(event => event.id)));
     } catch (error) {
-      console.error('Error generating proposal:', error);
       showAlert('Error', 'Failed to generate scheduling proposal');
     } finally {
       setLoading(false);
@@ -99,7 +98,6 @@ const PlannerPreview = ({ visible, onClose, childId, familyId, children }) => {
       setSelectedEvents(new Set());
       onClose();
     } catch (error) {
-      console.error('Error committing proposal:', error);
       showAlert('Error', 'Failed to commit events');
     } finally {
       setCommitting(false);

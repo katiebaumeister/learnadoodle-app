@@ -123,10 +123,25 @@ async def complete_event(
         # Extract day_date from start_ts (date only)
         day_date = start_ts.date().isoformat()
         
+        # Determine child_id: prefer first child from child_ids array, fallback to child_id
+        child_id = None
+        if event.get("child_ids") and len(event.get("child_ids", [])) > 0:
+            # Use first child from child_ids array
+            child_id = event["child_ids"][0]
+        elif event.get("child_id"):
+            # Use single child_id
+            child_id = event["child_id"]
+        
+        if not child_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Event must have at least one child assigned (child_id or child_ids)"
+            )
+        
         # Upsert attendance record
         attendance_data = {
             "family_id": family_id,
-            "child_id": event["child_id"],
+            "child_id": child_id,
             "event_id": event_id,
             "day_date": day_date,
             "minutes": minutes,

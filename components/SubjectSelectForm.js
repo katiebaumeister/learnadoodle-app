@@ -100,7 +100,6 @@ export default function SubjectSelectForm({ child, onClose, onSaved }) {
         Alert.alert('No AI picks', 'AI did not return a recognizable list.');
       }
     } catch (e) {
-      console.error('AI suggest subjects failed:', e);
       Alert.alert('AI error', e.message || 'Failed to get AI suggestions');
     } finally {
       setAiLoading(false);
@@ -154,7 +153,6 @@ export default function SubjectSelectForm({ child, onClose, onSaved }) {
       onSaved && onSaved(rows);
       onClose && onClose();
     } catch (e) {
-      console.error('Save subjects failed:', e);
       Alert.alert('Error', e.message || 'Failed to save subjects');
     } finally {
       setSaving(false);
@@ -247,5 +245,4 @@ const styles = StyleSheet.create({
   btnOutline: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ccc' },
   btnTextOutline: { color: '#333' },
 });
-
 

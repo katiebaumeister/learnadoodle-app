@@ -85,25 +85,49 @@ export default function GeistSidebar({
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'intelligence', label: 'Intelligence', icon: Brain },
         { key: 'materials', label: 'Library', icon: BookOpen },
-        { key: 'profile', label: 'Profile', icon: UserCircle },
-        { key: 'records', label: 'Records', icon: FileText },
-        { key: 'explore', label: 'Explore', icon: Compass },
+        { key: 'profile', label: 'Family', icon: UserCircle },
+        // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
+        // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
       ];
 
       if (userRole === 'child') {
         return allItems.filter(item => item.key === 'home');
       } else if (userRole === 'tutor') {
-        return allItems.filter(item => item.key !== 'records');
+        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       } else {
-        return allItems;
+        // Parents see everything except archived items
+        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       }
     },
     [userRole]
   );
 
+  // Helper to validate if avatar_url is a valid URL (not just a UUID)
+  const isValidAvatarUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    // Check if it's a valid URL (starts with http/https/data) or is a known avatar key
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // If it's just a UUID without http/https, it's invalid
+    if (uuidPattern.test(url.trim())) return false;
+    // Valid if it starts with http/https/data or is a known avatar key
+    return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || 
+           Object.keys(avatarSources).includes(url.toLowerCase().replace(/\.(png|jpg|jpeg|webp|gif)$/i, ''));
+  };
+
   const renderChildAvatar = (child) => {
-    if (child.avatar_url) {
-      return <Image source={{ uri: child.avatar_url }} style={styles.childAvatar} />;
+    if (child.avatar_url && isValidAvatarUrl(child.avatar_url)) {
+      return (
+        <Image 
+          source={{ uri: child.avatar_url }} 
+          style={styles.childAvatar}
+          onError={(e) => {
+            // Suppress 404 errors for missing avatars - they're harmless
+            if (Platform.OS === 'web' && e.nativeEvent) {
+              e.preventDefault?.();
+            }
+          }}
+        />
+      );
     }
     const source = resolveAvatarSource(child.avatar);
     return <Image source={source} style={styles.childAvatar} />;
@@ -120,13 +144,22 @@ export default function GeistSidebar({
     setExpandedChildren(newExpanded);
   };
 
-  const sidebarStyles = {
+  const sidebarStyles = Platform.OS === 'web' ? {
+    // On web, let CSS glass class handle background
+    borderRightColor: 'var(--stroke)',
+  } : {
     backgroundColor: tokens.bg,
     borderRightColor: tokens.border,
   };
 
+  // Apply glass class on web
+  const containerClassName = Platform.OS === 'web' ? 'glass sidebarWash' : undefined;
+
   return (
-    <View style={[styles.container, sidebarStyles]}>
+    <View 
+      style={[styles.container, sidebarStyles]}
+      {...(Platform.OS === 'web' && containerClassName ? { className: containerClassName } : {})}
+    >
       <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}

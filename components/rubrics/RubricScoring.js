@@ -102,7 +102,6 @@ export default function RubricScoring({ assignment, rubric, onSave, onCancel }) 
         });
       }
     } catch (error) {
-      console.error('Error saving rubric scores:', error);
       alert('Failed to save rubric scores. Please try again.');
     } finally {
       setLoading(false);

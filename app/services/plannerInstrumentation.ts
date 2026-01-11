@@ -41,7 +41,6 @@ export async function logPlannerAction(
     // Get current user
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      console.warn('[plannerInstrumentation] No user found, skipping action log');
       return false;
     }
 
@@ -53,7 +52,6 @@ export async function logPlannerAction(
       .maybeSingle();
 
     if (!profile?.family_id) {
-      console.warn('[plannerInstrumentation] No family_id found, skipping action log');
       return false;
     }
 
@@ -78,13 +76,12 @@ export async function logPlannerAction(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[plannerInstrumentation] Failed to log action:', errorText);
+
       return false;
     }
 
     return true;
   } catch (error) {
-    console.error('[plannerInstrumentation] Error logging action:', error);
     return false;
   }
 }
@@ -107,7 +104,7 @@ export function logDragDrop(
     from_time: fromTime,
     to_time: toTime,
     child_id: childId,
-  }).catch(err => console.error('Error logging drag-drop:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -124,7 +121,7 @@ export function logAddEvent(
     date,
     child_id: childId,
     subject_id: subjectId,
-  }).catch(err => console.error('Error logging add event:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -139,7 +136,7 @@ export function logDeleteEvent(
     event_id: eventId,
     date,
     child_id: childId,
-  }).catch(err => console.error('Error logging delete event:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -148,7 +145,7 @@ export function logDeleteEvent(
 export function logUndoReschedule(eventIds?: string[]): void {
   logPlannerAction('undo_reschedule', {
     event_ids: eventIds,
-  }).catch(err => console.error('Error logging undo reschedule:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -161,7 +158,7 @@ export function logApplyReschedule(
   logPlannerAction('apply_reschedule', {
     event_ids: eventIds,
     diff_count: diffCount,
-  }).catch(err => console.error('Error logging apply reschedule:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -176,7 +173,7 @@ export function logOverrideCreated(
     date,
     adjustment_type: overrideKind,
     child_id: childId,
-  }).catch(err => console.error('Error logging override created:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -193,7 +190,7 @@ export function logBlackoutCreated(
     end_date: endDate,
     reason,
     child_id: childId,
-  }).catch(err => console.error('Error logging blackout created:', err));
+  }).catch(() => {})
 }
 
 /**
@@ -210,6 +207,6 @@ export function logScheduleAdjusted(
     start_date: startDate,
     end_date: endDate,
     child_id: childId,
-  }).catch(err => console.error('Error logging schedule adjusted:', err));
+  }).catch(() => {})
 }
 

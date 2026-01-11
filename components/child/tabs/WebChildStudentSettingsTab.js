@@ -45,7 +45,6 @@ export default function WebChildStudentSettingsTab({ childId, childName, familyI
       const docs = await getDocuments(childId);
       setDocuments(docs || []);
     } catch (error) {
-      console.error('Error loading documents:', error);
       setDocuments([]);
     } finally {
       setLoading(false);
@@ -79,7 +78,6 @@ export default function WebChildStudentSettingsTab({ childId, childName, familyI
       });
       loadDocuments();
     } catch (error) {
-      console.error('Error adding document:', error);
       alert('Failed to add document. Please try again.');
     }
   };
@@ -93,7 +91,6 @@ export default function WebChildStudentSettingsTab({ childId, childName, familyI
       await deleteDocument(documentId);
       loadDocuments();
     } catch (error) {
-      console.error('Error deleting document:', error);
       alert('Failed to delete document. Please try again.');
     }
   };
@@ -114,7 +111,6 @@ export default function WebChildStudentSettingsTab({ childId, childName, familyI
         alert(`Profile exported successfully as ${format.toUpperCase()}`);
       }
     } catch (error) {
-      console.error('Error exporting profile:', error);
       alert('Failed to export profile. Please try again.');
     } finally {
       setExporting(false);

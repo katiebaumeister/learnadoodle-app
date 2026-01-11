@@ -13,7 +13,6 @@ export default function ProfilePanel({ user }) {
         if (error) throw error;
         setProfile(data);
       } catch (error) {
-        console.error('Error loading profile:', error);
       } finally {
         setLoading(false);
       }

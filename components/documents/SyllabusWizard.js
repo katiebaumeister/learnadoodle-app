@@ -162,7 +162,6 @@ export default function SyllabusWizard({
 
       onClose();
     } catch (error) {
-      console.error('Error saving syllabus:', error);
       alert('Failed to save syllabus. Please try again.');
     } finally {
       setSaving(false);

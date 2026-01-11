@@ -37,7 +37,6 @@ export default function MasteryCharts({ childId, subjectId = null, daysBack = 36
       
       setChartsData(data);
     } catch (err) {
-      console.error('Error loading mastery charts:', err);
       setError(err.message || 'Failed to load mastery charts');
     } finally {
       setLoading(false);

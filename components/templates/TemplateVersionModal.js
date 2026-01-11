@@ -33,7 +33,6 @@ export default function TemplateVersionModal({
       if (error) throw error;
       setVersions(data || []);
     } catch (error) {
-      console.error('Error loading versions:', error);
       toast.push('Failed to load template versions', 'error');
     } finally {
       setLoading(false);
@@ -61,7 +60,6 @@ export default function TemplateVersionModal({
       await loadVersions();
       onVersionCreated?.(data);
     } catch (error) {
-      console.error('Error creating version:', error);
       toast.push('Failed to create version', 'error');
     } finally {
       setCreatingVersion(false);

@@ -99,12 +99,12 @@ async def create_note(
         if not result.data:
             raise HTTPException(status_code=500, detail="Failed to create note")
 
-        log_event("note_created", {
-            "note_id": result.data[0]["id"],
-            "child_id": input.child_id,
-            "family_id": input.family_id,
-            "type": input.type
-        })
+        log_event("note_created", 
+            note_id=result.data[0]["id"],
+            child_id=input.child_id,
+            family_id=input.family_id,
+            type=input.type
+        )
 
         return NoteOut(**result.data[0])
 
@@ -217,10 +217,10 @@ async def update_note(
         if not result.data:
             raise HTTPException(status_code=500, detail="Failed to update note")
 
-        log_event("note_updated", {
-            "note_id": note_id,
-            "family_id": user_family_id
-        })
+        log_event("note_updated",
+            note_id=note_id,
+            family_id=user_family_id
+        )
 
         return NoteOut(**result.data)
 
@@ -253,10 +253,10 @@ async def delete_note(
         # Delete note
         supabase.table("notes").delete().eq("id", note_id).execute()
 
-        log_event("note_deleted", {
-            "note_id": note_id,
-            "family_id": user_family_id
-        })
+        log_event("note_deleted",
+            note_id=note_id,
+            family_id=user_family_id
+        )
 
         return {"success": True, "message": "Note deleted successfully"}
 

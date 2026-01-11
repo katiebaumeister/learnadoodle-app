@@ -71,7 +71,6 @@ export default function RecommendationsPanel({ childId, familyId }) {
       const recs = await getRecommendations(childId, status);
       setRecommendations(recs || []);
     } catch (error) {
-      console.error('Error loading recommendations:', error);
       toast.push('Failed to load recommendations', 'error');
     } finally {
       setLoading(false);
@@ -89,7 +88,6 @@ export default function RecommendationsPanel({ childId, familyId }) {
         loadRecommendations();
       }
     } catch (error) {
-      console.error('Error generating recommendations:', error);
       toast.push('Failed to generate recommendations', 'error');
     } finally {
       setGenerating(false);
@@ -114,7 +112,6 @@ export default function RecommendationsPanel({ childId, familyId }) {
         });
       }, 300);
     } catch (error) {
-      console.error('Error updating recommendation:', error);
       toast.push('Failed to update recommendation', 'error');
       setAnimatingCards(prev => {
         const next = new Set(prev);

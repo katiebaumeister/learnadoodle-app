@@ -32,7 +32,6 @@ export default function StudentStreakNotification({ childId, childName, onDismis
         setVisible(false);
       }
     } catch (error) {
-      console.error('Error loading streak data:', error);
       setVisible(false);
     }
   };

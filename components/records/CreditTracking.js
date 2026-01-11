@@ -99,7 +99,6 @@ export default function CreditTracking({ childId, familyId, dateRange }) {
         setGpa(parseFloat(gpaResult.data));
       }
     } catch (error) {
-      console.error('Error loading credits data:', error);
     } finally {
       setLoading(false);
     }

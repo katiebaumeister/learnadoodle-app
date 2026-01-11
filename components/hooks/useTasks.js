@@ -13,7 +13,6 @@ export const useTasks = () => {
         const parsedTasks = JSON.parse(saved);
         setTasks(parsedTasks);
       } catch (error) {
-        console.error('Failed to parse tasks:', error);
         // Fallback to sample data
         setTasks(sampleData.tasks);
       }

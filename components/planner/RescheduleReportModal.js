@@ -19,7 +19,6 @@ export default function RescheduleReportModal({
       await onApply?.();
       onClose();
     } catch (error) {
-      console.error('Error applying proposals:', error);
       alert('Failed to apply changes');
     } finally {
       setApplying(false);

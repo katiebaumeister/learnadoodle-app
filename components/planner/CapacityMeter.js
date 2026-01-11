@@ -37,7 +37,6 @@ export default function CapacityMeter({
         setCapacity(data[0]);
       }
     } catch (error) {
-      console.error('Error loading capacity:', error);
     } finally {
       setLoading(false);
     }

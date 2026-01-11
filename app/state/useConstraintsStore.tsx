@@ -47,7 +47,6 @@ export function ConstraintsProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch (err) {
-        console.error('Error fetching family_id:', err);
       }
     }
 
@@ -200,8 +199,7 @@ export function ConstraintsProvider({ children }: { children: ReactNode }) {
       setWeekConstraintsState(constraints);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch constraints');
-      console.error('Error fetching constraints:', err);
-    } finally {
+} finally {
       setLoading(false);
     }
   }, []);

@@ -73,7 +73,6 @@ export default function PortfolioEvidenceTab({
         .limit(200);
       setStandards(data || []);
     } catch (error) {
-      console.error('Error loading standards:', error);
     }
   };
 
@@ -89,7 +88,6 @@ export default function PortfolioEvidenceTab({
         setSubjects(data);
       }
     } catch (error) {
-      console.error('Error loading subjects:', error);
     }
   };
 
@@ -125,15 +123,12 @@ export default function PortfolioEvidenceTab({
           if (error) {
             // Handle permission errors gracefully
             if (error.code === '42501' || error.code === 'PGRST301' || error.code === '403') {
-              console.warn('Permission denied for portfolio_evidence_links - continuing without links');
             } else {
-              console.warn('Error loading evidence links:', error);
             }
           } else {
             links = data || [];
           }
         } catch (err) {
-          console.warn('Exception loading evidence links:', err);
         }
       }
 
@@ -176,7 +171,6 @@ export default function PortfolioEvidenceTab({
       
       setEvidence(mapped);
     } catch (error) {
-      console.error('Error loading evidence:', error);
       setEvidence([]);
     } finally {
       setLoading(false);
@@ -485,7 +479,6 @@ export default function PortfolioEvidenceTab({
                         if (error) throw error;
                         Alert.alert('Export Started', 'Your portfolio export is being prepared.');
                       } catch (error) {
-                        console.error('Error creating export:', error);
                         Alert.alert('Error', 'Failed to start export');
                       }
                     },
@@ -755,7 +748,6 @@ export default function PortfolioEvidenceTab({
                       .eq('link_type', 'standard');
 
                     if (deleteError && deleteError.code !== '42501' && deleteError.code !== 'PGRST301') {
-                      console.warn('Error deleting existing links:', deleteError);
                     }
 
                     // Add new links
@@ -774,7 +766,6 @@ export default function PortfolioEvidenceTab({
                       if (insertError.code === '42501' || insertError.code === 'PGRST301' || insertError.code === '403') {
                         Alert.alert('Permission Denied', 'You do not have permission to link standards. This feature may require additional setup.');
                       } else {
-                        console.error('Error linking standards:', insertError);
                         Alert.alert('Error', 'Failed to link standards: ' + (insertError.message || 'Unknown error'));
                       }
                       return;
@@ -786,7 +777,6 @@ export default function PortfolioEvidenceTab({
                     setSelectedStandards([]);
                     Alert.alert('Success', 'Standards linked successfully');
                   } catch (error) {
-                    console.error('Exception linking standards:', error);
                     Alert.alert('Error', 'Failed to link standards: ' + (error.message || 'Unknown error'));
                   }
                 }}

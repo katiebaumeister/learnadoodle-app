@@ -30,6 +30,40 @@ except ImportError:
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
+# Helper function to validate and clean avatar URLs
+# Filters out UUIDs that aren't valid URLs to prevent 404 errors
+def validate_avatar_url(url: Optional[str]) -> Optional[str]:
+    """
+    Validates an avatar URL and returns None if it's invalid (e.g., just a UUID).
+    Valid URLs must start with http://, https://, or data:.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    
+    url = url.strip()
+    if not url:
+        return None
+    
+    # Check if it's just a UUID (invalid URL format)
+    import re
+    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+    if uuid_pattern.match(url):
+        # It's just a UUID, not a valid URL - return None
+        return None
+    
+    # Valid URLs must start with http://, https://, or data:
+    if url.startswith('http://') or url.startswith('https://') or url.startswith('data:'):
+        return url
+    
+    # If it's a known avatar key (like "prof1"), it's valid
+    # These will be handled by the frontend's avatar source mapping
+    known_avatar_keys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10']
+    if url.lower() in known_avatar_keys:
+        return url
+    
+    # Otherwise, it's not a valid URL
+    return None
+
 
 @router.get("/health")
 async def onboarding_health():
@@ -265,6 +299,10 @@ async def add_child(
         except Exception:
             pass  # Support profile is optional
         
+        # Get and validate avatar_url
+        raw_avatar_url = child_data.get("avatar_url") or child_data.get("avatar")
+        validated_avatar_url = validate_avatar_url(raw_avatar_url)
+        
         # Return child data in expected format (API spec format)
         result = {
             "id": child_id,
@@ -275,7 +313,7 @@ async def add_child(
             "grade_label": child_data.get("grade_label") or child_data.get("grade"),  # Map grade to grade_label
             "follow_standards": child_data.get("follow_standards", bool(child_data.get("standards"))),
             "standards_state": child_data.get("standards_state") or child_data.get("standards"),  # Map standards to standards_state
-            "avatar_url": child_data.get("avatar_url") or child_data.get("avatar"),  # Map avatar to avatar_url
+            "avatar_url": validated_avatar_url,  # Use validated URL (None if invalid)
             "interests": child_data.get("interests", []) if isinstance(child_data.get("interests"), list) else (child_data.get("interests", "").split(",") if child_data.get("interests") else []),
             "learning_styles": child_data.get("learning_styles", []) if isinstance(child_data.get("learning_styles"), list) else ([child_data.get("learning_style")] if child_data.get("learning_style") else []),
             "created_at": child_data.get("created_at"),
@@ -357,6 +395,10 @@ async def get_children(
             if not isinstance(learning_styles, list):
                 learning_styles = [child.get("learning_style")] if child.get("learning_style") else []
             
+            # Get and validate avatar_url
+            raw_avatar_url = child.get("avatar_url") or child.get("avatar")
+            validated_avatar_url = validate_avatar_url(raw_avatar_url)
+            
             children.append({
                 "id": child["id"],
                 "family_id": child.get("family_id"),
@@ -366,7 +408,7 @@ async def get_children(
                 "grade_label": child.get("grade_label") or child.get("grade"),  # Map grade to grade_label
                 "follow_standards": child.get("follow_standards", bool(child.get("standards"))),
                 "standards_state": child.get("standards_state") or child.get("standards"),  # Map standards to standards_state
-                "avatar_url": child.get("avatar_url") or child.get("avatar"),  # Map avatar to avatar_url
+                "avatar_url": validated_avatar_url,  # Use validated URL (None if invalid)
                 "interests": interests,
                 "learning_styles": learning_styles,
                 "created_at": child.get("created_at"),

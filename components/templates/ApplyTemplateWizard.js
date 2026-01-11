@@ -61,7 +61,6 @@ export default function ApplyTemplateWizard({
       
       onClose();
     } catch (error) {
-      console.error('Error applying template:', error);
       toast.push('Failed to apply template', 'error');
     } finally {
       setLoading(false);

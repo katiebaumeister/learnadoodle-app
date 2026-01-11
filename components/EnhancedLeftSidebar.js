@@ -27,7 +27,6 @@ function useLocalStorageState(key, initialValue) {
       const item = window.localStorage.getItem(key);
       return item ? JSON.parse(item) : initialValue;
     } catch (error) {
-      console.warn(`Error reading localStorage key "${key}":`, error);
       return initialValue;
     }
   });
@@ -37,7 +36,6 @@ function useLocalStorageState(key, initialValue) {
     try {
       window.localStorage.setItem(key, JSON.stringify(value));
     } catch (error) {
-      console.warn(`Error setting localStorage key "${key}":`, error);
     }
   }, [key, value]);
 
@@ -656,11 +654,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
+    borderRadius: 12,
     marginBottom: 4,
   },
   newButtonText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '500',
     color: colors.text,
     marginLeft: 10,

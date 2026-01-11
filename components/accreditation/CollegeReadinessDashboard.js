@@ -49,7 +49,6 @@ export default function CollegeReadinessDashboard({ childId }) {
         });
       }
     } catch (err) {
-      console.error('Error loading college readiness:', err);
       setError(err.message || 'Failed to load college readiness');
     } finally {
       setLoading(false);
@@ -86,7 +85,6 @@ export default function CollegeReadinessDashboard({ childId }) {
       setEditing(false);
       await loadReadiness(); // Reload to get updated readiness score
     } catch (err) {
-      console.error('Error updating college readiness:', err);
       alert('Failed to update: ' + (err.message || 'Unknown error'));
     }
   };

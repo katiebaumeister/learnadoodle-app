@@ -63,7 +63,6 @@ export default function Reports({ familyId, onNavigate }) {
       const pct_present = totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
       setSummary({ pct_present, by_child: byChild });
     } catch (error) {
-      console.error('Error loading reports data:', error);
       Alert.alert('Error', 'Failed to load reports data');
     } finally {
       setLoading(false);
@@ -102,7 +101,6 @@ export default function Reports({ familyId, onNavigate }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error exporting CSV:', error);
       Alert.alert('Error', 'Failed to export CSV');
     }
   };

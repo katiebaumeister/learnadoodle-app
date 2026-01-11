@@ -31,6 +31,7 @@ export default function PackWeekModal({
   const [result, setResult] = useState(null);
   const [weekStart, setWeekStart] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
+  const [hasStarted, setHasStarted] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -43,6 +44,8 @@ export default function PackWeekModal({
       setWeekStart(nextMonday.toISOString().split('T')[0]);
       setResult(null);
       setSelectedChildIds([]);
+      setHasStarted(false);
+      setLoading(false);
     }
   }, [visible]);
 
@@ -57,10 +60,7 @@ export default function PackWeekModal({
   };
 
   const handlePack = async () => {
-    console.log('[PackWeekModal] handlePack called', { weekStart, selectedChildIds, familyId });
-    
     if (!weekStart) {
-      console.log('[PackWeekModal] No weekStart, returning');
       if (Platform.OS === 'web') {
         alert('Please select a week start date');
       }
@@ -71,17 +71,14 @@ export default function PackWeekModal({
     const startTime = Date.now();
     
     try {
-      console.log('[PackWeekModal] Calling packWeek API...');
       const { data, error } = await packWeek(
         weekStart,
         selectedChildIds.length > 0 ? selectedChildIds : null
       );
       
       const duration = Date.now() - startTime;
-      console.log('[PackWeekModal] packWeek completed in', duration, 'ms');
-      
+
       if (error) {
-        console.error('[PackWeekModal] Error:', error);
         if (Platform.OS === 'web') {
           alert(`Failed to pack week: ${error.message || error}`);
         }
@@ -89,7 +86,6 @@ export default function PackWeekModal({
       }
 
       if (data) {
-        console.log('[PackWeekModal] Setting result:', data);
         setResult(data);
         
         // Extract proposedChanges from response
@@ -114,18 +110,16 @@ export default function PackWeekModal({
           window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }
       } else {
-        console.log('[PackWeekModal] No data returned');
       }
     } catch (err) {
       const duration = Date.now() - startTime;
-      console.error('[PackWeekModal] Exception after', duration, 'ms:', err);
+
       if (Platform.OS === 'web') {
         alert(`Error: ${err.message || 'Unknown error'}`);
       }
     } finally {
       setLoading(false);
-      console.log('[PackWeekModal] handlePack finished');
-    }
+}
   };
 
   if (!visible) return null;
@@ -140,9 +134,16 @@ export default function PackWeekModal({
       <View style={styles.overlay}>
         <View style={styles.modal}>
           <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Package size={20} color={colors.accent} />
-              <Text style={styles.title}>Pack Week</Text>
+            <View style={styles.headerContent}>
+              <View style={styles.iconCircleMint}>
+                <Package size={20} color="#10B981" />
+              </View>
+              <View style={styles.headerText}>
+                <Text style={styles.title}>Pack your week</Text>
+                <Text style={styles.subtitle}>
+                  We'll fill your open time slots with tasks from your backlog.
+                </Text>
+              </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <X size={20} color={colors.muted} />
@@ -150,63 +151,92 @@ export default function PackWeekModal({
           </View>
 
           <ScrollView style={styles.content}>
-            <View style={styles.infoBox}>
-              <Info size={16} color={colors.accent} />
-              <Text style={styles.infoText}>
-                AI will suggest optimal event placement for the selected week based on your year plans and availability.
-              </Text>
-            </View>
+            {!hasStarted && !loading && (
+              <>
+                <View style={styles.startSection}>
+                  <View style={styles.explanationCardMint}>
+                    <Text style={styles.explanationCardTitle}>What will change</Text>
+                    <Text style={styles.explanationCardItem}>Open slots filled from backlog</Text>
+                    <Text style={styles.explanationCardItem}>Tasks scheduled strategically</Text>
+                    <Text style={styles.explanationCardItem}>Week optimized for productivity</Text>
+                  </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Week Start (Monday)</Text>
-              <TextInput
-                style={styles.dateInput}
-                value={weekStart}
-                onChangeText={setWeekStart}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.muted}
-              />
-            </View>
+                  <View style={styles.inputCard}>
+                    <Text style={styles.inputCardLabel}>Week start</Text>
+                    <TextInput
+                      style={styles.dateInput}
+                      value={weekStart}
+                      onChangeText={setWeekStart}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor={colors.muted}
+                    />
+                  </View>
 
-            {children.length > 0 && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Children (optional - leave empty for all)</Text>
-                <View style={styles.childrenList}>
-                  {children.map(child => (
-                    <TouchableOpacity
-                      key={child.id}
-                      style={[
-                        styles.childChip,
-                        selectedChildIds.includes(child.id) && styles.childChipSelected
-                      ]}
-                      onPress={() => toggleChild(child.id)}
-                    >
-                      <Text style={[
-                        styles.childChipText,
-                        selectedChildIds.includes(child.id) && styles.childChipTextSelected
-                      ]}>
-                        {child.first_name || child.name || 'Unknown'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {children.length > 0 && (
+                    <View style={styles.inputCard}>
+                      <Text style={styles.inputCardLabel}>Children</Text>
+                      <Text style={styles.inputCardHint}>Optional - leave empty for all</Text>
+                      <View style={styles.childrenList}>
+                        {children.map(child => (
+                          <TouchableOpacity
+                            key={child.id}
+                            style={[
+                              styles.childChip,
+                              selectedChildIds.includes(child.id) && styles.childChipSelected
+                            ]}
+                            onPress={() => toggleChild(child.id)}
+                          >
+                            <Text style={[
+                              styles.childChipText,
+                              selectedChildIds.includes(child.id) && styles.childChipTextSelected
+                            ]}>
+                              {child.first_name || child.name || 'Unknown'}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  )}
                 </View>
+
+              </>
+            )}
+
+            {!hasStarted && !loading && (
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.startButton, styles.startButtonMint]}
+                  onPress={() => {
+                    setHasStarted(true);
+                    handlePack();
+                  }}
+                  disabled={loading}
+                >
+                  <Text style={styles.startButtonText}>Pack week</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={onClose}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
               </View>
             )}
 
-            <TouchableOpacity
-              style={[styles.packButton, loading && styles.packButtonDisabled]}
-              onPress={handlePack}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator size="small" color={colors.accentContrast} />
-              ) : (
-                <>
-                  <Package size={16} color={colors.accentContrast} />
-                  <Text style={styles.packButtonText}>Pack Week</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {loading && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={colors.accent} />
+                <Text style={styles.loadingText}>📦 Packing Your Week...</Text>
+                <Text style={styles.loadingSubtext}>Finding the perfect fit for everything!</Text>
+                <View style={styles.loadingSteps}>
+                  <Text style={styles.loadingStep}>✓ Analyzing backlog items</Text>
+                  <Text style={styles.loadingStep}>✓ Mapping out available time</Text>
+                  <Text style={styles.loadingStep}>⏳ Matching tasks to time slots</Text>
+                  <Text style={styles.loadingStep}>⏳ Balancing subjects throughout the week</Text>
+                  <Text style={styles.loadingStep}>⏳ Making sure it all fits just right...</Text>
+                </View>
+              </View>
+            )}
 
             {result && (
               <View style={styles.resultContainer}>
@@ -246,38 +276,57 @@ const styles = StyleSheet.create({
   },
   modal: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: 16,
     width: Platform.OS === 'web' ? 600 : '90%',
-    maxHeight: '80%',
+    maxHeight: '85%',
     ...Platform.select({
       web: {
-        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
       },
     }),
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    alignItems: 'flex-start',
+    padding: 24,
+    paddingBottom: 20,
   },
-  headerLeft: {
+  headerContent: {
+    flex: 1,
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  iconCircleMint: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+  },
+  headerText: {
+    flex: 1,
+    gap: 4,
   },
   title: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
     color: colors.text,
+    letterSpacing: -0.5,
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 18,
   },
   closeButton: {
     padding: 4,
   },
   content: {
-    padding: 16,
+    padding: 0,
   },
   infoBox: {
     flexDirection: 'row',
@@ -295,23 +344,14 @@ const styles = StyleSheet.create({
     color: colors.muted,
     lineHeight: 18,
   },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.text,
-    marginBottom: 6,
-  },
   dateInput: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    padding: 10,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    padding: 12,
     fontSize: 14,
     color: colors.text,
-    backgroundColor: colors.bg,
+    backgroundColor: '#ffffff',
   },
   childrenList: {
     flexDirection: 'row',
@@ -338,23 +378,36 @@ const styles = StyleSheet.create({
     color: colors.accentContrast,
     fontWeight: '600',
   },
-  packButton: {
-    flexDirection: 'row',
+  startButton: {
+    flex: 1,
+    backgroundColor: colors.accent,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.accent,
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
   },
-  packButtonDisabled: {
-    opacity: 0.6,
+  startButtonMint: {
+    backgroundColor: '#10B981',
   },
-  packButtonText: {
-    color: colors.accentContrast,
-    fontSize: 14,
+  startButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
     fontWeight: '600',
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    color: '#6b7280',
+    fontSize: 15,
+    fontWeight: '500',
   },
   resultContainer: {
     backgroundColor: colors.bgSubtle,
@@ -399,6 +452,137 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.muted,
     fontStyle: 'italic',
+  },
+  startSection: {
+    padding: 20,
+    paddingTop: 0,
+    gap: 14,
+  },
+  explanationCardMint: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    padding: 16,
+  },
+  explanationCardTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  explanationCardItem: {
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  inputCard: {
+    backgroundColor: '#F7F8FC',
+    borderRadius: 16,
+    padding: 16,
+  },
+  inputCardLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  inputCardHint: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginBottom: 10,
+  },
+  infoSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  optionsSection: {
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 20,
+  },
+  optionsTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 12,
+  },
+  optionRow: {
+    marginBottom: 8,
+  },
+  optionText: {
+    fontSize: 14,
+    color: colors.text,
+    lineHeight: 20,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  startButton: {
+    flex: 1,
+    backgroundColor: colors.accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  startButtonText: {
+    color: colors.accentContrast,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: colors.bgSubtle,
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 18,
+    color: colors.text,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  loadingSubtext: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  loadingSteps: {
+    alignSelf: 'stretch',
+    marginTop: 16,
+  },
+  loadingStep: {
+    fontSize: 14,
+    color: colors.text,
+    lineHeight: 24,
+    marginBottom: 4,
   },
 });
 

@@ -31,7 +31,6 @@ const undoLastReschedule = async () => {
     const data = await response.json();
     return { data, error: null };
   } catch (err) {
-    console.error('Error undoing reschedule:', err);
     return { data: null, error: err };
   }
 };
@@ -130,7 +129,6 @@ export default function PlannerDiffModal({
         onUndoComplete();
       }
     } catch (error: any) {
-      console.error('Error undoing reschedule:', error);
       // Show error toast or alert
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         alert(error?.message || 'Failed to undo reschedule. Please try again.');
@@ -222,12 +220,13 @@ export default function PlannerDiffModal({
               onPress={handleUndo}
               disabled={undoing}
               accessibilityRole="button"
+              {...(Platform.OS === 'web' ? { className: 'btnSecondary' } : {})}
             >
               {undoing ? (
                 <ActivityIndicator size="small" color="#6B7280" />
               ) : (
                 <>
-                  <RotateCcw size={16} color="#6B7280" />
+                  <RotateCcw size={16} color={Platform.OS === 'web' ? 'rgba(17,24,39,.92)' : '#6B7280'} />
                   <Text style={styles.buttonSecondaryText}>Undo</Text>
                 </>
               )}
@@ -238,6 +237,7 @@ export default function PlannerDiffModal({
                 style={[styles.button, styles.buttonTertiary]}
                 onPress={handleClose}
                 accessibilityRole="button"
+                {...(Platform.OS === 'web' ? { className: 'btnSecondary' } : {})}
               >
                 <Text style={styles.buttonTertiaryText}>Close</Text>
               </TouchableOpacity>
@@ -245,8 +245,9 @@ export default function PlannerDiffModal({
                 style={[styles.button, styles.buttonPrimary]}
                 onPress={handleAccept}
                 accessibilityRole="button"
+                {...(Platform.OS === 'web' ? { className: 'btnPrimary' } : {})}
               >
-                <Check size={16} color="#FFFFFF" />
+                <Check size={16} color={Platform.OS === 'web' ? 'white' : '#FFFFFF'} />
                 <Text style={styles.buttonPrimaryText}>Accept Changes</Text>
               </TouchableOpacity>
             </View>
@@ -342,37 +343,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    // On web, btnPrimary/btnSecondary classes handle styling
+    ...(Platform.OS === 'web' ? {
+      height: 44,
+      minWidth: 100,
+    } : {
     paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: 8,
+      borderRadius: 14,
     gap: 6,
     minWidth: 100,
+    }),
   },
   buttonPrimary: {
-    backgroundColor: '#059669',
+    // On web, btnPrimary class handles styling
+    ...(Platform.OS === 'web' ? {} : {
+      backgroundColor: 'rgba(17,24,39,.92)',
+    }),
   },
   buttonPrimaryText: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
+      color: '#FFFFFF',
+    }),
   },
   buttonSecondary: {
+    // On web, btnSecondary class handles styling
+    ...(Platform.OS === 'web' ? {} : {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+      borderColor: 'rgba(17,24,39,.08)',
+    }),
   },
   buttonSecondaryText: {
-    color: '#374151',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
+      color: 'rgba(17,24,39,.92)',
+    }),
   },
   buttonTertiary: {
+    // On web, btnSecondary class handles styling
+    ...(Platform.OS === 'web' ? {} : {
     backgroundColor: 'transparent',
+    }),
   },
   buttonTertiaryText: {
-    color: '#6B7280',
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
+      color: 'rgba(17,24,39,.72)',
+    }),
   },
 });
 

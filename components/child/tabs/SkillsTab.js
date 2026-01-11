@@ -38,7 +38,6 @@ export default function SkillsTab({ child }) {
       setSkills(data || []);
       setLastUpdated(new Date());
     } catch (err) {
-      console.error('Error loading skills:', err);
       setError(err.message || 'Failed to load skills');
     } finally {
       setLoading(false);

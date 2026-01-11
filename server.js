@@ -29,7 +29,6 @@ app.get('/health', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('API Error:', err);
   res.status(500).json({ 
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
@@ -47,11 +46,6 @@ const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.
 
 if (isMainModule || process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`🚀 Schedule Rules API server running on port ${PORT}`);
-    console.log(`📊 Health check: http://localhost:${PORT}/health`);
-    console.log(`📅 ICS Calendar feeds available at: http://localhost:${PORT}/api/ics/`);
-    console.log(`🤖 AI Planner endpoints: http://localhost:${PORT}/api/planner/`);
-    console.log(`🤖 AI Rescheduling endpoints: http://localhost:${PORT}/api/ai/`);
   });
 }
 

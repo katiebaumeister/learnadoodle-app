@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
 import { colors, shadows } from '../../theme/colors';
 import { autoCaptionOnUpload } from '../../lib/services/autoCaptionService';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 import PDFViewer from '../content/PDFViewer';
 import MagicExtract from '../content/MagicExtract';
 
@@ -90,34 +91,127 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
         .order('name');
       setSubjects(subs || []);
     } catch (error) {
-      console.error('Error loading metadata:', error);
     }
   };
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const { data, error: rpcError } = await supabase.rpc('get_uploads', {
-        _family: familyId,
-        _q: q || null,
-        _child_ids: childIds,
-        _subject_ids: subjectIds,
-        _types: types,
-        _include_unassigned_child: includeUnassignedChild,
-        _include_unassigned_subject: includeUnassignedSubject,
-        _sort_unassigned_first: sortUnassignedFirst
-      });
+      // Query materials table for file-based materials (replaces get_uploads RPC)
+      // Handle child filter via material_children junction table
+      let materialIds = null;
       
-      if (rpcError && !shouldSuppressError(rpcError)) {
-        console.error('Error loading uploads:', rpcError);
-        Alert.alert('Error', 'Failed to load uploads');
+      if (childIds && childIds.length > 0) {
+        // Get material_ids from material_children for these children
+        const { data: mcData } = await supabase
+          .from('material_children')
+          .select('material_id')
+          .in('child_id', childIds)
+          .eq('family_id', familyId);
+        materialIds = mcData?.map(mc => mc.material_id) || [];
+        if (materialIds.length === 0) {
+          setItems([]);
+          return;
+        }
+      } else if (!includeUnassignedChild) {
+        // Get all material_ids that have child assignments
+        const { data: mcData } = await supabase
+          .from('material_children')
+          .select('material_id')
+          .eq('family_id', familyId);
+        materialIds = [...new Set(mcData?.map(mc => mc.material_id) || [])];
+        if (materialIds.length === 0) {
+          setItems([]);
+          return;
+        }
       }
       
-      setItems(data || []);
+      let query = supabase
+        .from('materials')
+        .select('id, title, filename, storage_path, created_at, mime, bytes, tags, subject_id, event_id')
+        .eq('family_id', familyId)
+        .is('deleted_at', null)
+        .not('storage_path', 'is', null); // Only file-based materials
+      
+      if (materialIds) {
+        query = query.in('id', materialIds);
+      }
+      
+      // Search query
+      if (q) {
+        query = query.or(`title.ilike.%${q}%,filename.ilike.%${q}%,storage_path.ilike.%${q}%`);
+      }
+      
+      // Subject filter
+      if (subjectIds && subjectIds.length > 0) {
+        query = query.in('subject_id', subjectIds);
+      } else if (!includeUnassignedSubject) {
+        query = query.not('subject_id', 'is', null);
+      }
+      
+      // Type filter (based on mime type)
+      if (types && types.length > 0) {
+        const mimeFilters = types.map(type => {
+          switch(type) {
+            case 'image': return 'mime.ilike.image/%';
+            case 'pdf': return "mime.eq.application/pdf";
+            case 'doc': return 'mime.ilike.%document%';
+            case 'video': return 'mime.ilike.video/%';
+            case 'audio': return 'mime.ilike.audio/%';
+            default: return null;
+          }
+        }).filter(Boolean);
+        
+        if (mimeFilters.length > 0) {
+          query = query.or(mimeFilters.join(','));
+        }
+      }
+      
+      query = query.order('created_at', { ascending: false });
+      
+      const { data, error } = await query;
+      
+      if (error && !shouldSuppressError(error)) {
+        Alert.alert('Error', 'Failed to load files');
+      }
+      
+      // Get child_ids from material_children for display
+      if (data && data.length > 0) {
+        const ids = data.map(m => m.id);
+        const { data: mcData } = await supabase
+          .from('material_children')
+          .select('material_id, child_id')
+          .in('material_id', ids);
+        
+        const childIdMap = new Map();
+        (mcData || []).forEach(mc => {
+          if (!childIdMap.has(mc.material_id)) {
+            childIdMap.set(mc.material_id, mc.child_id);
+          }
+        });
+        
+        let itemsWithChildId = (data || []).map(m => ({
+          ...m,
+          child_id: childIdMap.get(m.id) || null,
+        }));
+        
+        // Sort by child_id if sortUnassignedFirst is enabled (do this in memory after adding child_id)
+        if (sortUnassignedFirst) {
+          itemsWithChildId = itemsWithChildId.sort((a, b) => {
+            if (!a.child_id && !b.child_id) return 0;
+            if (!a.child_id) return -1; // nulls first
+            if (!b.child_id) return 1;
+            return 0; // Keep original order for non-null
+          });
+        }
+        
+        setItems(itemsWithChildId);
+      } else {
+        setItems(data || []);
+      }
     } catch (error) {
       if (!shouldSuppressError(error)) {
-        console.error('Error loading uploads:', error);
-        Alert.alert('Error', 'Failed to load uploads');
+        Alert.alert('Error', 'Failed to load files');
       }
     } finally {
       setLoading(false);
@@ -151,23 +245,19 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
       const defaultChild = childIds?.[0] || null;
       const defaultSubject = subjectIds?.[0] || null;
 
-      const { data: uploadRecord, error: recordError } = await supabase.rpc('create_upload_record', {
-        _family: familyId,
-        _child: defaultChild,
-        _subject: defaultSubject,
-        _event: null,
-        _path: path,
-        _mime: file.type || 'application/octet-stream',
-        _bytes: file.size,
-        _title: file.name,
-        _tags: [],
-        _notes: null
+      // Create file material (replaces uploads table insert)
+      const uploadRecord = await createFileMaterial({
+        familyId,
+        storagePath: path,
+        title: file.name,
+        mime: file.type || 'application/octet-stream',
+        bytes: file.size,
+        childId: defaultChild,
+        subjectId: defaultSubject,
       });
 
-      if (recordError) throw recordError;
-
-      // Get upload ID from response
-      const uploadId = uploadRecord?.id || uploadRecord?.ok ? uploadRecord.id : null;
+      // Get upload ID
+      const uploadId = uploadRecord?.id;
       
       // Get file URL for auto-captioning
       const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(path);
@@ -176,14 +266,12 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
       // Trigger auto-captioning (non-blocking)
       if (uploadId && fileUrl) {
         autoCaptionOnUpload(uploadId, file.type, fileUrl, file.name).catch(err => {
-          console.log('Auto-captioning failed (non-critical):', err);
         });
       }
 
       await loadData();
       Alert.alert('Success', 'File uploaded successfully');
     } catch (error) {
-      console.error('Error uploading file:', error);
       Alert.alert('Error', 'Failed to upload file');
     }
   };
@@ -285,7 +373,6 @@ export default function UploadsEnhanced({ familyId, initialChildren = [], search
       await loadData();
       Alert.alert('Success', 'Files assigned successfully');
     } catch (error) {
-      console.error('Error assigning files:', error);
       Alert.alert('Error', 'Failed to assign files');
     }
   };
@@ -624,7 +711,17 @@ function UploadCard({ item, index, selected, onToggleSelect, onAssign, familyId 
       {/* Preview */}
       <View style={styles.cardPreview}>
         {item.kind === 'image' && signedUrl ? (
-          <Image source={{ uri: signedUrl }} style={styles.cardImage} resizeMode="cover" />
+          <Image 
+            source={{ uri: signedUrl }} 
+            style={styles.cardImage} 
+            resizeMode="cover"
+            onError={(e) => {
+              // Suppress 404 errors for missing images - they're harmless
+              if (Platform.OS === 'web' && e.nativeEvent) {
+                e.preventDefault?.();
+              }
+            }}
+          />
         ) : (
           <View style={[styles.cardIcon, { backgroundColor: kindStyle.bg }]}>
             <Text style={[styles.cardIconText, { color: kindStyle.text }]}>
@@ -719,7 +816,6 @@ function AssignSheet({ open, onClose, uploadIds, familyId, children, subjects, o
       onSaved?.(childId || null, subjectId || null);
       onClose();
     } catch (error) {
-      console.error('Error saving metadata:', error);
       Alert.alert('Error', 'Failed to save metadata');
     } finally {
       setSaving(false);

@@ -107,7 +107,6 @@ export default function ImportTemplateModal({
       onClose();
       resetForm();
     } catch (error) {
-      console.error('Error importing template:', error);
       toast.push('Failed to import template: ' + (error.message || 'Unknown error'), 'error');
     } finally {
       setProcessing(false);

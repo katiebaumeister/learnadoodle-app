@@ -30,6 +30,7 @@ from routers.attendance_enhanced_routes import router as attendance_enhanced_rou
 from routers.analytics_routes import router as analytics_router
 from routers.records_routes import router as records_router
 from routers.planner_routes import router as planner_router, events_router
+from routers.curriculum_routes import router as curriculum_router
 from routers.extension_routes import router as extension_router
 from routers.invite_routes import router as invite_router
 from routers.dashboard_routes import router as dashboard_router
@@ -57,6 +58,7 @@ from routers.ai_template_generation_routes import router as ai_template_generati
 from routers.ai_review_recommendations_routes import router as ai_review_recommendations_router
 from routers.family_calendar_routes import router as family_calendar_router
 from routers.curriculum_routes import router as curriculum_router
+from routers.progress_routes import router as progress_router
 from routers.inspire_routes import router as inspire_router
 from routers.schedule_routes import router as schedule_router
 from routers.log_routes import router as log_router
@@ -233,6 +235,7 @@ app.include_router(insights_router)
 app.include_router(gradebook_router)
 app.include_router(notes_router)
 app.include_router(curriculum_router)
+app.include_router(progress_router)
 app.include_router(inspire_router)
 app.include_router(schedule_router)
 app.include_router(log_router)
@@ -261,5 +264,12 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Increased timeout for long-running LLM requests (6 minutes)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port,
+        timeout_keep_alive=360,  # 6 minutes keep-alive timeout
+        timeout_graceful_shutdown=600  # 10 minutes graceful shutdown
+    )
 

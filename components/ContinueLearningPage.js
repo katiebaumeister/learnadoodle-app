@@ -94,7 +94,6 @@ export default function ContinueLearningPage({ courseId, childId, lessonId, time
           }
         }
       } catch (err) {
-        console.error('Error fetching course details:', err);
         // Fallback course data
         setCourse({
           id: courseId,
@@ -105,7 +104,6 @@ export default function ContinueLearningPage({ courseId, childId, lessonId, time
         });
       }
     } catch (err) {
-      console.error('Error loading course:', err);
       setError(err.message || 'Failed to load course');
     } finally {
       setLoading(false);
@@ -161,7 +159,6 @@ export default function ContinueLearningPage({ courseId, childId, lessonId, time
           }
         }
       } catch (err) {
-        console.error('Error fetching lesson URL:', err);
       }
     }
 
@@ -176,7 +173,6 @@ export default function ContinueLearningPage({ courseId, childId, lessonId, time
         position_seconds: positionSeconds,
         progress_percentage: resumePoint?.progress_percentage,
       }, course.type).catch(err => {
-        console.error('Failed to update resume point:', err);
       });
       
       toast.push('Opening course...', 'success');

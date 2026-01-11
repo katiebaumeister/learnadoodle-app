@@ -28,7 +28,6 @@ export default function CheckInOutButton({ childId, familyId, onStatusChange }) 
         onStatusChange(result);
       }
     } catch (error) {
-      console.error('Error loading check-in status:', error);
     } finally {
       setCheckingStatus(false);
     }
@@ -42,7 +41,6 @@ export default function CheckInOutButton({ childId, familyId, onStatusChange }) 
       await checkIn(childId);
       await loadStatus();
     } catch (error) {
-      console.error('Error checking in:', error);
       alert('Failed to check in. Please try again.');
     } finally {
       setLoading(false);
@@ -57,7 +55,6 @@ export default function CheckInOutButton({ childId, familyId, onStatusChange }) 
       await checkOut(status.check_in_record.id);
       await loadStatus();
     } catch (error) {
-      console.error('Error checking out:', error);
       alert('Failed to check out. Please try again.');
     } finally {
       setLoading(false);

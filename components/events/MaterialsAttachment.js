@@ -46,7 +46,6 @@ export default function MaterialsAttachment({
       if (error) throw error;
       setMaterials(data || []);
     } catch (error) {
-      console.error('Error loading materials:', error);
       toast.push('Failed to load materials', 'error');
     } finally {
       setLoading(false);

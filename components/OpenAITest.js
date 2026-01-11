@@ -32,19 +32,10 @@ Unit 2: Solving Equations
     setTestResult(null);
 
     try {
-      console.log('Testing OpenAI API key...');
-      
       const result = await processSyllabusWithAI(testSyllabus, 1);
-      
-      console.log('✅ OpenAI API key is working!');
-      console.log('Result:', result);
-      
+
       setTestResult(result);
-      
-    } catch (error) {
-      console.error('❌ OpenAI API key test failed:');
-      console.error(error.message);
-      
+} catch (error) {
       let errorMessage = error.message;
       
       if (error.message.includes('401')) {

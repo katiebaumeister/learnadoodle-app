@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
-import { Download, Filter, Calendar, GraduationCap, FileText } from 'lucide-react';
+import { Filter, Calendar, GraduationCap, FileText } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
 import { getGrades } from '../../lib/services/recordsClient';
@@ -134,11 +134,6 @@ export default function TranscriptBuilder({ childId, familyId }) {
     return '-';
   };
 
-  const handleExport = () => {
-    // TODO: Implement transcript export
-    alert('Transcript export coming soon!');
-  };
-
   // Group grades by term
   const groupedByTerm = filteredGrades.reduce((acc, grade) => {
     const term = grade.term_label || 'Ungrouped';
@@ -158,22 +153,13 @@ export default function TranscriptBuilder({ childId, familyId }) {
             Generate official transcripts with multi-year grade records
           </Text>
         </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={[styles.filterButton, { borderColor: tokens.border }]}
-            onPress={() => setShowFilters(!showFilters)}
-          >
-            <Filter size={16} color={tokens.text} />
-            <Text style={[styles.filterButtonText, { color: tokens.text }]}>Filter</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.exportButton, { backgroundColor: tokens.accent }]}
-            onPress={handleExport}
-          >
-            <Download size={16} color={tokens.surface} />
-            <Text style={[styles.exportButtonText, { color: tokens.surface }]}>Export</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={[styles.filterButton, { borderColor: tokens.border }]}
+          onPress={() => setShowFilters(!showFilters)}
+        >
+          <Filter size={16} color={tokens.text} />
+          <Text style={[styles.filterButtonText, { color: tokens.text }]}>Filter</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Year Filters */}
@@ -315,18 +301,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   filterButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  exportButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-  },
-  exportButtonText: {
     fontSize: 14,
     fontWeight: '500',
   },

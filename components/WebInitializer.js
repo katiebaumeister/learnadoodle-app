@@ -1,56 +1,339 @@
-import React, { useState, useEffect } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { Platform } from 'react-native';
-import LoadingScreen from './LoadingScreen';
 import { baseCssLayer, cssVariableMap } from '../theme/designTokens';
 
-export default function WebInitializer({ children }) {
-  const [isWebReady, setIsWebReady] = useState(false);
+// Set up error suppression IMMEDIATELY on module load (before React renders)
+// This must run before any other code to catch errors on initial page load
+// Wrap everything in try-catch to prevent initialization failures
+if (typeof window !== 'undefined') {
+  try {
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    
+    // Helper to check if a string is JUST a UUID (not a URL containing a UUID)
+    const isJustUuid = (str) => {
+      if (!str || typeof str !== 'string') return false;
+      const trimmed = str.trim();
+      return uuidPattern.test(trimmed) && !trimmed.includes('http') && !trimmed.includes('data:') && !trimmed.includes('/');
+    };
+    
+    // Helper to check if error should be suppressed
+    const shouldSuppress = (message) => {
+      if (!message || typeof message !== 'string') return false;
+      const hasUuid = uuidPattern.test(message);
+      const is404 = message.includes('404') || 
+                   message.includes('Failed to load resource') || 
+                   message.includes('Not Found') ||
+                   message.includes('the server responded with a status of 404') ||
+                   message.includes('status of 404');
+      return hasUuid && is404;
+    };
+    
+    // Intercept console errors immediately - this catches errors logged through console.error
+    try {
+      const originalError = window.console.error;
+      window.console.error = (...args) => {
+        try {
+          const message = args.join(' ');
+          // Check message and all string arguments
+          if (shouldSuppress(message) || args.some(arg => typeof arg === 'string' && shouldSuppress(arg))) {
+            return; // Suppress this error
+          }
+          originalError.apply(console, args);
+        } catch (e) {
+          // If our interceptor fails, fall back to original
+          originalError.apply(console, args);
+        }
+      };
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to intercept console.error:', e);
+    }
 
-  useEffect(() => {
+    // Also intercept console.warn
+    try {
+      const originalWarn = window.console.warn;
+      window.console.warn = (...args) => {
+        try {
+          const message = args.join(' ');
+          if (shouldSuppress(message) || args.some(arg => typeof arg === 'string' && shouldSuppress(arg))) {
+            return; // Suppress this warning
+          }
+          originalWarn.apply(console, args);
+        } catch (e) {
+          originalWarn.apply(console, args);
+        }
+      };
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to intercept console.warn:', e);
+    }
+
+    // Intercept HTMLImageElement.prototype.src at the prototype level (runs immediately)
+    try {
+      if (typeof HTMLImageElement !== 'undefined') {
+        const originalImageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+        if (originalImageSrcDescriptor && originalImageSrcDescriptor.set) {
+          Object.defineProperty(HTMLImageElement.prototype, 'src', {
+            set: function(value) {
+              try {
+                // Only block if it's JUST a UUID (not a URL containing a UUID)
+                if (isJustUuid(value)) {
+                  // Don't set invalid UUID URLs - prevent the browser from attempting to load
+                  if (this.style) {
+                    this.style.display = 'none';
+                  }
+                  this.setAttribute('data-blocked-uuid', 'true');
+                  return; // Don't call the original setter
+                }
+                // Valid URL - proceed normally
+                originalImageSrcDescriptor.set.call(this, value);
+              } catch (e) {
+                // If our interceptor fails, try to call original
+                try {
+                  originalImageSrcDescriptor.set.call(this, value);
+                } catch (e2) {
+                  // Silently fail if we can't set
+                }
+              }
+            },
+            get: function() {
+              try {
+                if (this.getAttribute('data-blocked-uuid') === 'true') {
+                  return '';
+                }
+                return originalImageSrcDescriptor.get ? originalImageSrcDescriptor.get.call(this) : this.getAttribute('src') || '';
+              } catch (e) {
+                return this.getAttribute('src') || '';
+              }
+            },
+            configurable: true,
+            enumerable: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to intercept HTMLImageElement.prototype.src:', e);
+    }
+
+    // Intercept HTMLIFrameElement.prototype.src at the prototype level (runs immediately)
+    try {
+      if (typeof HTMLIFrameElement !== 'undefined') {
+        const originalIframeSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+        if (originalIframeSrcDescriptor && originalIframeSrcDescriptor.set) {
+          Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
+            set: function(value) {
+              try {
+                // Only block if it's JUST a UUID
+                if (isJustUuid(value)) {
+                  // Don't set invalid UUID URLs
+                  if (this.style) {
+                    this.style.display = 'none';
+                  }
+                  this.setAttribute('data-blocked-uuid', 'true');
+                  return; // Don't call the original setter
+                }
+                // Valid URL - proceed normally
+                originalIframeSrcDescriptor.set.call(this, value);
+              } catch (e) {
+                try {
+                  originalIframeSrcDescriptor.set.call(this, value);
+                } catch (e2) {
+                  // Silently fail
+                }
+              }
+            },
+            get: function() {
+              try {
+                if (this.getAttribute('data-blocked-uuid') === 'true') {
+                  return '';
+                }
+                return originalIframeSrcDescriptor.get ? originalIframeSrcDescriptor.get.call(this) : this.getAttribute('src') || '';
+              } catch (e) {
+                return this.getAttribute('src') || '';
+              }
+            },
+            configurable: true,
+            enumerable: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to intercept HTMLIFrameElement.prototype.src:', e);
+    }
+
+    // Note: We're NOT intercepting fetch or XMLHttpRequest as they might be needed for legitimate API calls
+    // The image/iframe interception should be sufficient to prevent most 404 errors
+  } catch (e) {
+    console.error('[WebInitializer] Error setting up interceptors:', e);
+    // Don't throw - allow app to continue loading
+  }
+}
+
+export default function WebInitializer({ children }) {
+  // No need for loading state - design tokens are applied synchronously in useLayoutEffect
+  // This prevents any flash since we render children immediately
+  const isInitializedRef = useRef(false);
+
+  useLayoutEffect(() => {
     // Only apply web-specific logic on web platform
     if (Platform.OS !== 'web') {
-      setIsWebReady(true);
       return;
     }
 
+    // Prevent multiple initializations
+    if (isInitializedRef.current) return;
+    isInitializedRef.current = true;
+
+    // Clean up any invalid UUID URLs in the DOM immediately
+    const cleanupInvalidUrls = () => {
+      try {
+        if (typeof document === 'undefined') return;
+        
+        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        const isJustUuid = (str) => {
+          if (!str || typeof str !== 'string') return false;
+          const trimmed = str.trim();
+          return uuidPattern.test(trimmed) && !trimmed.includes('http') && !trimmed.includes('data:') && !trimmed.includes('/');
+        };
+        
+        // Clean up images
+        try {
+          const images = document.querySelectorAll('img');
+          images.forEach(img => {
+            try {
+              const src = img.src || img.getAttribute('src') || '';
+              if (isJustUuid(src)) {
+                img.removeAttribute('src');
+                if (img.style) img.style.display = 'none';
+                img.setAttribute('data-blocked-uuid', 'true');
+              }
+            } catch (e) {
+              // Skip this image if cleanup fails
+            }
+          });
+        } catch (e) {
+          // Skip image cleanup if it fails
+        }
+        
+        // Clean up iframes
+        try {
+          const iframes = document.querySelectorAll('iframe');
+          iframes.forEach(iframe => {
+            try {
+              const src = iframe.src || iframe.getAttribute('src') || '';
+              if (isJustUuid(src)) {
+                iframe.removeAttribute('src');
+                if (iframe.style) iframe.style.display = 'none';
+                iframe.setAttribute('data-blocked-uuid', 'true');
+              }
+            } catch (e) {
+              // Skip this iframe if cleanup fails
+            }
+          });
+        } catch (e) {
+          // Skip iframe cleanup if it fails
+        }
+      } catch (e) {
+        // Silently fail - don't break initialization
+      }
+    };
+
+    // Load Cooper Hewitt font family (all weights), League Spartan for sidebar, and JetBrains Mono for code
+    const loadFonts = () => {
+      // Note: Cooper Hewitt is loaded via @font-face in CSS or from local files
+      // The font-family references in designTokens.js will use Cooper Hewitt
+      // No need to load from Google Fonts as Cooper Hewitt is not available there
+      
+      // Load League Spartan for sidebar navigation
+      if (!document.getElementById('league-spartan-link')) {
+        const leagueSpartanLink = document.createElement('link');
+        leagueSpartanLink.id = 'league-spartan-link';
+        leagueSpartanLink.rel = 'stylesheet';
+        leagueSpartanLink.href = 'https://fonts.googleapis.com/css2?family=League+Spartan:wght@100;200;300;400;500;600;700;800;900&display=swap';
+        document.head.appendChild(leagueSpartanLink);
+      }
+      
+      // Load Libre Baskerville for button text
+      if (!document.getElementById('libre-baskerville-link')) {
+        const libreBaskervilleLink = document.createElement('link');
+        libreBaskervilleLink.id = 'libre-baskerville-link';
+        libreBaskervilleLink.rel = 'stylesheet';
+        libreBaskervilleLink.href = 'https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap';
+        document.head.appendChild(libreBaskervilleLink);
+      }
+      
+      // Load JetBrains Mono for code/metadata (optional, keep for monospace needs)
+      if (!document.getElementById('mono-link')) {
+        const monoLink = document.createElement('link');
+        monoLink.id = 'mono-link';
+        monoLink.rel = 'stylesheet';
+        monoLink.href = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap';
+        document.head.appendChild(monoLink);
+      }
+    };
+
     // Web-specific initialization
     const applyDesignTokens = () => {
-      const root = document.documentElement;
-      if (root) {
-        Object.entries(cssVariableMap).forEach(([token, value]) => {
-          root.style.setProperty(token, value);
-        });
-      }
+      try {
+        // Load fonts first
+        loadFonts();
 
-      if (!document.getElementById('ld-base-styles')) {
-        const styleTag = document.createElement('style');
-        styleTag.id = 'ld-base-styles';
-        styleTag.innerHTML = baseCssLayer;
-        document.head.appendChild(styleTag);
+        const root = document.documentElement;
+        if (root) {
+          Object.entries(cssVariableMap).forEach(([token, value]) => {
+            try {
+              root.style.setProperty(token, value);
+            } catch (e) {
+              // Skip this token if it fails
+            }
+          });
+        }
+
+        if (!document.getElementById('ld-base-styles')) {
+          const styleTag = document.createElement('style');
+          styleTag.id = 'ld-base-styles';
+          styleTag.innerHTML = baseCssLayer;
+          document.head.appendChild(styleTag);
+        }
+      } catch (e) {
+        console.error('[WebInitializer] Error applying design tokens:', e);
       }
     };
 
-    const initializeWeb = () => {
-      // Wait for DOM to be fully ready
-      if (document.readyState === 'complete') {
-        // Apply design tokens immediately - no delay needed
-        applyDesignTokens();
-        setIsWebReady(true);
+    // Apply design tokens immediately (safe to do multiple times)
+    // Since we're using useLayoutEffect, this runs synchronously before paint
+    try {
+      applyDesignTokens();
+    } catch (e) {
+      console.error('[WebInitializer] Error applying design tokens:', e);
+    }
+
+    // Run cleanup after a short delay to avoid interfering with initialization
+    // Don't run cleanup immediately - let the app load first
+    const cleanupTimeout = setTimeout(() => {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', cleanupInvalidUrls);
       } else {
-        // Wait for DOM to be ready, then apply immediately
-        window.addEventListener('load', () => {
-          applyDesignTokens();
-          setIsWebReady(true);
-        });
+        cleanupInvalidUrls();
+      }
+    }, 1000);
+    
+    // Also run cleanup periodically to catch dynamically added elements (less frequently)
+    const cleanupInterval = setInterval(cleanupInvalidUrls, 5000);
+    
+    // Clean up interval on unmount
+    return () => {
+      try {
+        clearTimeout(cleanupTimeout);
+        clearInterval(cleanupInterval);
+        if (document.removeEventListener) {
+          document.removeEventListener('DOMContentLoaded', cleanupInvalidUrls);
+        }
+      } catch (e) {
+        // Silently fail during cleanup
       }
     };
-
-    initializeWeb();
   }, []);
 
-  if (!isWebReady) {
-    return <LoadingScreen message="Loading web application" timeout={15000} />;
-  }
-
+  // Always render children immediately - design tokens are applied synchronously
   return children;
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
-import { Download, Calendar, TrendingUp, BookOpen, Award, Clock } from 'lucide-react';
+import { Calendar, TrendingUp, BookOpen, Award, Clock } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
 import { supabase } from '../../lib/supabase';
@@ -126,11 +126,6 @@ export default function StudentProgressReport({ childId, familyId }) {
     }
   };
 
-  const handleExportPDF = () => {
-    // TODO: Implement PDF export
-    alert('PDF export coming soon!');
-  };
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -140,13 +135,6 @@ export default function StudentProgressReport({ childId, familyId }) {
             Personalized student progress and achievement summary
           </Text>
         </View>
-        <TouchableOpacity
-          style={[styles.downloadButton, { backgroundColor: tokens.accent }]}
-          onPress={handleExportPDF}
-        >
-          <Download size={16} color={tokens.surface} />
-          <Text style={[styles.downloadText, { color: tokens.surface }]}>Export PDF</Text>
-        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -261,18 +249,6 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-  },
-  downloadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-  },
-  downloadText: {
-    fontSize: 14,
-    fontWeight: '500',
   },
   loading: {
     textAlign: 'center',

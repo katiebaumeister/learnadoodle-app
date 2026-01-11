@@ -1,4 +1,4 @@
-// Date utilities for planner views (Monday start)
+// Date utilities for planner views (Sunday start)
 
 export const startOfToday = () => {
   const d = new Date();
@@ -30,6 +30,10 @@ export const format = (date, formatStr) => {
   }
   if (formatStr === 'd') {
     return date.getDate().toString();
+  }
+  if (formatStr === 'MMM') {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months[date.getMonth()];
   }
   if (formatStr === 'MMM d') {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -64,7 +68,12 @@ export const isToday = (d) => {
   return t.toDateString() === d.toDateString();
 };
 
-export const isSameMonth = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+export const isSameMonth = (a, b) => {
+  if (!a || !b || !(a instanceof Date) || !(b instanceof Date) || isNaN(a.getTime()) || isNaN(b.getTime())) {
+    return false;
+  }
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+};
 
 export const isSameDay = (a, b) => {
   if (!a || !b) return false;
@@ -78,27 +87,60 @@ export const isSameHour = (a, b) => {
 
 export const formatDayNum = (d) => d.getDate();
 
-// Week starts on Monday (day 1)
+// Week starts on Sunday (day 0)
 export const startOfWeek = (d) => {
   const n = new Date(d);
   const day = n.getDay();
-  // Convert Sunday (0) to 7, then subtract to get Monday
-  const diff = day === 0 ? -6 : 1 - day;
+  // Subtract to get Sunday (day 0)
+  const diff = -day;
   n.setDate(n.getDate() + diff);
   n.setHours(0, 0, 0, 0);
   return n;
 };
 
 export const eachDayMatrix = (date) => {
+  // Validate input date
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+    console.error('[eachDayMatrix] Invalid date input:', date);
+    // Return a fallback matrix for current month
+    const fallbackDate = new Date();
+    fallbackDate.setDate(1);
+    date = fallbackDate;
+  }
+  
   const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  // Validate first date
+  if (isNaN(first.getTime())) {
+    console.error('[eachDayMatrix] Invalid first date created:', { date, first });
+    const fallbackDate = new Date();
+    fallbackDate.setDate(1);
+    return eachDayMatrix(fallbackDate); // Recursive call with valid date
+  }
+  
   const start = startOfWeek(first);
+  // Validate start date
+  if (isNaN(start.getTime())) {
+    console.error('[eachDayMatrix] Invalid start date created:', { first, start });
+    const fallbackDate = new Date();
+    fallbackDate.setDate(1);
+    return eachDayMatrix(fallbackDate); // Recursive call with valid date
+  }
+  
   const weeks = [];
   let cur = new Date(start);
   
-  for (let w = 0; w < 6; w++) {
+  for (let w = 0; w < 4; w++) {
     const row = [];
     for (let d = 0; d < 7; d++) {
-      row.push(new Date(cur));
+      const dayDate = new Date(cur);
+      // Validate each day date
+      if (isNaN(dayDate.getTime())) {
+        console.error('[eachDayMatrix] Invalid day date created:', { cur, dayDate, w, d });
+        // Skip this day or use a fallback
+        row.push(new Date(start.getTime() + (w * 7 + d) * 24 * 60 * 60 * 1000));
+      } else {
+        row.push(dayDate);
+      }
       cur.setDate(cur.getDate() + 1);
     }
     weeks.push(row);

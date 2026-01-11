@@ -50,7 +50,6 @@ export default function DeepLinkModal({
         return;
       }
     } catch (err) {
-      console.error('Error generating deep link via API:', err);
     }
     
     // Fallback: Generate locally
@@ -76,7 +75,6 @@ export default function DeepLinkModal({
         await navigator.clipboard.writeText(deepLink);
         toast.push('Link copied to clipboard!', 'success');
       } catch (err) {
-        console.error('Failed to copy:', err);
         toast.push('Failed to copy link', 'error');
       }
     } else {

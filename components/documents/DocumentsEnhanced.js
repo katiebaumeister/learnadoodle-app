@@ -43,7 +43,6 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
           .order('name');
         setSubjects(subs || []);
       } catch (error) {
-        console.error('Error loading metadata:', error);
       }
     };
 
@@ -76,7 +75,6 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
       if (error) throw error;
       setSyllabi(data || []);
     } catch (error) {
-      console.error('Error loading syllabi:', error);
     } finally {
       setLoading(false);
     }
@@ -124,23 +122,18 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
 
             if (uploadError) throw uploadError;
 
-            const { data: uploadRecord, error: recordError } = await supabase.rpc('create_upload_record', {
-              _family: familyId,
-              _child: null,
-              _subject: null,
-              _event: null,
-              _path: path,
-              _mime: file.type || 'application/octet-stream',
-              _bytes: file.size,
-              _title: file.name,
-              _tags: [],
-              _notes: null
+            // Create file material (replaces uploads table insert)
+            const { createFileMaterial } = await import('../../lib/services/materialsClient');
+            const uploadRecord = await createFileMaterial({
+              familyId,
+              storagePath: path,
+              title: file.name,
+              mime: file.type || 'application/octet-stream',
+              bytes: file.size,
             });
 
-            if (recordError) throw recordError;
-
             // Get upload ID and file URL for auto-captioning
-            const uploadId = uploadRecord?.id || uploadRecord?.ok ? uploadRecord.id : null;
+            const uploadId = uploadRecord?.id;
             const { data: urlData } = supabase.storage.from('evidence').getPublicUrl(path);
             const fileUrl = urlData?.publicUrl;
 
@@ -148,7 +141,6 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
             if (uploadId && fileUrl) {
               const { autoCaptionOnUpload } = await import('../../lib/services/autoCaptionService');
               autoCaptionOnUpload(uploadId, file.type, fileUrl, file.name).catch(err => {
-                console.log('Auto-captioning failed (non-critical):', err);
               });
             }
 
@@ -157,7 +149,6 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
               // Trigger reload in Uploads component
             }
           } catch (error) {
-            console.error('Error uploading file:', error);
             Alert.alert('Error', 'Failed to upload file');
           }
         }
@@ -369,8 +360,7 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
             childId={selectedChildren.length === 1 ? selectedChildren[0] : null}
             onFolderSelected={(folder) => {
               // Could filter files by folder
-              console.log('Selected folder:', folder);
-            }}
+}}
           />
         ) : tab === 'links' ? (
           <ExternalLinksManager
@@ -378,7 +368,6 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
             childId={selectedChildren.length === 1 ? selectedChildren[0] : null}
             subjectId={selectedSubjects.length === 1 ? selectedSubjects[0] : null}
             onLinkAdded={(link) => {
-              console.log('Link added:', link);
             }}
           />
         ) : tab === 'syllabi' ? (
@@ -480,7 +469,6 @@ export default function DocumentsEnhanced({ familyId, initialChildren = [] }) {
                   Alert.alert('Success', 'Plan suggestions generated!');
                 }
               } catch (err) {
-                console.error('Error generating suggestions:', err);
                 Alert.alert('Error', 'Failed to generate suggestions');
               }
             }}

@@ -51,7 +51,6 @@ export default function FoldersManager({ familyId, childId, onFolderSelected }) 
       if (error) throw error;
       setFolders(data || []);
     } catch (error) {
-      console.error('Error loading folders:', error);
       Alert.alert('Error', 'Failed to load folders');
     } finally {
       setLoading(false);
@@ -80,7 +79,6 @@ export default function FoldersManager({ familyId, childId, onFolderSelected }) 
       setFormData({ name: '', folder_type: 'custom', parent_folder_id: null });
       Alert.alert('Success', 'Folder created');
     } catch (error) {
-      console.error('Error creating folder:', error);
       Alert.alert('Error', 'Failed to create folder');
     }
   };
@@ -103,7 +101,6 @@ export default function FoldersManager({ familyId, childId, onFolderSelected }) 
 
               await loadFolders();
             } catch (error) {
-              console.error('Error deleting folder:', error);
               Alert.alert('Error', 'Failed to delete folder');
             }
           },
@@ -209,7 +206,6 @@ export default function FoldersManager({ familyId, childId, onFolderSelected }) 
       setEditingFolder(null);
       Alert.alert('Success', 'Folder updated');
     } catch (error) {
-      console.error('Error updating folder:', error);
       Alert.alert('Error', 'Failed to update folder');
     }
   };

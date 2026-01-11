@@ -41,7 +41,6 @@ export default function StandardsSearchModal({
       if (error) throw error;
       setStandards(data || []);
     } catch (error) {
-      console.error('Error loading standards:', error);
     } finally {
       setLoading(false);
     }
@@ -68,7 +67,7 @@ export default function StandardsSearchModal({
   };
 
   const handleConfirm = () => {
-    if (selectedStandards.length === 0) return;
+    // Allow accepting even with 0 selected (to clear standards)
     onSelect(selectedStandards);
     onClose();
   };
@@ -81,11 +80,11 @@ export default function StandardsSearchModal({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.container}>
+        <View style={[styles.container, { height: Platform.OS === 'web' ? 'auto' : undefined }]}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Attach Standards</Text>
@@ -166,12 +165,11 @@ export default function StandardsSearchModal({
               {selectedStandards.length} selected
             </Text>
             <TouchableOpacity
-              style={[styles.confirmButton, selectedStandards.length === 0 && styles.confirmButtonDisabled]}
+              style={styles.confirmButton}
               onPress={handleConfirm}
-              disabled={selectedStandards.length === 0}
             >
-              <Text style={[styles.confirmButtonText, selectedStandards.length === 0 && styles.confirmButtonTextDisabled]}>
-                Attach
+              <Text style={styles.confirmButtonText}>
+                {selectedStandards.length === 0 ? 'Clear' : 'Attach'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -193,9 +191,14 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     width: '90%',
     maxWidth: 600,
-    maxHeight: '80%',
+    maxHeight: Platform.OS === 'web' ? '85vh' : '85%',
     flexDirection: 'column',
+    overflow: 'hidden',
     ...shadows.large,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   header: {
     flexDirection: 'row',
@@ -247,8 +250,12 @@ const styles = StyleSheet.create({
   },
   resultsContainer: {
     flex: 1,
-    minHeight: 200,
-    maxHeight: 350,
+    minHeight: 150,
+    maxHeight: 280,
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+    }),
   },
   results: {
     flex: 1,
@@ -302,6 +309,8 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.card,
     zIndex: 10,
+    flexShrink: 0,
+    minHeight: 60,
   },
   selectedCount: {
     fontSize: 14,
@@ -310,7 +319,7 @@ const styles = StyleSheet.create({
   confirmButton: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent || '#8B7CF6',
     borderRadius: 8,
     minWidth: 100,
   },

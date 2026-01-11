@@ -33,7 +33,6 @@ export default function TemplatePreviewDrawer({ template, isOpen, onClose, onApp
 
       setTemplateData(template.template_data || {});
     } catch (error) {
-      console.error('Error loading template data:', error);
     } finally {
       setLoading(false);
     }

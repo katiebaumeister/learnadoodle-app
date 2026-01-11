@@ -78,21 +78,13 @@ export default function AuthScreen() {
     setLoading(true)
 
     try {
-      console.log('Attempting to', isSignUp ? 'sign up' : 'sign in', 'with email:', email)
-      
       const { data, error } = isSignUp 
         ? await signUp(email, password)
         : await signIn(email, password)
 
-      console.log('Auth response:', { data, error })
-
       if (error) {
-        console.error('Auth error:', error)
         Alert.alert('Error', error.message)
       } else if (isSignUp) {
-        console.log('Signup successful, user:', data?.user)
-        console.log('Session:', data?.session)
-        
         // Check if user needs email confirmation
         if (data?.user && !data?.session) {
           Alert.alert(
@@ -114,10 +106,8 @@ export default function AuthScreen() {
           )
         }
       } else {
-        console.log('Sign in successful, user:', data?.user)
-      }
+        }
     } catch (error) {
-      console.error('Auth exception:', error)
       Alert.alert('Error', 'An unexpected error occurred: ' + error.message)
     } finally {
       setLoading(false)
@@ -130,19 +120,13 @@ export default function AuthScreen() {
       return
     }
 
-    console.log('Attempting to reset password for email:', email)
     setLoading(true)
 
     try {
-      console.log('Calling resetPassword function...')
       const { data, error } = await resetPassword(email)
-      console.log('Reset password response:', { data, error })
-
       if (error) {
-        console.error('Reset password error:', error)
         Alert.alert('Error', error.message)
       } else {
-        console.log('Reset password successful, data:', data)
         Alert.alert(
           'Success', 
           'Password reset email sent! Please check your email for instructions.',
@@ -150,7 +134,6 @@ export default function AuthScreen() {
         )
       }
     } catch (error) {
-      console.error('Reset password exception:', error)
       Alert.alert('Error', 'An unexpected error occurred: ' + error.message)
     } finally {
       setLoading(false)

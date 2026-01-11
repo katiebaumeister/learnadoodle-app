@@ -40,7 +40,6 @@ export default function CoursesSyllabiTab({
         return;
       }
     } catch (error) {
-      console.warn('Error loading courses from service:', error);
     }
     
     // Fallback: Try to load from syllabi table directly
@@ -57,13 +56,11 @@ export default function CoursesSyllabiTab({
         if (error.code === '42501' || error.code === 'PGRST301') {
           // Permission denied is expected if RLS is enabled - only log in development
           if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-            console.warn('[CoursesSyllabiTab] Permission denied for syllabi table - this is expected if RLS is enabled');
           }
           setCourses([]);
         } else if (error.code === '42703') {
           // Column doesn't exist - try a simpler query (only log in development)
           if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-            console.warn('[CoursesSyllabiTab] Column error, trying simpler query:', error);
           }
           const { data: simpleData, error: simpleError } = await supabase
             .from('syllabi')
@@ -77,7 +74,6 @@ export default function CoursesSyllabiTab({
                                    simpleError.code === 'PGRST301' ||
                                    simpleError.message?.includes('permission');
             if (!isExpectedError && (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production')) {
-              console.warn('[CoursesSyllabiTab] Error loading syllabi (simple query):', simpleError);
             }
             setCourses([]);
           } else if (simpleData && simpleData.length > 0) {
@@ -100,7 +96,6 @@ export default function CoursesSyllabiTab({
                                  error.code === 'PGRST301' ||
                                  error.message?.includes('permission');
           if (!isExpectedError && __DEV__) {
-            console.warn('[CoursesSyllabiTab] Error loading syllabi:', error);
           }
           setCourses([]);
         }
@@ -126,7 +121,6 @@ export default function CoursesSyllabiTab({
                              error.code === 'PGRST301' ||
                              error.message?.includes('permission');
       if (!isExpectedError && __DEV__) {
-        console.warn('[CoursesSyllabiTab] Exception loading courses:', error);
       }
       setCourses([]);
     } finally {
@@ -184,7 +178,8 @@ export default function CoursesSyllabiTab({
                 </View>
                 <TouchableOpacity
                   style={styles.emptyCTA}
-                  onPress={() => onOpenExplore?.('syllabus')}
+                  // onPress={() => onOpenExplore?.('syllabus')} // Archived - explore page removed
+                  onPress={() => {}}
                 >
                   <BookOpen size={16} color={colors.white} />
                   <Text style={styles.emptyCTAText}>Upload Syllabus</Text>
@@ -193,8 +188,7 @@ export default function CoursesSyllabiTab({
                   style={styles.emptyLink}
                   onPress={() => {
                     // TODO: Navigate to example syllabi
-                    console.log('Show example syllabi');
-                  }}
+}}
                 >
                   <Text style={styles.emptyLinkText}>See example syllabi →</Text>
                 </TouchableOpacity>
@@ -324,7 +318,8 @@ export default function CoursesSyllabiTab({
                 {selectedCourse.provider !== 'Custom' && (
                   <TouchableOpacity
                     style={styles.modalActionButton}
-                    onPress={() => onOpenExplore?.(selectedCourse.provider)}
+                    // onPress={() => onOpenExplore?.(selectedCourse.provider)} // Archived - explore page removed
+                    onPress={() => {}}
                   >
                     <ExternalLink size={16} color={colors.indigo} />
                     <Text style={styles.modalActionText}>Open in Explore</Text>

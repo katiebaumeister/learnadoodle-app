@@ -48,7 +48,6 @@ export default function DailyChecklist({ childId, familyId, date = null }) {
         percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
       });
     } catch (error) {
-      console.error('Error loading checklist:', error);
     } finally {
       setLoading(false);
     }
@@ -66,12 +65,10 @@ export default function DailyChecklist({ childId, familyId, date = null }) {
         .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Error loading gamification:', error);
       } else {
         setGamification(data);
       }
     } catch (error) {
-      console.error('Error loading gamification:', error);
     }
   };
 
@@ -96,7 +93,6 @@ export default function DailyChecklist({ childId, familyId, date = null }) {
         await awardXPForCompletion(itemId);
       }
     } catch (error) {
-      console.error('Error toggling item:', error);
       alert('Failed to update item. Please try again.');
     }
   };
@@ -157,7 +153,6 @@ export default function DailyChecklist({ childId, familyId, date = null }) {
       // Reload gamification
       await loadGamification();
     } catch (error) {
-      console.error('Error awarding XP:', error);
     }
   };
 

@@ -44,7 +44,6 @@ export default function TutorDashboard({ accessibleChildren = [] }) {
         }
       }
     } catch (error) {
-      console.error('Error loading tutor overview:', error);
       toast.push('Failed to load dashboard', 'error');
     } finally {
       setLoading(false);
@@ -59,7 +58,6 @@ export default function TutorDashboard({ accessibleChildren = [] }) {
         setApprovedSuggestions(data);
       }
     } catch (error) {
-      console.error('Error loading suggestions:', error);
     }
   };
 
@@ -108,7 +106,6 @@ export default function TutorDashboard({ accessibleChildren = [] }) {
 
       loadOverview();
     } catch (error) {
-      console.error('Error updating event:', error);
       toast.push('Failed to update event', 'error');
     }
   };
@@ -141,7 +138,6 @@ export default function TutorDashboard({ accessibleChildren = [] }) {
       setSelectedEvent(null);
       loadOverview();
     } catch (error) {
-      console.error('Error saving reflection:', error);
       toast.push('Failed to save reflection', 'error');
     }
   };

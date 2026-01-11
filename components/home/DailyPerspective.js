@@ -38,7 +38,6 @@ export default function DailyPerspective({ learning = [] }) {
 
       setPerspective(line);
     } catch (err) {
-      console.error('[DailyPerspective] Error:', err);
       setPerspective("Today is a good day for slow learning and noticing small wins.");
     } finally {
       setLoading(false);

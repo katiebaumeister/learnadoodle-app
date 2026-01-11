@@ -92,7 +92,7 @@ export default function StickyNotesContainer({ familyId, visible = true }) {
   }
 
   return (
-    <View style={styles.container} pointerEvents="box-none">
+    <View style={[styles.container, { pointerEvents: 'box-none' }]}>
       {notes.map((note, index) => (
         <StickyNote
           key={note.id}

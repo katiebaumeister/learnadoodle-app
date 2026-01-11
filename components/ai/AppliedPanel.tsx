@@ -56,7 +56,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#065f46',
-    fontFamily: Platform.OS === 'web' ? 'Outfit' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Plus Jakarta Sans' : undefined,
   },
   list: {
     gap: 6,
@@ -64,7 +64,7 @@ const styles = StyleSheet.create({
   listItem: {
     fontSize: 13,
     color: '#0f172a',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   viewLink: {
     marginTop: 4,
@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#2563eb',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
 });
 

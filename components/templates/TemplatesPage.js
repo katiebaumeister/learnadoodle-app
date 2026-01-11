@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator, Platform } from 'react-native';
 import { Search, Plus, FileText, Filter } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { listLessonTemplates } from '../../lib/services/templatesClientWithOffline';
@@ -67,7 +67,6 @@ export default function TemplatesPage({ familyId, children = [] }) {
       if (error) throw error;
       setAvailableSubjects(data || []);
     } catch (error) {
-      console.error('Error loading subjects:', error);
     }
   };
 
@@ -96,7 +95,6 @@ export default function TemplatesPage({ familyId, children = [] }) {
       
       setTemplates(filtered);
     } catch (error) {
-      console.error('Error loading templates:', error);
       toast.push('Failed to load templates', 'error');
     } finally {
       setLoading(false);
@@ -216,6 +214,10 @@ export default function TemplatesPage({ familyId, children = [] }) {
             <TouchableOpacity
               style={[styles.filterChip, filters.subjects.length === 0 && styles.filterChipActive]}
               onPress={() => setFilters({ ...filters, subjects: [] })}
+              {...(Platform.OS === 'web' ? {
+                'data-active': filters.subjects.length === 0 ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               <Text style={[styles.filterChipText, filters.subjects.length === 0 && styles.filterChipTextActive]}>
                 All Subjects
@@ -231,6 +233,10 @@ export default function TemplatesPage({ familyId, children = [] }) {
                     : [...filters.subjects, subject.id];
                   setFilters({ ...filters, subjects: newSubjects });
                 }}
+                {...(Platform.OS === 'web' ? {
+                  'data-active': filters.subjects.includes(subject.id) ? 'true' : 'false',
+                  className: 'chip'
+                } : {})}
               >
                 <Text style={[styles.filterChipText, filters.subjects.includes(subject.id) && styles.filterChipTextActive]}>
                   {subject.name}
@@ -245,6 +251,10 @@ export default function TemplatesPage({ familyId, children = [] }) {
           <TouchableOpacity
             style={[styles.filterChip, filters.duration === null && styles.filterChipActive]}
             onPress={() => setFilters({ ...filters, duration: null })}
+            {...(Platform.OS === 'web' ? {
+              'data-active': filters.duration === null ? 'true' : 'false',
+              className: 'chip'
+            } : {})}
           >
             <Text style={[styles.filterChipText, filters.duration === null && styles.filterChipTextActive]}>
               All Durations
@@ -255,6 +265,10 @@ export default function TemplatesPage({ familyId, children = [] }) {
               key={duration}
               style={[styles.filterChip, filters.duration === duration && styles.filterChipActive]}
               onPress={() => setFilters({ ...filters, duration: filters.duration === duration ? null : duration })}
+              {...(Platform.OS === 'web' ? {
+                'data-active': filters.duration === duration ? 'true' : 'false',
+                className: 'chip'
+              } : {})}
             >
               <Text style={[styles.filterChipText, filters.duration === duration && styles.filterChipTextActive]}>
                 {duration}
@@ -447,24 +461,39 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    // On web, chip class handles styling
+    ...(Platform.OS === 'web' ? {
+      height: 32,
+    } : {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 9999,
+      backgroundColor: '#f3f4f6',
+      borderWidth: 1,
+      borderColor: 'rgba(17,24,39,.08)',
+    }),
   },
   filterChipActive: {
-    backgroundColor: '#dbeafe',
-    borderColor: '#3b82f6',
+    // On web, CSS handles active state
+    ...(Platform.OS === 'web' ? {} : {
+      backgroundColor: 'rgba(17,24,39,.92)',
+      borderColor: 'transparent',
+    }),
   },
   filterChipText: {
     fontSize: 13,
-    color: '#374151',
+    fontWeight: '500',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
+      color: '#374151',
+    }),
   },
   filterChipTextActive: {
-    color: '#1e40af',
-    fontWeight: '600',
+    // On web, CSS handles active color
+    ...(Platform.OS === 'web' ? {} : {
+      color: 'white',
+      fontWeight: '500',
+    }),
   },
   templatesGrid: {
     flex: 1,

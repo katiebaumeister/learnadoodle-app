@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Platform, 
 import { Plus, Award, Download, Eye, X, Save, Trash2, Edit } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
+import { designTokens } from '../../theme/designTokens';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import GeistCard from '../GeistCard';
@@ -241,7 +242,16 @@ export default function BadgesCertificates({ childId, familyId }) {
                 <GeistCard key={badge.id} variant="small" hoverable style={styles.badgeCard}>
                   <View style={styles.badgeContent}>
                     {imageUrl ? (
-                      <Image source={{ uri: imageUrl }} style={styles.badgeImage} />
+                      <Image 
+                        source={{ uri: imageUrl }} 
+                        style={styles.badgeImage}
+                        onError={(e) => {
+                          // Suppress 404 errors for missing images - they're harmless
+                          if (Platform.OS === 'web' && e.nativeEvent) {
+                            e.preventDefault?.();
+                          }
+                        }}
+                      />
                     ) : (
                       <View style={[styles.badgeIcon, { backgroundColor: tokens.accentSoft }]}>
                         <Award size={48} color={tokens.accent} />
@@ -290,7 +300,16 @@ export default function BadgesCertificates({ childId, familyId }) {
                 <GeistCard key={cert.id} variant="medium" hoverable style={styles.certCard}>
                   <View style={styles.certContent}>
                     {imageUrl ? (
-                      <Image source={{ uri: imageUrl }} style={styles.certImage} />
+                      <Image 
+                        source={{ uri: imageUrl }} 
+                        style={styles.certImage}
+                        onError={(e) => {
+                          // Suppress 404 errors for missing images - they're harmless
+                          if (Platform.OS === 'web' && e.nativeEvent) {
+                            e.preventDefault?.();
+                          }
+                        }}
+                      />
                     ) : (
                       <View style={[styles.certPlaceholder, { backgroundColor: tokens.bgSubtle }]}>
                         <Award size={32} color={tokens.iconMuted} />
@@ -507,6 +526,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   headerActions: {
     flexDirection: 'row',
@@ -523,6 +543,7 @@ const styles = StyleSheet.create({
   addButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   section: {
     gap: spacing.md,
@@ -530,15 +551,18 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
     marginBottom: spacing.sm,
   },
   loading: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   emptyText: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   badgeScroll: {
     marginHorizontal: -spacing.xl,
@@ -569,10 +593,12 @@ const styles = StyleSheet.create({
   badgeName: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     textAlign: 'center',
   },
   badgeDate: {
     fontSize: 12,
+    fontFamily: designTokens.fonts.sans,
   },
   badgeActions: {
     flexDirection: 'row',
@@ -611,9 +637,11 @@ const styles = StyleSheet.create({
   certName: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   certDate: {
     fontSize: 13,
+    fontFamily: designTokens.fonts.sans,
   },
   certActions: {
     flexDirection: 'row',
@@ -650,6 +678,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   modalBody: {
     flex: 1,
@@ -661,6 +690,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     marginBottom: spacing.xs,
   },
   input: {
@@ -668,12 +698,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
   },
   textArea: {
     borderWidth: 1,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     minHeight: 100,
     textAlignVertical: 'top',
   },
@@ -692,6 +724,7 @@ const styles = StyleSheet.create({
   typeButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   fileButton: {
     flexDirection: 'row',
@@ -703,10 +736,12 @@ const styles = StyleSheet.create({
   },
   fileButtonText: {
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     flex: 1,
   },
   fileInfo: {
     fontSize: 12,
+    fontFamily: designTokens.fonts.sans,
     marginTop: spacing.xs,
   },
   modalFooter: {
@@ -726,6 +761,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   saveButton: {
     flexDirection: 'row',
@@ -738,5 +774,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
 });

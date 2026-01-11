@@ -27,7 +27,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       if (error) throw error;
       setSuggestions(data || []);
     } catch (error) {
-      console.error('Error loading suggestions:', error);
       toast.push('Failed to load suggestions', 'error');
     } finally {
       setLoading(false);
@@ -48,7 +47,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       toast.push(`Generated ${data.suggestions?.length || 0} suggestions`, 'success');
       loadSuggestions(); // Reload to show new suggestions
     } catch (error) {
-      console.error('Error generating suggestions:', error);
       toast.push('Failed to generate suggestions', 'error');
     } finally {
       setGenerating(false);
@@ -62,7 +60,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       toast.push('Suggestion approved', 'success');
       loadSuggestions();
     } catch (error) {
-      console.error('Error approving suggestion:', error);
       toast.push('Failed to approve suggestion', 'error');
     }
   };
@@ -74,7 +71,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       toast.push('Suggestion removed', 'success');
       loadSuggestions();
     } catch (error) {
-      console.error('Error rejecting suggestion:', error);
       toast.push('Failed to reject suggestion', 'error');
     }
   };
@@ -109,7 +105,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       if (error) throw error;
       toast.push('Added to schedule (next available slot)', 'success');
     } catch (error) {
-      console.error('Error adding suggestion to schedule:', error);
       toast.push('Could not add to schedule', 'error');
     } finally {
       setActionLoadingId(null);
@@ -127,7 +122,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       if (error) throw error;
       toast.push('Added to todo list', 'success');
     } catch (error) {
-      console.error('Error adding suggestion to todo list:', error);
       toast.push('Could not add to todo list', 'error');
     } finally {
       setActionLoadingId(null);
@@ -145,7 +139,6 @@ export default function InspireLearning({ familyId, children = [], onViewIntelli
       if (error) throw error;
       toast.push('Saved to ideas list', 'success');
     } catch (error) {
-      console.error('Error saving suggestion to ideas list:', error);
       toast.push('Could not save to ideas list', 'error');
     } finally {
       setActionLoadingId(null);

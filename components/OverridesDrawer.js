@@ -107,7 +107,6 @@ const OverridesDrawer = ({
       
       onOverrideSaved();
     } catch (error) {
-      console.error('Error saving override:', error);
       showAlert('Error', 'Failed to save override');
     } finally {
       setSaving(false);
@@ -124,7 +123,6 @@ const OverridesDrawer = ({
       if (error) throw error;
       onOverrideSaved();
     } catch (error) {
-      console.error('Error deleting override:', error);
       showAlert('Error', 'Failed to delete override');
     }
   };

@@ -15,6 +15,9 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
 import { colors } from '../../theme/colors';
+import { designTokens } from '../../theme/designTokens';
+import { getModeTokens } from '../../theme/pastelDesignTokens';
+import { useSensoryMode } from '../../contexts/SensoryModeContext';
 
 export default function TabBar({ 
   tabs = [],
@@ -23,6 +26,10 @@ export default function TabBar({
   showScrollIndicator = false,
   containerStyle,
 }) {
+  const { mode } = useSensoryMode();
+  const tokens = getModeTokens(mode);
+  const styles = createStyles(tokens);
+
   return (
     <View style={[styles.container, containerStyle]}>
       <ScrollView 
@@ -43,7 +50,7 @@ export default function TabBar({
               {Icon && (
                 <Icon 
                   size={16} 
-                  color={isActive ? colors.indigo : colors.textSecondary} 
+                  color={isActive ? colors.indigo : tokens.textSecondary} 
                 />
               )}
               <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
@@ -57,49 +64,52 @@ export default function TabBar({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    ...(Platform.OS === 'web' && {
-      position: 'sticky',
-      top: 0,
-      zIndex: 100,
-    }),
-  },
-  scrollContent: {
-    flexDirection: 'row',
-    paddingHorizontal: 16, // px-4
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6, // gap-1.5
-    paddingHorizontal: 16, // px-4
-    paddingVertical: 12, // py-3
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      ':hover': {
-        backgroundColor: colors.panel,
-      },
-    }),
-  },
-  tabActive: {
-    borderBottomColor: colors.indigo,
-  },
-  tabLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  tabLabelActive: {
-    color: colors.indigo,
-    fontWeight: '600',
-  },
-});
+function createStyles(tokens) {
+  return StyleSheet.create({
+    container: {
+      backgroundColor: tokens.card,
+      borderBottomWidth: 1,
+      borderBottomColor: tokens.border,
+      ...(Platform.OS === 'web' && {
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+      }),
+    },
+    scrollContent: {
+      flexDirection: 'row',
+      paddingHorizontal: 16, // px-4
+    },
+    tab: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6, // gap-1.5
+      paddingHorizontal: 16, // px-4
+      paddingVertical: 12, // py-3
+      borderBottomWidth: 2,
+      borderBottomColor: 'transparent',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        ':hover': {
+          backgroundColor: tokens.bgSubtle,
+        },
+      }),
+    },
+    tabActive: {
+      borderBottomColor: colors.indigo,
+    },
+    tabLabel: {
+      fontSize: 14,
+      fontWeight: '500',
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.textSecondary,
+      lineHeight: 20,
+    },
+    tabLabelActive: {
+      color: colors.indigo,
+      fontWeight: '600',
+    },
+  });
+}
 

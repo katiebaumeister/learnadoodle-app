@@ -40,7 +40,6 @@ export default function ResumePositionModal({
       }
       onClose();
     } catch (error) {
-      console.error('Error updating resume position:', error);
       toast.push('Failed to update resume position', 'error');
     } finally {
       setLoading(false);
@@ -62,7 +61,6 @@ export default function ResumePositionModal({
       }
       onClose();
     } catch (error) {
-      console.error('Error marking complete:', error);
       toast.push('Failed to mark as complete', 'error');
     } finally {
       setLoading(false);

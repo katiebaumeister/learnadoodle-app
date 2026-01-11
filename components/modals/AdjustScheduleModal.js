@@ -77,19 +77,7 @@ export default function AdjustScheduleModal({
       // HTML5 date inputs already return YYYY-MM-DD, but double-check
       const normalizedStartDate = startDate.includes('T') ? startDate.split('T')[0] : startDate;
       const normalizedEndDate = (endDate || startDate).includes('T') ? (endDate || startDate).split('T')[0] : (endDate || startDate);
-      
-      console.log('[AdjustScheduleModal] Submitting schedule adjustment:', {
-        person_id: personId,
-        family_id: familyId,
-        start_date: normalizedStartDate,
-        end_date: normalizedEndDate,
-        adjustment_type: adjustmentType,
-        event_handling: eventHandling,
-        scope: selectedScope,
-        originalStartDate: startDate,
-        originalEndDate: endDate,
-      });
-      
+
       const response = await adjustSchedule({
         person_id: personId,
         family_id: familyId,
@@ -101,19 +89,10 @@ export default function AdjustScheduleModal({
         scope_type: selectedScope,
       });
 
-      console.log('[AdjustScheduleModal] Schedule adjustment response:', {
-        hasError: !!response.error,
-        hasData: !!response.data,
-        data: response.data,
-        error: response.error,
-        eventsHandled: response.data?.events_handled,
-        diffCount: response.data?.diff?.length || 0,
-      });
-
       // Check for errors first
       if (response.error || !response.data) {
         const errorMessage = response.error?.message || response.error || 'Failed to adjust schedule';
-        console.error('[AdjustScheduleModal] Schedule adjustment error:', response.error);
+
         toast.push(`Failed to adjust schedule: ${errorMessage}`, 'error');
         return; // Exit early on error
       }
@@ -139,16 +118,7 @@ export default function AdjustScheduleModal({
       // Show user feedback about events moved
       const eventsHandled = response.data?.events_handled || {};
       const totalEvents = (eventsHandled.backlogged || 0) + (eventsHandled.canceled || 0) + (eventsHandled.rescheduled || 0);
-      
-      console.log('[AdjustScheduleModal] Events handled details:', {
-        eventsHandled,
-        totalEvents,
-        backlogged: eventsHandled.backlogged,
-        canceled: eventsHandled.canceled,
-        rescheduled: eventsHandled.rescheduled,
-        fullResponse: response.data,
-      });
-      
+
       // Build a clear, comprehensive message about what happened to the events
       let successMessage = 'Schedule adjusted successfully.';
       
@@ -187,16 +157,7 @@ export default function AdjustScheduleModal({
       } else {
         successMessage += ' No events found in this date range.';
       }
-      
-      console.log('[AdjustScheduleModal] Showing success message:', successMessage);
-      console.log('[AdjustScheduleModal] Event handling breakdown:', {
-        rescheduled: eventsHandled.rescheduled,
-        backlogged: eventsHandled.backlogged,
-        canceled: eventsHandled.canceled,
-        total: totalEvents,
-        requestedHandling: eventHandling,
-      });
-      
+
       // Reset form
       setStartDate('');
       setEndDate('');
@@ -220,37 +181,24 @@ export default function AdjustScheduleModal({
       if (typeof window !== 'undefined') {
         // Force refresh after a delay to ensure backend processing completes
         setTimeout(() => {
-          console.log('[AdjustScheduleModal] Starting calendar refresh for date:', adjustedDateStr);
-          
           // Parse the start date to get month/year for targeted refresh
           // Use noon local time to avoid timezone issues when creating Date object
           const adjustedDate = new Date(adjustedDateStr + 'T12:00:00'); 
           const targetMonth = adjustedDate.getMonth(); // 0-based (0 = January, 10 = November)
           const targetYear = adjustedDate.getFullYear();
           const targetMonthNum = targetMonth + 1; // 1-based for loadMonthData (1 = January, 11 = November)
-          
-          console.log('[AdjustScheduleModal] Refresh target:', { 
-            targetMonth, 
-            targetMonthNum,
-            targetYear, 
-            adjustedDateStr,
-            adjustedDate: adjustedDate.toISOString(),
-          });
-          
+
           // Clear the calendar cache for this month to force fresh data
           // Note: monthKey format in WebContent is `${year}-${monthIndex}` (0-based month)
           // So November (month 11) = index 10, monthKey = "2025-10"
           const monthKey = `${targetYear}-${targetMonth}`;
-          console.log('[AdjustScheduleModal] Month key for cache clear:', monthKey, '(month index', targetMonth, '= month', targetMonthNum, ')');
-          
+
           if (window.__clearCalendarCache) {
-            console.log('[AdjustScheduleModal] Clearing calendar cache for month:', monthKey);
             window.__clearCalendarCache(monthKey);
           }
           
           // Also try to trigger loadMonthData directly if available
           if (window.__loadMonthData) {
-            console.log('[AdjustScheduleModal] Calling window.__loadMonthData directly');
             window.__loadMonthData(targetYear, targetMonthNum);
           }
           
@@ -263,22 +211,17 @@ export default function AdjustScheduleModal({
             } 
           });
           window.dispatchEvent(refreshEvent);
-          console.log('[AdjustScheduleModal] Dispatched refreshCalendar event');
-          
+
           const plannerRefreshEvent = new CustomEvent('refreshPlannerWeek');
           window.dispatchEvent(plannerRefreshEvent);
-          console.log('[AdjustScheduleModal] Dispatched refreshPlannerWeek event');
-          
+
           // Try direct refresh if available - with multiple attempts
           if (window.__refreshCalendarData) {
-            console.log('[AdjustScheduleModal] Calling window.__refreshCalendarData directly');
             window.__refreshCalendarData(adjustedDate);
           } else {
-            console.warn('[AdjustScheduleModal] window.__refreshCalendarData not available, will rely on event listeners');
             // Retry after another delay in case the function becomes available
             setTimeout(() => {
               if (window.__refreshCalendarData) {
-                console.log('[AdjustScheduleModal] Retry: Calling window.__refreshCalendarData');
                 window.__refreshCalendarData(adjustedDate);
               }
             }, 1500);
@@ -286,7 +229,6 @@ export default function AdjustScheduleModal({
         }, 1500); // Increased delay to ensure backend processing completes
       }
     } catch (error) {
-      console.error('Error adjusting schedule:', error);
       toast.push(`Failed to adjust schedule: ${error.message || 'Unknown error'}`, 'error');
     } finally {
       setSaving(false);

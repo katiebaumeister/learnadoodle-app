@@ -120,7 +120,6 @@ export default function EventSearch({ familyId, children = [], onEventSelect, on
           setPopularSubjects(popular);
         }
       } catch (err) {
-        console.log('Error loading popular subjects:', err);
       }
     }
   };
@@ -204,7 +203,6 @@ export default function EventSearch({ familyId, children = [], onEventSelect, on
       const { data: events, error: eventsError } = await eventsQuery;
 
       if (eventsError) {
-        console.error('Events search error:', eventsError);
       } else if (events) {
         events.forEach(event => {
           const childName = event.child_id ? (childMap[event.child_id] || 'Unknown') : 'Unknown';
@@ -247,7 +245,6 @@ export default function EventSearch({ familyId, children = [], onEventSelect, on
         const { data: childEvents, error: childError } = await childQuery;
 
         if (childError) {
-          console.error('Child events search error:', childError);
         } else if (childEvents) {
           childEvents.forEach(event => {
             if (!results.find(r => r.id === event.id)) {
@@ -275,7 +272,6 @@ export default function EventSearch({ familyId, children = [], onEventSelect, on
 
       setSearchResults(results);
     } catch (error) {
-      console.error('Search error:', error);
       setSearchResults([]);
     } finally {
       setIsSearching(false);
@@ -322,14 +318,11 @@ export default function EventSearch({ familyId, children = [], onEventSelect, on
       onEventSelect(result.event);
     } else if (action === 'edit') {
       // TODO: Open edit modal
-      console.log('Edit:', result);
-    } else if (action === 'complete') {
+} else if (action === 'complete') {
       // TODO: Mark as complete
-      console.log('Complete:', result);
-    } else if (action === 'planner') {
+} else if (action === 'planner') {
       // TODO: Navigate to planner
-      console.log('Open in planner:', result);
-    }
+}
   };
 
   const suggestedFilters = [
@@ -555,9 +548,10 @@ export default function EventSearch({ familyId, children = [], onEventSelect, on
                     style={styles.filterChip}
                     onPress={() => setSearchQuery(filter.label)}
                     activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && {
+                    {...(Platform.OS === 'web' ? {
+                      className: 'chip',
                       title: `Show all ${filter.label.toLowerCase()} events`
-                    })}
+                    } : {})}
                   >
                     <IconComponent size={14} color={filter.color} />
                     <Text style={styles.filterChipText}>{filter.label}</Text>
@@ -1057,23 +1051,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    // On web, chip class handles styling
+    ...(Platform.OS === 'web' ? {
+      height: 32,
+    } : {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 9999,
     backgroundColor: '#f3f4f6',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 1px rgba(0, 0, 0, 0.02)',
-      transition: 'all 0.2s ease',
-      ':hover': {
-        backgroundColor: '#e5e7eb',
-        transform: 'translateY(-1px)',
-      },
     }),
   },
   filterChipText: {
     fontSize: 13,
-    color: '#4b5563',
     fontWeight: '500',
+    // On web, CSS handles color
+    ...(Platform.OS === 'web' ? {} : {
+      color: '#4b5563',
+    }),
   },
   scrollView: {
     flex: 1,

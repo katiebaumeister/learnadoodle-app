@@ -29,7 +29,7 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={{ push, remove }}>
       {children}
-      <View style={styles.container} pointerEvents="box-none">
+      <View style={[styles.container, { pointerEvents: 'box-none' }]}>
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} onRemove={remove} />
         ))}

@@ -67,7 +67,6 @@ export default function SkillCoverageMap({ childId, familyId, subjectId }) {
         avgMastery: skills.filter(s => s.mastery_level === 'mastered').length / skills.length,
       })));
     } catch (error) {
-      console.error('Error loading skills data:', error);
       // If table doesn't exist, show empty state
       setSkillsData([]);
     } finally {

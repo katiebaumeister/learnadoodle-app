@@ -66,7 +66,6 @@ export default function ContinueLearningStrip({
       // Silently handle errors - don't spam console with network errors
       const isNetworkError = error.message?.includes('Cannot connect') || error.message?.includes('Failed to fetch');
       if (!isNetworkError) {
-        console.error('Error loading resumable events:', error);
       }
       setResumableEvents([]);
     } finally {

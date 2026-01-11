@@ -61,8 +61,7 @@ export default function SearchModal({ visible, onClose }) {
         setFamilyId(profile.family_id)
       }
     } catch (error) {
-      console.warn('Could not get user profile:', error)
-    }
+      }
     
     // Add welcome message
     const welcomeMessage = `Hi! I'm Doodle, your fast chat assistant for Learnadoodle! 🤖
@@ -81,14 +80,12 @@ How can I help you today?`
   }
 
   const handleSearch = async () => {
-    console.log('handleSearch called with query:', searchQuery);
     if (!searchQuery.trim()) {
-      console.log('Search blocked - no query');
       return;
     }
 
     const userMessage = searchQuery.trim();
-    console.log('Processing message:', userMessage);
+
     setSearchQuery('')
     setIsLoading(true)
 
@@ -112,123 +109,82 @@ How can I help you today?`
             }
           } catch (toolError) {
             console.error('Tool execution error:', toolError)
-            finalResponse += `\n\n❌ Sorry, I couldn't complete that action. Please try again.`
           }
         }
-
+        
         // Add assistant response
         setMessages([...newMessages, { role: 'assistant', content: finalResponse, timestamp: Date.now() }])
-      } else {
-        // Fallback response if no family_id
-        const fallbackResponse = `I received your message: "${userMessage}". I'm here to help with your learning questions! 🤖
-
-I can help you with:
-• Quick questions and answers
-• Logging homework and activities
-• Checking progress
-• Scheduling and planning
-• Subject recommendations
-
-What would you like to know more about?`
-        
-        setMessages([...newMessages, { role: 'assistant', content: fallbackResponse, timestamp: Date.now() }])
       }
-
     } catch (error) {
-      console.error('Error processing search:', error)
-      const errorMessage = 'Sorry, I encountered an error while processing your request. Please try again.'
-      setMessages([...newMessages, { role: 'assistant', content: errorMessage, timestamp: Date.now() }])
+      console.error('Search error:', error)
+      setMessages([...newMessages, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.', timestamp: Date.now() }])
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const handleClose = () => {
-    setSearchQuery('')
-    setMessages([])
-    setFamilyId(null)
-    onClose()
   }
 
   return (
     <Modal
       visible={visible}
       transparent={true}
-      animationType="fade"
-      animationDuration={150}
-      onRequestClose={handleClose}
+      animationType="none"
+      onRequestClose={onClose}
     >
-      <View style={styles.modalOverlay}>
-        <Animated.View 
+      <View style={styles.modalOverlay} onTouchEnd={onClose}>
+        <Animated.View
           style={[
             styles.modalContent,
             {
               transform: [
-                { translateY: slideAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [100, 0]
-                })},
+                { translateY: slideAnim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) },
                 { scale: scaleAnim }
               ]
             }
           ]}
+          onTouchEnd={(e) => e.stopPropagation()}
         >
-          {/* Header */}
           <View style={styles.modalHeader}>
             <View style={styles.headerLeft}>
-              <Bot size={24} color="#1a1a1a" />
-              <Text style={styles.modalTitle}>Ask Doodle</Text>
+              <Bot size={20} color="#4285F4" />
+              <Text style={styles.modalTitle}>Doodle Assistant</Text>
             </View>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={handleClose}
-              accessibilityRole="button"
-              accessibilityLabel="Close search modal"
-            >
-              <X size={20} color="#666666" />
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <X size={20} color="#666" />
             </TouchableOpacity>
           </View>
 
-          {/* Messages */}
-          <ScrollView style={styles.messagesContainer} showsVerticalScrollIndicator={false}>
-            {messages.map((message, index) => (
+          <ScrollView style={styles.messagesContainer} contentContainerStyle={styles.messagesContent}>
+            {messages.map((msg, index) => (
               <View
                 key={index}
                 style={[
-                  styles.messageItem,
-                  message.role === 'user' ? styles.userMessage : styles.assistantMessage
+                  styles.message,
+                  msg.role === 'user' ? styles.userMessage : styles.assistantMessage
                 ]}
               >
                 <Text style={[
                   styles.messageText,
-                  message.role === 'user' ? styles.userMessageText : styles.assistantMessageText
+                  msg.role === 'user' ? styles.userMessageText : styles.assistantMessageText
                 ]}>
-                  {message.content}
+                  {msg.content}
                 </Text>
               </View>
             ))}
             {isLoading && (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="#1a1a1a" />
-                <Text style={styles.loadingText}>Doodle is thinking...</Text>
+                <ActivityIndicator size="small" color="#4285F4" />
               </View>
             )}
           </ScrollView>
 
-          {/* Search Input */}
-          <View style={styles.searchContainer}>
+          <View style={styles.inputContainer}>
             <TextInput
-              style={styles.searchInput}
-              placeholder="Ask Doodle anything..."
+              style={styles.input}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              placeholder="Ask Doodle anything..."
+              placeholderTextColor="#999"
               onSubmitEditing={handleSearch}
-              onKeyPress={(e) => {
-                if (e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
-                  e.preventDefault();
-                  handleSearch();
-                }
-              }}
               multiline
               maxLength={500}
               returnKeyType="send"

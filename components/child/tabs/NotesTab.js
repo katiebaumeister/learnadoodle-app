@@ -63,7 +63,6 @@ export default function NotesTab({ child }) {
         setNotes(formattedNotes);
       }
     } catch (error) {
-      console.error('Error fetching notes:', error);
       setNotes([]);
     } finally {
       setLoading(false);
@@ -119,7 +118,6 @@ export default function NotesTab({ child }) {
       await fetchNotes();
       setDraft("");
     } catch (error) {
-      console.error('Error saving note:', error);
       alert('Failed to save note. Please try again.');
     } finally {
       setSaving(false);

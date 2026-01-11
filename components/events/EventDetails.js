@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform } from 'react-native';
-import { Clock, UserCircle, BookOpen, Trash2, Edit2, Calendar, Plus, ChevronDown, X, Save } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated } from 'react-native';
+import { Clock, UserCircle, BookOpen, Trash2, Edit2, Calendar, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest } from '../../lib/apiClient';
@@ -9,7 +9,8 @@ import AddMaterialModal from '../materials/AddMaterialModal';
 import { logDeleteEvent } from '../../app/services/plannerInstrumentation';
 import StandardsSearchModal from '../standards/StandardsSearchModal';
 import MasteryPicker from '../standards/MasteryPicker';
-import TemplatePicker from '../templates/TemplatePicker';
+import { useToast } from '../Toast';
+import AddSubjectModal from '../AddSubjectModal';
 
 const STATUS_BASE = ['scheduled', 'in_progress', 'done', 'skipped', 'canceled'];
 const STATUS_NORMALIZE = {
@@ -24,7 +25,7 @@ const normalizeStatus = (value) => {
   return STATUS_NORMALIZE[key] || key;
 };
 
-const formatStatusLabel = (value) => value.replace('_', ' ').toUpperCase();
+
 
 const getTimestamp = (event, keys = []) => {
   for (const key of keys) {
@@ -45,6 +46,88 @@ const toDateInput = (timestamp) => {
   const d = new Date(timestamp);
   if (Number.isNaN(d.getTime())) return '';
   return d.toISOString().split('T')[0];
+};
+
+// Helper function to check if a string is just a UUID (not a valid URL)
+const isUUID = (str) => {
+  if (!str || typeof str !== 'string') return false;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidPattern.test(str.trim());
+};
+
+// Helper function to check if a URL is valid for use as an iframe source
+const isValidUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  // Reject if it's just a UUID (not a valid URL)
+  if (isUUID(url)) return false;
+  // Must start with http:// or https://
+  return url.startsWith('http://') || url.startsWith('https://');
+};
+
+// Helper function to check if URL is a Supabase storage URL
+const isSupabaseStorageUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  // Check if URL contains Supabase storage path patterns
+  return url.includes('/storage/v1/object/') || url.includes('supabase.co/storage/');
+};
+
+// Web-only PDF iframe component
+const PDFIframe = ({ src, title }) => {
+  if (Platform.OS !== 'web') return null;
+  
+  // Use a ref to inject iframe after mount
+  const containerRef = useRef(null);
+  
+  useEffect(() => {
+    if (containerRef.current && src && typeof document !== 'undefined') {
+      // Validate URL before using it
+      if (!isValidUrl(src)) {
+        console.warn('[PDFIframe] Invalid URL provided, skipping iframe creation:', src);
+        return;
+      }
+
+      // In React Native Web, ref.current is the DOM element
+      const domElement = containerRef.current;
+      
+      // Clear any existing content
+      if (domElement.innerHTML !== undefined) {
+        domElement.innerHTML = '';
+      } else if (domElement.removeChild) {
+        while (domElement.firstChild) {
+          domElement.removeChild(domElement.firstChild);
+        }
+      }
+      
+      // Create and inject iframe
+      const iframe = document.createElement('iframe');
+      iframe.src = src;
+      iframe.title = title || 'PDF Viewer';
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.border = 'none';
+      iframe.setAttribute('allow', 'fullscreen');
+      
+      // Add error handler to prevent console errors
+      iframe.onerror = (e) => {
+        console.warn('[PDFIframe] Error loading PDF:', src);
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      
+      domElement.appendChild(iframe);
+    }
+  }, [src, title]);
+  
+  return (
+    <View
+      ref={containerRef}
+      style={{
+        flex: 1,
+        width: '100%',
+        height: '100%',
+      }}
+    />
+  );
 };
 
 const toTimeInput = (timestamp) => {
@@ -72,8 +155,6 @@ const formatDateInput = (value) => {
 
 // Format time input to enforce HH:MM AM/PM with validation
 const formatTimeInput = (value) => {
-  console.log('[formatTimeInput] Input value:', value);
-  
   // Preserve colon and extract AM/PM
   const upper = value.toUpperCase();
   const hasAM = upper.includes('AM');
@@ -96,10 +177,8 @@ const formatTimeInput = (value) => {
   }
   
   const digits = hourDigits + minuteDigits; // For length checks
-  console.log('[formatTimeInput] Hour digits:', hourDigits, 'Minute digits:', minuteDigits, 'hasColon:', hasColon, 'hasAM:', hasAM, 'hasPM:', hasPM);
-  
+
   if (digits.length === 0) {
-    console.log('[formatTimeInput] No digits, returning empty');
     return '';
   }
   
@@ -107,19 +186,18 @@ const formatTimeInput = (value) => {
   if (hourDigits.length === 1 && minuteDigits.length === 0) {
     const d = parseInt(hourDigits, 10);
     if (d === 0 || d > 9) {
-      console.log('[formatTimeInput] Invalid single digit:', d);
       return '';
     }
     // Preserve colon if present (user is typing minutes)
     if (hasColon) {
       const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
       const result = `${hourDigits}:${minuteDigits}${ampm}`;
-      console.log('[formatTimeInput] Single digit hour with colon result:', result);
+
       return result;
     }
     // No colon - just preserve AM/PM if present
     const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-    console.log('[formatTimeInput] Single digit valid:', hourDigits, 'with AM/PM:', ampm);
+
     return hourDigits + ampm;
   }
   
@@ -127,7 +205,6 @@ const formatTimeInput = (value) => {
   if (hourDigits.length === 1 && minuteDigits.length > 0) {
     const d = parseInt(hourDigits, 10);
     if (d === 0 || d > 9) {
-      console.log('[formatTimeInput] Invalid single digit hour:', d);
       return '';
     }
     // Limit minutes to 2 digits
@@ -139,13 +216,13 @@ const formatTimeInput = (value) => {
         // Invalid minutes - keep only first digit
         const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
         const result = `${hourDigits}:${limitedMinutes[0]}${ampm}`;
-        console.log('[formatTimeInput] Invalid minutes, keeping first digit:', result);
+
         return result;
       }
     }
     const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
     const result = `${hourDigits}:${limitedMinutes}${ampm}`;
-    console.log('[formatTimeInput] Single digit hour with minutes result:', result);
+
     return result;
   }
   
@@ -154,11 +231,10 @@ const formatTimeInput = (value) => {
     const hours = parseInt(hourDigits, 10);
     if (hours > 12) {
       // Invalid hour like "20" - keep only first digit and add colon for minutes
-      console.log('[formatTimeInput] Invalid hours > 12:', hours, '->', `${hourDigits[0]}:`);
+
       return `${hourDigits[0]}:`;
     }
     if (hours === 0) {
-      console.log('[formatTimeInput] Invalid hours = 0');
       return '';
     }
     // Auto-insert colon after 2 digits if not already present (unless AM/PM is already set)
@@ -166,17 +242,17 @@ const formatTimeInput = (value) => {
     if (hasColon) {
       // Already has colon - preserve it
       const result = `${hourDigits}:${minuteDigits}${ampm ? ' ' + ampm : ''}`;
-      console.log('[formatTimeInput] Two digits with colon result:', result);
+
       return result;
     } else if (ampm) {
       // If AM/PM is set, don't auto-add colon yet
       const result = `${hourDigits} ${ampm}`;
-      console.log('[formatTimeInput] Two digits with AM/PM result:', result);
+
       return result;
     } else {
       // Auto-add colon to allow typing minutes
       const result = `${hourDigits}:`;
-      console.log('[formatTimeInput] Two digits auto-adding colon result:', result);
+
       return result;
     }
   }
@@ -185,7 +261,6 @@ const formatTimeInput = (value) => {
   if (hourDigits.length === 2 && minuteDigits.length > 0) {
     const hours = parseInt(hourDigits, 10);
     if (hours > 12 || hours === 0) {
-      console.log('[formatTimeInput] Invalid hours:', hours);
       return `${hourDigits[0]}:${minuteDigits}`;
     }
     // Limit minutes to 2 digits
@@ -197,20 +272,19 @@ const formatTimeInput = (value) => {
         // Invalid minutes - keep only first digit
         const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
         const result = `${hourDigits}:${limitedMinutes[0]}${ampm}`;
-        console.log('[formatTimeInput] Invalid minutes, keeping first digit:', result);
+
         return result;
       }
     }
     const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
     const result = `${hourDigits}:${limitedMinutes}${ampm}`;
-    console.log('[formatTimeInput] Two digit hour with minutes result:', result);
+
     return result;
   }
   
   // Handle remaining edge cases - if we get here, something unexpected happened
   // Fallback: try to format based on total digits
-  console.log('[formatTimeInput] Fallback case - hourDigits:', hourDigits, 'minuteDigits:', minuteDigits);
-  
+
   // If we have hour digits but no colon and no minutes, just return what we have
   if (hourDigits.length > 0 && !hasColon && minuteDigits.length === 0) {
     const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
@@ -223,8 +297,7 @@ const formatTimeInput = (value) => {
     const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
     return `${hourDigits}:${limitedMinutes}${ampm}`;
   }
-  
-  console.log('[formatTimeInput] No match, returning empty');
+
   return '';
 };
 
@@ -269,6 +342,39 @@ const combineDateTime = (dateStr, timeStr, fallbackMinutes = 0) => {
   return base;
 };
 
+// Helper functions for time/date parsing (matching TaskCreateModal)
+const parseTimeString = (timeStr) => {
+  if (!timeStr) return null;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return null;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+
+  if (hours === 0 || hours > 12 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  if (period === 'PM' && hours !== 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+
+  return { hours, minutes };
+};
+
+const applyTimeToDate = (date, timeStr) => {
+  const parts = parseTimeString(timeStr);
+  if (!parts) return null;
+  const result = new Date(date);
+  result.setHours(parts.hours, parts.minutes, 0, 0);
+  return result;
+};
+
+const calculateMinutes = (startDate, endDate) => {
+  if (!startDate || !endDate) return null;
+  return Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+};
+
 const formatTime = (timestamp) => {
   if (!timestamp) return '—';
   const date = new Date(timestamp);
@@ -278,37 +384,231 @@ const formatTime = (timestamp) => {
 
 const SUGGESTED_TAGS = ['math', 'reading', 'science', 'writing', 'review', 'test', 'project', 'practice'];
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId }) {
+const EVENT_TYPES = [
+  'Lesson',
+  'Project',
+  'Exam',
+  'Assignment',
+  'Activity',
+  'Schedule Block',
+  'Appointment',
+];
+
+// Tag categories and suggested tags
+const TAG_CATEGORIES = {
+  domain: ['academic', 'physical', 'creative', 'social', 'emotional'],
+};
+
+const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
+
+const DEFAULT_START_TIME = '9:00 AM';
+const DEFAULT_DURATION_MINUTES = 30;
+
+// Color constants matching TaskCreateModal
+const BG = '#ffffff';
+const FG = '#111827';
+const SUB = '#6b7280';
+const BORDER = '#e5e7eb';
+const MUTED = '#9ca3af';
+const ACCENT = '#d4a256';
+const CHIP_BG = '#f3f4f6';
+const CHIP_BORDER = '#e5e7eb';
+
+// Helper functions
+function addDays(d, n) {
+  const nd = new Date(d);
+  nd.setDate(nd.getDate() + n);
+  return nd;
+}
+
+function fmt(d) {
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Format date range for multi-day events
+function fmtDateRange(startDate, endDate) {
+  if (!startDate || !endDate) return fmt(startDate || endDate);
+  
+  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  
+  // If same day, just show the date
+  if (start.getTime() === end.getTime()) {
+    return fmt(startDate);
+  }
+  
+  // Same month and year: "Jan 9 - 12, 2026"
+  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+    const startDay = start.getDate();
+    const endDay = end.getDate();
+    const month = start.toLocaleDateString('en-US', { month: 'short' });
+    const year = start.getFullYear();
+    return `${month} ${startDay} - ${endDay}, ${year}`;
+  }
+  
+  // Same year, different months: "Jan 9 - Feb 12, 2026"
+  if (start.getFullYear() === end.getFullYear()) {
+    const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${startFormatted} - ${endFormatted}, ${start.getFullYear()}`;
+  }
+  
+  // Different years: "Jan 9, 2026 - Feb 12, 2027"
+  return `${fmt(startDate)} - ${fmt(endDate)}`;
+}
+
+// Safe View wrapper that filters out text nodes
+function SafeView({ children, style, ...props }) {
+  const childrenArray = React.Children.toArray(children);
+  const safeChildren = childrenArray.filter((child) => {
+    if (typeof child === 'string') return false;
+    if (child == null) return false;
+    if (typeof child === 'boolean') return false;
+    return true;
+  });
+  return <View style={style} {...props}>{safeChildren}</View>;
+}
+
+// Wrapper for fieldRow to catch text nodes
+function SafeFieldRow({ children, style }) {
+  const safeChildren = React.Children.toArray(children).filter((child) => {
+    if (typeof child === 'string') return false;
+    return child != null;
+  });
+  return <View style={style}>{safeChildren}</View>;
+}
+
+function ChipRow({ children, style }) {
+  const normalizedChildren = React.Children.map(children, (child) => {
+    if (typeof child === 'string') return null;
+    if (child == null) return null;
+    if (typeof child === 'boolean') return null;
+    return child;
+  }) || [];
+  
+  const safeChildren = normalizedChildren.filter((child) => {
+    if (typeof child === 'string') return false;
+    if (child == null) return false;
+    return true;
+  });
+
+  return <View style={style}>{safeChildren}</View>;
+}
+
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose }) {
+  const toast = useToast();
   const [deleting, setDeleting] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(false); // Start in view mode
   const [saving, setSaving] = useState(false);
+  const [schedulingBacklog, setSchedulingBacklog] = useState(false); // State for "Add to schedule" mode
 
   const [draftTitle, setDraftTitle] = useState('');
   const [draftDate, setDraftDate] = useState('');
+  const [dueDate, setDueDate] = useState(new Date());
+  const [eventEndDate, setEventEndDate] = useState(null); // End date for multi-day events
   const [draftStartTime, setDraftStartTime] = useState('');
   const [draftEndTime, setDraftEndTime] = useState('');
+  const [startTime, setStartTime] = useState(DEFAULT_START_TIME);
+  const [endTime, setEndTime] = useState('');
   const [draftChildId, setDraftChildId] = useState(null);
+  const [assigneeIds, setAssigneeIds] = useState([]);
   const [draftAllDay, setDraftAllDay] = useState(false);
+  const [allDay, setAllDay] = useState(false);
   const [draftNotes, setDraftNotes] = useState('');
+  const [notes, setNotes] = useState('');
   const [draftStatus, setDraftStatus] = useState('scheduled');
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
+  const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
+  const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
   const [draftMaterialId, setDraftMaterialId] = useState(null);
+  const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
+  const [selectedMaterialId, setSelectedMaterialId] = useState(null);
   const [materials, setMaterials] = useState([]);
   const [loadingMaterials, setLoadingMaterials] = useState(false);
   const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  const materialDropdownRef = useRef(null);
+  const materialButtonRef = useRef(null);
+  const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
+  
+  // PDF viewer state
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfTitle, setPdfTitle] = useState('');
+  
+  // Subject dropdown refs and position for portal
+  const subjectButtonRef = useRef(null);
+  const subjectDropdownRef = useRef(null);
+  const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
+  
+  // Event type and placement
+  const [eventType, setEventType] = useState('Lesson');
+  const [placement, setPlacement] = useState('calendar'); // 'calendar' or 'backlog'
+  const [showCalendarPicker, setShowCalendarPicker] = useState(false);
+  const [calendarViewMonth, setCalendarViewMonth] = useState(new Date());
+  const [showEventEndDatePicker, setShowEventEndDatePicker] = useState(false);
+  const [eventEndDateCalendarViewMonth, setEventEndDateCalendarViewMonth] = useState(() => {
+    try {
+      const baseDate = new Date();
+      const endDate = new Date(baseDate);
+      endDate.setDate(endDate.getDate() + 1);
+      return endDate;
+    } catch (e) {
+      return new Date();
+    }
+  });
+  
+  // Academic and location fields
+  const [subjectId, setSubjectId] = useState(null);
+  const [unit, setUnit] = useState('');
+  const [grade, setGrade] = useState('');
+  const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
+  const [location, setLocation] = useState('');
+  const [mode, setMode] = useState('');
+  const [instructor, setInstructor] = useState('');
+  const [goalLink, setGoalLink] = useState(null);
+  const [subjects, setSubjects] = useState([]);
+  const [subjectGoals, setSubjectGoals] = useState([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
+  const [showGoalDropdown, setShowGoalDropdown] = useState(false);
+  const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  
+  // Recurring event state
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceType, setRecurrenceType] = useState('daily');
+  const [recurrenceInterval, setRecurrenceInterval] = useState(null);
+  const [recurrenceIntervalText, setRecurrenceIntervalText] = useState('');
+  const [recurrenceEndType, setRecurrenceEndType] = useState('never');
+  const [recurrenceEndAfter, setRecurrenceEndAfter] = useState(null);
+  const [recurrenceEndAfterText, setRecurrenceEndAfterText] = useState('');
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState(null);
+  const [showEndDateCalendarPicker, setShowEndDateCalendarPicker] = useState(false);
+  const [endDateCalendarViewMonth, setEndDateCalendarViewMonth] = useState(() => {
+    try {
+      const baseDate = new Date();
+      const endDate = new Date(baseDate);
+      endDate.setDate(endDate.getDate() + 30);
+      return endDate;
+    } catch (e) {
+      return new Date();
+    }
+  });
   
   // Standards state
   const [attachedStandards, setAttachedStandards] = useState([]);
   const [showStandardsModal, setShowStandardsModal] = useState(false);
+
+  // Grade percentage validation state
+  const [percentValidationError, setPercentValidationError] = useState(null);
+  const [percentValidationData, setPercentValidationData] = useState(null);
+  const [checkingPercent, setCheckingPercent] = useState(false);
   const [loadingStandards, setLoadingStandards] = useState(false);
   const [standardsMastery, setStandardsMastery] = useState({}); // Map of standard_id -> mastery_level
   
-  // Templates state
-  const [savingAsTemplate, setSavingAsTemplate] = useState(false);
-  const [showTemplateNameInput, setShowTemplateNameInput] = useState(false);
-  const [templateName, setTemplateName] = useState('');
+  // Validation
+  const [validationErrors, setValidationErrors] = useState({});
 
   const startPeriod = useMemo(() => {
     if (!draftStartTime) return null;
@@ -326,21 +626,72 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return null;
   }, [draftEndTime]);
 
-  const statusColors = useMemo(
-    () => ({
-      scheduled: '#f3f4f6',
-      done: '#f3f4f6',
-      skipped: '#f3f4f6',
-      canceled: '#f3f4f6',
-      in_progress: '#f3f4f6',
-    }),
-    []
-  );
-
   const statusOptions = useMemo(() => {
     const current = normalizeStatus(event?.status);
     return Array.from(new Set([...STATUS_BASE, current].filter(Boolean)));
   }, [event?.status]);
+
+  // Helper functions matching TaskCreateModal
+  const showAcademicFields = () => {
+    return eventType && ['Lesson', 'Activity', 'Assignment', 'Schedule Block'].includes(eventType);
+  };
+
+  const showLocationFields = () => {
+    return eventType && ['Appointment', 'Activity'].includes(eventType);
+  };
+
+  const validateFields = () => {
+    const errors = {};
+    
+    if (!draftTitle.trim()) {
+      errors.title = 'Title is required';
+    }
+    
+    if (!dueDate) {
+      errors.date = 'Date is required';
+    }
+    
+    // End date is required for multi-day event types (Project, Trip, Holiday, Other)
+    const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+    if (isMultiDayEventType && placement === 'calendar' && !eventEndDate) {
+      errors.endDate = 'End date is required for ' + eventType + ' events';
+    }
+    if (isMultiDayEventType && eventEndDate && dueDate) {
+      // Compare dates only (ignore time)
+      const startDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+      const endDateOnly = new Date(eventEndDate.getFullYear(), eventEndDate.getMonth(), eventEndDate.getDate());
+      if (endDateOnly < startDateOnly) {
+        errors.endDate = 'End date must be on or after start date';
+      }
+    }
+    
+    // Time is required if calendar placement and not all day
+    if (placement === 'calendar' && !allDay && !startTime.trim()) {
+      errors.time = 'Start time is required';
+    }
+    
+    if (!eventType) {
+      errors.eventType = 'Event type is required';
+    }
+    
+    if (assigneeIds.length === 0) {
+      errors.assignee = 'At least one assignee is required';
+    }
+    
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const isFormValid = () => {
+    if (!draftTitle.trim()) return false;
+    if (assigneeIds.length === 0) return false;
+    if (!dueDate) return false;
+    if (placement === 'calendar' && !allDay && !startTime.trim()) return false;
+    if (!eventType) return false;
+    const isMultiDayEvent = false; // No multi-day events in new system
+    if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
+    return true;
+  };
 
   // Load standards when event loads
   useEffect(() => {
@@ -386,10 +737,35 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
       }
     } catch (error) {
-      console.error('Error loading standards:', error);
     } finally {
       setLoadingStandards(false);
     }
+  };
+
+  const handleMaterialDropdownToggle = () => {
+    const willShow = !showMaterialDropdown;
+    
+    if (willShow && Platform.OS === 'web' && materialButtonRef.current) {
+      // Calculate position before showing dropdown
+      const node = materialButtonRef.current._nativeNode || materialButtonRef.current;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        const dropdownMaxHeight = 300;
+        
+        // Position below the button (like subject dropdown)
+        const top = rect.bottom + 4;
+        
+        const newPosition = {
+          top: top,
+          left: rect.left,
+          width: rect.width, // Match the selector box width exactly
+          maxHeight: dropdownMaxHeight,
+        };
+        setMaterialDropdownPosition(newPosition);
+      }
+    }
+    
+    setShowMaterialDropdown(willShow);
   };
 
   const handleAttachStandards = async (standards) => {
@@ -410,7 +786,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setAttachedStandards(standards);
       onEventUpdated?.();
     } catch (error) {
-      console.error('Error attaching standards:', error);
       Alert.alert('Error', 'Failed to attach standards');
     }
   };
@@ -435,7 +810,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       });
       onEventUpdated?.();
     } catch (error) {
-      console.error('Error removing standard:', error);
       Alert.alert('Error', 'Failed to remove standard');
     }
   };
@@ -458,73 +832,91 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }));
       onEventUpdated?.();
     } catch (error) {
-      console.error('Error updating mastery:', error);
       Alert.alert('Error', 'Failed to update mastery level');
     }
   };
 
-  const handleApplyTemplate = async (template) => {
-    if (!event?.id) return;
-    
-    try {
-      const { data, error } = await apiRequest(`/api/lesson-templates/${template.id}/apply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lesson_id: event.id }),
-      });
+  // Notify parent when editing state changes
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      console.log('[EventDetails] Notifying parent of editing state:', editing);
+    }
+    onEditingChange?.(editing);
+  }, [editing, onEditingChange]);
+
+  // Update material dropdown position on scroll/resize when visible
+  useEffect(() => {
+    if (showMaterialDropdown && Platform.OS === 'web' && materialButtonRef.current) {
+      const updatePosition = () => {
+        if (materialButtonRef.current) {
+          const node = materialButtonRef.current._nativeNode || materialButtonRef.current;
+          if (node && typeof node.getBoundingClientRect === 'function') {
+            const rect = node.getBoundingClientRect();
+            const dropdownMaxHeight = 300;
+            
+            // Position below the button (like subject dropdown)
+            const top = rect.bottom + 4;
+            
+            const newPosition = {
+              top: top,
+              left: rect.left,
+              width: rect.width, // Match the selector box width exactly
+              maxHeight: dropdownMaxHeight,
+            };
+            setMaterialDropdownPosition(newPosition);
+          }
+        }
+      };
       
-      if (error) throw error;
+      // Update on scroll/resize
+      if (typeof window !== 'undefined') {
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
+        
+        return () => {
+          window.removeEventListener('scroll', updatePosition, true);
+          window.removeEventListener('resize', updatePosition);
+        };
+      }
+    }
+  }, [showMaterialDropdown]);
+
+  // Calculate subject dropdown position when it opens
+  useEffect(() => {
+    if (showSubjectDropdown && Platform.OS === 'web' && subjectButtonRef.current) {
+      const updatePosition = () => {
+        if (subjectButtonRef.current) {
+          const node = subjectButtonRef.current._nativeNode || subjectButtonRef.current;
+          if (node && typeof node.getBoundingClientRect === 'function') {
+            const rect = node.getBoundingClientRect();
+            const newPosition = {
+              top: rect.bottom + 4,
+              left: rect.left,
+              width: Math.max(rect.width, 200),
+            };
+            setSubjectDropdownPosition(newPosition);
+          }
+        }
+      };
       
-      // Update local state with template data
-      if (data.template) {
-        setDraftNotes(data.template.default_objectives || draftNotes);
-        // Could update other fields too
+      // Use setTimeout to ensure DOM is ready after state update
+      const timeoutId = setTimeout(updatePosition, 0);
+      
+      // Update on scroll/resize
+      if (typeof window !== 'undefined') {
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
+        
+        return () => {
+          clearTimeout(timeoutId);
+          window.removeEventListener('scroll', updatePosition, true);
+          window.removeEventListener('resize', updatePosition);
+        };
       }
       
-      // Reload event to get updated data
-      onEventUpdated?.();
-      Alert.alert('Success', 'Template applied successfully');
-    } catch (error) {
-      console.error('Error applying template:', error);
-      Alert.alert('Error', 'Failed to apply template');
+      return () => clearTimeout(timeoutId);
     }
-  };
-
-  const handleSaveAsTemplate = () => {
-    if (!event?.id) return;
-    setShowTemplateNameInput(true);
-    setTemplateName(event.title || '');
-  };
-
-  const confirmSaveTemplate = async () => {
-    if (!event?.id || !templateName.trim()) {
-      Alert.alert('Error', 'Template name is required');
-      return;
-    }
-    
-    setSavingAsTemplate(true);
-    try {
-      const { data, error } = await apiRequest('/api/lesson-templates/from-lesson', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lesson_id: event.id,
-          title: templateName.trim(),
-        }),
-      });
-      
-      if (error) throw error;
-      
-      setShowTemplateNameInput(false);
-      setTemplateName('');
-      Alert.alert('Success', 'Template saved successfully');
-    } catch (error) {
-      console.error('Error saving template:', error);
-      Alert.alert('Error', 'Failed to save template');
-    } finally {
-      setSavingAsTemplate(false);
-    }
-  };
+  }, [showSubjectDropdown]);
 
   useEffect(() => {
     if (!event) return;
@@ -532,10 +924,55 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const startTs = getTimestamp(event, ['start_ts', 'start', 'start_local']);
     const endTs = getTimestamp(event, ['end_ts', 'end', 'end_local']);
 
+    // Title
     setDraftTitle(event.title || '');
+    
+    // Date handling
     const dateString = toDateInput(startTs);
-    setDraftDate(dateString);
+    const dateObj = startTs ? new Date(startTs) : new Date();
+    setDraftDate(dateString || (event.is_backlog === true || event.data?.is_backlog === true ? new Date().toISOString().split('T')[0] : ''));
+    setDueDate(dateObj);
+    setCalendarViewMonth(dateObj);
+    
+    // End date for multi-day events (Project, Trip, Holiday, Other)
+    // Check if this is a multi-day event type
+    const isMultiDayEventType = event.event_type && ['Project', 'Trip', 'Holiday', 'Other'].includes(event.event_type);
+    if (endTs && isMultiDayEventType) {
+      const endDateObj = new Date(endTs);
+      const startDateObj = startTs ? new Date(startTs) : null;
+      
+      // Always load the end date for multi-day events, even if same day
+      // The user can change it if needed
+      if (startDateObj) {
+        // Extract just the date part (ignore time) for the end date picker
+        const endDateOnly = new Date(endDateObj.getFullYear(), endDateObj.getMonth(), endDateObj.getDate());
+        const startDateOnly = new Date(startDateObj.getFullYear(), startDateObj.getMonth(), startDateObj.getDate());
+        
+        console.log('[EventDetails] Loading end date for multi-day event:', {
+          event_type: event.event_type,
+          start_ts: startTs,
+          end_ts: endTs,
+          startDateObj: startDateObj.toISOString(),
+          endDateObj: endDateObj.toISOString(),
+          startDateOnly: startDateOnly.toISOString(),
+          endDateOnly: endDateOnly.toISOString(),
+          areSameDay: startDateOnly.getTime() === endDateOnly.getTime()
+        });
+        
+        setEventEndDate(endDateOnly);
+        setEventEndDateCalendarViewMonth(endDateOnly);
+      } else {
+        setEventEndDate(null);
+      }
+    } else {
+      setEventEndDate(null);
+    }
+    
+    // Placement (calendar vs backlog)
+    const isBacklog = event.is_backlog === true || event.data?.is_backlog === true;
+    setPlacement(isBacklog ? 'backlog' : 'calendar');
 
+    // All day inference
     const inferredAllDay =
       !!startTs &&
       (() => {
@@ -555,40 +992,316 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       })();
 
     setDraftAllDay(inferredAllDay || (!startTs && !endTs));
+    setAllDay(inferredAllDay || (!startTs && !endTs));
 
+    // Time handling
     if (inferredAllDay) {
       setDraftStartTime('');
       setDraftEndTime('');
+      setStartTime('');
+      setEndTime('');
     } else {
-      setDraftStartTime(toTimeInput(startTs));
-      setDraftEndTime(toTimeInput(endTs));
+      const startTimeStr = toTimeInput(startTs);
+      const endTimeStr = toTimeInput(endTs);
+      setDraftStartTime(startTimeStr);
+      setDraftEndTime(endTimeStr);
+      setStartTime(startTimeStr || DEFAULT_START_TIME);
+      setEndTime(endTimeStr || '');
     }
-    setDraftChildId(event.child_id || event.childId || event.child?.id || null);
-    setDraftNotes(event.description || event.notes || '');
+    
+    // Assignees
+    // For flexible events with overlaps, child_id might be null but child_ids array contains the assignment
+    // Check child_id first, then child_ids array, then child object
+    const childId = event.child_id || 
+                    (event.child_ids && event.child_ids.length > 0 ? event.child_ids[0] : null) || 
+                    event.childId || 
+                    event.child?.id || 
+                    null;
+    
+    console.log('[EventDetails] Loading assignees from event:', {
+      child_id: event.child_id,
+      child_ids: event.child_ids,
+      child: event.child,
+      computed_childId: childId
+    });
+    
+    setDraftChildId(childId);
+    // Use child_ids array if available, otherwise use child_id if it exists
+    const assigneeIdsArray = event.child_ids && event.child_ids.length > 0 
+      ? event.child_ids 
+      : (childId ? [childId] : []);
+    setAssigneeIds(assigneeIdsArray);
+    
+    console.log('[EventDetails] Set assigneeIds:', assigneeIdsArray);
+    
+    // Notes
+    const notesStr = event.description || event.notes || '';
+    setDraftNotes(notesStr);
+    setNotes(notesStr);
+    
+    // Status
     setDraftStatus(normalizeStatus(event.status));
+    
+    // Tags
     setDraftTags(Array.isArray(event.tags) ? event.tags : []);
     setTagInput('');
+    
+    // Event type
+    setEventType(event.event_type || 'Lesson');
+    
+    // Academic fields
+    setSubjectId(event.subject_id || null);
+    setUnit(event.unit || '');
+    setGrade(event.grade || '');
+    setPercentOfTotalGrade(event.percent_of_total_grade ? event.percent_of_total_grade.toString() : '');
+    
+    // Location fields
+    setLocation(event.location || '');
+    setMode(event.mode || '');
+    setInstructor(event.instructor || '');
+    setGoalLink(event.goal_link || null);
+    
+    // Auto-expand sections if they have content
+    const hasLogisticDetails = !!(event.location || event.mode || event.instructor);
+    const hasAcademicDetails = !!(event.subject_id || event.unit || event.grade || event.percent_of_total_grade);
+    setShowLogisticDetails(hasLogisticDetails);
+    setShowAcademicDetails(hasAcademicDetails);
+    
+    // Materials
     setDraftMaterialId(event.material_id || null);
-    setEditing(false);
+    setSelectedMaterialId(event.material_id || null);
+    setAttachedMaterialIds(event.materials_attachment_ids || (event.material_id ? [event.material_id] : []));
+    
+    // Recurring event
+    if (event.recurrence_rule) {
+      try {
+        const rule = typeof event.recurrence_rule === 'string' ? JSON.parse(event.recurrence_rule) : event.recurrence_rule;
+        setIsRecurring(true);
+        setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
+        setRecurrenceInterval(rule.interval || null);
+        setRecurrenceIntervalText(rule.interval ? rule.interval.toString() : '');
+        if (rule.count) {
+          setRecurrenceEndType('after');
+          setRecurrenceEndAfter(rule.count);
+          setRecurrenceEndAfterText(rule.count.toString());
+        } else if (rule.until) {
+          setRecurrenceEndType('on');
+          setRecurrenceEndDate(new Date(rule.until));
+        } else {
+          setRecurrenceEndType('never');
+        }
+      } catch (e) {
+        // Invalid recurrence rule, ignore
+      }
+    } else {
+      setIsRecurring(false);
+      setRecurrenceType('daily');
+      setRecurrenceInterval(null);
+      setRecurrenceIntervalText('');
+      setRecurrenceEndType('never');
+      setRecurrenceEndAfter(null);
+      setRecurrenceEndAfterText('');
+      setRecurrenceEndDate(null);
+    }
+    
+    setSchedulingBacklog(false);
   }, [event]);
 
-  // Load materials when editing starts
+  // Load materials, subjects when editing starts or when event loads (for view mode)
   useEffect(() => {
-    if (editing && familyId) {
+    if (familyId && event?.id) {
       loadMaterials();
+      fetchSubjects();
+      if (assigneeIds.length > 0) {
+        fetchSubjectGoals(assigneeIds[0]);
+      }
     }
-  }, [editing, familyId]);
+  }, [familyId, event?.id, assigneeIds]);
+
+  // Check grade percentage sum when percentOfTotalGrade or subjectId changes (for editing)
+  useEffect(() => {
+    const checkPercentSum = async () => {
+      // Only check if we have a subject and a percentage value, and if we're editing
+      if (!editing || !subjectId || !percentOfTotalGrade.trim()) {
+        setPercentValidationError(null);
+        setPercentValidationData(null);
+        return;
+      }
+
+      const parsedPercent = parseFloat(percentOfTotalGrade.trim());
+      
+      // Check for invalid number format
+      if (isNaN(parsedPercent) || !isFinite(parsedPercent)) {
+        setPercentValidationError({
+          message: 'Please enter a valid number between 0 and 100',
+          suggestedPercent: null
+        });
+        setPercentValidationData(null);
+        return;
+      }
+
+      // Check for values outside 0-100 range
+      if (parsedPercent < 0 || parsedPercent > 100) {
+        setPercentValidationError({
+          message: 'Percentage must be between 0 and 100%',
+          suggestedPercent: parsedPercent > 100 ? 100 : 0
+        });
+        setPercentValidationData(null);
+        return;
+      }
+
+      setCheckingPercent(true);
+      try {
+        const { data, error } = await supabase.rpc('get_subject_grade_percentage_sum', {
+          p_subject_id: subjectId,
+          p_exclude_event_id: event?.id || null // Exclude current event when editing
+        });
+
+        if (error) {
+          console.error('Error checking grade percentage:', error);
+          setPercentValidationError(null);
+          setPercentValidationData(null);
+          return;
+        }
+
+        if (data) {
+          const totalPercent = parseFloat(data.total_percent) || 0;
+          const remainingPercent = parseFloat(data.remaining_percent) || 100;
+          const newTotal = totalPercent + parsedPercent;
+
+          setPercentValidationData({
+            totalPercent,
+            remainingPercent,
+            assignments: data.assignments || [],
+            newTotal
+          });
+
+          if (newTotal > 100) {
+            setPercentValidationError({
+              message: `This would exceed 100% for this subject. Current total: ${totalPercent.toFixed(1)}%, remaining: ${remainingPercent.toFixed(1)}%.`,
+              suggestedPercent: Math.max(0, remainingPercent),
+              newTotal
+            });
+          } else {
+            setPercentValidationError(null);
+          }
+        }
+      } catch (err) {
+        console.error('Error checking grade percentage:', err);
+        setPercentValidationError(null);
+        setPercentValidationData(null);
+      } finally {
+        setCheckingPercent(false);
+      }
+    };
+
+    // Debounce the check by 500ms
+    const timeoutId = setTimeout(checkPercentSum, 500);
+    return () => clearTimeout(timeoutId);
+  }, [editing, subjectId, percentOfTotalGrade, event?.id]);
 
   const loadMaterials = async () => {
     if (!familyId) return;
     setLoadingMaterials(true);
     try {
-      const data = await getMaterials(familyId);
-      setMaterials(data);
+      // Load all materials (now includes both purchased materials and uploaded files)
+      const materialsData = await getMaterials(familyId);
+      console.log('[EventDetails] Loaded materials:', materialsData?.length || 0);
+      
+      setMaterials(materialsData || []);
+      if (materialsData.length === 0) {
+        console.warn('[EventDetails] No materials found for familyId:', familyId);
+      }
     } catch (error) {
-      console.error('Error loading materials:', error);
+      console.error('[EventDetails] Failed to load materials:', error);
     } finally {
       setLoadingMaterials(false);
+    }
+  };
+
+  const fetchSubjects = async () => {
+    if (!familyId) return;
+    setLoadingSubjects(true);
+    try {
+      // If no assignees selected, show no subjects (user must select assignee first)
+      if (assigneeIds.length === 0) {
+        setSubjects([]);
+        setLoadingSubjects(false);
+        return;
+      }
+      
+      // First, fetch all subjects to see what we have
+      const { data: allSubjects, error: allError } = await supabase
+        .from('subject')
+        .select('id, name, child_id')
+        .eq('family_id', familyId);
+      
+      if (allError) {
+        console.error('Error fetching all subjects:', allError);
+        throw allError;
+      }
+      
+      // Filter in JavaScript: Show both family-wide subjects AND child-specific subjects
+      // Family-wide subjects (child_id: null) show for all children
+      // Child-specific subjects only show for the assigned child
+      // Deduplicate by name - if same name exists as both family-wide and child-specific, prefer child-specific
+      const subjectMap = new Map();
+      
+      (allSubjects || []).forEach(subject => {
+        const isFamilyWide = subject.child_id === null;
+        const isForSelectedChild = subject.child_id !== null && assigneeIds.includes(subject.child_id);
+        const shouldInclude = isFamilyWide || isForSelectedChild;
+        
+        if (shouldInclude) {
+          const existing = subjectMap.get(subject.name);
+          
+          // If no existing entry, add this one
+          if (!existing) {
+            subjectMap.set(subject.name, subject);
+          } 
+          // If existing is family-wide and this is child-specific, replace it (prefer child-specific)
+          else if (existing.child_id === null && subject.child_id !== null) {
+            subjectMap.set(subject.name, subject);
+          }
+          // If existing is child-specific and this is also child-specific, prefer the one matching first assignee
+          else if (existing.child_id !== null && subject.child_id !== null) {
+            const firstAssigneeId = assigneeIds[0];
+            if (subject.child_id === firstAssigneeId && existing.child_id !== firstAssigneeId) {
+              subjectMap.set(subject.name, subject);
+            }
+          }
+        }
+      });
+      
+      const filteredSubjects = Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+      setSubjects(filteredSubjects);
+    } catch (error) {
+      console.error('Error in fetchSubjects:', error);
+      setSubjects([]);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  };
+
+  const fetchSubjectGoals = async (childId) => {
+    if (!childId) return;
+    try {
+      const { data, error } = await supabase
+        .from('subject_goals')
+        .select('id, subject_id, minutes_per_week')
+        .eq('child_id', childId)
+        .eq('is_active', true);
+      
+      if (error) {
+        if (error.code === 'PGRST301' || error.status === 403 || error.message?.includes('permission')) {
+          setSubjectGoals([]);
+          return;
+        }
+        throw error;
+      }
+      setSubjectGoals(data || []);
+    } catch (error) {
+      setSubjectGoals([]);
     }
   };
 
@@ -602,12 +1315,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name;
 
   const handleDelete = async () => {
-    console.log('[EventDetails] handleDelete called');
-    console.log('[EventDetails] Event object:', event);
-    console.log('[EventDetails] Event ID:', event?.id);
-    
     if (!event?.id) {
-      console.error('[EventDetails] Event ID is missing, cannot delete');
       if (Platform.OS === 'web') {
         window.alert('Error: Event ID is missing');
       } else {
@@ -615,15 +1323,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
       return;
     }
-    
-    console.log('[EventDetails] Showing delete confirmation');
-    
+
     // Use window.confirm on web, Alert.alert on native
     let confirmed = false;
     if (Platform.OS === 'web') {
       confirmed = window.confirm('Are you sure you want to delete this event?');
-      console.log('[EventDetails] User confirmed delete:', confirmed);
-    } else {
+} else {
       // For native, use Alert.alert with Promise wrapper
       confirmed = await new Promise((resolve) => {
     Alert.alert(
@@ -634,7 +1339,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               text: 'Cancel', 
               style: 'cancel',
               onPress: () => {
-                console.log('[EventDetails] Delete cancelled by user');
                 resolve(false);
               }
             },
@@ -642,7 +1346,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           text: 'Delete',
           style: 'destructive',
               onPress: () => {
-                console.log('[EventDetails] Delete confirmed by user');
                 resolve(true);
               },
             },
@@ -652,74 +1355,309 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     
     if (!confirmed) {
-      console.log('[EventDetails] Delete cancelled, aborting');
       return;
     }
-    
-    console.log('[EventDetails] Delete confirmed, starting deletion process');
+
             setDeleting(true);
             try {
-      console.log('[EventDetails] Attempting to delete event with ID:', event.id);
-      console.log('[EventDetails] Supabase client:', supabase ? 'available' : 'missing');
+      console.log('[EventDetails] Attempting to delete event:', event.id);
+      console.log('[EventDetails] Event details:', { id: event.id, family_id: event.family_id, title: event.title });
       
-      const deleteQuery = supabase
-        .from('events')
-        .delete()
-        .eq('id', event.id)
-        .select();
+      // Get the current user's family_id for the RPC function
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      let userFamilyId = event.family_id;
       
-      console.log('[EventDetails] Delete query constructed, executing...');
-      const { data, error } = await deleteQuery;
-      
-      console.log('[EventDetails] Delete response received');
-      console.log('[EventDetails] Delete response data:', data);
-      console.log('[EventDetails] Delete response error:', error);
-      
-      if (error) {
-        console.error('[EventDetails] Delete error details:', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code
-        });
-        throw error;
+      if (authUser) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('family_id')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        userFamilyId = profile?.family_id || event.family_id;
+        console.log('[EventDetails] Current user family_id:', userFamilyId);
+        console.log('[EventDetails] Event family_id:', event.family_id);
       }
       
-      console.log('[EventDetails] Event deleted successfully, calling onEventDeleted callback');
-      console.log('[EventDetails] onEventDeleted function:', onEventDeleted ? 'exists' : 'missing');
+      // Try using RPC function first (bypasses RLS with SECURITY DEFINER)
+      try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', {
+          _event_id: event.id,
+          _family_id: userFamilyId
+        });
+        
+        if (rpcError) {
+          console.warn('[EventDetails] RPC delete failed, falling back to soft delete:', rpcError);
+          console.warn('[EventDetails] RPC error details:', JSON.stringify(rpcError, null, 2));
+          // Fall through to soft delete below
+        } else if (rpcData?.success) {
+          console.log('[EventDetails] RPC delete succeeded:', rpcData);
+          
+          // Verify the soft delete actually worked
+          await new Promise(resolve => setTimeout(resolve, 300)); // Wait for DB to update
+          const { data: verifyData } = await supabase
+            .from('events')
+            .select('deleted_at')
+            .eq('id', event.id)
+            .maybeSingle();
+          
+          if (verifyData?.deleted_at) {
+            console.log('[EventDetails] RPC soft delete verified - deleted_at is set');
+          toast.push('Event deleted', 'success');
+          // RPC delete worked - call onEventDeleted and return
+          if (onEventDeleted) {
+            onEventDeleted(event.id);
+          }
+          
+          // Log delete event action
+          try {
+            const eventDate = event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+            logDeleteEvent(
+              event.id,
+              eventDate,
+              event.child_id
+            );
+          } catch (logError) {
+            // Ignore logging errors
+          }
+          
+          return; // Exit early - delete succeeded via RPC
+          } else {
+            console.warn('[EventDetails] RPC returned success but deleted_at not set, falling back to direct soft delete');
+            // Fall through to direct soft delete below
+          }
+        } else {
+          console.warn('[EventDetails] RPC delete returned success=false:', rpcData);
+          // Fall through to direct soft delete below
+        }
+      } catch (rpcErr) {
+        console.warn('[EventDetails] RPC delete error, falling back to direct delete:', rpcErr);
+        // Fall through to direct delete below
+      }
       
-              if (onEventDeleted) {
-                onEventDeleted(event.id);
-                console.log('[EventDetails] onEventDeleted callback executed with event ID:', event.id);
-              } else {
-                console.warn('[EventDetails] onEventDeleted callback is not provided');
-              }
+      // Fallback: Try soft delete (set deleted_at)
+      console.log('[EventDetails] Attempting soft delete as fallback');
+      const deleteQuery = supabase
+        .from('events')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', event.id)
+        .is('deleted_at', null); // Only update if not already deleted
+
+      let directDeleteResult;
+      try {
+        directDeleteResult = await deleteQuery;
+        console.log('[EventDetails] Delete query result:', directDeleteResult);
+      } catch (networkError) {
+        // Catch network errors (TypeError: Load failed, etc.)
+        console.error('[EventDetails] Network error during delete:', networkError);
+        if (networkError instanceof TypeError && networkError.message?.includes('Load failed')) {
+          throw new Error('Network error: Unable to connect to server. Please check your connection and try again.');
+        }
+        throw networkError;
+      }
+
+      const { data, error } = directDeleteResult || {};
+
+      if (error) {
+        console.error('[EventDetails] Delete error from Supabase:', error);
+        console.error('[EventDetails] Error code:', error.code);
+        console.error('[EventDetails] Error message:', error.message);
+        console.error('[EventDetails] Error details:', error.details);
+        console.error('[EventDetails] Error hint:', error.hint);
+        console.error('[EventDetails] Full error:', JSON.stringify(error, null, 2));
+        
+        // Check for specific error codes
+        if (error.code === '42501') {
+          throw new Error('Permission denied: You do not have permission to delete this event.');
+        } else if (error.code === '23503') {
+          throw new Error('Cannot delete: This event is referenced by other records.');
+        } else if (error.message?.includes('permission denied') || error.message?.includes('row-level security')) {
+          throw new Error('Permission denied: Row-level security policy prevents deletion of this event.');
+        }
+        
+        throw error;
+      }
+
+      console.log('[EventDetails] Delete query completed without error, data:', data);
+      console.log('[EventDetails] Delete response status:', directDeleteResult?.status);
+      console.log('[EventDetails] Delete response count:', directDeleteResult?.count);
+      
+      // Check if soft delete actually affected any rows
+      // Supabase returns count: 0 if no rows were updated (even if no error)
+      if (directDeleteResult?.count === 0) {
+        console.warn('[EventDetails] Soft delete query returned count: 0 - no rows were updated (may already be deleted)');
+        // Check if it's already deleted
+        const { data: checkData } = await supabase
+          .from('events')
+          .select('deleted_at')
+          .eq('id', event.id)
+          .maybeSingle();
+        
+        if (checkData?.deleted_at) {
+          console.log('[EventDetails] Event is already soft-deleted');
+          toast.push('Event deleted', 'success');
+          if (onEventDeleted) {
+            onEventDeleted(event.id);
+          }
+          return; // Exit early - already deleted
+        }
+        // Fall through to verification
+      } else if (directDeleteResult?.count !== null && directDeleteResult?.count > 0) {
+        console.log('[EventDetails] Soft delete query affected', directDeleteResult.count, 'row(s)');
+        // Soft delete succeeded, verify it
+      }
+      
+      // Wait a moment for the delete to propagate
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Verify soft deletion succeeded by checking if deleted_at is set
+      console.log('[EventDetails] Verifying soft deletion for event:', event.id);
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('events')
+        .select('id, deleted_at')
+        .eq('id', event.id)
+        .maybeSingle();
+
+      console.log('[EventDetails] Verification result:', { verifyData, verifyError });
+
+      if (verifyError) {
+        if (verifyError.code === 'PGRST116') {
+          // PGRST116 is "not found" which is good - means it was deleted
+          console.log('[EventDetails] Delete verified - event not found (deleted)');
+          toast.push('Event deleted', 'success');
+        } else {
+          console.warn('[EventDetails] Error verifying deletion (may be RLS):', verifyError);
+          // If we can't verify due to RLS, check if delete returned success
+          // If no error from delete, assume it worked
+          if (!error) {
+            console.log('[EventDetails] Delete query succeeded, assuming deletion worked despite verification error');
+          } else {
+            throw new Error(`Delete verification failed: ${verifyError.message}`);
+          }
+        }
+      } else if (verifyData) {
+        // Check if soft delete succeeded (deleted_at is set)
+        if (verifyData.deleted_at) {
+          console.log('[EventDetails] Soft delete verified - deleted_at is set');
+          toast.push('Event deleted', 'success');
+          if (onEventDeleted) {
+            onEventDeleted(event.id);
+          }
+          return; // Exit early - soft delete succeeded
+        }
+        
+        // Event still exists and is not soft-deleted - delete failed
+        console.error('[EventDetails] Delete failed - event still exists and is not deleted:', verifyData);
+        console.error('[EventDetails] Direct delete query result:', { data, error });
+        console.error('[EventDetails] Event ID attempted:', event.id);
+        console.error('[EventDetails] Event family_id:', event.family_id);
+        
+        // Check if this might be an RLS issue by trying to read the event
+        const { data: readData, error: readError } = await supabase
+          .from('events')
+          .select('id, family_id, status')
+          .eq('id', event.id)
+          .maybeSingle();
+        
+        console.log('[EventDetails] Can read event after delete attempt:', { readData, readError });
+        
+        if (readError && readError.code === 'PGRST301') {
+          // Permission denied - RLS is blocking, but delete might have worked
+          console.warn('[EventDetails] RLS blocking verification - delete may have succeeded');
+          // Trust that delete worked if the query didn't error
+        } else if (readData) {
+          // We can read it, so delete definitely failed
+          // Try soft delete as fallback (mark as canceled)
+          console.warn('[EventDetails] Hard delete failed, attempting soft delete (mark as canceled)');
+          try {
+            const { error: updateError } = await supabase
+              .from('events')
+              .update({ 
+                status: 'canceled',
+                canceled_at: new Date().toISOString()
+              })
+              .eq('id', event.id);
+            
+            if (updateError) {
+              console.error('[EventDetails] Soft delete also failed:', updateError);
+              throw new Error(`Delete operation failed: Event still exists in database. Event ID: ${event.id}. This may be due to database constraints, triggers, or RLS policies preventing deletion. Error: ${updateError.message}`);
+            } else {
+              console.log('[EventDetails] Soft delete succeeded - event marked as canceled');
+              // Verify soft delete worked
+              const { data: softVerifyData } = await supabase
+                .from('events')
+                .select('id, status')
+                .eq('id', event.id)
+                .maybeSingle();
               
-              // Log delete event action (will be logged in PlannerWeek.handleEventDeleted if called from there)
-              // EventDetails is used in multiple contexts, so we log here as fallback
-              try {
-                const eventDate = event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-                logDeleteEvent(
-                  event.id,
-                  eventDate,
-                  event.child_id
-                );
-              } catch (logError) {
-                console.warn('Failed to log event deletion:', logError);
+              if (softVerifyData && softVerifyData.status === 'canceled') {
+                console.log('[EventDetails] Soft delete verified - event is now canceled');
+                // Treat soft delete as success - call onEventDeleted
+                toast.push('Event deleted', 'success');
+                if (onEventDeleted) {
+                  onEventDeleted(event.id);
+                }
+                return; // Exit early - soft delete succeeded
               }
-            } catch (err) {
-      console.error('[EventDetails] Exception during delete:', err);
-      console.error('[EventDetails] Error stack:', err?.stack);
-      const errorMessage = err?.message || err?.details || 'Failed to delete event';
-      console.error('[EventDetails] Showing error alert:', errorMessage);
+            }
+          } catch (softDeleteErr) {
+            throw new Error(`Delete operation failed: Event still exists in database. Event ID: ${event.id}. This may be due to database constraints, triggers, or RLS policies preventing deletion.`);
+          }
+        }
+      } else {
+          // Event not found - might be deleted or RLS blocking
+          console.log('[EventDetails] Event not found during verification - assuming soft delete succeeded');
+          toast.push('Event deleted', 'success');
+          if (onEventDeleted) {
+            onEventDeleted(event.id);
+          }
+          return; // Exit early
+        }
       
+      // If we get here, soft deletion was successful
+      toast.push('Event deleted', 'success');
+      if (onEventDeleted) {
+        onEventDeleted(event.id);
+      }
+              
+      // Log delete event action (will be logged in PlannerWeek.handleEventDeleted if called from there)
+      // EventDetails is used in multiple contexts, so we log here as fallback
+      try {
+        const eventDate = event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+        logDeleteEvent(
+          event.id,
+          eventDate,
+          event.child_id
+        );
+      } catch (logError) {
+        // Ignore logging errors
+      }
+            } catch (err) {
+      // Handle different types of errors
+      let errorMessage = 'Failed to delete event';
+      
+      if (err?.message) {
+        if (err.message.includes('Load failed') || err.message.includes('Failed to fetch')) {
+          errorMessage = 'Network error: Please check your connection and try again';
+        } else if (err.message.includes('timed out')) {
+          errorMessage = 'Request timed out: Please try again';
+        } else {
+          errorMessage = err.message;
+        }
+      } else if (err?.details) {
+        errorMessage = err.details;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+
+      console.error('[EventDetails] Delete error:', err);
+      toast.push(errorMessage, 'error');
+
       if (Platform.OS === 'web') {
         window.alert(`Failed to delete event: ${errorMessage}`);
       } else {
         Alert.alert('Error', `Failed to delete event: ${errorMessage}`);
       }
             } finally {
-      console.log('[EventDetails] Setting deleting state to false');
               setDeleting(false);
             }
   };
@@ -748,59 +1686,468 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return;
     }
 
+    // Validate percentage - show inline errors instead of toast
+    if (percentOfTotalGrade.trim() && subjectId) {
+      const parsedPercent = parseFloat(percentOfTotalGrade.trim());
+      if (!isNaN(parsedPercent) && isFinite(parsedPercent)) {
+        // If value is outside 0-100 range, show inline error
+        if (parsedPercent < 0 || parsedPercent > 100) {
+          setPercentValidationError({
+            message: 'Percentage must be between 0 and 100%',
+            suggestedPercent: parsedPercent > 100 ? 100 : 0
+          });
+          return;
+        }
+
+        // Check if async validation found an issue (already set inline, just prevent save)
+        if (percentValidationError) {
+          return;
+        }
+
+        // If we have validation data and it shows exceeding 100%, set inline error and prevent save
+        if (percentValidationData && percentValidationData.newTotal > 100) {
+          setPercentValidationError({
+            message: `This would exceed 100% for this subject. Current total: ${percentValidationData.totalPercent.toFixed(1)}%, remaining: ${percentValidationData.remainingPercent.toFixed(1)}%.`,
+            suggestedPercent: Math.max(0, percentValidationData.remainingPercent)
+          });
+          setPercentValidationData(percentValidationData);
+          return;
+        }
+
+        // Do a final synchronous validation check if we don't have validation data yet
+        // This ensures we catch the issue even if async validation hasn't completed
+        if (!percentValidationData && !checkingPercent && parsedPercent > 0) {
+          try {
+            const { data: validationData, error: validationError } = await supabase.rpc('get_subject_grade_percentage_sum', {
+              p_subject_id: subjectId,
+              p_exclude_event_id: event?.id || null
+            });
+
+            if (!validationError && validationData) {
+              const totalPercent = parseFloat(validationData.total_percent) || 0;
+              const remainingPercent = parseFloat(validationData.remaining_percent) || 100;
+              const newTotal = totalPercent + parsedPercent;
+
+              if (newTotal > 100) {
+                setPercentValidationError({
+                  message: `This would exceed 100% for this subject. Current total: ${totalPercent.toFixed(1)}%, remaining: ${remainingPercent.toFixed(1)}%.`,
+                  suggestedPercent: Math.max(0, remainingPercent)
+                });
+                setPercentValidationData({
+                  totalPercent,
+                  remainingPercent,
+                  assignments: validationData.assignments || [],
+                  newTotal
+                });
+                return;
+              }
+            }
+          } catch (validationErr) {
+            console.error('Error in final validation check:', validationErr);
+            // Continue with save if validation check fails (don't block save due to validation error)
+          }
+        }
+      } else {
+        // Invalid number format - check if field has content
+        if (percentOfTotalGrade.trim()) {
+          setPercentValidationError({
+            message: 'Please enter a valid number between 0 and 100',
+            suggestedPercent: null
+          });
+          return;
+        }
+      }
+    }
+
+    console.log('🔵 [EventDetails] ========== handleSave CALLED ==========');
+    console.log('[EventDetails] handleSave called with state:', {
+      eventId: event.id,
+      eventType,
+      eventEndDate: eventEndDate?.toISOString(),
+      eventEndDateDateString: eventEndDate?.toDateString(),
+      dueDate: dueDate?.toISOString(),
+      dueDateDateString: dueDate?.toDateString(),
+      startTime,
+      endTime,
+      allDay,
+      placement
+    });
+
     let startDateObj = null;
     let endDateObj = null;
 
-    if (draftDate) {
-      if (draftAllDay) {
-        startDateObj = combineDateTime(draftDate, null);
-        endDateObj = null;
+    // If scheduling a backlog item, date is required
+    if (schedulingBacklog && !draftDate) {
+      Alert.alert('Date Required', 'Please enter a date to schedule this task.');
+      return;
+    }
+
+    // Use dueDate for date, startTime/endTime for times (matching TaskCreateModal structure)
+    const dateToUse = dueDate ? toDateInput(dueDate.toISOString()) : draftDate;
+    
+    if (dateToUse) {
+      if (allDay || draftAllDay) {
+        const baseDate = dueDate || new Date(dateToUse);
+        baseDate.setHours(0, 0, 0, 0);
+        startDateObj = baseDate;
+        endDateObj = new Date(baseDate);
+        endDateObj.setHours(23, 59, 0, 0);
         if (!startDateObj || Number.isNaN(startDateObj.getTime())) {
           Alert.alert('Validation', 'Start date is invalid.');
           return;
         }
       } else {
-        if (!draftStartTime) {
+        if (!startTime.trim() && !draftStartTime.trim()) {
           Alert.alert('Validation', 'Please enter a start time or mark the event as All Day.');
           return;
         }
 
-        startDateObj = combineDateTime(draftDate, draftStartTime);
-        if (!startDateObj || Number.isNaN(startDateObj.getTime())) {
-          Alert.alert('Validation', 'Start date/time is invalid.');
+        const timeToUse = startTime.trim() || draftStartTime.trim();
+        const resolvedStart = applyTimeToDate(dueDate || new Date(dateToUse), timeToUse);
+        if (!resolvedStart) {
+          Alert.alert('Validation', 'Enter a valid start time, e.g. 9:00 AM');
           return;
         }
+        startDateObj = resolvedStart;
 
-        if (draftEndTime) {
-          endDateObj = combineDateTime(draftDate, draftEndTime);
-          if (!endDateObj || Number.isNaN(endDateObj.getTime())) {
-            Alert.alert('Validation', 'End time is invalid.');
+        // Check if this is a multi-day event type with an end date set
+        const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+        console.log('[EventDetails] Checking end date logic:', {
+          isMultiDayEventType,
+          eventType,
+          hasEventEndDate: !!eventEndDate,
+          eventEndDate: eventEndDate?.toISOString(),
+          hasEndTime: !!(endTime.trim() || draftEndTime.trim())
+        });
+        
+        if (isMultiDayEventType && eventEndDate) {
+          console.log('[EventDetails] Multi-day event detected:', { eventType, eventEndDate: eventEndDate.toISOString(), startDateObj: startDateObj.toISOString() });
+          // For multi-day events, set end date to end of the selected day (23:59)
+          // This ensures the project spans the full day
+          // Create a new date from the eventEndDate to avoid timezone issues
+          const endDateYear = eventEndDate.getFullYear();
+          const endDateMonth = eventEndDate.getMonth();
+          const endDateDay = eventEndDate.getDate();
+          endDateObj = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+          
+          console.log('[EventDetails] Created endDateObj from eventEndDate:', {
+            eventEndDate: eventEndDate.toISOString(),
+            endDateYear,
+            endDateMonth,
+            endDateDay,
+            endDateObj: endDateObj.toISOString()
+          });
+          
+          // If end date is before start date, that's invalid - use start date + 1 day
+          // But allow same-day projects (end date = start date)
+          const startDateOnly = new Date(startDateObj.getFullYear(), startDateObj.getMonth(), startDateObj.getDate());
+          const endDateOnly = new Date(endDateObj.getFullYear(), endDateObj.getMonth(), endDateObj.getDate());
+          
+          console.log('[EventDetails] Comparing dates:', {
+            startDateOnly: startDateOnly.toISOString(),
+            endDateOnly: endDateOnly.toISOString(),
+            comparison: endDateOnly.getTime() < startDateOnly.getTime()
+          });
+          
+          if (endDateOnly.getTime() < startDateOnly.getTime()) {
+            console.warn('[EventDetails] End date is before start date, adjusting to start date + 1 day');
+            endDateObj = new Date(startDateObj);
+            endDateObj.setDate(endDateObj.getDate() + 1);
+            endDateObj.setHours(23, 59, 59, 999);
+          }
+          console.log('[EventDetails] Final endDateObj for multi-day event:', {
+            endDateObj: endDateObj.toISOString(),
+            startDateObj: startDateObj.toISOString(),
+            daysDifference: Math.round((endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24))
+          });
+        } else if (endTime.trim() || draftEndTime.trim()) {
+          // Single-day event with end time
+          const endTimeToUse = endTime.trim() || draftEndTime.trim();
+          let resolvedEnd = applyTimeToDate(dueDate || new Date(dateToUse), endTimeToUse);
+          if (!resolvedEnd) {
+            Alert.alert('Validation', 'Enter a valid end time, e.g. 10:00 AM');
             return;
           }
+          if (resolvedEnd <= startDateObj) {
+            resolvedEnd = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+          }
+          endDateObj = resolvedEnd;
         } else {
-          endDateObj = new Date(startDateObj.getTime() + 30 * 60 * 1000);
+          endDateObj = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
         }
       }
     }
 
     setSaving(true);
     try {
+      const isBacklog = event.is_backlog === true || event.data?.is_backlog === true;
+      
+      // Build recurrence rule if recurring
+      let recurrenceRule = null;
+      if (isRecurring && placement === 'calendar') {
+        const interval = recurrenceInterval || 1;
+        const rule = {
+          frequency: recurrenceType.toUpperCase(),
+          interval: interval,
+        };
+        if (recurrenceEndType === 'after') {
+          const countValue = recurrenceEndAfter || (recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : null);
+          if (countValue && !isNaN(countValue) && countValue > 0) {
+            rule.count = countValue;
+          }
+        } else if (recurrenceEndType === 'on' && recurrenceEndDate) {
+          rule.until = recurrenceEndDate.toISOString().split('T')[0];
+        }
+        recurrenceRule = rule;
+      }
+      
       const updates = {
         title: draftTitle.trim(),
-        description: draftNotes.trim() ? draftNotes.trim() : null,
-        child_id: draftChildId || null,
+        description: notes.trim() ? notes.trim() : null,
+        child_id: assigneeIds.length > 0 ? assigneeIds[0] : null,
+        child_ids: assigneeIds.length > 0 ? assigneeIds : null, // Also set child_ids array
         status: normalizeStatus(draftStatus),
         tags: draftTags.length ? draftTags : null,
-        material_id: draftMaterialId || null,
+        material_id: selectedMaterialId || null,
+        materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
+        event_type: eventType || 'Lesson',
+        subject_id: subjectId || null,
+        unit: (unit && unit.trim()) ? unit.trim() : null,
+        grade: (grade && grade.trim()) ? grade.trim() : null,
+        percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
+          const parsed = parseFloat(percentOfTotalGrade.trim());
+          return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
+        })() : null,
+        location: (location && location.trim()) ? location.trim() : null,
+        mode: mode || null,
+        instructor: (instructor && instructor.trim()) ? instructor.trim() : null,
+        goal_link: goalLink || null,
+        recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
       };
 
-      if (startDateObj) {
+      // If moving from backlog to schedule, set is_backlog to false and set date/time
+      if (isBacklog && startDateObj) {
+        updates.is_backlog = false;
         updates.start_ts = startDateObj.toISOString();
         updates.end_ts = endDateObj?.toISOString() || null;
+        toast.push('Task moved to schedule', 'success');
+      } else if (startDateObj) {
+        updates.start_ts = startDateObj.toISOString();
+        // Always set end_ts - use calculated endDateObj or default to start + 1 hour
+        if (endDateObj) {
+          updates.end_ts = endDateObj.toISOString();
+        } else {
+          // Default: start + 1 hour if no end time/date specified
+          updates.end_ts = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000).toISOString();
+        }
+        console.log('[EventDetails] Saving event with dates:', { 
+          start_ts: updates.start_ts, 
+          end_ts: updates.end_ts,
+          eventType,
+          eventEndDate: eventEndDate?.toISOString(),
+          endDateObj: endDateObj?.toISOString(),
+          hasEventEndDate: !!eventEndDate,
+          isMultiDay: eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType)
+        });
+      } else if (schedulingBacklog) {
+        // If we're in scheduling mode but no date was set, this shouldn't happen due to validation above
+        toast.push('Please enter a date to schedule this task', 'error');
+        setSaving(false);
+        return;
       }
 
-      const { error } = await supabase.from('events').update(updates).eq('id', event.id);
-      if (error) throw error;
+      // Remove undefined values from updates (Supabase doesn't accept undefined)
+      const cleanUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([_, value]) => value !== undefined)
+      );
+      
+      console.log('[EventDetails] About to save to database:', {
+        eventId: event.id,
+        updates: cleanUpdates,
+        originalUpdates: updates
+      });
+      
+      let { error, data } = await supabase.from('events').update(cleanUpdates).eq('id', event.id).select();
+      
+      // If we get an overlap error, do a multi-step update:
+      // 1. First set is_flexible = true (this removes it from the constraint)
+      // 2. Update all fields except child_id
+      // 3. Finally update child_id separately (if it changed)
+      if (error && (error.message?.includes('overlap') || error.message?.includes('Event overlaps'))) {
+        console.log('[EventDetails] Overlap error detected, doing multi-step update with is_flexible=true');
+        
+        // Step 1: Set is_flexible = true first (only if it's not already set)
+        if (!cleanUpdates.is_flexible) {
+          const setFlexibleResult = await supabase
+            .from('events')
+            .update({ is_flexible: true })
+            .eq('id', event.id)
+            .select();
+          
+          if (setFlexibleResult.error) {
+            console.error('[EventDetails] Error setting is_flexible=true:', setFlexibleResult.error);
+            throw setFlexibleResult.error;
+          }
+          console.log('[EventDetails] Set is_flexible=true successfully');
+        }
+        
+        // Step 2: Update all fields EXCEPT child_id first
+        const childIdToUpdate = cleanUpdates.child_id;
+        const updatesWithoutChildId = { ...cleanUpdates };
+        delete updatesWithoutChildId.child_id;
+        updatesWithoutChildId.is_flexible = true; // Ensure it stays true
+        
+        if (Object.keys(updatesWithoutChildId).length > 0) {
+          const updateWithoutChildResult = await supabase
+            .from('events')
+            .update(updatesWithoutChildId)
+            .eq('id', event.id)
+            .select();
+          
+          if (updateWithoutChildResult.error) {
+            console.error('[EventDetails] Error updating fields (without child_id):', updateWithoutChildResult.error);
+            throw updateWithoutChildResult.error;
+          }
+          console.log('[EventDetails] Updated fields (without child_id) successfully');
+        }
+        
+        // Step 3: If child_id is being changed, use a different approach
+        // The exclusion constraint checks child_id, but not child_ids array
+        // For flexible events, we can use child_ids array instead, or set child_id to NULL
+        // and rely on child_ids array. However, for consistency, we'll use an RPC function
+        // if available, or use a workaround by setting child_ids array first
+        if (childIdToUpdate !== undefined && childIdToUpdate !== event.child_id) {
+          // Use RPC function if available, otherwise use multi-step approach
+          // First, try using the update_event_with_overlap_handling RPC function
+          try {
+            const rpcResult = await supabase.rpc('update_event_with_overlap_handling', {
+              _event_id: event.id,
+              _updates: {
+                ...cleanUpdates,
+                child_id: childIdToUpdate,
+                child_ids: childIdToUpdate ? [childIdToUpdate] : null,
+                is_flexible: true
+              },
+              _allow_overlaps: true
+            });
+            
+            if (rpcResult.error) {
+              throw rpcResult.error;
+            }
+            
+            if (rpcResult.data && rpcResult.data.ok) {
+              console.log('[EventDetails] Updated child_id successfully using RPC function');
+              // Fetch the updated event
+              const fetchResult = await supabase.from('events').select().eq('id', event.id).single();
+              if (fetchResult.error) {
+                throw fetchResult.error;
+              }
+              data = [fetchResult.data];
+            } else {
+              throw new Error(rpcResult.data?.error || 'RPC function returned error');
+            }
+          } catch (rpcError) {
+            console.warn('[EventDetails] RPC function not available or failed, using fallback method:', rpcError);
+            
+            // Fallback: For flexible events with overlaps, use child_ids array instead of child_id
+            // This is a workaround because the exclusion constraint only checks child_id, not child_ids
+            // The exclusion constraint prevents overlapping events for the same child_id, but not for child_ids array
+            // For flexible events with overlaps, we'll use child_ids array to track the assignment
+            // while keeping child_id as NULL to bypass the constraint
+            const fallbackUpdate = {
+              child_id: null, // Set to NULL to bypass constraint
+              child_ids: childIdToUpdate ? [childIdToUpdate] : null,
+              is_flexible: true
+            };
+            
+            const fallbackResult = await supabase
+              .from('events')
+              .update(fallbackUpdate)
+              .eq('id', event.id)
+              .select();
+            
+            if (fallbackResult.error) {
+              console.error('[EventDetails] Error with fallback method (setting child_id to NULL):', fallbackResult.error);
+              throw fallbackResult.error;
+            }
+            
+            console.log('[EventDetails] Fallback method succeeded (child_id set to NULL, using child_ids array for flexible event)');
+            console.log('[EventDetails] Note: For flexible events with overlaps, child assignment is tracked via child_ids array');
+            console.log('[EventDetails] Saved event data:', {
+              child_id: fallbackResult.data?.[0]?.child_id,
+              child_ids: fallbackResult.data?.[0]?.child_ids,
+              is_flexible: fallbackResult.data?.[0]?.is_flexible
+            });
+            data = fallbackResult.data;
+          }
+        } else {
+          // Fetch the final data if we didn't update child_id
+          const fetchResult = await supabase.from('events').select().eq('id', event.id).single();
+          if (fetchResult.error) {
+            console.error('[EventDetails] Error fetching updated event:', fetchResult.error);
+            throw fetchResult.error;
+          }
+          data = [fetchResult.data];
+        }
+        
+        // Success with multi-step update
+        error = null;
+        console.log('[EventDetails] Multi-step update succeeded with is_flexible=true');
+      } else if (error) {
+        console.error('[EventDetails] Database update error:', error);
+        console.error('[EventDetails] Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          eventId: event.id,
+          eventType: eventType,
+          updates: cleanUpdates
+        });
+        
+        // Check if error is due to percent_of_total_grade constraint violation
+        if (error.message && (
+          error.message.includes('percent_of_total_grade') ||
+          error.message.includes('check constraint') ||
+          error.message.includes('violates check constraint')
+        )) {
+          // Set inline error instead of toast
+          setPercentValidationError({
+            message: 'Percentage must be between 0 and 100%',
+            suggestedPercent: null
+          });
+          throw error;
+        }
+        
+        throw error;
+      }
+      
+      console.log('[EventDetails] Database update successful:', {
+        eventId: event.id,
+        savedData: data?.[0],
+        saved_start_ts: data?.[0]?.start_ts,
+        saved_end_ts: data?.[0]?.end_ts
+      });
+
+      // Attach standards if any were selected
+      if (attachedStandards.length > 0) {
+        try {
+          const { error: attachError } = await apiRequest('/api/standards/attach', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lesson_id: event.id,
+              standards: attachedStandards.map(s => s.id),
+            }),
+          });
+          
+          if (attachError) {
+            console.error('[EventDetails] Failed to attach standards:', attachError);
+          }
+        } catch (attachErr) {
+          console.error('[EventDetails] Error attaching standards:', attachErr);
+        }
+      }
 
       const patch = { ...updates };
       if (!('start_ts' in patch) && event.start_ts) {
@@ -809,8 +2156,40 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (!('end_ts' in patch) && event.end_ts) {
         patch.end_ts = event.end_ts;
       }
+      
+      // Include saved data from database, especially child_ids if child_id is null
+      // This is critical for flexible events where child_id might be NULL but child_ids has the assignment
+      if (data?.[0]) {
+        console.log('[EventDetails] Including saved data in patch:', {
+          child_id: data[0].child_id,
+          child_ids: data[0].child_ids,
+          is_flexible: data[0].is_flexible
+        });
+        // Include child_id and child_ids from saved data to ensure UI updates correctly
+        // Even if child_id is NULL, we need to include child_ids so the UI can display the child
+        if (data[0].child_id !== undefined) {
+          patch.child_id = data[0].child_id;
+        }
+        if (data[0].child_ids !== undefined) {
+          patch.child_ids = data[0].child_ids;
+        }
+        // Also include other fields that might have been updated
+        if (data[0].is_flexible !== undefined) {
+          patch.is_flexible = data[0].is_flexible;
+        }
+      }
 
       setEditing(false);
+      setSchedulingBacklog(false);
+      
+      // Show toast for regular edits (not backlog moves, which already showed toast above)
+      if (!isBacklog || !startDateObj) {
+        toast.push('Event updated', 'success');
+      }
+      
+      // Close the modal after saving
+      onClose?.();
+      
       onEventPatched?.({
         id: event.id,
         previous_start_ts: event.start_ts,
@@ -818,296 +2197,1724 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       });
       onEventUpdated?.();
     } catch (err) {
-      console.error('Error updating event:', err);
+      toast.push('Failed to update event', 'error');
       Alert.alert('Error', 'Failed to update event');
     } finally {
       setSaving(false);
     }
   };
 
-  const renderTagsView = (tags) => {
-    if (!tags || tags.length === 0) return null;
+
+  const renderViewMode = () => {
+    const selectedSubject = subjects.find(s => s.id === subjectId);
+    const selectedMaterials = materials.filter(m => attachedMaterialIds.includes(m.id));
+    
+    // Get end date for display - use state first, then fallback to event's end_ts
+    let displayEndDate = eventEndDate;
+    if (!displayEndDate && event?.end_ts) {
+      const isMultiDayEventType = event?.event_type && ['Project', 'Trip', 'Holiday', 'Other'].includes(event.event_type);
+      if (isMultiDayEventType) {
+        const endDateObj = new Date(event.end_ts);
+        const startDateObj = event?.start_ts ? new Date(event.start_ts) : dueDate;
+        if (startDateObj) {
+          const endDateOnly = new Date(endDateObj.getFullYear(), endDateObj.getMonth(), endDateObj.getDate());
+          const startDateOnly = new Date(startDateObj.getFullYear(), startDateObj.getMonth(), startDateObj.getDate());
+          // Only use if different from start date
+          if (endDateOnly.getTime() !== startDateOnly.getTime()) {
+            displayEndDate = endDateOnly;
+          }
+        }
+      }
+    }
+    
     return (
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Tags</Text>
-        <View style={styles.tagsRow}>
-          {tags.map((tag) => (
-            <View key={tag} style={styles.tagChip}>
-              <Text style={styles.tagChipText}>#{tag}</Text>
+      <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+        {/* Header / Title */}
+        <View style={styles.header}>
+          <Text style={[styles.titleInput, { color: FG, fontSize: 18, fontWeight: '600' }]}>
+            {draftTitle || event?.title || 'Untitled Event'}
+          </Text>
+        </View>
+
+        {/* Scrollable Content */}
+        <ScrollView 
+          style={styles.bodyScroll}
+          contentContainerStyle={styles.bodyContent}
+          showsVerticalScrollIndicator={true}
+          nestedScrollEnabled={true}
+          {...(Platform.OS === 'web' && {
+            style: {
+              ...styles.bodyScroll,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              WebkitOverflowScrolling: 'touch',
+            },
+          })}
+        >
+          {/* Event Type - show only selected */}
+          {eventType && (
+            <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Event Type</Text>
+                <View style={styles.dropdownContainer}>
+                  <View style={[styles.dropdownOption, styles.dropdownOptionActive]}>
+                    <Text style={[styles.dropdownOptionText, styles.dropdownOptionTextActive]}>
+                      {eventType}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </SafeFieldRow>
+          )}
+
+          {/* Tags - show if they exist */}
+          {Array.isArray(event?.tags) && event.tags.length > 0 && (
+            <SafeFieldRow style={styles.fieldRow}>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Tags</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {event.tags.map((tag, index) => (
+                    <View
+                      key={index}
+                      style={{
+                        backgroundColor: CHIP_BG,
+                        borderWidth: 1,
+                        borderColor: CHIP_BORDER,
+                        borderRadius: 16,
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: FG }}>{tag}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </SafeFieldRow>
+          )}
+
+          {/* Status - Scheduled or Backlogged */}
+          <SafeFieldRow style={styles.fieldRow}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Status</Text>
+              <View style={styles.dropdownContainer}>
+                <View style={[styles.dropdownOption, styles.dropdownOptionActive]}>
+                  <Text style={[styles.dropdownOptionText, styles.dropdownOptionTextActive]}>
+                    {placement === 'backlog' ? 'Backlogged' : 'Scheduled'}
+                  </Text>
+                </View>
+              </View>
             </View>
-          ))}
+          </SafeFieldRow>
+
+          {/* Date and Assignee - side by side in chipRow */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipRow}
+            style={{ marginBottom: 0 }}
+          >
+            {/* Date chip */}
+            {placement === 'calendar' ? (
+              <View style={styles.chip}>
+                <View>
+                  <Text style={styles.chipLabel}>Date</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                  <View style={[styles.chipOption, styles.chipOptionActive]}>
+                    <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
+                      {displayEndDate && dueDate && displayEndDate.getTime() !== dueDate.getTime() 
+                        ? fmtDateRange(dueDate, displayEndDate)
+                        : dueDate ? fmt(dueDate) : '—'
+                      }
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ) : null}
+
+            {/* Assignee chip - show only selected */}
+            {assigneeIds.length > 0 ? (
+              <View style={styles.chip}>
+                <View>
+                  <Text style={styles.chipLabel}>Assignee</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                  {assigneeIds.map((id) => {
+                    const member = familyMembers.find(m => m.id === id);
+                    if (!member) return null;
+                    return (
+                      <View key={id} style={[styles.chipOption, styles.chipOptionActive]}>
+                        <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
+                          {member.name || member.first_name || 'Unknown'}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
+          </ScrollView>
+
+          {/* Schedule Time - in gray rounded block */}
+          {placement === 'calendar' && (
+            <SafeView style={styles.fieldRow}>
+              <View style={styles.timeSection}>
+                <View style={styles.timeToggleRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={styles.sectionLabel}>Schedule time</Text>
+                  </View>
+                  {isRecurring && (
+                    <View style={styles.allDayControl}>
+                      <Text style={styles.allDayLabel}>Recurring</Text>
+                      <Text style={{ color: FG, fontSize: 13, marginTop: 4 }}>Enabled</Text>
+                    </View>
+                  )}
+                </View>
+                {!allDay && (
+                  <View style={styles.timeInputsRow}>
+                    <View style={[styles.timeField, { minWidth: 120 }]}>
+                      <Text style={styles.timeLabel}>Start</Text>
+                      <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{startTime || 'Not set'}</Text>
+                    </View>
+                    <View style={[styles.timeField, { minWidth: 120 }]}>
+                      <Text style={styles.timeLabel}>End</Text>
+                      <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{endTime || 'Not set'}</Text>
+                    </View>
+                  </View>
+                )}
+                {isRecurring && (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={[styles.timeLabel, { marginBottom: 8 }]}>Recurrence</Text>
+                    <Text style={{ color: SUB, fontSize: 13 }}>
+                      {recurrenceType.charAt(0).toUpperCase() + recurrenceType.slice(1)}
+                      {recurrenceInterval ? ` every ${recurrenceInterval} ${recurrenceType === 'daily' ? 'day(s)' : recurrenceType === 'weekly' ? 'week(s)' : 'month(s)'}` : ''}
+                      {recurrenceEndType === 'never' ? ' (never ends)' : recurrenceEndType === 'after' ? ` (ends after ${recurrenceEndAfter} occurrence${recurrenceEndAfter !== 1 ? 's' : ''})` : recurrenceEndDate ? ` (ends on ${fmt(recurrenceEndDate)})` : ''}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </SafeView>
+          )}
+
+          {/* Logistic Details - show if location, mode, or instructor exist */}
+          {(location || mode || instructor) && (
+            <SafeView style={styles.academicSection}>
+              <View
+                style={{
+                  paddingVertical: 4,
+                }}
+              >
+                <Text style={styles.sectionLabel}>Logistical details</Text>
+              </View>
+                  {location && (
+                    <SafeFieldRow style={styles.fieldRow}>
+                      <View style={styles.field}>
+                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Location</Text>
+                        <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{location}</Text>
+                      </View>
+                    </SafeFieldRow>
+                  )}
+                  {mode && (
+                    <SafeFieldRow style={styles.fieldRow}>
+                      <View style={styles.field}>
+                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Mode</Text>
+                        <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{mode.charAt(0).toUpperCase() + mode.slice(1)}</Text>
+                      </View>
+                    </SafeFieldRow>
+                  )}
+                  {instructor && (
+                    <SafeFieldRow style={styles.fieldRow}>
+                      <View style={styles.field}>
+                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Instructor / Host</Text>
+                        <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{instructor}</Text>
+                      </View>
+                    </SafeFieldRow>
+                  )}
+            </SafeView>
+          )}
+
+          {/* Academic Details - keep as is */}
+          {(subjectId || unit || grade || event?.percent_of_total_grade) && (
+            <SafeView style={styles.academicSection}>
+              <View
+                style={{
+                  paddingVertical: 4,
+                }}
+              >
+                <Text style={styles.sectionLabel}>Academic Details</Text>
+              </View>
+              {subjectId && (
+                <SafeFieldRow style={styles.fieldRow}>
+                  <View style={styles.field}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Subject</Text>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>
+                      {selectedSubject?.name || 'Unknown'}
+                    </Text>
+                  </View>
+                </SafeFieldRow>
+              )}
+              {unit && (
+                <SafeFieldRow style={styles.fieldRow}>
+                  <View style={styles.field}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Unit / Topic</Text>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{unit}</Text>
+                  </View>
+                </SafeFieldRow>
+              )}
+              {grade && (
+                <SafeFieldRow style={styles.fieldRow}>
+                  <View style={styles.field}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Grade</Text>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{grade}</Text>
+                  </View>
+                </SafeFieldRow>
+              )}
+              {event?.percent_of_total_grade != null && (
+                <SafeFieldRow style={styles.fieldRow}>
+                  <View style={styles.field}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>% of Total Grade</Text>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>
+                      {parseFloat(event.percent_of_total_grade).toFixed(1)}%
+                    </Text>
+                  </View>
+                </SafeFieldRow>
+              )}
+              {attachedStandards.length > 0 && (
+                <SafeFieldRow style={styles.fieldRow}>
+                  <View style={styles.field}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Standards</Text>
+                    <View style={{ marginTop: 8 }}>
+                      {attachedStandards.map((standard) => (
+                        <Text key={standard.id} style={{ color: FG, fontSize: 13, marginBottom: 4 }}>
+                          {standard.code || standard.name || standard.id}
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+                </SafeFieldRow>
+              )}
+            </SafeView>
+          )}
+
+          {/* Attachments - show as links */}
+          {selectedMaterials.length > 0 && (
+            <SafeFieldRow style={styles.fieldRow}>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Attachments</Text>
+                <View style={{ marginTop: 8 }}>
+                  {selectedMaterials.map((material) => (
+                    <TouchableOpacity
+                      key={material.id}
+                      onPress={async () => {
+                        // Check if it's a file-based material (has storage_path)
+                        const isFileBased = material.storage_path && material.storage_path.trim() !== '';
+                        
+                        if (isFileBased) {
+                          // Check if it's a PDF (by mime type or file extension)
+                          const isPdf = material.mime === 'application/pdf' || 
+                                        (material.storage_path && material.storage_path.toLowerCase().endsWith('.pdf')) ||
+                                        (material.title && material.title.toLowerCase().endsWith('.pdf'));
+                          
+                          if (material.storage_path && isPdf) {
+                            try {
+                              // Use signed URL for better compatibility
+                              const { data: signedUrlData, error: signedError } = await supabase.storage
+                                .from('evidence')
+                                .createSignedUrl(material.storage_path, 3600); // 1 hour expiry
+                              
+                              if (signedError) {
+                                console.error('[EventDetails] Error getting signed URL:', signedError);
+                                Alert.alert(
+                                  'File Access Error',
+                                  `Unable to access the file: ${signedError.message || 'Storage error'}.`
+                                );
+                                return;
+                              } else if (signedUrlData?.signedUrl) {
+                                setPdfUrl(signedUrlData.signedUrl);
+                                setPdfTitle(material.title || 'Attachment');
+                                setShowPdfViewer(true);
+                              } else {
+                                Alert.alert(
+                                  'File Access Error',
+                                  'Unable to generate a URL for this file. Please try again later.'
+                                );
+                              }
+                            } catch (err) {
+                              console.error('[EventDetails] Error getting PDF URL:', err);
+                              Alert.alert(
+                                'Error',
+                                `Unable to open file: ${err.message || 'Unknown error'}`
+                              );
+                            }
+                          } else {
+                            // File-based but not PDF - open in new tab
+                            const fileUrl = `${supabase.supabaseUrl}/storage/v1/object/public/materials/${material.storage_path}`;
+                            if (Platform.OS === 'web') {
+                              window.open(fileUrl, '_blank');
+                            }
+                          }
+                        } else {
+                          // Non-file-based material - only use provider_url if it's a Supabase storage URL
+                          if (material.provider_url && 
+                              material.provider_url.toLowerCase().endsWith('.pdf') && 
+                              isSupabaseStorageUrl(material.provider_url)) {
+                            setPdfUrl(material.provider_url);
+                            setPdfTitle(material.title || 'Attachment');
+                            setShowPdfViewer(true);
+                          } else if (material.provider_url) {
+                            // External URL - open in new tab
+                            if (Platform.OS === 'web') {
+                              window.open(material.provider_url, '_blank');
+                            }
+                          }
+                        }
+                      }}
+                      style={{ marginBottom: 8 }}
+                    >
+                      <Text style={{ color: ACCENT, fontSize: 14, textDecorationLine: 'underline' }}>
+                        {material.title || 'View Attachment'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </SafeFieldRow>
+          )}
+
+          {/* Notes */}
+          {notes && notes.trim() && (
+            <SafeFieldRow style={styles.fieldRow}>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Notes</Text>
+                <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{notes}</Text>
+              </View>
+            </SafeFieldRow>
+          )}
+        </ScrollView>
+
+        {/* Footer with Edit and Delete buttons */}
+        <View style={[styles.footer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+          <TouchableOpacity onPress={() => {
+            setEditing(true);
+            onEditingChange?.(true);
+          }}>
+            <Text style={styles.cancelText}>Edit</Text>
+          </TouchableOpacity>
+          {event?.source !== 'global_holiday' && (
+            <TouchableOpacity 
+              onPress={handleDelete}
+              disabled={deleting}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+            >
+              <Trash2 size={16} color={deleting ? MUTED : '#ef4444'} />
+              <Text style={[styles.cancelText, { color: deleting ? MUTED : '#ef4444' }]}>
+                {deleting ? 'Deleting...' : 'Delete'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
   };
 
-  const renderEditForm = () => (
-    <View style={styles.editForm}>
-      <Text style={styles.fieldLabel}>Title</Text>
+  const renderEditForm = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      console.log('[EventDetails] renderEditForm called');
+    }
+    return (
+    <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+      {/* Header / Title input */}
+      <View style={styles.header}>
       <TextInput
-        style={styles.input}
+          placeholder="Task name (required)"
+          placeholderTextColor={MUTED}
         value={draftTitle}
-        onChangeText={setDraftTitle}
-        placeholder="Event title"
-      />
-
-      <View>
-        <Text style={styles.fieldLabel}>Date</Text>
-        <TextInput
-          style={styles.input}
-          value={draftDate}
-          onChangeText={(value) => {
-            const formatted = formatDateInput(value);
-            setDraftDate(formatted);
-          }}
-          placeholder="YYYY-MM-DD"
-          maxLength={10}
-          keyboardType="numeric"
-        />
-      </View>
-
-      <View style={styles.toggleRow}>
-        <Text style={styles.fieldLabel}>All day</Text>
-        <Switch
-          value={draftAllDay}
-          onValueChange={(value) => {
-            setDraftAllDay(value);
-            if (value) {
-              setDraftStartTime('');
-              setDraftEndTime('');
+          onChangeText={(text) => {
+            setDraftTitle(text);
+            if (validationErrors.title) {
+              setValidationErrors({ ...validationErrors, title: null });
             }
           }}
-          trackColor={{ false: colors.border, true: colors.primary }}
-          thumbColor={draftAllDay ? colors.white : colors.card}
+          style={[
+            styles.titleInput,
+            validationErrors.title && styles.inputError,
+          ]}
+        />
+        {validationErrors.title && (
+          <Text style={styles.errorText}>{validationErrors.title}</Text>
+        )}
+      </View>
+
+      {/* Scrollable Content */}
+      <ScrollView 
+        style={styles.bodyScroll}
+        contentContainerStyle={styles.bodyContent}
+        showsVerticalScrollIndicator={true}
+        nestedScrollEnabled={true}
+        {...(Platform.OS === 'web' && {
+          style: {
+            ...styles.bodyScroll,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            WebkitOverflowScrolling: 'touch',
+          },
+        })}
+      >
+      {/* Event Type selector - shown first */}
+      <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+        <View style={styles.field}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={styles.fieldLabel}>Event Type</Text>
+            <Text style={styles.fieldLabel}>(required)</Text>
+          </View>
+          <SafeView style={[
+            styles.dropdownContainer,
+            validationErrors.eventType && styles.dropdownContainerError,
+          ]}>
+            <ChipRow style={styles.dropdownRow}>{EVENT_TYPES.map((type) => (
+              <TouchableOpacity
+                key={type}
+                onPress={() => {
+                  setEventType(type);
+                  if (validationErrors.eventType) {
+                    setValidationErrors({ ...validationErrors, eventType: null });
+                  }
+                }}
+                style={[
+                  styles.dropdownOption,
+                  eventType === type && styles.dropdownOptionActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.dropdownOptionText,
+                    eventType === type && styles.dropdownOptionTextActive,
+                  ]}
+                >
+                  {type}
+                </Text>
+              </TouchableOpacity>
+            ))}</ChipRow>
+          </SafeView>
+          {validationErrors.eventType && (
+            <Text style={styles.errorTextSmall}>{validationErrors.eventType}</Text>
+          )}
+        </View>
+      </SafeFieldRow>
+
+      {/* Placement toggle */}
+      <View style={styles.modeToggle}>
+        {[
+          { key: 'calendar', label: 'Schedule on calendar' },
+          { key: 'backlog', label: 'Add to backlog' },
+        ].map((option) => (
+          <TouchableOpacity
+            key={option.key}
+            onPress={() => {
+              setPlacement(option.key);
+              if (option.key === 'backlog' && validationErrors.time) {
+                setValidationErrors({ ...validationErrors, time: null });
+              }
+            }}
+            style={[
+              styles.modeOption,
+              placement === option.key && styles.modeOptionActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.modeOptionText,
+                placement === option.key && styles.modeOptionTextActive,
+              ]}
+            >
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {placement === 'backlog' && (
+        <View style={styles.modeInfo}>
+          <Text style={styles.modeInfoText}>
+            Backlog tasks stay off the calendar until you schedule them.
+          </Text>
+        </View>
+      )}
+      
+      {/* Chip Row */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipRow}
+        style={{ marginBottom: 0 }}
+      >
+        {/* Date picker - single date or date range based on event type */}
+        {placement === 'calendar' && (() => {
+          const isMultiDayEvent = ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType);
+          
+          if (isMultiDayEvent) {
+            // Start date picker for multi-day events
+            return (
+              <View style={styles.chip}>
+                <Text style={[styles.chipLabel, { marginRight: 8 }]}>Start:</Text>
+                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
+                  <ChevronLeft size={16} color={FG} />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={() => {
+                    setCalendarViewMonth(dueDate);
+                    setShowCalendarPicker(true);
+                  }}
+                  style={{ flex: 1, paddingHorizontal: 8 }}
+                >
+                  <Text style={styles.chipText}>{fmt(dueDate)}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, +1))}>
+                  <ChevronRight size={16} color={FG} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setDueDate(new Date())} style={styles.todayButton}>
+                  <Text style={styles.todayText}>Today</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          } else {
+            // Single date picker for regular events
+            return (
+              <View style={styles.chip}>
+                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
+                  <ChevronLeft size={16} color={FG} />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={() => {
+                    setCalendarViewMonth(dueDate);
+                    setShowCalendarPicker(true);
+                  }}
+                  style={{ flex: 1, paddingHorizontal: 8 }}
+                >
+                  <Text style={styles.chipText}>{fmt(dueDate)}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, +1))}>
+                  <ChevronRight size={16} color={FG} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setDueDate(new Date())} style={styles.todayButton}>
+                  <Text style={styles.todayText}>Today</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          }
+        })()}
+
+        {/* Assignee chip */}
+        {familyMembers.length > 0 && (
+          <View style={styles.chip}>
+      <View>
+              <Text style={styles.chipLabel}>Assignee</Text>
+              <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>(required)</Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              {familyMembers.map((m) => {
+                const isSelected = assigneeIds.includes(m.id);
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    onPress={() => {
+                      if (isSelected) {
+                        setAssigneeIds(assigneeIds.filter(id => id !== m.id));
+                      } else {
+                        setAssigneeIds([...assigneeIds, m.id]);
+                      }
+                    }}
+                    style={[
+                      styles.chipOption,
+                      isSelected && styles.chipOptionActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipOptionText,
+                        isSelected && styles.chipOptionTextActive,
+                      ]}
+                    >
+                      {m.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+      </View>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* End date picker - shown below start date for multi-day events */}
+      {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (
+        <View style={{ marginTop: 8, marginBottom: 8, paddingHorizontal: 0 }}>
+          <View style={[
+            styles.chip,
+            { alignSelf: 'flex-start', marginRight: 0 },
+            validationErrors.endDate && { borderColor: '#ef4444', borderWidth: 1.5 }
+          ]}>
+            <Text style={[styles.chipLabel, { marginRight: 12 }]}>End:</Text>
+            <TouchableOpacity onPress={() => eventEndDate && setEventEndDate(addDays(eventEndDate, -1))}>
+              <ChevronLeft size={16} color={FG} />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={() => {
+                if (eventEndDate) {
+                  setEventEndDateCalendarViewMonth(eventEndDate);
+                } else {
+                  const defaultEnd = new Date(dueDate);
+                  defaultEnd.setDate(defaultEnd.getDate() + 1);
+                  setEventEndDateCalendarViewMonth(defaultEnd);
+                }
+                setShowEventEndDatePicker(true);
+                if (validationErrors.endDate) {
+                  setValidationErrors({ ...validationErrors, endDate: null });
+                }
+              }}
+              style={[
+                { flex: 1, paddingHorizontal: 8 },
+                validationErrors.endDate && { borderColor: '#ef4444', borderWidth: 1, borderRadius: 4 }
+              ]}
+            >
+              <Text style={[
+                styles.chipText,
+                validationErrors.endDate && { color: '#ef4444' }
+              ]}>
+                {eventEndDate ? fmt(eventEndDate) : 'Select end date'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => eventEndDate && setEventEndDate(addDays(eventEndDate, +1))}>
+              <ChevronRight size={16} color={FG} />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={() => {
+                const today = new Date();
+                const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+                setEventEndDate(todayDateOnly);
+                setEventEndDateCalendarViewMonth(todayDateOnly);
+              }} 
+              style={styles.todayButton}
+            >
+              <Text style={styles.todayText}>Today</Text>
+            </TouchableOpacity>
+          </View>
+          {validationErrors.endDate && (
+            <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text>
+          )}
+        </View>
+      )}
+
+      <SafeView>
+        {placement === 'calendar' && (
+          <View style={styles.timeSection}>
+            <View style={styles.timeToggleRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={styles.sectionLabel}>Schedule time</Text>
+                <Text style={styles.sectionLabel}>(required)</Text>
+              </View>
+              <View style={styles.timeToggleControls}>
+                <View style={styles.allDayControl}>
+                  <Text style={styles.allDayLabel}>All day</Text>
+        <Switch
+                    value={allDay}
+          onValueChange={(value) => {
+                      setAllDay(value);
+            setDraftAllDay(value);
+            if (value) {
+                        setStartTime('');
+                        setEndTime('');
+              setDraftStartTime('');
+              setDraftEndTime('');
+                        if (validationErrors.time) {
+                          setValidationErrors({ ...validationErrors, time: null });
+                        }
+                      } else {
+                        setStartTime(startTime || DEFAULT_START_TIME);
+                        setEndTime(endTime || '');
+                      }
+                    }}
+                    trackColor={{ false: BORDER, true: '#93c5fd' }}
+                    thumbColor={allDay ? '#ffffff' : '#f9fafb'}
         />
       </View>
-
-      <View style={styles.inlineRow}>
-        <View style={styles.inlineField}>
-          <Text style={styles.fieldLabel}>Start time</Text>
-          <View style={styles.timeInputContainer}>
+                <View style={styles.allDayControl}>
+                  <Text style={styles.allDayLabel}>Recurring</Text>
+                  <Switch
+                    value={isRecurring}
+                    onValueChange={setIsRecurring}
+                    trackColor={{ false: BORDER, true: '#93c5fd' }}
+                    thumbColor={isRecurring ? '#ffffff' : '#f9fafb'}
+                  />
+                </View>
+              </View>
+            </View>
+            {!allDay && (
+              <View style={styles.timeInputsRow}>
+                <View style={styles.timeField}>
+                  <Text style={styles.timeLabel}>Start</Text>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="time"
+                      value={startTime ? (() => {
+                        // Convert "9:00 AM" to "09:00" format
+                        const parts = parseTimeString(startTime);
+                        if (parts) {
+                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                        }
+                        return '';
+                      })() : ''}
+                      onChange={(e) => {
+                        // Convert "09:00" to "9:00 AM" format
+                        const [hours, minutes] = e.target.value.split(':').map(Number);
+                        if (!isNaN(hours) && !isNaN(minutes)) {
+                          const hour12 = hours % 12 || 12;
+                          const period = hours >= 12 ? 'PM' : 'AM';
+                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                          setStartTime(formatted);
+                          setDraftStartTime(formatted);
+                          if (validationErrors.time) {
+                            setValidationErrors({ ...validationErrors, time: null });
+                          }
+                        }
+                      }}
+                      style={{
+                        backgroundColor: '#ffffff',
+                        borderRadius: 10,
+                        paddingTop: 10,
+                        paddingBottom: 10,
+                        paddingLeft: 12,
+                        paddingRight: 12,
+                        borderWidth: 1,
+                        borderColor: validationErrors.time ? '#ef4444' : '#e5e7eb',
+                        borderStyle: 'solid',
+                        fontSize: 14,
+                        color: '#111827',
+                        width: '100%',
+                        maxWidth: 100,
+                        height: 'auto',
+                        outline: 'none',
+                        ...(validationErrors.time && {
+                          borderColor: '#ef4444',
+                        }),
+                      }}
+                    />
+                  ) : (
             <TextInput
-              style={styles.timeInput}
-              value={draftStartTime.replace(/\s*(AM|PM)/i, '').trim()}
-              onChangeText={(value) => {
-                console.log('[StartTime] onChangeText - value:', value, 'current draftStartTime:', draftStartTime);
-                // Extract current AM/PM if it exists
-                const currentAMPM = draftStartTime.match(/\s*(AM|PM)/i)?.[0]?.trim() || '';
-                console.log('[StartTime] Current AM/PM:', currentAMPM);
-                const formatted = formatTimeInput(value + (currentAMPM ? ' ' + currentAMPM : ''));
-                console.log('[StartTime] Formatted result:', formatted);
+                      placeholder="e.g. 9:00 AM"
+                      placeholderTextColor={MUTED}
+                      value={startTime}
+                      onChangeText={(text) => {
+                        const formatted = formatTimeInput(text);
+                        setStartTime(formatted);
                 setDraftStartTime(formatted);
-              }}
-              placeholder="09:00"
-              maxLength={6}
+                        if (validationErrors.time) {
+                          setValidationErrors({ ...validationErrors, time: null });
+                        }
+                      }}
+                      style={[
+                        styles.timeInputEdit,
+                        validationErrors.time && styles.inputError,
+                      ]}
+                      autoCapitalize="characters"
+                    />
+                  )}
+                  {validationErrors.time && (
+                    <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
+                  )}
+                </View>
+                <View style={styles.timeField}>
+                  <Text style={styles.timeLabel}>End</Text>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="time"
+                      value={endTime ? (() => {
+                        // Convert "10:00 AM" to "10:00" format
+                        const parts = parseTimeString(endTime);
+                        if (parts) {
+                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                        }
+                        return '';
+                      })() : ''}
+                      onChange={(e) => {
+                        // Convert "10:00" to "10:00 AM" format
+                        const [hours, minutes] = e.target.value.split(':').map(Number);
+                        if (!isNaN(hours) && !isNaN(minutes)) {
+                          const hour12 = hours % 12 || 12;
+                          const period = hours >= 12 ? 'PM' : 'AM';
+                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                          setEndTime(formatted);
+                          setDraftEndTime(formatted);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: '#ffffff',
+                        borderRadius: 10,
+                        paddingTop: 10,
+                        paddingBottom: 10,
+                        paddingLeft: 12,
+                        paddingRight: 12,
+                        borderWidth: 1,
+                        borderColor: '#e5e7eb',
+                        borderStyle: 'solid',
+                        fontSize: 14,
+                        color: '#111827',
+                        width: '100%',
+                        maxWidth: 100,
+                        height: 'auto',
+                        outline: 'none',
+                      }}
+                    />
+                  ) : (
+                    <TextInput
+                      placeholder="Optional"
+                      placeholderTextColor={MUTED}
+                      value={endTime}
+                      onChangeText={(text) => {
+                        const formatted = formatTimeInput(text);
+                        setEndTime(formatted);
+                        setDraftEndTime(formatted);
+                      }}
+                      style={styles.timeInputEdit}
+                      autoCapitalize="characters"
+                    />
+                  )}
+                </View>
+              </View>
+            )}
+            {isRecurring && (
+              <View style={styles.recurringSectionContent}>
+                {/* Repeat and Every in one row */}
+                <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Repeat</Text>
+                    <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+                      {['daily', 'weekly', 'monthly'].map((type) => (
+                        <TouchableOpacity
+                          key={type}
+                          onPress={() => setRecurrenceType(type)}
+                          style={[
+                            {
+                              paddingVertical: 6,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: CHIP_BORDER,
+                              backgroundColor: '#fff',
+                            },
+                            recurrenceType === type && {
+                              backgroundColor: '#e0f2fe',
+                              borderColor: '#bae6fd',
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              {
+                                color: FG,
+                                fontSize: 12,
+                              },
+                              recurrenceType === type && {
+                                fontWeight: '600',
+                                color: FG,
+                              },
+                            ]}
+                          >
+                            {type.charAt(0).toUpperCase() + type.slice(1)}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ChipRow>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Every</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TextInput
+                        style={{
+                          borderWidth: 1,
+                          borderColor: BORDER,
+                          borderRadius: 10,
+                          width: 60,
+                          textAlign: 'center',
+                          marginBottom: 0,
+                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          height: 'auto',
+                          color: FG,
+                        }}
+                        value={recurrenceIntervalText}
+                        onChangeText={(text) => {
+                          if (text === '' || /^\d+$/.test(text)) {
+                            setRecurrenceIntervalText(text);
+                            const num = parseInt(text, 10);
+                            if (!isNaN(num) && num > 0) {
+                              setRecurrenceInterval(num);
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const num = parseInt(recurrenceIntervalText, 10);
+                          if (isNaN(num) || num <= 0) {
+                            setRecurrenceIntervalText('');
+                            setRecurrenceInterval(null);
+                          } else {
+                            setRecurrenceIntervalText(num.toString());
+                            setRecurrenceInterval(num);
+                          }
+                        }}
               keyboardType="numeric"
-              editable={!draftAllDay}
-              selectTextOnFocus={!draftAllDay}
-            />
-            <View style={styles.timePeriodContainer} pointerEvents="box-none">
+                      />
+                      <Text style={{ color: SUB, fontSize: 13 }}>
+                        {recurrenceType === 'daily' ? 'day(s)' : recurrenceType === 'weekly' ? 'week(s)' : 'month(s)'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                
+                {/* Ends and Number of occurrences/End date in one row */}
+                <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Ends</Text>
+                    <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+                      {['never', 'after', 'on'].map((endType) => (
               <TouchableOpacity
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          key={endType}
+                          onPress={() => setRecurrenceEndType(endType)}
+                          style={[
+                            {
+                              paddingVertical: 6,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: CHIP_BORDER,
+                              backgroundColor: '#fff',
+                            },
+                            recurrenceEndType === endType && {
+                              backgroundColor: '#e0f2fe',
+                              borderColor: '#bae6fd',
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              {
+                                color: FG,
+                                fontSize: 12,
+                              },
+                              recurrenceEndType === endType && {
+                                fontWeight: '600',
+                                color: FG,
+                              },
+                            ]}
+                          >
+                            {endType === 'never' ? 'Never' : endType === 'after' ? 'After' : 'On date'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ChipRow>
+                  </View>
+                  {recurrenceEndType === 'after' && (
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Number of occurrences</Text>
+                      <TextInput
+                        style={{
+                          borderWidth: 1,
+                          borderColor: BORDER,
+                          borderRadius: 10,
+                          width: 100,
+                          marginBottom: 0,
+                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          height: 'auto',
+                          color: FG,
+                        }}
+                        value={recurrenceEndAfterText}
+                        onChangeText={(text) => {
+                          if (text === '' || /^\d+$/.test(text)) {
+                            setRecurrenceEndAfterText(text);
+                            const num = parseInt(text, 10);
+                            if (!isNaN(num) && num > 0) {
+                              setRecurrenceEndAfter(num);
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const num = parseInt(recurrenceEndAfterText, 10);
+                          if (isNaN(num) || num <= 0) {
+                            setRecurrenceEndAfterText('');
+                            setRecurrenceEndAfter(null);
+                          } else {
+                            setRecurrenceEndAfterText(num.toString());
+                            setRecurrenceEndAfter(num);
+                          }
+                        }}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                  )}
+                  {recurrenceEndType === 'on' && (
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>End date</Text>
+                      <TouchableOpacity
+                        style={{
+                          borderWidth: 1,
+                          borderColor: BORDER,
+                          borderRadius: 10,
+                          marginBottom: 0,
+                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          height: 'auto',
+                        }}
                 onPress={() => {
-                  if (draftAllDay) return;
-                  console.log('[StartTime] AM button pressed');
-                  let timeWithoutAMPM = draftStartTime.replace(/\s*(AM|PM)/i, '').trim();
-                  // If no colon, add ":00" for proper parsing
-                  if (timeWithoutAMPM && !timeWithoutAMPM.includes(':')) {
-                    timeWithoutAMPM = `${timeWithoutAMPM}:00`;
-                  }
-                  const timeValue = timeWithoutAMPM || '12:00';
-                  console.log('[StartTime] Setting to:', `${timeValue} AM`);
-                  setDraftStartTime(`${timeValue} AM`);
-                }}
-                style={[
-                  styles.timePeriodButton,
-                  draftAllDay && styles.timePeriodButtonDisabled,
-                  startPeriod === 'AM' && styles.timePeriodButtonActive
-                ]}
-              >
-                <Text style={[
-                  styles.timePeriodButtonText,
-                  draftAllDay && styles.timePeriodButtonTextDisabled,
-                  startPeriod === 'AM' && styles.timePeriodButtonTextActive
-                ]}>AM</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                onPress={() => {
-                  if (draftAllDay) return;
-                  console.log('[StartTime] PM button pressed');
-                  let timeWithoutAMPM = draftStartTime.replace(/\s*(AM|PM)/i, '').trim();
-                  // If no colon, add ":00" for proper parsing
-                  if (timeWithoutAMPM && !timeWithoutAMPM.includes(':')) {
-                    timeWithoutAMPM = `${timeWithoutAMPM}:00`;
-                  }
-                  const timeValue = timeWithoutAMPM || '12:00';
-                  console.log('[StartTime] Setting to:', `${timeValue} PM`);
-                  setDraftStartTime(`${timeValue} PM`);
-                }}
-                style={[
-                  styles.timePeriodButton,
-                  draftAllDay && styles.timePeriodButtonDisabled,
-                  startPeriod === 'PM' && styles.timePeriodButtonActive
-                ]}
-              >
-                <Text style={[
-                  styles.timePeriodButtonText,
-                  draftAllDay && styles.timePeriodButtonTextDisabled,
-                  startPeriod === 'PM' && styles.timePeriodButtonTextActive
-                ]}>PM</Text>
-              </TouchableOpacity>
-            </View>
+                          if (recurrenceEndDate) {
+                            setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
+                          } else {
+                            const endDate = new Date(dueDate);
+                            endDate.setDate(endDate.getDate() + 30);
+                            setEndDateCalendarViewMonth(endDate);
+                          }
+                          setShowEndDateCalendarPicker(true);
+                        }}
+                      >
+                        <Text style={{ color: recurrenceEndDate ? FG : MUTED }}>
+                          {recurrenceEndDate ? fmt(recurrenceEndDate) : 'Select end date'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
           </View>
-        </View>
-        <View style={styles.inlineField}>
-          <Text style={styles.fieldLabel}>End time</Text>
-          <View style={styles.timeInputContainer}>
-            <TextInput
-              style={styles.timeInput}
-              value={draftEndTime.replace(/\s*(AM|PM)/i, '').trim()}
-              onChangeText={(value) => {
-                console.log('[EndTime] onChangeText - value:', value, 'current draftEndTime:', draftEndTime);
-                // Extract current AM/PM if it exists
-                const currentAMPM = draftEndTime.match(/\s*(AM|PM)/i)?.[0]?.trim() || '';
-                console.log('[EndTime] Current AM/PM:', currentAMPM);
-                const formatted = formatTimeInput(value + (currentAMPM ? ' ' + currentAMPM : ''));
-                console.log('[EndTime] Formatted result:', formatted);
-                setDraftEndTime(formatted);
-              }}
-              placeholder="10:00"
-              maxLength={6}
-              keyboardType="numeric"
-              editable={!draftAllDay}
-              selectTextOnFocus={!draftAllDay}
-            />
-            <View style={styles.timePeriodContainer} pointerEvents="box-none">
-              <TouchableOpacity
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                onPress={() => {
-                  if (draftAllDay) return;
-                  console.log('[EndTime] AM button pressed');
-                  let timeWithoutAMPM = draftEndTime.replace(/\s*(AM|PM)/i, '').trim();
-                  // If no colon, add ":00" for proper parsing
-                  if (timeWithoutAMPM && !timeWithoutAMPM.includes(':')) {
-                    timeWithoutAMPM = `${timeWithoutAMPM}:00`;
-                  }
-                  const timeValue = timeWithoutAMPM || '12:00';
-                  console.log('[EndTime] Setting to:', `${timeValue} AM`);
-                  setDraftEndTime(`${timeValue} AM`);
-                }}
-                style={[
-                  styles.timePeriodButton,
-                  draftAllDay && styles.timePeriodButtonDisabled,
-                  endPeriod === 'AM' && styles.timePeriodButtonActive
-                ]}
-              >
-                <Text style={[
-                  styles.timePeriodButtonText,
-                  draftAllDay && styles.timePeriodButtonTextDisabled,
-                  endPeriod === 'AM' && styles.timePeriodButtonTextActive
-                ]}>AM</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                onPress={() => {
-                  if (draftAllDay) return;
-                  console.log('[EndTime] PM button pressed');
-                  let timeWithoutAMPM = draftEndTime.replace(/\s*(AM|PM)/i, '').trim();
-                  // If no colon, add ":00" for proper parsing
-                  if (timeWithoutAMPM && !timeWithoutAMPM.includes(':')) {
-                    timeWithoutAMPM = `${timeWithoutAMPM}:00`;
-                  }
-                  const timeValue = timeWithoutAMPM || '12:00';
-                  console.log('[EndTime] Setting to:', `${timeValue} PM`);
-                  setDraftEndTime(`${timeValue} PM`);
-                }}
-                style={[
-                  styles.timePeriodButton,
-                  draftAllDay && styles.timePeriodButtonDisabled,
-                  endPeriod === 'PM' && styles.timePeriodButtonActive
-                ]}
-              >
-                <Text style={[
-                  styles.timePeriodButtonText,
-                  draftAllDay && styles.timePeriodButtonTextDisabled,
-                  endPeriod === 'PM' && styles.timePeriodButtonTextActive
-                ]}>PM</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Material Selector */}
-      <Text style={styles.fieldLabel}>Material (optional)</Text>
-      <View style={styles.materialSelectorContainer}>
-        <TouchableOpacity
-          style={styles.materialSelector}
-          onPress={() => setShowMaterialDropdown(!showMaterialDropdown)}
-        >
-          <Text style={[styles.materialSelectorText, !draftMaterialId && styles.materialSelectorPlaceholder]}>
-            {draftMaterialId 
-              ? materials.find(m => m.id === draftMaterialId)?.title || 'Select material...'
-              : 'Select material...'}
-          </Text>
-          <ChevronDown size={16} color={colors.muted} />
-        </TouchableOpacity>
-        {draftMaterialId && (
-          <TouchableOpacity
-            style={styles.clearMaterialButton}
-            onPress={() => setDraftMaterialId(null)}
-          >
-            <Text style={styles.clearMaterialText}>Clear</Text>
-          </TouchableOpacity>
         )}
-        <TouchableOpacity
-          style={styles.addMaterialButton}
-          onPress={() => setShowAddMaterialModal(true)}
-        >
-          <Plus size={14} color={colors.accent} />
-          <Text style={styles.addMaterialText}>Add New</Text>
-        </TouchableOpacity>
-      </View>
-      {showMaterialDropdown && (
-        <View style={styles.materialDropdown}>
-          <ScrollView style={styles.materialDropdownList} nestedScrollEnabled>
+      </SafeView>
+        {/* Logistic Details Section */}
+        <SafeView style={styles.academicSection}>
+          <TouchableOpacity
+            onPress={() => setShowLogisticDetails(!showLogisticDetails)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={styles.sectionLabel}>Logistical details</Text>
+            {showLogisticDetails ? (
+              <ChevronUp size={20} color={MUTED} />
+            ) : (
+              <ChevronDown size={20} color={MUTED} />
+            )}
+          </TouchableOpacity>
+          {showLogisticDetails && (
+            <>
+              <SafeFieldRow style={styles.fieldRow}>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Location (optional)</Text>
+                  <TextInput
+                    placeholder="e.g. Library, Park, etc."
+                    placeholderTextColor={MUTED}
+                    value={location}
+                    onChangeText={setLocation}
+                    style={styles.input}
+                  />
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Mode (optional)</Text>
+                  <SafeView style={styles.dropdownContainer}>
+                    <ChipRow style={styles.dropdownRow}>{MODE_OPTIONS.map((m) => (
+                      <TouchableOpacity
+                        key={m}
+                        onPress={() => setMode(mode === m ? '' : m)}
+                        style={[
+                          styles.dropdownOption,
+                          mode === m && styles.dropdownOptionActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.dropdownOptionText,
+                            mode === m && styles.dropdownOptionTextActive,
+                          ]}
+                        >
+                          {m.charAt(0).toUpperCase() + m.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}</ChipRow>
+                  </SafeView>
+                </View>
+              </SafeFieldRow>
+              <SafeFieldRow style={styles.fieldRow}>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Instructor / Host (optional)</Text>
+                  <TextInput
+                    placeholder="e.g. Ms. Chen"
+                    placeholderTextColor={MUTED}
+                    value={instructor}
+                    onChangeText={setInstructor}
+                    style={styles.input}
+                  />
+                </View>
+              </SafeFieldRow>
+            </>
+          )}
+        </SafeView>
+
+        {/* Academic Details Section - after Schedule time */}
+        <SafeView style={styles.academicSection}>
+          <TouchableOpacity
+            onPress={() => setShowAcademicDetails(!showAcademicDetails)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={styles.sectionLabel}>Academic Details</Text>
+            {showAcademicDetails ? (
+              <ChevronUp size={20} color={MUTED} />
+            ) : (
+              <ChevronDown size={20} color={MUTED} />
+            )}
+          </TouchableOpacity>
+          {showAcademicDetails && (
+            <>
+          {/* Subject, Unit/Topic, Grade - always visible */}
+          <SafeFieldRow style={styles.fieldRow}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Subject (optional)</Text>
+              <View style={styles.selectContainer}>
+                <TouchableOpacity
+                  ref={subjectButtonRef}
+                  style={[styles.select, assigneeIds.length === 0 && { opacity: 0.6 }]}
+                  onPress={() => {
+                    if (assigneeIds.length > 0) {
+                      setShowSubjectDropdown(!showSubjectDropdown);
+                    }
+                  }}
+                  disabled={assigneeIds.length === 0}
+                >
+                  <Text style={[styles.selectText, (!subjectId || assigneeIds.length === 0) && styles.selectPlaceholder]}>
+                    {assigneeIds.length === 0 
+                      ? 'Select Assignee first' 
+                      : subjectId 
+                        ? subjects.find(s => s.id === subjectId)?.name || 'Select...' 
+                        : 'Select subject'}
+                  </Text>
+                  <ChevronDown size={16} color={assigneeIds.length === 0 ? MUTED : SUB} />
+                </TouchableOpacity>
+                {showSubjectDropdown && Platform.OS === 'web' && (() => {
+                  // Use portal to render outside modal to avoid positioning issues
+                  let ReactDOM;
+                  try {
+                    ReactDOM = require('react-dom');
+                  } catch (e) {
+                    // ReactDOM not available, fall back to normal rendering
+                  }
+                  
+                  const dropdownContent = (
+                    <View
+                      ref={subjectDropdownRef}
+                      style={{
+                        position: 'fixed',
+                        top: subjectDropdownPosition.top,
+                        left: subjectDropdownPosition.left,
+                        width: subjectDropdownPosition.width || 200,
+                        backgroundColor: '#fff',
+                        borderWidth: 1,
+                        borderColor: BORDER,
+                        borderRadius: 10,
+                        marginTop: 4,
+                        maxHeight: 200,
+                        zIndex: 99999,
+                        ...Platform.select({
+                          web: {
+                            boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                          },
+                          default: {
+                            shadowColor: '#000',
+                            shadowOpacity: 0.1,
+                            shadowRadius: 8,
+                            shadowOffset: { width: 0, height: 4 },
+                          },
+                        }),
+                        elevation: 10000,
+                      }}
+                    >
+                      <ScrollView 
+                        style={{ 
+                          maxHeight: 196,
+                          ...(Platform.OS === 'web' && {
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            WebkitOverflowScrolling: 'touch',
+                          }),
+                        }} 
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                      >
+                        {assigneeIds.length === 0 ? (
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, color: MUTED }}>Select Assignee first</Text>
+                          </View>
+                        ) : subjects.length > 0 ? (
+                          <>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setSubjectId(null);
+                                setShowSubjectDropdown(false);
+                              }}
+                              style={[styles.selectOption, !subjectId && styles.selectOptionActive]}
+                            >
+                              <Text style={[styles.selectOptionText, !subjectId && styles.selectOptionTextActive]}>
+                                None
+                              </Text>
+              </TouchableOpacity>
+                            {subjects.map((subj) => (
+              <TouchableOpacity
+                                key={subj.id}
+                onPress={() => {
+                                  setSubjectId(subj.id);
+                                  setShowSubjectDropdown(false);
+                                }}
+                                style={[styles.selectOption, subjectId === subj.id && styles.selectOptionActive]}
+                              >
+                                <Text style={[styles.selectOptionText, subjectId === subj.id && styles.selectOptionTextActive]}>
+                                  {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </>
+                        ) : (
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, color: MUTED }}>No subjects yet</Text>
+                          </View>
+                        )}
+                      </ScrollView>
+                    </View>
+                  );
+                  
+                  if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                    return ReactDOM.createPortal(dropdownContent, document.body);
+                  }
+                  
+                  return dropdownContent;
+                })()}
+                {showSubjectDropdown && Platform.OS !== 'web' && assigneeIds.length === 0 && (
+                  <View style={styles.selectOptions}>
+                    <View style={{ padding: 12 }}>
+                      <Text style={{ fontSize: 13, color: MUTED }}>Select Assignee first</Text>
+                    </View>
+                  </View>
+                )}
+                {showSubjectDropdown && Platform.OS !== 'web' && assigneeIds.length > 0 && subjects.length > 0 && (
+                  <View style={styles.selectOptions}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSubjectId(null);
+                        setShowSubjectDropdown(false);
+                      }}
+                      style={[styles.selectOption, !subjectId && styles.selectOptionActive]}
+                    >
+                      <Text style={[styles.selectOptionText, !subjectId && styles.selectOptionTextActive]}>
+                        None
+                      </Text>
+              </TouchableOpacity>
+                    {subjects.map((subj) => (
+                      <TouchableOpacity
+                        key={subj.id}
+                        onPress={() => {
+                          setSubjectId(subj.id);
+                          setShowSubjectDropdown(false);
+                        }}
+                        style={[styles.selectOption, subjectId === subj.id && styles.selectOptionActive]}
+                      >
+                        <Text style={[styles.selectOptionText, subjectId === subj.id && styles.selectOptionTextActive]}>
+                          {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+            </View>
+                )}
+                {showSubjectDropdown && Platform.OS !== 'web' && assigneeIds.length > 0 && subjects.length === 0 && (
+                  <View style={styles.selectOptions}>
+                    <View style={{ padding: 12 }}>
+                      <Text style={{ fontSize: 13, color: MUTED }}>No subjects yet</Text>
+          </View>
+        </View>
+                )}
+              </View>
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Unit / Topic (optional)</Text>
+            <TextInput
+                placeholder="e.g. Algebra I – Linear Equations"
+                placeholderTextColor={MUTED}
+                value={unit}
+                onChangeText={setUnit}
+                style={styles.input}
+              />
+            </View>
+          </SafeFieldRow>
+
+          <SafeFieldRow style={styles.fieldRow}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Grade (optional)</Text>
+              <TextInput
+                placeholder="e.g. B+ or 88%"
+                placeholderTextColor={MUTED}
+                value={grade}
+                onChangeText={setGrade}
+                style={styles.input}
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>% of Total Grade (optional)</Text>
+              <TextInput
+                placeholder="e.g. 25"
+                placeholderTextColor={MUTED}
+                value={percentOfTotalGrade}
+                onChangeText={setPercentOfTotalGrade}
+                style={[
+                  styles.input,
+                  percentValidationError && styles.inputError
+                ]}
+                keyboardType="numeric"
+              />
+              {checkingPercent && (
+                <Text style={styles.fieldHelpText}>Checking...</Text>
+              )}
+              {percentValidationError && (
+                <View style={{ marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <AlertCircle size={16} color="#ef4444" style={{ marginTop: 2, marginRight: 6 }} />
+                    <Text style={styles.errorText}>
+                      {percentValidationError.message}
+                    </Text>
+                  </View>
+                  {percentValidationError.suggestedPercent !== null && percentValidationError.suggestedPercent !== undefined && (
+                    <View style={{ marginTop: 4, paddingLeft: 22 }}>
+                      <Text style={styles.fieldHelpText}>
+                        {`Suggested: Use ${percentValidationError.suggestedPercent.toFixed(1)}% to stay within 100%`}
+                      </Text>
+                      {percentValidationData && percentValidationData.assignments && percentValidationData.assignments.length > 0 && (
+                        <View style={{ marginTop: 8 }}>
+                          <Text style={[styles.fieldHelpText, { marginBottom: 4, fontWeight: '600' }]}>
+                            Or reduce the weight of other assignments:
+                          </Text>
+                          {percentValidationData.assignments.slice(0, 3).map((assignment, idx) => (
+                            <Text key={idx} style={[styles.fieldHelpText, { marginLeft: 8 }]}>
+                              {`• ${assignment.title}: ${assignment.percent}%`}
+                            </Text>
+                          ))}
+                          {percentValidationData.assignments.length > 3 && (
+                            <Text style={[styles.fieldHelpText, { marginLeft: 8, fontStyle: 'italic' }]}>
+                              {`and ${percentValidationData.assignments.length - 3} more...`}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          </SafeFieldRow>
+
+          {familyId && (
+            <SafeFieldRow style={styles.fieldRow}>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Standards (optional)</Text>
+                <View style={styles.standardsSelectorContainer}>
+                  <TouchableOpacity
+                    style={styles.standardsSelector}
+                    onPress={() => {
+                      setShowStandardsModal(true);
+                    }}
+                  >
+                    <Text style={[
+                      styles.standardsSelectorText,
+                      attachedStandards.length === 0 && styles.standardsSelectorPlaceholder
+                    ]}>
+                      {attachedStandards.length > 0
+                        ? `${attachedStandards.length} standard${attachedStandards.length > 1 ? 's' : ''} selected`
+                        : 'Select standards...'}
+                    </Text>
+                    <ChevronDown size={16} color={MUTED} />
+                  </TouchableOpacity>
+                  {attachedStandards.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.clearStandardsButton}
+                      onPress={() => {
+                        setAttachedStandards([]);
+                      }}
+                    >
+                      <Text style={styles.clearStandardsText}>Clear</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </SafeFieldRow>
+          )}
+          {familyId && attachedStandards.length > 0 && (
+            <SafeFieldRow style={styles.fieldRow}>
+              <View style={styles.field}>
+                <View style={styles.standardsList}>
+                  {attachedStandards.map(standard => (
+                    <View key={standard.id} style={styles.standardChip}>
+                      <Text style={styles.standardChipText}>
+                        {standard.standard_code || standard.code || 'Standard'}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setAttachedStandards(prev => prev.filter(s => s.id !== standard.id))}
+                        style={styles.removeStandardButton}
+                      >
+                        <X size={14} color={MUTED} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </SafeFieldRow>
+          )}
+
+          {/* Tags input */}
+          <SafeFieldRow style={styles.fieldRow}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Tags (optional)</Text>
+              <Text style={styles.fieldHelpText}>
+                Add tags for context, modality, and domain categorization
+              </Text>
+            
+              {/* Selected tags */}
+              {draftTags.length > 0 && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {draftTags.map((tag, index) => (
+                    <View
+                      key={index}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: CHIP_BG,
+                        borderWidth: 1,
+                        borderColor: CHIP_BORDER,
+                        borderRadius: 16,
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: FG }}>{tag}</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDraftTags(draftTags.filter((_, i) => i !== index));
+                        }}
+                        style={{ marginLeft: 6 }}
+                      >
+                        <X size={14} color={MUTED} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Tag suggestions and custom input */}
+              <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                {Object.values(TAG_CATEGORIES).flat().map((suggestedTag) => {
+                  const isSelected = draftTags.includes(suggestedTag);
+                  return (
+                    <TouchableOpacity
+                      key={suggestedTag}
+                      onPress={() => {
+                        if (isSelected) {
+                          setDraftTags(draftTags.filter(t => t !== suggestedTag));
+                        } else {
+                          setDraftTags([...draftTags, suggestedTag]);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: isSelected ? ACCENT : CHIP_BG,
+                        borderWidth: 1,
+                        borderColor: isSelected ? ACCENT : CHIP_BORDER,
+                        borderRadius: 16,
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: isSelected ? '#FFFFFF' : FG }}>
+                        {suggestedTag}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TextInput
+                  style={{
+                    backgroundColor: CHIP_BG,
+                    borderWidth: 1,
+                    borderColor: CHIP_BORDER,
+                    borderRadius: 16,
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    fontSize: 12,
+                    color: FG,
+                    minWidth: 120,
+                  }}
+                  placeholder="Add custom tag..."
+                  placeholderTextColor={MUTED}
+                  value={tagInput}
+                  onChangeText={setTagInput}
+                  onSubmitEditing={() => {
+                    const trimmed = tagInput.trim().toLowerCase();
+                    if (trimmed && !draftTags.includes(trimmed)) {
+                      setDraftTags([...draftTags, trimmed]);
+                      setTagInput('');
+                    }
+                  }}
+                />
+              </View>
+            </View>
+          </SafeFieldRow>
+            </>
+          )}
+        </SafeView>
+        <Text style={[styles.fieldHelpText, { marginTop: 4 }]}>
+          Note: Make edits or add/delete children/subjects from the Profile screen
+        </Text>
+
+        {/* Attachments Selector - always visible */}
+        {familyId && (
+          <SafeFieldRow style={[styles.fieldRow, { marginTop: 20 }]}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Attachments (optional)</Text>
+              <View style={styles.materialSelectorContainer}>
+                <TouchableOpacity
+                  ref={materialButtonRef}
+                  style={styles.materialSelector}
+                  onPress={handleMaterialDropdownToggle}
+                >
+                  <Text style={[
+                    styles.materialSelectorText,
+                    !selectedMaterialId && styles.materialSelectorPlaceholder
+                  ]}>
+                    {selectedMaterialId
+                      ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select attachment...')
+                      : 'Select attachment...'}
+                  </Text>
+                  <ChevronDown size={16} color={MUTED} />
+                </TouchableOpacity>
+                {selectedMaterialId && (
+                  <TouchableOpacity
+                    style={styles.clearMaterialButton}
+                    onPress={() => {
+                      setSelectedMaterialId(null);
+                      setAttachedMaterialIds([]);
+                      setDraftMaterialId(null);
+                    }}
+                  >
+                    <Text style={styles.clearMaterialText}>Clear</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.addMaterialButton}
+                  onPress={() => setShowAddMaterialModal(true)}
+                >
+                  <Plus size={14} color={ACCENT} />
+                  <Text style={styles.addMaterialText}>Add New</Text>
+                </TouchableOpacity>
+              </View>
+              {showMaterialDropdown && Platform.OS === 'web' && (() => {
+                let ReactDOM;
+                try {
+                  ReactDOM = require('react-dom');
+                } catch (e) {
+                }
+                
+                const dropdownContent = (
+                  <View
+                    ref={materialDropdownRef}
+                    style={{
+                      position: 'fixed',
+                      top: materialDropdownPosition.top,
+                      left: materialDropdownPosition.left,
+                      width: materialDropdownPosition.width || 400,
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: 'rgba(15,23,42,0.08)',
+                      padding: 4,
+                      minWidth: 400,
+                      maxHeight: materialDropdownPosition.maxHeight || 300,
+                      zIndex: 99999,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                      ...(Platform.OS === 'web' && {
+                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }),
+                    }}
+                  >
+                    <ScrollView 
+                      style={{ 
+                        maxHeight: (materialDropdownPosition.maxHeight || 300) - 8,
+                        ...(Platform.OS === 'web' && {
+                          overflowY: 'auto',
+                          overflowX: 'hidden',
+                          WebkitOverflowScrolling: 'touch',
+                        }),
+                      }} 
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                    >
             {loadingMaterials ? (
-              <Text style={styles.materialDropdownItem}>Loading...</Text>
+                        <View style={{ padding: 12 }}>
+                          <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
+                        </View>
             ) : materials.length === 0 ? (
-              <Text style={styles.materialDropdownItem}>No materials yet</Text>
+                        <View style={{ padding: 12 }}>
+                          <Text style={{ fontSize: 13, color: MUTED }}>No materials yet</Text>
+                        </View>
             ) : (
               <>
                 <TouchableOpacity
-                  style={styles.materialDropdownItem}
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 4,
+                            }}
                   onPress={() => {
+                              setSelectedMaterialId(null);
+                              setAttachedMaterialIds([]);
                     setDraftMaterialId(null);
                     setShowMaterialDropdown(false);
                   }}
                 >
-                  <Text style={styles.materialDropdownItemText}>None</Text>
+                            <Text style={{ fontSize: 13, color: FG }}>None</Text>
                 </TouchableOpacity>
                 {materials.map((material) => (
                   <TouchableOpacity
                     key={material.id}
-                    style={[
-                      styles.materialDropdownItem,
-                      draftMaterialId === material.id && styles.materialDropdownItemActive
-                    ]}
+                              style={{
+                                paddingVertical: 6,
+                                paddingHorizontal: 10,
+                                borderRadius: 4,
+                                backgroundColor: selectedMaterialId === material.id ? 'rgba(212, 162, 86, 0.1)' : 'transparent',
+                              }}
                     onPress={() => {
+                                setSelectedMaterialId(material.id);
+                                setAttachedMaterialIds([material.id]);
                       setDraftMaterialId(material.id);
                       setShowMaterialDropdown(false);
                     }}
                   >
-                    <Text style={[
-                      styles.materialDropdownItemText,
-                      draftMaterialId === material.id && styles.materialDropdownItemTextActive
-                    ]}>
-                      {material.title} ({material.type})
+                              <Text style={{
+                                fontSize: 13,
+                                color: selectedMaterialId === material.id ? ACCENT : FG,
+                                fontWeight: selectedMaterialId === material.id ? '600' : '400',
+                              }}>
+                                {material.title || material.provider_name || 'Untitled Material'}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -1115,389 +3922,865 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             )}
           </ScrollView>
         </View>
-      )}
-
-      <Text style={styles.fieldLabel}>Child</Text>
-      <View style={styles.tagsRow}>
-        {familyMembers.map((member) => {
-          const active = draftChildId === member.id;
-          return (
-            <TouchableOpacity
-              key={member.id}
-              onPress={() => setDraftChildId(active ? null : member.id)}
-              style={[styles.assigneeChip, active && styles.assigneeChipActive]}
-            >
-              <Text style={[styles.assigneeChipText, active && styles.assigneeChipTextActive]}>
-                {member.name}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-        {familyMembers.length === 0 && (
-          <Text style={styles.emptyHint}>No family members found.</Text>
+                );
+                
+                if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                  return ReactDOM.createPortal(dropdownContent, document.body);
+                }
+                
+                return dropdownContent;
+              })()}
+            </View>
+          </SafeFieldRow>
         )}
-      </View>
 
-      <Text style={styles.fieldLabel}>Status</Text>
-      <View style={styles.tagsRow}>
-        {statusOptions.map((status) => {
-          const active = draftStatus === status;
-          return (
-            <TouchableOpacity
-              key={status}
-              onPress={() => setDraftStatus(status)}
-              style={[styles.statusChip, active && styles.statusChipActive]}
-            >
-              <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
-                {formatStatusLabel(status)}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.fieldLabel}>Notes</Text>
+        {/* Notes */}
       <TextInput
-        style={[styles.input, styles.notesInput]}
-        value={draftNotes}
-        onChangeText={setDraftNotes}
-        placeholder="Add notes"
-        multiline
-      />
-
-      {/* Template Section */}
-      <View style={styles.templateSection}>
-        <Text style={styles.fieldLabel}>Template</Text>
-        <TemplatePicker
-          subjectId={event?.subject_id}
-          familyId={familyId}
-          onSelect={handleApplyTemplate}
+          placeholder="Notes (optional)"
+          placeholderTextColor={MUTED}
+          value={notes}
+          onChangeText={(text) => {
+            setNotes(text);
+            setDraftNotes(text);
+          }}
+          style={[
+            styles.input,
+            styles.notesInput,
+          ]}
+          multiline
         />
-        {!familyId && (
-          <Text style={{ fontSize: 10, color: colors.muted, marginTop: 4 }}>
-            Warning: Family ID missing - templates may not load
-          </Text>
-        )}
-        {event?.id && (
-          <TouchableOpacity
-            style={styles.saveTemplateButton}
-            onPress={handleSaveAsTemplate}
-            disabled={savingAsTemplate}
-          >
-            <Text style={styles.saveTemplateButtonText}>
-              {savingAsTemplate ? 'Saving...' : 'Save as Template'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      </ScrollView>
 
-      <Text style={styles.fieldLabel}>Tags</Text>
-      <View style={styles.tagsRow}>
-        {draftTags.map((tag) => (
-          <TouchableOpacity key={tag} style={styles.editTagChip} onPress={() => removeTag(tag)}>
-            <Text style={styles.editTagChipText}>#{tag} ✕</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <TextInput
-        style={styles.input}
-        value={tagInput}
-        onChangeText={(value) => {
-          setTagInput(value);
-          if (/[\s,]$/.test(value)) {
-            commitTag();
-          }
-        }}
-        onSubmitEditing={commitTag}
-        placeholder="Type #label and press enter"
-      />
-      <View style={styles.tagsRow}>
-        {SUGGESTED_TAGS.map((tag) => (
+      {/* Footer with Save/Cancel buttons */}
+      <View style={styles.footer}>
+        <TouchableOpacity onPress={() => {
+          onClose?.();
+        }}>
+          <Text style={styles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
           <TouchableOpacity
-            key={tag}
-            style={[styles.suggestedChip, draftTags.includes(tag) && styles.suggestedChipActive]}
-            onPress={() => toggleTag(tag)}
-          >
-            <Text style={[styles.suggestedChipText, draftTags.includes(tag) && styles.suggestedChipTextActive]}>#{tag}</Text>
+          onPress={handleSave}
+          disabled={saving || !isFormValid()}
+          style={[
+            styles.createButton,
+            (saving || !isFormValid()) && styles.createButtonDisabled,
+          ]}
+        >
+          <Text style={styles.createButtonText}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </Text>
           </TouchableOpacity>
-        ))}
       </View>
     </View>
   );
-
-  const renderViewMode = () => {
-    const currentStatus = normalizeStatus(event.status || event.data?.status || 'scheduled');
-
-    return (
-      <>
-        <Text style={styles.title}>{event.title || 'Untitled Event'}</Text>
-
-        <View style={[styles.statusBadge, { backgroundColor: statusColors[currentStatus] || colors.muted }]}>
-          <Text style={styles.statusText}>{formatStatusLabel(currentStatus)}</Text>
-        </View>
-
-        <View style={styles.detailsGrid}>
-          <View style={styles.detailRow}>
-            <Calendar size={16} color={colors.muted} />
-            <Text style={styles.detailLabel}>Date:</Text>
-            <Text style={styles.detailValue}>
-              {(() => {
-                const timestamp = getTimestamp(event, ['start_ts', 'start', 'start_local']);
-                if (!timestamp) return '—';
-                // If it's a time string like "09:00", skip it and try other fields
-                if (typeof timestamp === 'string' && /^\d{2}:\d{2}$/.test(timestamp)) {
-                  const fallback = getTimestamp(event, ['start_ts']);
-                  return fallback ? formatDate(fallback) : '—';
-                }
-                return formatDate(timestamp);
-              })()}
-            </Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <Clock size={16} color={colors.muted} />
-            <Text style={styles.detailLabel}>Time:</Text>
-            <Text style={styles.detailValue}>
-              {(() => {
-                const startTs = getTimestamp(event, ['start_ts', 'start', 'start_local']);
-                const endTs = getTimestamp(event, ['end_ts', 'end', 'end_local']);
-                // If timestamps are time strings, try to get proper timestamps
-                const start = (typeof startTs === 'string' && /^\d{2}:\d{2}$/.test(startTs))
-                  ? getTimestamp(event, ['start_ts']) || startTs
-                  : startTs;
-                const end = (typeof endTs === 'string' && /^\d{2}:\d{2}$/.test(endTs))
-                  ? getTimestamp(event, ['end_ts']) || endTs
-                  : endTs;
-                return `${formatTime(start)} - ${formatTime(end)}`;
-              })()}
-            </Text>
-          </View>
-
-          {childName && (
-            <View style={styles.detailRow}>
-              <UserCircle size={16} color={colors.muted} />
-              <Text style={styles.detailLabel}>Child:</Text>
-              <Text style={styles.detailValue}>{childName}</Text>
-            </View>
-          )}
-
-          {subjectName && (
-            <View style={styles.detailRow}>
-              <BookOpen size={16} color={colors.muted} />
-              <Text style={styles.detailLabel}>Subject:</Text>
-              <Text style={styles.detailValue}>{subjectName}</Text>
-            </View>
-          )}
-
-          {(event.estimated_minutes || event.minutes) && (
-            <View style={styles.detailRow}>
-              <Clock size={16} color={colors.muted} />
-              <Text style={styles.detailLabel}>Duration:</Text>
-              <Text style={styles.detailValue}>{event.estimated_minutes || event.minutes} minutes</Text>
-            </View>
-          )}
-
-          {event.is_flexible && (
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Type:</Text>
-              <Text style={styles.detailValue}>Flexible Task</Text>
-            </View>
-          )}
-        </View>
-
-        {(event.description || event.notes) && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Description</Text>
-            <Text style={styles.sectionContent}>{event.description || event.notes}</Text>
-          </View>
-        )}
-
-        {renderTagsView(event.tags)}
-
-        {/* Standards Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Standards</Text>
-            <TouchableOpacity 
-              style={styles.attachButton}
-              onPress={() => setShowStandardsModal(true)}
-            >
-              <Plus size={16} color={colors.primary} />
-              <Text style={styles.attachButtonText}>Attach Standard</Text>
-            </TouchableOpacity>
-          </View>
-          
-          {loadingStandards ? (
-            <Text style={styles.loadingText}>Loading standards...</Text>
-          ) : attachedStandards.length === 0 ? (
-            <Text style={styles.emptyText}>No standards attached</Text>
-          ) : (
-            <View style={styles.standardsList}>
-              {attachedStandards.map(standard => (
-                <View key={standard.id} style={styles.standardItem}>
-                  <View style={styles.standardContent}>
-                    <Text style={styles.standardCode}>
-                      {standard.standard_code || standard.code || 'N/A'}
-                    </Text>
-                    <Text style={styles.standardDescription} numberOfLines={2}>
-                      {standard.standard_text || standard.description || ''}
-                    </Text>
-                    {event && (event.status === 'done' || event.status === 'completed') && event.child_id && (
-                      <MasteryPicker
-                        studentId={event.child_id}
-                        standardId={standard.id}
-                        lessonId={event.id}
-                        currentMastery={standardsMastery[standard.id] || 'not_attempted'}
-                        onUpdate={handleMasteryUpdate}
-                      />
-                    )}
-                  </View>
-                  <TouchableOpacity
-                    style={styles.removeButton}
-                    onPress={() => handleRemoveStandard(standard.id)}
-                  >
-                    <X size={16} color={colors.muted} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Save as Template Button */}
-        {event?.id && (
-          <View style={styles.section}>
-            <TouchableOpacity
-              style={styles.saveTemplateButtonView}
-              onPress={handleSaveAsTemplate}
-              disabled={savingAsTemplate}
-            >
-              <Save size={18} color={colors.accent} />
-              <Text style={styles.saveTemplateButtonText}>
-                {savingAsTemplate ? 'Saving as Template...' : 'Save as Template'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </>
-    );
   };
+
 
   const selectedMaterial = materials.find(m => m.id === draftMaterialId);
 
+  // Debug: Log editing state
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    console.log('[EventDetails] editing state:', editing);
+  }
+
   return (
     <>
-      <ScrollView style={styles.container}>
-        <View style={styles.content}>
-          {editing ? renderEditForm() : renderViewMode()}
+      <View style={{ flex: 1, backgroundColor: '#ffffff', minHeight: 400 }}>
+        {editing ? renderEditForm() : renderViewMode()}
+      </View>
           
           {/* Standards Search Modal */}
           <StandardsSearchModal
             visible={showStandardsModal}
             onClose={() => setShowStandardsModal(false)}
             onSelect={handleAttachStandards}
-            subjectId={event?.subject_id}
+            subjectId={subjectId}
             initialSelected={attachedStandards}
           />
-          
-          {/* Template Name Input Modal */}
-          {showTemplateNameInput && (
+
+          {/* Add Subject Modal */}
+          <AddSubjectModal
+            visible={showAddSubjectModal}
+            onClose={() => setShowAddSubjectModal(false)}
+            onSubjectAdded={(newSubject) => {
+              fetchSubjects();
+              if (newSubject?.id) {
+                setSubjectId(newSubject.id);
+              }
+            }}
+            familyId={familyId}
+            defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
+          />
+
+          {/* Add Material Modal */}
+          <AddMaterialModal
+            visible={showAddMaterialModal}
+            onClose={() => setShowAddMaterialModal(false)}
+            onSaved={() => {
+              loadMaterials();
+            }}
+            familyId={familyId}
+            children={familyMembers}
+          />
+
+          {/* Mini Calendar Picker Modal */}
+          {showCalendarPicker && (
             <Modal
-              visible={showTemplateNameInput}
-              transparent
-              animationType="slide"
-              onRequestClose={() => setShowTemplateNameInput(false)}
+              animationType="fade"
+              transparent={true}
+              visible={showCalendarPicker}
+              onRequestClose={() => setShowCalendarPicker(false)}
             >
-              <View style={styles.modalOverlay}>
-                <View style={styles.modalContainer}>
-                  <Text style={styles.modalTitle}>Save as Template</Text>
-                  <Text style={styles.modalSubtitle}>Enter a name for this template:</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={templateName}
-                    onChangeText={setTemplateName}
-                    placeholder="Template name"
-                    autoFocus
-                  />
-                  <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                activeOpacity={1}
+                onPress={() => setShowCalendarPicker(false)}
+              >
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={(e) => e.stopPropagation()}
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 12,
+                    padding: 16,
+                    width: Platform.OS === 'web' ? 320 : '90%',
+                    maxWidth: 320,
+                    ...(Platform.OS === 'web' 
+                      ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }
+                      : {
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 12,
+                          elevation: 8,
+                        }
+                    ),
+                  }}
+                >
+                  {/* Month/Year Navigation */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 16,
+                  }}>
                     <TouchableOpacity
-                      style={[styles.modalButton, styles.modalButtonCancel]}
                       onPress={() => {
-                        setShowTemplateNameInput(false);
-                        setTemplateName('');
+                        const newMonth = new Date(calendarViewMonth);
+                        newMonth.setMonth(newMonth.getMonth() - 1);
+                        setCalendarViewMonth(newMonth);
                       }}
+                      style={{ padding: 4 }}
                     >
-                      <Text style={[styles.modalButtonText, styles.modalButtonCancelText]}>Cancel</Text>
+                      <ChevronLeft size={20} color={FG} />
                     </TouchableOpacity>
+                    <Text style={{
+                      fontSize: 16,
+                      fontWeight: '600',
+                      color: FG,
+                      ...(Platform.OS === 'web' && {
+                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }),
+                    }}>
+                      {calendarViewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </Text>
                     <TouchableOpacity
-                      style={[styles.modalButton, styles.modalButtonSave]}
-                      onPress={confirmSaveTemplate}
-                      disabled={savingAsTemplate || !templateName.trim()}
+                      onPress={() => {
+                        const newMonth = new Date(calendarViewMonth);
+                        newMonth.setMonth(newMonth.getMonth() + 1);
+                        setCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
                     >
-                      <Text style={[styles.modalButtonText, styles.modalButtonSaveText]}>
-                        {savingAsTemplate ? 'Saving...' : 'Save'}
-                      </Text>
+                      <ChevronRight size={20} color={FG} />
                     </TouchableOpacity>
                   </View>
-                </View>
-              </View>
+
+                  {/* Year Navigation */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    marginBottom: 12,
+                  }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(calendarViewMonth);
+                        newMonth.setFullYear(newMonth.getFullYear() - 1);
+                        setCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB,
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>← Year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const today = new Date();
+                        setCalendarViewMonth(today);
+                        setDueDate(today);
+                        setShowCalendarPicker(false);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB, 
+                        textDecorationLine: 'underline',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>Today</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(calendarViewMonth);
+                        newMonth.setFullYear(newMonth.getFullYear() + 1);
+                        setCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB,
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>Year →</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Calendar Grid */}
+                  <View>
+                    {/* Day Headers */}
+                    <View style={{
+                      flexDirection: 'row',
+                      marginBottom: 8,
+                    }}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                        <View key={day} style={{ flex: 1, alignItems: 'center' }}>
+                          <Text style={{
+                            fontSize: 11,
+                            color: SUB,
+                            fontWeight: '500',
+                          }}>{day}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Calendar Days */}
+                    {(() => {
+                      const year = calendarViewMonth.getFullYear();
+                      const month = calendarViewMonth.getMonth();
+                      const firstDay = new Date(year, month, 1);
+                      const lastDay = new Date(year, month + 1, 0);
+                      const startDate = new Date(firstDay);
+                      startDate.setDate(startDate.getDate() - startDate.getDay());
+                      
+                      const days = [];
+                      const currentDate = new Date(startDate);
+                      
+                      for (let i = 0; i < 42; i++) {
+                        days.push(new Date(currentDate));
+                        currentDate.setDate(currentDate.getDate() + 1);
+                      }
+
+                      return (
+                        <View>
+                          {[0, 1, 2, 3, 4, 5].map((week) => (
+                            <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                              {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                                const isCurrentMonth = day.getMonth() === month;
+                                const isSelected = day.toDateString() === dueDate.toDateString();
+                                const isToday = day.toDateString() === new Date().toDateString();
+                                
+                                return (
+                                  <TouchableOpacity
+                                    key={idx}
+                                    onPress={() => {
+                                      setDueDate(day);
+                                      setShowCalendarPicker(false);
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      aspectRatio: 1,
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: 6,
+                                      backgroundColor: isSelected ? ACCENT : 'transparent',
+                                      borderWidth: isToday ? 2 : 0,
+                                      borderColor: isToday ? ACCENT : 'transparent',
+                                    }}
+                                  >
+                                    <Text style={{
+                                      fontSize: 13,
+                                      color: isSelected 
+                                        ? '#FFFFFF' 
+                                        : (isCurrentMonth ? FG : MUTED),
+                                      fontWeight: isSelected || isToday ? '600' : '400',
+                                    }}>
+                                      {day.getDate()}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    })()}
+                  </View>
+                </TouchableOpacity>
+              </TouchableOpacity>
             </Modal>
           )}
 
-        <View style={styles.actions}>
-          {editing ? (
-            <>
+          {/* Event End Date Calendar Picker Modal */}
+          {showEventEndDatePicker && (
+            <Modal
+              animationType="fade"
+              transparent={true}
+              visible={showEventEndDatePicker}
+              onRequestClose={() => setShowEventEndDatePicker(false)}
+            >
               <TouchableOpacity
-                style={[styles.actionButton, styles.cancelButton]}
-                onPress={() => setEditing(false)}
-                disabled={saving}
-              >
-                <Text style={[styles.actionButtonText, styles.cancelButtonText]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.saveButton]}
-                onPress={handleSave}
-                disabled={saving}
-              >
-                <Text style={styles.actionButtonText}>{saving ? 'Saving…' : 'Save'}</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.editButton]}
-                onPress={() => setEditing(true)}
-              >
-                <Edit2 size={16} color="#111827" />
-                <Text style={styles.actionButtonText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.deleteButton]}
-                onPress={() => {
-                  console.log('[EventDetails] Delete button pressed');
-                  handleDelete();
+                style={{
+                  flex: 1,
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  justifyContent: 'center',
+                  alignItems: 'center',
                 }}
-                disabled={deleting}
+                activeOpacity={1}
+                onPress={() => setShowEventEndDatePicker(false)}
               >
-                <Trash2 size={16} color="#111827" />
-                <Text style={styles.actionButtonText}>{deleting ? 'Deleting…' : 'Delete'}</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      </View>
-    </ScrollView>
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={(e) => e.stopPropagation()}
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 12,
+                    padding: 16,
+                    width: Platform.OS === 'web' ? 320 : '90%',
+                    maxWidth: 320,
+                    ...(Platform.OS === 'web' 
+                      ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }
+                      : {
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 12,
+                          elevation: 8,
+                        }
+                    ),
+                  }}
+                >
+                  {/* Month/Year Navigation */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 16,
+                  }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(eventEndDateCalendarViewMonth);
+                        newMonth.setMonth(newMonth.getMonth() - 1);
+                        setEventEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <ChevronLeft size={20} color={FG} />
+                    </TouchableOpacity>
+                    <Text style={{
+                      fontSize: 16,
+                      fontWeight: '600',
+                      color: FG,
+                      ...(Platform.OS === 'web' && {
+                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }),
+                    }}>
+                      {eventEndDateCalendarViewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(eventEndDateCalendarViewMonth);
+                        newMonth.setMonth(newMonth.getMonth() + 1);
+                        setEventEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <ChevronRight size={20} color={FG} />
+                    </TouchableOpacity>
+                  </View>
 
-    {/* Add Material Modal */}
-    <AddMaterialModal
-      visible={showAddMaterialModal}
-      onClose={() => setShowAddMaterialModal(false)}
-      onSaved={async () => {
-        setShowAddMaterialModal(false);
-        await loadMaterials();
-      }}
-      familyId={familyId}
-    />
+                  {/* Year Navigation */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    marginBottom: 12,
+                  }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(eventEndDateCalendarViewMonth);
+                        newMonth.setFullYear(newMonth.getFullYear() - 1);
+                        setEventEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB,
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>← Year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const defaultEnd = new Date(dueDate);
+                        defaultEnd.setDate(defaultEnd.getDate() + 1);
+                        setEventEndDateCalendarViewMonth(defaultEnd);
+                        setEventEndDate(defaultEnd);
+                        setShowEventEndDatePicker(false);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB, 
+                        textDecorationLine: 'underline',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>+1 day</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(eventEndDateCalendarViewMonth);
+                        newMonth.setFullYear(newMonth.getFullYear() + 1);
+                        setEventEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB,
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>Year →</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Calendar Grid */}
+                  <View>
+                    {/* Day Headers */}
+                    <View style={{
+                      flexDirection: 'row',
+                      marginBottom: 8,
+                    }}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                        <View key={day} style={{ flex: 1, alignItems: 'center' }}>
+                          <Text style={{
+                            fontSize: 11,
+                            color: SUB,
+                            fontWeight: '500',
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
+                          }}>{day}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Calendar Days */}
+                    {(() => {
+                      const year = eventEndDateCalendarViewMonth.getFullYear();
+                      const month = eventEndDateCalendarViewMonth.getMonth();
+                      const firstDay = new Date(year, month, 1);
+                      const lastDay = new Date(year, month + 1, 0);
+                      const startDate = new Date(firstDay);
+                      startDate.setDate(startDate.getDate() - startDate.getDay());
+                      
+                      const days = [];
+                      const currentDate = new Date(startDate);
+                      
+                      for (let i = 0; i < 42; i++) {
+                        days.push(new Date(currentDate));
+                        currentDate.setDate(currentDate.getDate() + 1);
+                      }
+
+                      return (
+                        <View>
+                          {[0, 1, 2, 3, 4, 5].map((week) => (
+                            <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                              {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                                const isCurrentMonth = day.getMonth() === month;
+                                const isSelected = eventEndDate ? day.toDateString() === new Date(eventEndDate).toDateString() : false;
+                                const isToday = day.toDateString() === new Date().toDateString();
+                                const isBeforeStart = dueDate && day < dueDate;
+                                
+                                return (
+                                  <TouchableOpacity
+                                    key={idx}
+                                    onPress={() => {
+                                      if (!isBeforeStart) {
+                                        console.log('[EventDetails] User selected end date:', {
+                                          selectedDay: day.toISOString(),
+                                          dayDate: day.toDateString(),
+                                          startDate: dueDate?.toDateString()
+                                        });
+                                        setEventEndDate(day);
+                                        setShowEventEndDatePicker(false);
+                                      }
+                                    }}
+                                    disabled={isBeforeStart}
+                                    style={{
+                                      flex: 1,
+                                      aspectRatio: 1,
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: 6,
+                                      backgroundColor: isSelected ? ACCENT : 'transparent',
+                                      borderWidth: isToday ? 2 : 0,
+                                      borderColor: isToday ? ACCENT : 'transparent',
+                                      opacity: isBeforeStart ? 0.3 : 1,
+                                    }}
+                                  >
+                                    <Text style={{
+                                      fontSize: 13,
+                                      color: isSelected 
+                                        ? '#FFFFFF' 
+                                        : (isCurrentMonth ? FG : MUTED),
+                                      fontWeight: isSelected || isToday ? '600' : '400',
+                                      ...(Platform.OS === 'web' && {
+                                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                      }),
+                                    }}>
+                                      {day.getDate()}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    })()}
+                  </View>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
+          )}
+
+          {/* Recurrence End Date Calendar Picker Modal */}
+          {showEndDateCalendarPicker && (
+            <Modal
+              animationType="fade"
+              transparent={true}
+              visible={showEndDateCalendarPicker}
+              onRequestClose={() => setShowEndDateCalendarPicker(false)}
+            >
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                activeOpacity={1}
+                onPress={() => setShowEndDateCalendarPicker(false)}
+              >
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={(e) => e.stopPropagation()}
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 12,
+                    padding: 16,
+                    width: Platform.OS === 'web' ? 320 : '90%',
+                    maxWidth: 320,
+                    ...(Platform.OS === 'web' 
+                      ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }
+                      : {
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 12,
+                          elevation: 8,
+                        }
+                    ),
+                  }}
+                >
+                  {/* Month/Year Navigation */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 16,
+                  }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(endDateCalendarViewMonth);
+                        newMonth.setMonth(newMonth.getMonth() - 1);
+                        setEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <ChevronLeft size={20} color={FG} />
+                    </TouchableOpacity>
+                    <Text style={{
+                      fontSize: 16,
+                      fontWeight: '600',
+                      color: FG,
+                      ...(Platform.OS === 'web' && {
+                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }),
+                    }}>
+                      {endDateCalendarViewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(endDateCalendarViewMonth);
+                        newMonth.setMonth(newMonth.getMonth() + 1);
+                        setEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <ChevronRight size={20} color={FG} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Year Navigation */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    marginBottom: 12,
+                  }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(endDateCalendarViewMonth);
+                        newMonth.setFullYear(newMonth.getFullYear() - 1);
+                        setEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB,
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>← Year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const today = new Date();
+                        setEndDateCalendarViewMonth(today);
+                        setRecurrenceEndDate(today);
+                        setShowEndDateCalendarPicker(false);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB, 
+                        textDecorationLine: 'underline',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>Today</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newMonth = new Date(endDateCalendarViewMonth);
+                        newMonth.setFullYear(newMonth.getFullYear() + 1);
+                        setEndDateCalendarViewMonth(newMonth);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: SUB,
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}>Year →</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Calendar Grid */}
+                  <View>
+                    {/* Day Headers */}
+                    <View style={{
+                      flexDirection: 'row',
+                      marginBottom: 8,
+                    }}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                        <View key={day} style={{ flex: 1, alignItems: 'center' }}>
+                          <Text style={{
+                            fontSize: 11,
+                            color: SUB,
+                            fontWeight: '500',
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
+                          }}>{day}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Calendar Days */}
+                    {(() => {
+                      const year = endDateCalendarViewMonth.getFullYear();
+                      const month = endDateCalendarViewMonth.getMonth();
+                      const firstDay = new Date(year, month, 1);
+                      const lastDay = new Date(year, month + 1, 0);
+                      const startDate = new Date(firstDay);
+                      startDate.setDate(startDate.getDate() - startDate.getDay());
+                      
+                      const days = [];
+                      const currentDate = new Date(startDate);
+                      
+                      for (let i = 0; i < 42; i++) {
+                        days.push(new Date(currentDate));
+                        currentDate.setDate(currentDate.getDate() + 1);
+                      }
+
+                      return (
+                        <View>
+                          {[0, 1, 2, 3, 4, 5].map((week) => (
+                            <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                              {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                                const isCurrentMonth = day.getMonth() === month;
+                                const isSelected = recurrenceEndDate ? day.toDateString() === new Date(recurrenceEndDate).toDateString() : false;
+                                const isToday = day.toDateString() === new Date().toDateString();
+                                
+                                return (
+                                  <TouchableOpacity
+                                    key={idx}
+                                    onPress={() => {
+                                      setRecurrenceEndDate(day);
+                                      setShowEndDateCalendarPicker(false);
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      aspectRatio: 1,
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: 6,
+                                      backgroundColor: isSelected ? ACCENT : 'transparent',
+                                      borderWidth: isToday ? 2 : 0,
+                                      borderColor: isToday ? ACCENT : 'transparent',
+                                    }}
+                                  >
+                                    <Text style={{
+                                      fontSize: 13,
+                                      color: isSelected 
+                                        ? '#FFFFFF' 
+                                        : (isCurrentMonth ? FG : MUTED),
+                                      fontWeight: isSelected || isToday ? '600' : '400',
+                                      ...(Platform.OS === 'web' && {
+                                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                      }),
+                                    }}>
+                                      {day.getDate()}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    })()}
+                  </View>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
+          )}
+
+      {/* PDF Viewer Modal */}
+      {showPdfViewer && pdfUrl && (
+        <Modal
+          visible={showPdfViewer}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowPdfViewer(false)}
+        >
+          <View style={styles.pdfModalOverlay}>
+            <TouchableOpacity
+              style={styles.pdfModalOverlayTouchable}
+              activeOpacity={1}
+              onPress={() => setShowPdfViewer(false)}
+            />
+            <View
+              style={styles.pdfModalContainer}
+              onStartShouldSetResponder={() => true}
+            >
+              <View style={styles.pdfModalHeader}>
+                <Text style={styles.pdfModalTitle} numberOfLines={1}>
+                  {pdfTitle}
+                </Text>
+                <View style={styles.pdfModalActions}>
+                  {Platform.OS === 'web' && (
+                    <TouchableOpacity
+                      style={styles.pdfModalButton}
+                      onPress={() => {
+                        window.open(pdfUrl, '_blank');
+                      }}
+                    >
+                      <ExternalLink size={18} color={colors.accent} />
+                      <Text style={styles.pdfModalButtonText}>Open in new tab</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.pdfModalCloseButton}
+                    onPress={() => setShowPdfViewer(false)}
+                  >
+                    <X size={20} color={colors.text} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.pdfViewerContainer}>
+                {Platform.OS === 'web' ? (
+                  <PDFIframe src={pdfUrl} title={pdfTitle} />
+                ) : (
+                  <View style={styles.pdfFallback}>
+                    <Text style={styles.pdfFallbackText}>
+                      PDF viewing is not available on this platform.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.pdfModalButton}
+                      onPress={() => {
+                        Alert.alert('Open PDF', 'Would you like to open this PDF in your browser?');
+                      }}
+                    >
+                      <ExternalLink size={18} color={colors.accent} />
+                      <Text style={styles.pdfModalButtonText}>Open externally</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </>
   );
 }
@@ -1508,46 +4791,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 12,
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  detailsGrid: {
-    marginBottom: 24,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 8,
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: colors.muted,
-    fontWeight: '500',
-    minWidth: 80,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: colors.text,
-    flex: 1,
   },
   section: {
     marginBottom: 24,
@@ -1563,42 +4806,70 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sectionContent: {
     fontSize: 14,
     color: colors.muted,
     lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   actions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
     marginTop: 8,
+    alignItems: 'center',
   },
   actionButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
-    gap: 8,
+    gap: 6,
+    minHeight: 40,
   },
   actionButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   editButton: {
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
+    flex: 1,
+    backgroundColor: colors.text || '#111827',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: colors.text || '#111827',
+  },
+  editButtonText: {
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   deleteButton: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
+  },
+  deleteButtonText: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    paddingHorizontal: 12,
+  },
+  deleteButtonTextText: {
+    color: colors.muted || 'rgba(15, 23, 42, 0.6)',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   saveButton: {
     backgroundColor: colors.primary,
@@ -1610,6 +4881,9 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timeInputContainer: {
     flexDirection: 'row',
@@ -1627,6 +4901,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.card,
     flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timePeriodContainer: {
     flexDirection: 'row',
@@ -1650,11 +4927,18 @@ const styles = StyleSheet.create({
   timePeriodButtonActive: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
-    shadowColor: colors.primary,
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    ...Platform.select({
+      web: {
+        boxShadow: `0 4px 8px ${colors.primary}33`,
+      },
+      default: {
+        shadowColor: colors.primary,
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 3,
+      },
+    }),
   },
   timePeriodButtonDisabled: {
     opacity: 0.5,
@@ -1663,13 +4947,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timePeriodButtonTextDisabled: {
     color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timePeriodButtonTextActive: {
     color: colors.white,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   editForm: {
     gap: 16,
@@ -1680,6 +4973,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
     marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   input: {
     borderWidth: 1,
@@ -1689,6 +4985,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text,
     backgroundColor: colors.card,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   notesInput: {
     minHeight: 80,
@@ -1734,76 +5033,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: colors.primary,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   standardsList: {
     marginTop: 8,
-  },
-  standardItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    padding: 12,
-    marginBottom: 8,
-    backgroundColor: colors.bgSubtle,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  standardContent: {
-    flex: 1,
-  },
-  standardCode: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 4,
-  },
-  standardDescription: {
-    fontSize: 12,
-    color: colors.muted,
-    marginBottom: 8,
-  },
-  removeButton: {
-    padding: 4,
-    marginLeft: 8,
-  },
-  loadingText: {
-    fontSize: 12,
-    color: colors.muted,
-    fontStyle: 'italic',
-  },
-  emptyText: {
-    fontSize: 12,
-    color: colors.muted,
-    fontStyle: 'italic',
-  },
-  templateSection: {
-    marginBottom: 16,
-  },
-  saveTemplateButton: {
-    marginTop: 8,
-    padding: 10,
-    backgroundColor: colors.bgSubtle,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-  },
-  saveTemplateButtonView: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 12,
-    backgroundColor: colors.blueSoft,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  saveTemplateButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.accent,
   },
   modalOverlay: {
     flex: 1,
@@ -1824,11 +5059,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalSubtitle: {
     fontSize: 14,
     color: colors.muted,
     marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalInput: {
     padding: 12,
@@ -1839,6 +5080,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.text,
     marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalButtons: {
     flexDirection: 'row',
@@ -1859,17 +5103,29 @@ const styles = StyleSheet.create({
   modalButtonText: {
     fontSize: 14,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalButtonCancelText: {
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalButtonSaveText: {
     color: colors.accentContrast,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   tagChipText: {
     color: colors.muted,
     fontSize: 12,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   editTagChip: {
     backgroundColor: '#eef2ff',
@@ -1882,6 +5138,9 @@ const styles = StyleSheet.create({
   editTagChipText: {
     color: colors.text,
     fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   suggestedChip: {
     borderWidth: 1,
@@ -1899,9 +5158,15 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 12,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   suggestedChipTextActive: {
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   assigneeChip: {
     borderWidth: 1,
@@ -1918,13 +5183,22 @@ const styles = StyleSheet.create({
   assigneeChipText: {
     color: colors.text,
     fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   assigneeChipTextActive: {
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyHint: {
     fontSize: 12,
     color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   statusChip: {
     borderWidth: 1,
@@ -1941,9 +5215,15 @@ const styles = StyleSheet.create({
   statusChipText: {
     color: colors.text,
     fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   statusChipTextActive: {
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   materialSelectorContainer: {
     flexDirection: 'row',
@@ -1967,9 +5247,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text,
     flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   materialSelectorPlaceholder: {
     color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   clearMaterialButton: {
     paddingHorizontal: 12,
@@ -1979,6 +5265,9 @@ const styles = StyleSheet.create({
   clearMaterialText: {
     fontSize: 12,
     color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   addMaterialButton: {
     flexDirection: 'row',
@@ -1995,6 +5284,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.accent,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   materialDropdown: {
     position: 'absolute',
@@ -2035,10 +5327,696 @@ const styles = StyleSheet.create({
   materialDropdownItemText: {
     fontSize: 14,
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   materialDropdownItemTextActive: {
     color: colors.accent,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  // Styles matching TaskCreateModal.js
+  header: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+  },
+  titleInput: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  bodyScroll: {
+    flex: 1,
+    maxHeight: Platform.OS === 'web' ? 'calc(100vh - 200px)' : undefined,
+  },
+  bodyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 8,
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    paddingHorizontal: 0,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  modeOption: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    backgroundColor: '#ffffff',
+  },
+  modeOptionActive: {
+    backgroundColor: '#e2e8f0',
+    borderColor: '#cbd5f5',
+  },
+  modeOptionText: {
+    color: FG,
+    fontSize: 13,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modeOptionTextActive: {
+    color: FG,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modeInfo: {
+    paddingHorizontal: 0,
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  modeInfoText: {
+    color: SUB,
+    fontSize: 13,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  chipRow: {
+    paddingHorizontal: 0,
+    paddingTop: 12,
+    paddingBottom: 12,
+    gap: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: CHIP_BG,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 8,
+    marginRight: 8,
+    flexShrink: 0,
+    minHeight: 40,
+  },
+  chipText: {
+    color: FG,
+    fontWeight: '600',
+    marginHorizontal: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  chipLabel: {
+    color: SUB,
+    marginRight: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  chipOption: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    backgroundColor: '#fff',
+  },
+  chipOptionActive: {
+    backgroundColor: '#e0f2fe',
+    borderColor: '#bae6fd',
+  },
+  chipOptionText: {
+    color: FG,
+    fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  chipOptionTextActive: {
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  todayButton: {
+    marginLeft: 10,
+  },
+  todayText: {
+    color: SUB,
+    textDecorationLine: 'underline',
+    fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  fieldRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 10,
+  },
+  field: {
+    flex: 1,
+    alignItems: 'flex-start',
+  },
+  fieldLabelEdit: {
+    color: SUB,
+    fontSize: 12,
+    marginBottom: 4,
+    fontWeight: '500',
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dropdownContainer: {
+    flexDirection: 'row',
+    width: '100%',
+    flex: 1,
+  },
+  dropdownRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    width: '100%',
+  },
+  dropdownOption: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    backgroundColor: '#fff',
+  },
+  dropdownOptionActive: {
+    backgroundColor: '#e0f2fe',
+    borderColor: '#bae6fd',
+  },
+  dropdownOptionText: {
+    color: FG,
+    fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dropdownOptionTextActive: {
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dropdownContainerError: {
+    borderColor: '#ef4444',
+    borderWidth: 1.5,
+    borderRadius: 8,
+    padding: 4,
+  },
+  fieldHelpText: {
+    color: MUTED,
+    fontSize: 12,
+    fontStyle: 'italic',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timeSection: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: '#f9fafb',
+  },
+  timeToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timeToggleControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  allDayControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  allDayLabel: {
+    color: SUB,
+    fontSize: 13,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timeInputsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  timeField: {
+    flex: 1,
+  },
+  timeLabel: {
+    color: SUB,
+    fontSize: 12,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timeInputEdit: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    color: FG,
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    padding: 10,
+    color: FG,
+    marginBottom: 8,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  notesInput: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+  },
+  cancelText: {
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  createButton: {
+    backgroundColor: '#000000',
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+  },
+  createButtonDisabled: {
+    backgroundColor: '#d1d5db',
+  },
+  createButtonText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  inputError: {
+    borderColor: '#ef4444',
+    borderWidth: 1.5,
+  },
+  errorText: {
+    color: '#ef4444',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  errorTextSmall: {
+    color: '#ef4444',
+    fontSize: 11,
+    marginTop: 4,
+    marginLeft: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  recurringSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    paddingVertical: 8,
+  },
+  recurringSectionContent: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+  },
+  academicSection: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: '#f9fafb',
+    overflow: 'visible',
+  },
+  selectContainer: {
+    position: 'relative',
+    zIndex: 1000,
+  },
+  select: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+  },
+  selectText: {
+    color: FG,
+    fontSize: 14,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  selectPlaceholder: {
+    color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  selectOptions: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    marginTop: 4,
+    maxHeight: 200,
+    zIndex: 10000,
+    elevation: 10000,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 4 },
+      },
+    }),
+    elevation: 4,
+  },
+  selectOption: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+  },
+  selectOptionActive: {
+    backgroundColor: '#e0f2fe',
+  },
+  selectOptionText: {
+    color: FG,
+    fontSize: 14,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  selectOptionTextActive: {
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  standardsSelectorContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  standardsSelector: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: BG,
+  },
+  standardsSelectorText: {
+    fontSize: 14,
+    color: FG,
+  },
+  standardsSelectorPlaceholder: {
+    color: MUTED,
+  },
+  clearStandardsButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  clearStandardsText: {
+    fontSize: 13,
+    color: MUTED,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  standardsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  standardChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  standardChipText: {
+    fontSize: 12,
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  removeStandardButton: {
+    padding: 2,
+  },
+  materialSelectorContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+    width: '100%',
+  },
+  materialSelector: {
+    flex: 1,
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: BG,
+    minWidth: 0,
+  },
+  materialSelectorText: {
+    fontSize: 14,
+    color: FG,
+    flex: 1,
+  },
+  materialSelectorPlaceholder: {
+    color: MUTED,
+  },
+  clearMaterialButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  clearMaterialText: {
+    fontSize: 13,
+    color: SUB,
+    textDecorationLine: 'underline',
+  },
+  addMaterialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: ACCENT,
+  },
+  addMaterialText: {
+    fontSize: 13,
+    color: ACCENT,
+    fontWeight: '500',
+  },
+  pdfModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    ...Platform.select({
+      web: {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+      },
+    }),
+  },
+  pdfModalOverlayTouchable: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  pdfModalContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    width: Platform.OS === 'web' ? '90%' : '100%',
+    maxWidth: 1200,
+    maxHeight: '85%',
+    overflow: 'hidden',
+    position: 'relative',
+    zIndex: 1,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.2)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        shadowOffset: { width: 0, height: 10 },
+        elevation: 10,
+      },
+    }),
+  },
+  pdfModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: '#ffffff',
+  },
+  pdfModalTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    marginRight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pdfModalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  pdfModalButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: '#ffffff',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  pdfModalButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.accent,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pdfModalCloseButton: {
+    padding: 4,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  pdfViewerContainer: {
+    height: Platform.OS === 'web' ? 'calc(85vh - 80px)' : '100%',
+    minHeight: 400,
+    backgroundColor: '#f9fafb',
+    ...Platform.select({
+      web: {
+        maxHeight: 'calc(85vh - 80px)',
+      },
+    }),
+  },
+  pdfFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  pdfFallbackText: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 20,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
-

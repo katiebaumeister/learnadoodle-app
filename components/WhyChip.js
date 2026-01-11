@@ -29,7 +29,6 @@ const WhyChip = ({ childId, date, familyId, style }) => {
       setData(res);
       setOpen(true);
     } catch (error) {
-      console.error('Error loading explanation:', error);
     } finally {
       setLoading(false);
     }

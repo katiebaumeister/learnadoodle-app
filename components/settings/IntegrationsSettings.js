@@ -27,7 +27,6 @@ export default function IntegrationsSettings({ user }) {
         setUserRole(data.role || 'parent');
       }
     } catch (error) {
-      console.error('Error loading user info:', error);
     }
   };
 
@@ -61,7 +60,6 @@ export default function IntegrationsSettings({ user }) {
         setYoutubeQuota(quotaData);
       }
     } catch (error) {
-      console.error('Error loading integrations:', error);
       toast.push('Failed to load integrations', 'error');
     } finally {
       setLoading(false);
@@ -89,7 +87,6 @@ export default function IntegrationsSettings({ user }) {
         toast.push('Complete Google Calendar connection in the popup window', 'info');
       }
     } catch (error) {
-      console.error('Error connecting Google:', error);
       toast.push('Failed to connect Google Calendar', 'error');
     }
   };
@@ -111,7 +108,6 @@ export default function IntegrationsSettings({ user }) {
       toast.push('Google Calendar disconnected', 'success');
       loadIntegrations();
     } catch (error) {
-      console.error('Error disconnecting Google:', error);
       toast.push('Failed to disconnect Google Calendar', 'error');
     }
   };
@@ -138,7 +134,6 @@ export default function IntegrationsSettings({ user }) {
 
       toast.push('ICS URL generated. Copy it and subscribe in Apple Calendar.', 'success');
     } catch (error) {
-      console.error('Error generating ICS URL:', error);
       toast.push('Failed to generate ICS URL', 'error');
     }
   };

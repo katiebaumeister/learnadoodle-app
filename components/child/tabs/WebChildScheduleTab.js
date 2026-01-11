@@ -61,7 +61,6 @@ export default function WebChildScheduleTab({ childId, familyId }) {
       setGrades(gradesData || []);
       setUploads(uploadsData || []);
     } catch (error) {
-      console.error('Error loading schedule data:', error);
     } finally {
       setLoading(false);
     }

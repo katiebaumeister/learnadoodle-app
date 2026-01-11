@@ -90,7 +90,6 @@ export default function SyllabusScanner({
       setUnits(extractedUnits);
       setStep('review');
     } catch (err) {
-      console.error('[SyllabusScanner] Error:', err);
       setError(err.message || 'Failed to scan syllabus');
       setStep('upload');
     } finally {
@@ -172,7 +171,6 @@ export default function SyllabusScanner({
       }
       onClose();
     } catch (err) {
-      console.error('[SyllabusScanner] Error saving:', err);
       setError(err.message || 'Failed to save syllabus');
     } finally {
       setSaving(false);

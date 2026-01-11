@@ -31,13 +31,11 @@ export default function InlineNotesIndicator({ eventId, familyId, size = 'small'
         .eq('linked_event_id', eventId);
 
       if (error) {
-        console.error('Error loading note count:', error);
         setNoteCount(0);
       } else {
         setNoteCount(count || 0);
       }
     } catch (err) {
-      console.error('Exception loading note count:', err);
       setNoteCount(0);
     } finally {
       setLoading(false);

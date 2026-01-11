@@ -28,13 +28,11 @@ export default function UnscheduledTasksCard({ familyId, onDragStart, onAutoPlac
       });
       
       if (error) {
-        console.error('Error loading flexible backlog:', error);
         setItems([]);
       } else {
         setItems(data || []);
       }
     } catch (err) {
-      console.error('Error loading backlog:', err);
       setItems([]);
     } finally {
       setLoading(false);

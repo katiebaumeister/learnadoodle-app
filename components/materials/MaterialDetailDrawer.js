@@ -212,7 +212,9 @@ export default function MaterialDetailDrawer({
                   )}
 
                   {/* Provider Link */}
-                  {material.provider_url && (
+                  {material.provider_url && 
+                   (material.provider_url.startsWith('http://') || material.provider_url.startsWith('https://')) && 
+                   !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(material.provider_url) && (
                     <TouchableOpacity
                       style={styles.linkButton}
                       onPress={() => {

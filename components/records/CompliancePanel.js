@@ -74,8 +74,7 @@ export default function CompliancePanel({
       await handleExportCompliance();
     } else if (type === 'transcript') {
       // TODO: Handle transcript export (should be done from TranscriptsTab)
-      console.log('Generate transcript');
-    }
+}
   };
 
   if (loading) {

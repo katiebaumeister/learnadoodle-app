@@ -3,7 +3,7 @@
  * AI-suggested weekly schedule reshuffling
  */
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, Platform } from 'react-native';
 import { X, RefreshCw, CheckCircle, AlertCircle, Clock, Sparkles } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -65,7 +65,6 @@ export default function WeeklyReshuffleModal({
       const data = await response.json();
       setSuggestions(data);
     } catch (err) {
-      console.error('[WeeklyReshuffleModal] Error:', err);
       setError(err.message || 'Failed to generate reshuffle suggestions');
     } finally {
       setLoading(false);
@@ -102,7 +101,6 @@ export default function WeeklyReshuffleModal({
       }
       onClose();
     } catch (err) {
-      console.error('[WeeklyReshuffleModal] Error applying:', err);
       setError(err.message || 'Failed to apply reshuffle');
     } finally {
       setApplying(false);
@@ -266,10 +264,18 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 700,
     maxHeight: '90%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.3)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+      },
+    }),
     elevation: 8,
   },
   header: {

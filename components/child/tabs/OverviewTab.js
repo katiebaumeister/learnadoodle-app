@@ -242,8 +242,7 @@ export default function OverviewTab({
           onAddSession={onAddSession}
           onEventPress={(ev) => {
             // Could open event detail modal here
-            console.log('Event pressed:', ev);
-          }}
+}}
         />
       </View>
 

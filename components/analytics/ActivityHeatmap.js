@@ -68,7 +68,6 @@ export default function ActivityHeatmap({ childId, familyId, daysBack = 90 }) {
 
       setHeatmapData(days);
     } catch (err) {
-      console.error('[ActivityHeatmap] Error:', err);
       setError(err.message || 'Failed to load activity data');
     } finally {
       setLoading(false);

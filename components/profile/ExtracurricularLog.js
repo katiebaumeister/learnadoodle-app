@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, 
 import { Plus, Edit, Trash2, Calendar, Clock, X, Save } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
+import { designTokens } from '../../theme/designTokens';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import GeistCard from '../GeistCard';
@@ -403,6 +404,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   addButton: {
     flexDirection: 'row',
@@ -415,14 +417,17 @@ const styles = StyleSheet.create({
   addButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   loading: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   emptyText: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   list: {
     flex: 1,
@@ -441,6 +446,7 @@ const styles = StyleSheet.create({
   activityName: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
     marginBottom: spacing.xs,
   },
   activityMeta: {
@@ -456,9 +462,11 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 13,
+    fontFamily: designTokens.fonts.sans,
   },
   activityDescription: {
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     lineHeight: 20,
     marginTop: spacing.xs,
   },
@@ -496,6 +504,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   modalBody: {
     flex: 1,
@@ -511,6 +520,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     marginBottom: spacing.xs,
   },
   input: {
@@ -518,12 +528,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
   },
   textArea: {
     borderWidth: 1,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
     minHeight: 100,
     textAlignVertical: 'top',
   },
@@ -544,6 +556,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   saveButton: {
     flexDirection: 'row',
@@ -556,5 +569,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
 });

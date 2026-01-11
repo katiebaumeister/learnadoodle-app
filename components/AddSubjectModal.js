@@ -87,21 +87,14 @@ export default function AddSubjectModal({
       if (childrenError) {
         // If archived column doesn't exist or query fails, try without it
         if (childrenError.code === '42703' || childrenError.message?.includes('archived') || childrenError.code === '400') {
-          console.log('Trying to fetch children without archived filter');
           const { data: retryData, error: retryError } = await supabase
             .from('children')
             .select('*')
             .eq('family_id', effectiveFamilyId);
           
           if (retryError) {
-            console.error('Error fetching children (retry):', retryError);
             // Log the full error for debugging
-            console.error('Retry error details:', {
-              code: retryError.code,
-              message: retryError.message,
-              details: retryError.details,
-              hint: retryError.hint
-            });
+
             // Silently fail - child selection is optional
             setChildren([]);
             return;
@@ -109,14 +102,7 @@ export default function AddSubjectModal({
           setChildren(retryData || []);
           return;
         }
-        
-        console.error('Error fetching children:', childrenError);
-        console.error('Error details:', {
-          code: childrenError.code,
-          message: childrenError.message,
-          details: childrenError.details,
-          hint: childrenError.hint
-        });
+
         // Silently fail - child selection is optional
         setChildren([]);
         return;
@@ -126,7 +112,6 @@ export default function AddSubjectModal({
       // Clear any previous errors if we successfully loaded (even if empty)
       setError(null);
     } catch (error) {
-      console.error('Error fetching children:', error);
       // Silently fail - child selection is optional
       setChildren([]);
     } finally {
@@ -197,7 +182,6 @@ export default function AddSubjectModal({
         onClose();
       }, 500);
     } catch (err) {
-      console.error('Error adding subject:', err);
       setError(err.message || 'Failed to add subject. Please try again.');
     } finally {
       setIsSubmitting(false);

@@ -52,7 +52,6 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
         .maybeSingle();
 
       if (profileError || !profile?.family_id) {
-        console.error('Error fetching profile:', profileError);
         return;
       }
 
@@ -66,7 +65,6 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
         setChildren(childrenData);
       }
     } catch (error) {
-      console.error('Error fetching children:', error);
     }
   };
 
@@ -83,7 +81,6 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
         .maybeSingle();
 
       if (profileError || !profile?.family_id) {
-        console.error('Error fetching profile:', profileError);
         return;
       }
 
@@ -98,7 +95,6 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
         setSelectedYear(years[0]);
       }
     } catch (error) {
-      console.error('Error fetching academic years:', error);
     } finally {
       setIsLoading(false);
     }
@@ -132,10 +128,10 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
         .lte('start_ts', endDate.toISOString())
         .neq('status', 'canceled')
         .is('canceled_at', null)
+        .is('deleted_at', null)
         .order('start_ts', { ascending: true });
 
       if (eventsError) {
-        console.error('Error fetching events:', eventsError);
         return;
       }
 
@@ -195,7 +191,6 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
 
       setMarkedDates(marked);
     } catch (error) {
-      console.error('Error fetching calendar data:', error);
     } finally {
       setIsLoading(false);
     }
@@ -215,13 +210,11 @@ export default function FamilyCalendarView({ familyId, onEventSelect = null, onP
       });
 
       if (error) {
-        console.error('Error fetching conflicts:', error);
         return;
       }
 
       setConflicts(data || []);
     } catch (error) {
-      console.error('Error fetching conflicts:', error);
     }
   };
 

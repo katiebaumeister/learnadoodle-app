@@ -120,7 +120,6 @@ export default function CurriculumImportWizard({
       setParsedData(data);
       setStep(STEPS.REVIEW);
     } catch (err) {
-      console.error('Error uploading/parsing syllabus:', err);
       setError(err.message || 'Failed to upload and parse syllabus');
       setStep(STEPS.UPLOAD);
     } finally {

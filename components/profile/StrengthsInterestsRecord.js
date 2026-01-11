@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, TextInput,
 import { Plus, Edit, Sparkles, Heart, X, Save, Trash2 } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
+import { designTokens } from '../../theme/designTokens';
 import { supabase } from '../../lib/supabase';
 import GeistCard from '../GeistCard';
 
@@ -321,6 +322,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   addButton: {
     width: 32,
@@ -333,10 +335,12 @@ const styles = StyleSheet.create({
   loading: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   emptyText: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   tagsContainer: {
     flexDirection: 'row',
@@ -353,6 +357,7 @@ const styles = StyleSheet.create({
   tagText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     flex: 1,
   },
   tagActions: {
@@ -385,6 +390,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   modalBody: {
     padding: spacing.lg,
@@ -395,6 +401,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     marginBottom: spacing.xs,
   },
   input: {
@@ -402,6 +409,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
   },
   modalFooter: {
     flexDirection: 'row',
@@ -420,6 +428,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   saveButton: {
     flexDirection: 'row',
@@ -432,5 +441,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
 });

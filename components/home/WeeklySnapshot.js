@@ -39,7 +39,6 @@ export default function WeeklySnapshot({ familyId, children = [], onViewFull }) 
             .in('status', ['scheduled', 'done']);
 
           if (allEventsError) {
-            console.error(`[WeeklySnapshot] Error loading events for ${child.id}:`, allEventsError);
             progressData[child.id] = { completed: 0, total: 0 };
             continue;
           }
@@ -54,14 +53,12 @@ export default function WeeklySnapshot({ familyId, children = [], onViewFull }) 
             total: totalEvents || 0,
           };
         } catch (err) {
-          console.error(`[WeeklySnapshot] Error processing child ${child.id}:`, err);
           progressData[child.id] = { completed: 0, total: 0 };
         }
       }
 
       setProgress(progressData);
     } catch (err) {
-      console.error('[WeeklySnapshot] Error:', err);
     } finally {
       setLoading(false);
     }

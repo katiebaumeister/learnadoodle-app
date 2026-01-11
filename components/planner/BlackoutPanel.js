@@ -44,7 +44,6 @@ export default function BlackoutPanel({ familyId, children = [] }) {
       if (error) throw error;
       setExisting(data || []);
     } catch (error) {
-      console.error('Error loading blackouts:', error);
       Alert.alert('Error', error.message || 'Unable to load blackouts');
     } finally {
       setLoading(false);
@@ -91,7 +90,6 @@ export default function BlackoutPanel({ familyId, children = [] }) {
       // Refresh blackouts after creation
       await fetchBlackouts();
     } catch (error) {
-      console.error('Error creating blackout:', error);
       Alert.alert('Error', error.message || 'Unable to create blackout');
     } finally {
       setSaving(false);
@@ -113,7 +111,6 @@ export default function BlackoutPanel({ familyId, children = [] }) {
             if (error) throw error;
             await fetchBlackouts();
           } catch (error) {
-            console.error('Error deleting blackout:', error);
             Alert.alert('Error', error.message || 'Unable to remove blackout');
           }
         },

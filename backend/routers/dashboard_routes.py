@@ -21,6 +21,40 @@ from supabase_client import get_admin_client
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
+# Helper function to validate and clean avatar URLs
+# Filters out UUIDs that aren't valid URLs to prevent 404 errors
+def validate_avatar_url(url: Optional[str]) -> Optional[str]:
+    """
+    Validates an avatar URL and returns None if it's invalid (e.g., just a UUID).
+    Valid URLs must start with http://, https://, or data:.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    
+    url = url.strip()
+    if not url:
+        return None
+    
+    # Check if it's just a UUID (invalid URL format)
+    import re
+    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+    if uuid_pattern.match(url):
+        # It's just a UUID, not a valid URL - return None
+        return None
+    
+    # Valid URLs must start with http://, https://, or data:
+    if url.startswith('http://') or url.startswith('https://') or url.startswith('data:'):
+        return url
+    
+    # If it's a known avatar key (like "prof1"), it's valid
+    # These will be handled by the frontend's avatar source mapping
+    known_avatar_keys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10']
+    if url.lower() in known_avatar_keys:
+        return url
+    
+    # Otherwise, it's not a valid URL
+    return None
+
 
 # ============================================================
 # Request/Response Models
@@ -106,7 +140,7 @@ async def get_me(
                             "name": c.get("first_name") or c.get("name", ""),
                             "nickname": c.get("nickname"),
                             "age": c.get("age"),
-                            "avatar_url": c.get("avatar_url")
+                            "avatar_url": validate_avatar_url(c.get("avatar_url"))
                         }
                         for c in (children_res.data or [])
                     ]
@@ -121,7 +155,7 @@ async def get_me(
                         "name": c.get("first_name") or c.get("name", ""),
                         "nickname": c.get("nickname"),
                         "age": c.get("age"),
-                        "avatar_url": c.get("avatar_url")
+                        "avatar_url": validate_avatar_url(c.get("avatar_url"))
                     }
                     for c in (children_res.data or [])
                 ]

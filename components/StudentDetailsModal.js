@@ -34,7 +34,6 @@ export default function StudentDetailsModal({ visible, student, onClose, onDelet
     try {
       return avatarSources[avatarKey] || avatarSources.prof1;
     } catch (error) {
-      console.warn('Avatar source error:', error);
       return avatarSources.prof1;
     }
   };
@@ -46,7 +45,6 @@ export default function StudentDetailsModal({ visible, student, onClose, onDelet
   // Safety check: if child has invalid data, close the modal after render
   useEffect(() => {
     if (visible && (!child || !child.first_name || child.first_name === null || child.first_name === '')) {
-      console.log('StudentDetailsModal: Invalid child data, closing modal', child);
       if (onClose) onClose();
     }
   }, [visible, child, onClose]);
@@ -147,14 +145,12 @@ export default function StudentDetailsModal({ visible, student, onClose, onDelet
             <TouchableOpacity 
               style={styles.deleteButton} 
               onPress={() => {
-                console.log('Delete button clicked for child:', child.first_name);
                 // Web-compatible confirmation
                 if (typeof window !== 'undefined' && window.confirm) {
                   const confirmed = window.confirm(
                     `Are you sure you want to delete ${child.first_name}? This action cannot be undone.`
                   );
                   if (confirmed) {
-                    console.log('Delete confirmed for child:', child.first_name);
                     if (onDelete) {
                       onDelete(child.id);
                     }
@@ -171,7 +167,6 @@ export default function StudentDetailsModal({ visible, student, onClose, onDelet
                         text: 'Delete', 
                         style: 'destructive',
                         onPress: () => {
-                          console.log('Delete confirmed for child:', child.first_name);
                           if (onDelete) {
                             onDelete(child.id);
                           }

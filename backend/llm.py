@@ -651,8 +651,30 @@ async def llm_suggest_plan(context: dict, reason: str = "rebalance") -> Dict[str
             for date, minutes in day_minutes.items():
                 minutes_summary.append(f"{date}: {minutes} min")
         
+        # Get performance data to inform adaptive rebalancing
+        performance_data = context.get("performance_by_subject", {})
+        recent_struggles = context.get("recent_struggles", {})
+        
+        # Build performance summary for rebalancing
+        performance_summary = []
+        struggling_subjects = []
+        excelling_subjects = []
+        
+        for key, perf in performance_data.items():
+            child_id, subject_id = key.split(":", 1) if ":" in key else (key, "none")
+            avg_rating = perf.get("avg_rating")
+            rating_count = perf.get("rating_count", 0)
+            struggles_list = perf.get("struggles", [])
+            strengths_list = perf.get("strengths", [])
+            
+            if avg_rating is not None and rating_count >= 2:  # Need at least 2 ratings for meaningful data
+                if avg_rating <= 2.5:  # Low performance
+                    struggling_subjects.append(f"{child_id}:{subject_id} (avg rating: {avg_rating:.1f}/5, {len(struggles_list)} struggles)")
+                elif avg_rating >= 4.0:  # High performance
+                    excelling_subjects.append(f"{child_id}:{subject_id} (avg rating: {avg_rating:.1f}/5, {len(strengths_list)} strengths)")
+        
         reason_instructions = f"""
-REBALANCE MODE: Your goal is to redistribute existing events to balance workload across days.
+REBALANCE MODE: Your goal is to redistribute existing events to balance workload across days AND adapt to child performance.
 
 Current workload distribution:
 {chr(10).join(minutes_summary) if minutes_summary else "No current minutes data available"}
@@ -665,7 +687,17 @@ You have {len(events)} existing events scheduled. Your task:
 5. Preserve subject balance - don't cluster all Math on one day, all Reading on another
 6. Look at the events array and propose moves to balance the schedule
 
-IMPORTANT: You MUST propose moves even if events are in valid time slots. The goal is balance, not just fixing conflicts.
+ADAPTIVE REBALANCING (based on child performance):
+{f"- Subjects where child is struggling (low ratings): {chr(10).join(struggling_subjects)}" if struggling_subjects else "- No struggling subjects identified"}
+{f"- Subjects where child is excelling (high ratings): {chr(10).join(excelling_subjects)}" if excelling_subjects else "- No excelling subjects identified"}
+
+When rebalancing:
+- For struggling subjects (avg rating ≤ 2.5): Consider ADDING extra sessions or INCREASING time allocated to help the child catch up. You can propose "adds" in addition to moves.
+- For excelling subjects (avg rating ≥ 4.0): Consider REDUCING time slightly or maintaining current allocation, as the child is performing well.
+- Use recent_struggles data to identify specific areas needing more support.
+- Balance the need for even daily distribution with the need to support struggling subjects.
+
+IMPORTANT: You MUST propose moves even if events are in valid time slots. The goal is balance AND adaptive support. You can propose both "moves" (redistribute) and "adds" (add extra time for struggling subjects).
 """
     elif reason == "catch_up":
         reason_instructions = """
@@ -681,12 +713,55 @@ PACK WEEK MODE: Fill open time slots with useful learning tasks.
 - Use flexible backlog items if available
 - Fill gaps in the schedule with appropriate learning activities
 - Maximize productive time without exceeding daily limits
+
+IMPORTANT: If there are no flexible backlog items available, you should still return an empty adds array with a helpful message in rationale explaining that backlog items need to be added first.
 """
+    
+    # Format availability windows clearly for the LLM
+    availability_summary = []
+    avail = context.get("availability", [])
+    if avail:
+        # Group by child and date
+        by_child_date = {}
+        for entry in avail:
+            child_id = entry.get("child_id")
+            date = entry.get("date")
+            windows = entry.get("windows", [])
+            day_status = entry.get("day_status")
+            
+            if day_status == "off":
+                continue  # Skip blackout days
+            
+            key = f"{child_id}:{date}"
+            if key not in by_child_date:
+                by_child_date[key] = {
+                    "child_id": child_id,
+                    "child_name": entry.get("child_name", "Child"),
+                    "date": date,
+                    "windows": []
+                }
+            
+            if windows:
+                by_child_date[key]["windows"].extend(windows)
+        
+        for key, entry in sorted(by_child_date.items()):
+            windows_str = ", ".join([
+                f"{w.get('start', 'N/A')} to {w.get('end', 'N/A')}"
+                for w in entry["windows"]
+            ]) if entry["windows"] else "No windows available"
+            availability_summary.append(
+                f"  {entry['child_name']} ({entry['date']}): {windows_str}"
+            )
+    
+    availability_text = "\n".join(availability_summary) if availability_summary else "No availability windows found in context."
     
     prompt = f"""You are an intelligent scheduling assistant for homeschooling families.
 Propose schedule changes for the coming weeks.
 
 {reason_instructions}
+
+CRITICAL: AVAILABLE TEACHING WINDOWS (You MUST schedule events ONLY within these times):
+{availability_text}
 
 IMPORTANT: Only propose moves for events that actually conflict with blackouts, need rescheduling, or serve the purpose above.
 Do not propose moves for events that are already in valid time slots UNLESS you're rebalancing workload.
@@ -694,10 +769,18 @@ Do not propose moves for events that are already in valid time slots UNLESS you'
 Constraints:
 - Do not exceed per-day cap (240 minutes per day)
 - Prefer 45-60 minute blocks (max 90 minutes)
-- Avoid blackout days and outside teach windows
+- CRITICAL: ALL event start and end times MUST be within the teaching windows listed above
+- NEVER schedule events outside the teaching windows (e.g., before 9 AM or after 3 PM unless the window explicitly allows it)
+- Avoid blackout days (days with no windows listed above)
 - Respect due hints from syllabus
 - Balance subjects across the week
 - Consider learning velocity (if child is slower, allocate more time)
+
+ADAPTIVE SCHEDULING (use performance data when available):
+- If performance_by_subject shows a child/subject with low average ratings (≤2.5), consider allocating MORE time to that subject
+- If performance_by_subject shows a child/subject with high average ratings (≥4.0), you may allocate LESS time or maintain current allocation
+- Use recent_struggles to identify specific areas needing support - prefer shorter, more frequent sessions for struggling subjects
+- Use strengths data to identify subjects where the child excels - these may need less time or can be compressed
 
 Support Profile Adjustments (if available in context):
 - ADHD: Use shorter durations (20-30 min blocks), schedule frequent breaks, avoid long sessions
@@ -766,7 +849,118 @@ CONTEXT:
         )
         
         content = response.choices[0].message.content
-        return json.loads(content)
+        proposal = json.loads(content)
+        
+        # Post-process: Validate and filter out suggestions outside teaching windows
+        avail = context.get("availability", [])
+        if avail:
+            # Build availability map: (child_id, date) -> list of windows
+            avail_map = {}
+            for entry in avail:
+                child_id = entry.get("child_id")
+                date = entry.get("date")
+                windows = entry.get("windows", [])
+                day_status = entry.get("day_status")
+                
+                if day_status == "off":
+                    continue  # Skip blackout days
+                
+                key = (child_id, date)
+                if key not in avail_map:
+                    avail_map[key] = []
+                avail_map[key].extend(windows)
+            
+            # Helper to check if a timestamp is within any window for a child/date
+            def is_within_window(child_id: str, timestamp: str, windows_list: list) -> bool:
+                if not windows_list:
+                    return False
+                try:
+                    from datetime import datetime
+                    ts_dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    for window in windows_list:
+                        win_start = window.get("start")
+                        win_end = window.get("end")
+                        if win_start and win_end:
+                            try:
+                                start_dt = datetime.fromisoformat(win_start.replace("Z", "+00:00"))
+                                end_dt = datetime.fromisoformat(win_end.replace("Z", "+00:00"))
+                                if start_dt <= ts_dt <= end_dt:
+                                    return True
+                            except:
+                                pass
+                except:
+                    pass
+                return False
+            
+            # Filter adds
+            filtered_adds = []
+            for add in proposal.get("adds", []):
+                child_id = add.get("child_id")
+                start_ts = add.get("start")
+                end_ts = add.get("end")
+                
+                if not child_id or not start_ts:
+                    continue
+                
+                # Extract date from start_ts
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
+                    date_str = start_dt.date().isoformat()
+                    
+                    windows_list = avail_map.get((child_id, date_str), [])
+                    if is_within_window(child_id, start_ts, windows_list) and is_within_window(child_id, end_ts, windows_list):
+                        filtered_adds.append(add)
+                except:
+                    pass  # Skip if parsing fails
+            
+            # Filter moves
+            filtered_moves = []
+            for move in proposal.get("moves", []):
+                # Get child_id from the event being moved
+                event_id = move.get("event_id")
+                child_id = None
+                
+                # Try to find child_id from events in context
+                events = context.get("events", [])
+                for event in events:
+                    if event.get("id") == event_id:
+                        child_id = event.get("child_id")
+                        break
+                
+                if not child_id:
+                    continue
+                
+                to_start = move.get("to_start")
+                to_end = move.get("to_end")
+                
+                if not to_start:
+                    continue
+                
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(to_start.replace("Z", "+00:00"))
+                    date_str = start_dt.date().isoformat()
+                    
+                    windows_list = avail_map.get((child_id, date_str), [])
+                    if is_within_window(child_id, to_start, windows_list) and is_within_window(child_id, to_end, windows_list):
+                        filtered_moves.append(move)
+                except:
+                    pass  # Skip if parsing fails
+            
+            # Update proposal with filtered results
+            proposal["adds"] = filtered_adds
+            proposal["moves"] = filtered_moves
+            
+            # Add note to rationale if we filtered anything
+            original_adds_count = len(proposal.get("adds", [])) + (len(filtered_adds) - len(proposal.get("adds", [])))
+            original_moves_count = len(proposal.get("moves", [])) + (len(filtered_moves) - len(proposal.get("moves", [])))
+            if len(filtered_adds) < original_adds_count or len(filtered_moves) < original_moves_count:
+                proposal.setdefault("rationale", []).append(
+                    f"Filtered out {original_adds_count - len(filtered_adds)} adds and {original_moves_count - len(filtered_moves)} moves that were outside teaching windows"
+                )
+        
+        return proposal
     except json.JSONDecodeError as e:
         import re
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -2987,4 +3181,318 @@ Prioritize recommendations that:
         
         return {
             "recommendations": recommendations
+        }
+
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=3)
+async def llm_plan_week(planner_context_json: str) -> Dict[str, Any]:
+    """
+    Generate a 7-day learning plan using LLM.
+    
+    Input: JSON string with planner context
+    Output: Plan proposal with patch (create/move/update/delete) and summary
+    """
+    try:
+        context = json.loads(planner_context_json)
+        
+        system_message = "You are an educational scheduling planner. Output ONLY valid JSON matching the provided schema. No markdown."
+        
+        user_message = f"""You are generating a 7-day learning plan (week view) for a family.
+
+Hard requirements:
+- Respect fixed events and blocked times. Never schedule inside them.
+- Do not create overlapping events for the same child.
+- Prefer consistent daily rhythms (same general time windows).
+- Maintain sequence continuity: never schedule lesson N+1 before lesson N.
+- Use progress estimates to choose appropriate durations and pacing.
+- Use each child's learning style + interests to pick modalities and topics when flexible.
+- If the week is overloaded, reduce optional work first and add short "catch-up" blocks only if needed.
+- Every created item MUST include: child_ids, title, start, end, type, confidence (0-1), rationale.
+
+Output format:
+Return JSON with:
+- summary: {{week_start, children: [{{child_id, planned_minutes}}], conflicts_resolved, new_items, moved_items}}
+- patch: {{create: [...], move: [...], update: [...], delete: [...]}}
+- notes: [{{child_id, message}}]
+
+Now generate the plan proposal patch for the requested week.
+
+CONTEXT JSON:
+{planner_context_json}"""
+        
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        
+        content = response.choices[0].message.content
+        result = json.loads(content)
+        
+        # Ensure required fields exist
+        if "summary" not in result:
+            result["summary"] = {
+                "week_start": context.get("week_start"),
+                "children": [],
+                "conflicts_resolved": 0,
+                "new_items": len(result.get("patch", {}).get("create", [])),
+                "moved_items": len(result.get("patch", {}).get("move", []))
+            }
+        
+        if "patch" not in result:
+            result["patch"] = {
+                "create": [],
+                "move": [],
+                "update": [],
+                "delete": []
+            }
+        
+        if "notes" not in result:
+            result["notes"] = []
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        # Fallback: try to extract JSON from response
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL) if 'content' in locals() else None
+        if json_match:
+            return json.loads(json_match.group())
+        raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+    except Exception as e:
+        # Return empty plan on error
+        context_data = json.loads(planner_context_json) if isinstance(planner_context_json, str) else planner_context_json
+        return {
+            "summary": {
+                "week_start": context_data.get("week_start", ""),
+                "children": [],
+                "conflicts_resolved": 0,
+                "new_items": 0,
+                "moved_items": 0
+            },
+            "patch": {
+                "create": [],
+                "move": [],
+                "update": [],
+                "delete": []
+            },
+            "notes": [{"child_id": None, "message": f"Error generating plan: {str(e)}"}]
+        }
+
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=3)
+async def llm_build_curriculum(curriculum_context_json: str) -> Dict[str, Any]:
+    """
+    Build a structured curriculum unit with lessons and pacing using LLM.
+    
+    Input: JSON string with curriculum context
+    Output: Curriculum structure with unit, lessons, and pacing
+    """
+    try:
+        context = json.loads(curriculum_context_json)
+        
+        input_text = context.get("input_text", "")
+        # Truncate very long input text to prevent timeouts (120k chars ~ 30k tokens)
+        if len(input_text) > 120000:
+            input_text = input_text[:120000] + "\n\n[Text truncated due to length - using first 120,000 characters]"
+        source_type = context.get("source_type", "topic")
+        students = context.get("students", [])
+        constraints = context.get("constraints", {})
+        availability = context.get("availability", [])
+        existing_events = context.get("existing_events", [])
+        
+        # Build student profiles summary
+        students_summary = []
+        for student in students:
+            profile = f"{student.get('name', 'Student')} (Grade {student.get('grade', 'Unknown')})"
+            if student.get("learning_style"):
+                profile += f", Learning style: {', '.join(student['learning_style'])}"
+            if student.get("interests"):
+                profile += f", Interests: {', '.join(student['interests'])}"
+            students_summary.append(profile)
+        
+        # Build availability summary
+        availability_summary = []
+        for avail_entry in availability:
+            windows = avail_entry.get("windows", [])
+            if windows:
+                windows_str = ", ".join([
+                    f"{w.get('start', 'N/A')} to {w.get('end', 'N/A')}"
+                    for w in windows
+                ])
+                availability_summary.append(
+                    f"  {avail_entry.get('child_id', 'Child')} ({avail_entry.get('date', 'N/A')}): {windows_str}"
+                )
+        
+        system_message = "You are a curriculum planning engine for a family learning calendar. Output ONLY valid JSON matching the provided schema. No markdown, no prose outside JSON."
+        
+        user_message = f"""You are building a structured curriculum unit that can be inserted into an existing schedule.
+
+INPUT:
+{input_text}
+
+STUDENTS:
+{chr(10).join(students_summary) if students_summary else "No student profiles provided"}
+
+CONSTRAINTS:
+- Total weeks: {constraints.get('weeks', 1)}
+- Minutes per day: {constraints.get('minutes_per_day', 60)}
+- Weekdays only: {constraints.get('weekdays_only', True)}
+- Difficulty: {constraints.get('difficulty', 'standard')}
+- Start date: {constraints.get('start_date', 'Not specified')}
+
+AVAILABLE TIME WINDOWS:
+{chr(10).join(availability_summary) if availability_summary else "No availability windows specified"}
+
+REQUIREMENTS:
+1. Create a unit with appropriate title, grade band, and subject tags
+2. Break down into atomic, schedule-ready lessons
+3. Each lesson must have:
+   - Clear objective
+   - Realistic minutes estimate (15-120 minutes)
+   - Appropriate modality (reading, video, hands_on, discussion, practice, quiz, project)
+   - Difficulty level matching constraints
+   - Materials list (if needed)
+   - Assessment check (quick verification)
+   - Prerequisites (if any)
+   - Links to resources (if any)
+4. Generate a pacing sequence that fits within the week constraints
+5. Schedule map should recommend day offsets and preferred time windows
+
+OUTPUT JSON SCHEMA:
+{{
+  "unit": {{
+    "title": "string",
+    "grade_band": "string",
+    "subject_tags": ["string"],
+    "student_ids": ["string"],
+    "total_minutes_est": 0,
+    "weeks_est": 0,
+    "source_type": "{source_type}",
+    "metadata": {{}}
+  }},
+  "lessons": [
+    {{
+      "sequence_index": 1,
+      "title": "string",
+      "objective": "string",
+      "minutes_est": 0,
+      "modality": "reading|video|hands_on|discussion|practice|quiz|project",
+      "difficulty": "gentle|standard|stretch",
+      "materials": [{{"name":"string","type":"string","optional":true}}],
+      "assessment": {{"type":"string","prompt":"string"}},
+      "prereqs": ["string"],
+      "links": [{{"title":"string","url":"string"}}]
+    }}
+  ],
+  "pacing": {{
+    "strategy": "fit_openings|prefer_mornings|avoid_days",
+    "schedule_map": [
+      {{
+        "sequence_index": 1,
+        "recommended_day_offset": 0,
+        "preferred_time_windows": ["morning|midday|afternoon|evening"],
+        "constraints_used": ["string"]
+      }}
+    ]
+  }}
+}}
+
+Generate the curriculum now."""
+        
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"},
+            timeout=300.0  # 5 minute timeout for long syllabus processing
+        )
+        
+        content = response.choices[0].message.content
+        result = json.loads(content)
+        
+        # Validate and ensure required fields
+        if "unit" not in result:
+            result["unit"] = {
+                "title": "Untitled Unit",
+                "grade_band": "",
+                "subject_tags": [],
+                "student_ids": [s.get("child_id") for s in students],
+                "total_minutes_est": 0,
+                "weeks_est": constraints.get("weeks", 1),
+                "source_type": source_type,
+                "metadata": {}
+            }
+        
+        if "lessons" not in result:
+            result["lessons"] = []
+        
+        # Calculate total minutes
+        total_minutes = sum(lesson.get("minutes_est", 60) for lesson in result["lessons"])
+        result["unit"]["total_minutes_est"] = total_minutes
+        
+        # Ensure pacing exists
+        if "pacing" not in result:
+            result["pacing"] = {
+                "strategy": "fit_openings",
+                "schedule_map": []
+            }
+        
+        # Generate schedule_map if missing
+        if not result["pacing"].get("schedule_map"):
+            schedule_map = []
+            for idx, lesson in enumerate(result["lessons"]):
+                day_offset = idx if constraints.get("weekdays_only", True) else idx
+                schedule_map.append({
+                    "sequence_index": lesson.get("sequence_index", idx + 1),
+                    "recommended_day_offset": day_offset,
+                    "preferred_time_windows": ["morning", "midday"],
+                    "constraints_used": []
+                })
+            result["pacing"]["schedule_map"] = schedule_map
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL) if 'content' in locals() else None
+        if json_match:
+            return json.loads(json_match.group())
+        raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+    except asyncio.TimeoutError as e:
+        # Handle timeout specifically
+        context_data = json.loads(curriculum_context_json) if isinstance(curriculum_context_json, str) else curriculum_context_json
+        students = context_data.get("students", [])
+        raise ValueError(f"Request timed out while processing curriculum. The input may be too long. Please try with a shorter description or add notes to the material instead.")
+    except Exception as e:
+        # Return minimal structure on error
+        context_data = json.loads(curriculum_context_json) if isinstance(curriculum_context_json, str) else curriculum_context_json
+        students = context_data.get("students", [])
+        error_msg = str(e)
+        # Check if it's a timeout-related error
+        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+            raise ValueError(f"Request timed out while processing curriculum. The input may be too long. Please try with a shorter description or add notes to the material instead.")
+        return {
+            "unit": {
+                "title": "Error: Could not generate curriculum",
+                "grade_band": "",
+                "subject_tags": [],
+                "student_ids": [s.get("child_id") for s in students],
+                "total_minutes_est": 0,
+                "weeks_est": 1,
+                "source_type": context_data.get("source_type", "topic"),
+                "metadata": {"error": str(e)}
+            },
+            "lessons": [],
+            "pacing": {
+                "strategy": "fit_openings",
+                "schedule_map": []
+            }
         }

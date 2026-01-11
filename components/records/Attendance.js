@@ -44,7 +44,6 @@ export default function Attendance({ familyId }) {
           p_end_date: rangeTo,
         });
         if (error) {
-          console.warn('get_child_attendance error', error.message);
           continue;
         }
         const arr = Array.isArray(att) ? att : [];
@@ -60,7 +59,6 @@ export default function Attendance({ familyId }) {
 
       setRows(allRows);
     } catch (error) {
-      console.error('Error loading attendance data:', error);
       Alert.alert('Error', 'Failed to load attendance data');
     } finally {
       setLoading(false);
@@ -96,7 +94,6 @@ export default function Attendance({ familyId }) {
       });
       await loadData();
     } catch (error) {
-      console.error('Error setting attendance:', error);
       Alert.alert('Error', 'Failed to update attendance');
     }
   };

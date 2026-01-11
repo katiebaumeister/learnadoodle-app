@@ -64,7 +64,6 @@ async function loadChildren() {
     const data = await response.json();
     return data.children || [];
   } catch (error) {
-    console.error('Error loading children:', error);
     return [];
   }
 }
@@ -224,7 +223,6 @@ async function init() {
         window.close();
       }, 2000);
     } catch (error) {
-      console.error('Error adding resource:', error);
       showStatus(`Error: ${error.message}`, 'error');
       addButton.disabled = false;
       addButton.textContent = 'Add to Planner';

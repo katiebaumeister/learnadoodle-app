@@ -14,24 +14,17 @@ const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  console.error('❌ Missing required environment variables:');
-  console.error('   EXPO_PUBLIC_SUPABASE_URL');
-  console.error('   SUPABASE_SERVICE_ROLE_KEY');
   process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 async function runMigration() {
-  console.log('🚀 Starting schedule rules migration...\n');
-
   try {
     // Read the migration SQL file
     const migrationPath = path.join(process.cwd(), 'database-migration-schedule-rules.sql');
     const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
 
-    console.log('📄 Executing migration SQL...');
-    
     // Execute the migration
     const { data, error } = await supabase.rpc('exec_sql', {
       sql: migrationSQL
@@ -39,8 +32,7 @@ async function runMigration() {
 
     if (error) {
       // If exec_sql doesn't exist, try direct execution
-      console.log('⚠️  exec_sql not available, trying direct execution...');
-      
+
       // Split the SQL into individual statements and execute them
       const statements = migrationSQL
         .split(';')
@@ -48,8 +40,6 @@ async function runMigration() {
         .filter(stmt => stmt.length > 0);
 
       for (const statement of statements) {
-        console.log(`   Executing: ${statement.substring(0, 50)}...`);
-        
         const { error: stmtError } = await supabase
           .from('_migration_temp')
           .select('*')
@@ -60,17 +50,13 @@ async function runMigration() {
           .rpc('exec', { sql: statement });
 
         if (execError && !execError.message.includes('relation "_migration_temp" does not exist')) {
-          console.error(`❌ Error executing statement: ${execError.message}`);
           // Continue with other statements
         }
       }
     }
 
-    console.log('✅ Migration completed successfully!\n');
-
     // Verify the new tables exist
-    console.log('🔍 Verifying new tables...');
-    
+
     const tables = ['schedule_rules', 'schedule_overrides', 'events', 'calendar_days_cache'];
     
     for (const table of tables) {
@@ -80,15 +66,12 @@ async function runMigration() {
         .limit(1);
       
       if (error) {
-        console.log(`❌ Table ${table}: ${error.message}`);
       } else {
-        console.log(`✅ Table ${table}: OK`);
       }
     }
 
     // Insert some sample rules for testing
-    console.log('\n📝 Inserting sample rules...');
-    
+
     const { data: families } = await supabase
       .from('family')
       .select('id')
@@ -119,9 +102,7 @@ async function runMigration() {
         });
 
       if (ruleError) {
-        console.log(`⚠️  Could not insert sample rule: ${ruleError.message}`);
       } else {
-        console.log('✅ Sample family rule inserted');
       }
 
       // Insert a sample override
@@ -140,29 +121,16 @@ async function runMigration() {
         });
 
       if (overrideError) {
-        console.log(`⚠️  Could not insert sample override: ${overrideError.message}`);
       } else {
-        console.log('✅ Sample override inserted');
       }
     }
-
-    console.log('\n🎉 Migration completed successfully!');
-    console.log('\n📋 Next steps:');
-    console.log('   1. Add ScheduleRulesButton to your app UI');
-    console.log('   2. Test the schedule rules manager');
-    console.log('   3. Integrate AI rescheduling service');
-    console.log('   4. Update your calendar logic to use the new rules');
-
-  } catch (error) {
-    console.error('❌ Migration failed:', error);
+} catch (error) {
     process.exit(1);
   }
 }
 
 // Handle the case where exec_sql doesn't exist
 async function executeSQLDirectly(sql) {
-  console.log('📄 Executing SQL directly...');
-  
   // This is a simplified approach - in practice you might need to use
   // a different method depending on your Supabase setup
   
@@ -181,12 +149,10 @@ async function executeSQLDirectly(sql) {
         .limit(1);
 
       // If no error, the table might already exist
-      console.log(`   Executed: ${statement.substring(0, 50)}...`);
-    } catch (err) {
-      console.log(`   Skipped: ${statement.substring(0, 50)}... (${err.message})`);
+} catch (err) {
     }
   }
 }
 
 // Run the migration
-runMigration().catch(console.error);
+runMigration().catch(() => {});

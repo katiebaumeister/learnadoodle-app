@@ -140,7 +140,6 @@ export default function SuperpowerModal({
             
             return suggestions;
           } catch (err) {
-            console.error('Catch-up error:', err);
             throw new Error('Failed to generate catch-up plan');
           }
         };

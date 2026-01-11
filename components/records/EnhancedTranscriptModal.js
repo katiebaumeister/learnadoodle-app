@@ -40,7 +40,6 @@ export default function EnhancedTranscriptModal({
         .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Error loading transcript settings:', error);
       }
 
       if (data) {
@@ -50,7 +49,6 @@ export default function EnhancedTranscriptModal({
         setIncludeSyllabi(data.include_syllabi !== false);
       }
     } catch (error) {
-      console.error('Error loading transcript settings:', error);
     }
   };
 
@@ -72,7 +70,6 @@ export default function EnhancedTranscriptModal({
 
       if (error) throw error;
     } catch (error) {
-      console.error('Error saving settings:', error);
       alert('Failed to save settings');
     } finally {
       setLoading(false);
@@ -138,7 +135,6 @@ export default function EnhancedTranscriptModal({
 
       onClose();
     } catch (err) {
-      console.error('Error generating transcript:', err);
       setError(err.message || 'Failed to generate transcript');
     } finally {
       setGenerating(false);

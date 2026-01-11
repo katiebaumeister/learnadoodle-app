@@ -1,22 +1,25 @@
 import React, { useMemo, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, TouchableOpacity } from 'react-native';
 import { startOfWeek, addDays, isSameDay, format, isSameMonth, isToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 
-export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEventPress, onEventRightClick, onEventComplete }) {
+export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEventPress, onEventRightClick, onEventComplete, children = [], onSwitchToBoardView }) {
   const scrollViewRef = useRef(null);
-  const weekStart = startOfWeek(anchorDate); // Monday start
+  const weekStart = startOfWeek(anchorDate); // Sunday start
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   
-  // Full 24-hour range (0-23, midnight to 11 PM)
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  const hourHeight = 48; // Reduced from 60px for Google Calendar density
+  // Visible hours range (6 AM to 6 PM = 13 hours)
+  const DAY_START_HOUR = 6; // 6 AM
+  const DAY_END_HOUR = 19; // 7 PM (19:00)
+  const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => i + DAY_START_HOUR);
+  const hourHeight = 60; // 60px per hour for proper alignment
+  const DAY_START_MINUTES = DAY_START_HOUR * 60; // 360 minutes (6 AM)
   
   // Auto-scroll to 7 AM on mount
   useEffect(() => {
     if (scrollViewRef.current) {
       const targetHour = 7;
-      const scrollPosition = targetHour * hourHeight;
+      const scrollPosition = (targetHour - DAY_START_HOUR) * hourHeight;
       
       const scrollToPosition = () => {
         if (scrollViewRef.current) {
@@ -32,15 +35,31 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
     }
   }, [anchorDate]);
   
-  // Parse event time to minutes since midnight
+  // Parse event time to minutes since midnight, using start_local as primary source
   const getEventMinutes = (event) => {
-    const startTime = event.start || event.start_ts || event.start_at || event.start_local;
-    if (!startTime) return null;
+    // 1) Prefer start_local (time-only or timestamp) as the single source of truth
+    if (typeof event.start_local === 'string') {
+      const match = event.start_local.match(/(\d{1,2})(?::(\d{2}))?(?:\s*(AM|PM))?/i);
+      if (match) {
+        let hours = parseInt(match[1], 10);
+        const minutes = parseInt(match[2] ?? '0', 10);
+        const period = match[3]?.toUpperCase();
+        if (period === 'PM' && hours !== 12) hours += 12;
+        if (period === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + minutes;
+      }
+    }
     
-    const eventDate = new Date(startTime);
-    if (Number.isNaN(eventDate.getTime())) return null;
+    // 2) Fallback: derive from full timestamps if start_local is missing
+    const startStr = event.start || event.start_ts || event.start_at;
+    if (startStr) {
+      const eventDate = new Date(startStr);
+      if (!Number.isNaN(eventDate.getTime())) {
+        return eventDate.getHours() * 60 + eventDate.getMinutes();
+      }
+    }
     
-    return eventDate.getHours() * 60 + eventDate.getMinutes();
+    return null;
   };
   
   // Get event duration in minutes
@@ -58,6 +77,56 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
     return Math.max(15, Math.round((end.getTime() - start.getTime()) / 60000)); // Minimum 15 minutes
   };
   
+  // Expand Project events to show on all days they span (if within a week)
+  const expandedEvents = useMemo(() => {
+    const expanded = [];
+    const seenIds = new Set();
+    
+    for (const e of events) {
+      if (!e || !e.id) continue;
+      if (seenIds.has(e.id)) continue;
+      seenIds.add(e.id);
+      
+      // Check if this is a Project event with start and end dates
+      if (e.event_type === 'Project' && e.start_ts && e.end_ts) {
+        const startDate = new Date(e.start_ts);
+        const endDate = new Date(e.end_ts);
+        
+        if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+          // Calculate days difference
+          const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          // If project spans within a week (7 days or less), expand it
+          if (daysDiff <= 7) {
+            // Create a copy for each day from start to end
+            for (let i = 0; i <= daysDiff; i++) {
+              const dayDate = new Date(startDate);
+              dayDate.setDate(startDate.getDate() + i);
+              
+              // Only include days that are in the current week view
+              const dayKey = dayDate.toDateString();
+              if (days.some(d => d.toDateString() === dayKey)) {
+                const expandedEvent = {
+                  ...e,
+                  id: `${e.id}-day-${i}`, // Unique ID for each day instance
+                  _originalId: e.id, // Keep reference to original
+                  _dayIndex: i,
+                };
+                expanded.push(expandedEvent);
+              }
+            }
+            continue; // Skip adding the original event
+          }
+        }
+      }
+      
+      // For non-Project events or Projects outside the week range, add as-is
+      expanded.push(e);
+    }
+    
+    return expanded;
+  }, [events, days]);
+
   // Bucket events by day and calculate positions with overlap detection
   const eventsByDay = useMemo(() => {
     const map = new Map();
@@ -67,36 +136,38 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
       map.set(d.toDateString(), []);
     }
     
-    // Deduplicate events by ID first
-    const seenIds = new Set();
-    const uniqueEvents = events.filter(e => {
-      if (!e || !e.id) return false;
-      if (seenIds.has(e.id)) return false;
-      seenIds.add(e.id);
-      return true;
-    });
-    
     // Add events to their respective days with position info
-    for (const e of uniqueEvents) {
-      const eventDateStr = e.start || e.start_ts || e.start_at || e.start_local;
-      if (!eventDateStr) continue;
+    for (const e of expandedEvents) {
+      // For expanded Project events, use the day from the expansion
+      let eventDate;
+      if (e._dayIndex !== undefined && e._originalId) {
+        // This is an expanded Project event - calculate the date for this day
+        const originalStart = new Date(e.start_ts);
+        eventDate = new Date(originalStart);
+        eventDate.setDate(originalStart.getDate() + e._dayIndex);
+      } else {
+        // Regular event - use its start time
+        const eventDateStr = e.start || e.start_ts || e.start_at || e.start_local;
+        if (!eventDateStr) continue;
+        eventDate = new Date(eventDateStr);
+      }
       
-      const eventDate = new Date(eventDateStr);
       if (Number.isNaN(eventDate.getTime())) continue;
       
       for (const d of days) {
         if (isSameDay(eventDate, d)) {
           const startMinutes = getEventMinutes(e);
           const duration = getEventDuration(e);
-          
-          if (startMinutes !== null) {
-            map.get(d.toDateString()).push({
-              ...e,
-              startMinutes,
-              duration,
-              endMinutes: startMinutes + duration,
-            });
-          }
+
+          // If we failed to parse the time for some reason, fall back to noon
+          const safeStartMinutes = startMinutes !== null ? startMinutes : 12 * 60; // 12:00 PM
+
+          map.get(d.toDateString()).push({
+            ...e,
+            startMinutes: safeStartMinutes,
+            duration,
+            endMinutes: safeStartMinutes + duration,
+          });
           break; // Only add to one day
         }
       }
@@ -110,95 +181,174 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
     return map;
   }, [events, anchorDate, days]);
   
-  // Calculate overlap groups and positions for events in a day
-  // Uses a more sophisticated algorithm that handles transitive overlaps
+  // Calculate event positions based on actual time (proper time-grid alignment)
   const calculateEventPositions = (dayEvents) => {
     if (dayEvents.length === 0) return [];
     
-    // Build overlap graph - events that directly overlap
-    const overlapGraph = new Map();
-    dayEvents.forEach(event => {
-      overlapGraph.set(event.id, []);
+    // Sort events by start time
+    const sortedEvents = [...dayEvents].sort((a, b) => a.startMinutes - b.startMinutes);
+    
+    // Use DAY_START_MINUTES constant (6 AM = 360 minutes)
+    const dayStartMinutes = DAY_START_MINUTES;
+    
+    // Group events by hour for overflow handling
+    const eventsByHour = new Map();
+    sortedEvents.forEach(event => {
+      const eventHour = Math.floor(event.startMinutes / 60);
+      if (!eventsByHour.has(eventHour)) {
+        eventsByHour.set(eventHour, []);
+      }
+      eventsByHour.get(eventHour).push(event);
     });
     
-    dayEvents.forEach(event => {
-      dayEvents.forEach(otherEvent => {
-        if (event.id === otherEvent.id) return;
-        
-        // Check if events overlap
-        const overlaps = !(
-          event.endMinutes <= otherEvent.startMinutes ||
-          otherEvent.endMinutes <= event.startMinutes
+    // Process each hour: show max 2 events, rest go to overflow
+    const visibleEvents = [];
+    const overflowByHourMap = new Map(); // Track overflow per hour
+    
+    eventsByHour.forEach((hourEvents, hour) => {
+      // Sort events in this hour by start time
+      hourEvents.sort((a, b) => a.startMinutes - b.startMinutes);
+      
+      if (hourEvents.length === 1) {
+        // Show the single event
+        visibleEvents.push(...hourEvents);
+      } else if (hourEvents.length === 2) {
+        // Show both events if exactly 2
+        visibleEvents.push(...hourEvents);
+      } else {
+        // More than 2 events: show only first 1 event
+        visibleEvents.push(hourEvents[0]);
+        // Rest go to overflow for this hour
+        overflowByHourMap.set(hour, hourEvents.slice(1));
+      }
+    });
+    
+    // Stack overlapping events vertically instead of horizontally
+    // Group events by overlapping time ranges
+    const eventGroups = [];
+    
+    visibleEvents.forEach(event => {
+      // Find which group this event belongs to (overlaps with)
+      let addedToGroup = false;
+      
+      for (const group of eventGroups) {
+        // Check if event overlaps with any event in this group
+        const overlaps = group.some(e => 
+          event.startMinutes < e.endMinutes && event.endMinutes > e.startMinutes
         );
         
         if (overlaps) {
-          overlapGraph.get(event.id).push(otherEvent.id);
+          group.push(event);
+          addedToGroup = true;
+          break;
         }
-      });
-    });
-    
-    // Find connected components (events that overlap directly or transitively)
-    const groups = [];
-    const processed = new Set();
-    
-    const findConnectedComponent = (startId) => {
-      const component = new Set([startId]);
-      const queue = [startId];
-      processed.add(startId);
-      
-      while (queue.length > 0) {
-        const currentId = queue.shift();
-        const neighbors = overlapGraph.get(currentId) || [];
-        
-        neighbors.forEach(neighborId => {
-          if (!processed.has(neighborId)) {
-            component.add(neighborId);
-            processed.add(neighborId);
-            queue.push(neighborId);
-          }
-        });
       }
       
-      return Array.from(component);
-    };
-    
-    dayEvents.forEach(event => {
-      if (!processed.has(event.id)) {
-        const componentIds = findConnectedComponent(event.id);
-        const component = dayEvents.filter(e => componentIds.includes(e.id));
-        if (component.length > 0) {
-          groups.push(component);
-        }
+      // If no overlap found, create new group
+      if (!addedToGroup) {
+        eventGroups.push([event]);
       }
     });
     
-    // Calculate positions for each group
+    // Now calculate positions for each visible event - only stack if events actually overlap
     const positionedEvents = [];
+    const eventSpacing = 2; // Spacing between stacked events
     
-    groups.forEach(group => {
-      // Sort group by start time, then by duration (shorter first for better packing)
-      group.sort((a, b) => {
-        if (a.startMinutes !== b.startMinutes) {
-          return a.startMinutes - b.startMinutes;
-        }
-        return a.duration - b.duration;
-      });
+    // Sort visible events by start time to process in order
+    const sortedVisibleEvents = [...visibleEvents].sort((a, b) => a.startMinutes - b.startMinutes);
+    
+    sortedVisibleEvents.forEach(event => {
+      // Calculate base top position from actual time
+      const minutesFromDayStart = event.startMinutes - dayStartMinutes;
+      const baseTopPx = (minutesFromDayStart / 60) * hourHeight;
+      const eventEndMinutes = event.startMinutes + event.duration;
       
-      // For each event in the group, calculate its horizontal position
-      // Events are split evenly: 50/50 for 2, 33/33/33 for 3, etc.
-      group.forEach((event, index) => {
-        const widthPercent = 100 / group.length;
-        const leftPercent = (index / group.length) * 100;
+      // Find if this event overlaps with any already-positioned event
+      let stackedTopPx = baseTopPx;
+      let maxBottomPx = baseTopPx;
+      
+      // Check all already-positioned events to see if this one overlaps
+      for (const positionedEvent of positionedEvents) {
+        const positionedStartMinutes = positionedEvent.startMinutes;
+        const positionedEndMinutes = positionedEvent.startMinutes + positionedEvent.duration;
         
-        positionedEvents.push({
-          ...event,
-          widthPercent,
-          leftPercent,
-        });
+        // Check if events overlap in time
+        const overlaps = event.startMinutes < positionedEndMinutes && eventEndMinutes > positionedStartMinutes;
+        
+        if (overlaps) {
+          // This event overlaps with an already-positioned event
+          // Stack it below the overlapping event
+          const positionedBottomPx = positionedEvent.topPx + positionedEvent.heightPx;
+          maxBottomPx = Math.max(maxBottomPx, positionedBottomPx);
+        }
+      }
+      
+      // If we found overlapping events, stack below them; otherwise use actual time position
+      if (maxBottomPx > baseTopPx) {
+        stackedTopPx = maxBottomPx + eventSpacing;
+      }
+      
+      // Calculate height based on duration
+      const heightPx = Math.max(24, (event.duration / 60) * hourHeight);
+      
+      positionedEvents.push({
+        ...event,
+        topPx: Math.max(0, stackedTopPx),
+        heightPx,
+        widthPercent: 100,
+        leftPercent: 0,
+        isOverflow: false,
       });
     });
     
-    return positionedEvents;
+    // Add overflow indicators for hours with more than 2 events
+    overflowByHourMap.forEach((hourOverflowEvents, hour) => {
+      if (hourOverflowEvents.length === 0) return;
+      
+      // Find the earliest event in this hour's overflow to position the indicator
+      const earliestOverflowEvent = hourOverflowEvents.reduce((earliest, event) => 
+        event.startMinutes < earliest.startMinutes ? event : earliest
+      );
+      
+      // Position overflow indicator at the same time as first overflow event
+      // It will appear below the 2 visible events if they exist at the same time
+      const minutesFromDayStart = earliestOverflowEvent.startMinutes - dayStartMinutes;
+      const topPx = (minutesFromDayStart / 60) * hourHeight;
+      
+      // Check if there are visible events at the same time - if so, position overflow below them
+      const visibleEventsAtSameTime = visibleEvents.filter(e => {
+        const eHour = Math.floor(e.startMinutes / 60);
+        return eHour === hour && e.startMinutes === earliestOverflowEvent.startMinutes;
+      });
+      
+      // Adjust top position if visible events exist at same time
+      let adjustedTopPx = topPx;
+      if (visibleEventsAtSameTime.length > 0) {
+        // Position after the visible events (stack below them)
+        const maxVisibleEnd = Math.max(...visibleEventsAtSameTime.map(e => {
+          const endMin = e.endMinutes || (e.startMinutes + (e.duration || 60));
+          return endMin;
+        }));
+        const minutesFromDayStartAdjusted = maxVisibleEnd - dayStartMinutes;
+        adjustedTopPx = (minutesFromDayStartAdjusted / 60) * hourHeight;
+      }
+      
+      // Use a fixed height for overflow indicator
+      const heightPx = Math.max(24, hourHeight * 0.5); // Half hour height
+      
+      positionedEvents.push({
+        id: `overflow-${hour}-${earliestOverflowEvent.startMinutes}`,
+        topPx: Math.max(0, adjustedTopPx),
+        heightPx,
+        widthPercent: 100,
+        leftPercent: 0,
+        isOverflow: true,
+        overflowCount: hourOverflowEvents.length,
+        overflowEvents: hourOverflowEvents,
+      });
+    });
+    
+    return positionedEvents.sort((a, b) => a.topPx - b.topPx);
   };
   
   // Format hour for display (12-hour format)
@@ -210,38 +360,61 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
   };
   
   return (
+    <View style={styles.outerContainer}>
     <View style={styles.container}>
       {/* Fixed Header Row */}
       {Platform.OS === 'web' && typeof window !== 'undefined' ? (
         <div style={{
           display: 'flex',
           flexDirection: 'row',
-          borderBottomWidth: 1,
-          borderBottomColor: '#e5e7eb',
-          borderBottomStyle: 'solid',
-          backgroundColor: '#ffffff',
+          backgroundColor: 'transparent',
           position: 'sticky',
           top: 0,
           zIndex: 10,
+          width: '100%',
+          maxWidth: '100%',
+          overflow: 'hidden',
+          boxSizing: 'border-box',
         }}>
           {/* Time column spacer */}
-          <div style={{ width: 60, borderRightWidth: 1, borderRightColor: '#e5e7eb', borderRightStyle: 'solid' }} />
+          <div style={{ width: 60, flexShrink: 0, borderRightWidth: 1, borderRightColor: '#e5e7eb', borderRightStyle: 'solid' }} />
           
           {/* Day headers */}
-          {days.map(d => (
-            <div key={d.toISOString()} style={{ flex: 1, paddingTop: 8, paddingBottom: 8, paddingLeft: 4, paddingRight: 4, alignItems: 'center', borderRightWidth: 1, borderRightColor: '#e5e7eb', borderRightStyle: 'solid', display: 'flex', flexDirection: 'column' }}>
-              <Text style={styles.dayName}>
-                {format(d, 'EEE').toUpperCase()}
-              </Text>
-              <Text style={[
-                styles.dayNumber,
-                isToday(d) && styles.dayNumberToday,
-                !isSameMonth(d, anchorDate) && styles.dayNumberOtherMonth
-              ]}>
-                {format(d, 'd')}
-              </Text>
-            </div>
-          ))}
+          {days.map(d => {
+            const isWeekend = d.getDay() === 0 || d.getDay() === 6; // Sunday (0) or Saturday (6)
+            return (
+              <div key={d.toISOString()} style={{ flex: 1, minWidth: 0, paddingTop: 8, paddingBottom: 8, paddingLeft: 4, paddingRight: 4, alignItems: 'center', borderRightWidth: 1, borderRightColor: '#e5e7eb', borderRightStyle: 'solid', display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: 'transparent' }}>
+                <Text style={styles.dayName}>
+                  {format(d, 'EEE').toUpperCase()}
+                </Text>
+                {isToday(d) ? (
+                  <div style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '14px',
+                    backgroundColor: '#111827',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <Text style={[
+                      styles.dayNumber,
+                      { color: '#FFFFFF', fontSize: 14 }
+                    ]}>
+                      {format(d, 'd')}
+                    </Text>
+                  </div>
+                ) : (
+                  <Text style={[
+                    styles.dayNumber,
+                    !isSameMonth(d, anchorDate) && styles.dayNumberOtherMonth
+                  ]}>
+                    {format(d, 'd')}
+                  </Text>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <View style={styles.headerRow}>
@@ -249,20 +422,40 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
         <View style={styles.timeColumnSpacer} />
         
         {/* Day headers */}
-        {days.map(d => (
-          <View key={d.toISOString()} style={styles.dayHeader}>
-            <Text style={styles.dayName}>
-              {format(d, 'EEE').toUpperCase()}
-            </Text>
-            <Text style={[
-              styles.dayNumber,
-              isToday(d) && styles.dayNumberToday,
-              !isSameMonth(d, anchorDate) && styles.dayNumberOtherMonth
-            ]}>
-              {format(d, 'd')}
-            </Text>
-          </View>
-        ))}
+        {days.map(d => {
+          const isWeekend = d.getDay() === 0 || d.getDay() === 6; // Sunday (0) or Saturday (6)
+          return (
+            <View key={d.toISOString()} style={[styles.dayHeader, { backgroundColor: 'transparent' }]}>
+              <Text style={styles.dayName}>
+                {format(d, 'EEE').toUpperCase()}
+              </Text>
+              {isToday(d) ? (
+                <View style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: '#111827',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Text style={[
+                    styles.dayNumber,
+                    { color: '#FFFFFF', fontSize: 14 }
+                  ]}>
+                    {format(d, 'd')}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={[
+                  styles.dayNumber,
+                  !isSameMonth(d, anchorDate) && styles.dayNumberOtherMonth
+                ]}>
+                  {format(d, 'd')}
+                </Text>
+              )}
+            </View>
+          );
+        })}
       </View>
       )}
 
@@ -274,7 +467,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
         showsVerticalScrollIndicator={true}
         onContentSizeChange={() => {
           if (scrollViewRef.current) {
-            const scrollPosition = 7 * hourHeight;
+            const scrollPosition = (7 - DAY_START_HOUR) * hourHeight;
             scrollViewRef.current.scrollTo({ y: scrollPosition, animated: false });
           }
         }}
@@ -284,27 +477,37 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
           {Platform.OS === 'web' && typeof window !== 'undefined' ? (
             <div style={{
               width: 60,
+              flexShrink: 0,
+              flexGrow: 0,
               borderRightWidth: 1,
               borderRightColor: '#e5e7eb',
               borderRightStyle: 'solid',
-              backgroundColor: '#ffffff',
+              backgroundColor: 'transparent',
               position: 'sticky',
               left: 0,
               zIndex: 5,
+              overflow: 'hidden',
+              boxSizing: 'border-box',
+              margin: 0,
+              padding: 0,
             }}>
-              {hours.map(hour => (
+              {hours.map((hour, index) => (
                 <div
                   key={hour}
                   style={{
-                    height: 48,
+                    height: hourHeight,
                     paddingRight: 8,
-                    paddingTop: 2,
+                    paddingTop: 0,
+                    paddingBottom: 0,
                     display: 'flex',
-                    alignItems: 'flex-end',
+                    alignItems: 'flex-start',
                     justifyContent: 'flex-start',
-                    borderBottomWidth: 1,
-                    borderBottomColor: '#f3f4f6',
-                    borderBottomStyle: 'solid',
+                    textAlign: 'right',
+                    boxSizing: 'border-box',
+                    borderTopWidth: index > 0 ? 1 : 0,
+                    borderTopColor: '#F3F4F6',
+                    borderTopStyle: 'solid',
+                    position: 'relative',
                   }}
                 >
                   <Text style={styles.timeText}>
@@ -334,41 +537,44 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
               const key = d.toDateString();
               const dayEvents = eventsByDay.get(key) ?? [];
               const positionedEvents = calculateEventPositions(dayEvents);
+              const isWeekend = d.getDay() === 0 || d.getDay() === 6; // Sunday (0) or Saturday (6)
               
               return (
                 <View
                   key={key}
-                  style={styles.dayColumn}
+                  style={[styles.dayColumn, { 
+                    backgroundColor: 'transparent'
+                  }]}
+                  {...(Platform.OS === 'web' && {
+                    onMouseEnter: undefined,
+                    onMouseLeave: undefined,
+                  })}
                 >
-                  {/* Hour grid lines */}
-                  {hours.map(hour => (
+                  {/* Hour grid lines - positioned at exact hour boundaries */}
+                  {hours.map((hour, index) => (
                     <View
                       key={hour}
                       style={[
                         styles.hourLine,
-                        { top: hour * hourHeight }
+                        { top: index * hourHeight }
                       ]}
                     />
                   ))}
                   
                   {/* Half-hour grid lines (subtle) */}
-                  {hours.map(hour => (
+                  {hours.map((hour, index) => (
                     <View
                       key={`half-${hour}`}
                       style={[
                         styles.halfHourLine,
-                        { top: (hour * hourHeight) + (hourHeight / 2) }
+                        { top: (index * hourHeight) + (hourHeight / 2) }
                       ]}
                     />
                   ))}
                   
-                  {/* Events positioned absolutely */}
+                  {/* Events positioned absolutely at their actual times */}
                   {positionedEvents.map(ev => {
-                    const startOffsetMinutes = ev.startMinutes - (hours[0] * 60);
-                    const topPx = (startOffsetMinutes / 60) * hourHeight;
-                    const heightPx = (ev.duration / 60) * hourHeight;
-                    
-                    // Only show if within visible hours
+                    // Check if event is within visible hours
                     const eventStartHour = Math.floor(ev.startMinutes / 60);
                     const eventEndHour = Math.ceil(ev.endMinutes / 60);
                     
@@ -376,23 +582,128 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                       return null;
                     }
                     
-                    // Use div for web with inline styles, View for native
+                    // Overflow indicator
+                    if (ev.isOverflow) {
+                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                        return (
+                          <View
+                            key={ev.id}
+                            style={{
+                              position: 'absolute',
+                              left: 4,
+                              top: ev.topPx,
+                              zIndex: 1,
+                              backgroundColor: 'rgba(156, 163, 175, 0.2)',
+                              borderRadius: 4,
+                              paddingHorizontal: 4,
+                              paddingVertical: 2,
+                              alignSelf: 'flex-start',
+                              flexShrink: 0,
+                              ...(Platform.OS === 'web' && {
+                                cursor: 'pointer',
+                              }),
+                            }}
+                            {...(Platform.OS === 'web' && {
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                if (onSwitchToBoardView) {
+                                  onSwitchToBoardView();
+                                }
+                              },
+                              onMouseEnter: (e) => {
+                                if (e.currentTarget) {
+                                  e.currentTarget.style.zIndex = '100';
+                                  e.currentTarget.style.backgroundColor = 'rgba(156, 163, 175, 0.3)';
+                                }
+                              },
+                              onMouseLeave: (e) => {
+                                if (e.currentTarget) {
+                                  e.currentTarget.style.zIndex = '1';
+                                  e.currentTarget.style.backgroundColor = 'rgba(156, 163, 175, 0.2)';
+                                }
+                              },
+                            })}
+                          >
+                            <Text style={{ 
+                              fontSize: 9, 
+                              color: '#9ca3af',
+                              fontWeight: '500',
+                              textAlign: 'left',
+                              lineHeight: 12,
+                            }}>
+                              +{ev.overflowCount} more
+                            </Text>
+                          </View>
+                        );
+                      }
+                      
+                      return (
+                        <TouchableOpacity
+                          key={ev.id}
+                          style={[
+                            styles.eventBlock,
+                            {
+                              top: ev.topPx,
+                              left: 4,
+                              right: 4,
+                              height: ev.heightPx,
+                              minHeight: 24,
+                            }
+                          ]}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            if (onSwitchToBoardView) {
+                              onSwitchToBoardView();
+                            }
+                          }}
+                        >
+                          <View style={{
+                            backgroundColor: 'rgba(156, 163, 175, 0.2)',
+                            borderRadius: 4,
+                            paddingHorizontal: 4,
+                            paddingVertical: 2,
+                            alignSelf: 'flex-start',
+                          }}>
+                            <Text style={{ 
+                              fontSize: 9, 
+                              color: '#9ca3af',
+                              fontWeight: '500',
+                              textAlign: 'left',
+                              lineHeight: 12,
+                            }}>
+                              +{ev.overflowCount}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    }
+                    
+                    // Regular event chip - positioned at exact time
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                       return (
                         <div
                           key={ev.id}
                           style={{
                             position: 'absolute',
-                            paddingLeft: 2,
-                            paddingRight: 2,
-                            paddingTop: 1,
-                            paddingBottom: 1,
+                            left: '4px',
+                            right: '4px',
+                            width: 'auto',
+                            top: `${ev.topPx}px`,
+                            height: `${ev.heightPx}px`,
+                            minHeight: 24,
                             zIndex: 1,
                             cursor: 'pointer',
-                            top: Math.max(0, topPx),
-                            left: `${ev.leftPercent}%`,
-                            width: `${ev.widthPercent}%`,
-                            height: Math.max(20, heightPx),
+                            boxSizing: 'border-box',
+                            overflow: 'hidden',
+                            margin: 0,
+                            padding: 0,
+                            border: 'none',
+                            outline: 'none',
+                            // Prevent layout shifts on hover
+                            willChange: 'z-index',
+                            ...(Platform.OS === 'web' && {
+                              transition: 'z-index 0.15s ease',
+                            }),
                           }}
                           onClick={(e) => {
                             if (onEventPress) {
@@ -407,16 +718,25 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                               onEventRightClick(ev, e);
                             }
                           }}
+                          onMouseEnter={(e) => {
+                            // Only change z-index, don't add shadow that causes shift
+                            e.currentTarget.style.zIndex = '100';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.zIndex = '1';
+                          }}
                         >
                           <EventChip
                             ev={ev}
-                            compact={ev.widthPercent < 20}
+                            compact={true}
                             fullWidth={true}
-                            hideTime={ev.widthPercent < 15}
+                            hideTime={false}
                             onPress={onEventPress ? () => onEventPress(ev) : undefined}
                             onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
                             onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
                             showCheckmark={true}
+                            children={children}
+                            hideDoneStyling={true}
                           />
                         </div>
                       );
@@ -429,18 +749,19 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                         style={[
                           styles.eventBlock,
                           {
-                            top: Math.max(0, topPx),
-                            left: `${ev.leftPercent}%`,
-                            width: `${ev.widthPercent}%`,
-                            height: Math.max(20, heightPx),
+                            top: ev.topPx,
+                            left: 4,
+                            right: 4,
+                            height: ev.heightPx,
+                            minHeight: 24,
                           }
                         ]}
                       >
                         <EventChip
                           ev={ev}
-                          compact={ev.widthPercent < 20}
+                          compact={true}
                           fullWidth={true}
-                          hideTime={ev.widthPercent < 15}
+                          hideTime={false}
                           onPress={onEventPress ? () => onEventPress(ev) : undefined}
                           onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
                           onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
@@ -455,20 +776,41 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
           </View>
         </View>
       </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  outerContainer: {
+    flex: 1,
+    margin: 8,
+    ...(Platform.OS === 'web' && {
+      width: 'calc(100% - 16px)',
+      maxWidth: 'calc(100% - 16px)',
+    }),
+  },
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    ...(Platform.OS === 'web' && {
+      width: '100%',
+      maxWidth: '100%',
+      minHeight: 0,
+      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+    }),
+    ...(Platform.OS !== 'web' && {
+      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+      elevation: 2,
+    }),
   },
   headerRow: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#F8F8F8',
   },
   timeColumnSpacer: {
     width: 60,
@@ -486,84 +828,150 @@ const styles = StyleSheet.create({
   dayName: {
     fontSize: 11,
     color: '#6b7280',
-    fontWeight: '600',
+    fontWeight: '400',
     marginBottom: 2,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   dayNumber: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#1F2937',
   },
   dayNumberToday: {
-    color: '#3b82f6',
+    color: '#4F46E5',
   },
   dayNumberOtherMonth: {
-    color: '#94a3b8',
+    color: '#9CA3AF',
   },
   scrollView: {
     flex: 1,
+    ...(Platform.OS === 'web' && {
+      overflow: 'hidden',
+      maxWidth: '100%',
+      width: '100%',
+    }),
   },
   scrollContent: {
     paddingBottom: 40,
   },
   gridContainer: {
     flexDirection: 'row',
-    minHeight: 24 * 48, // 24 hours * 48px
+    minHeight: 24 * 72, // 24 hours * 72px (taller hour blocks)
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' && {
+      width: '100%',
+      maxWidth: '100%',
+      overflow: 'hidden',
+      boxSizing: 'border-box',
+    }),
   },
   timeColumn: {
     width: 60,
+    flexShrink: 0,
+    flexGrow: 0,
     borderRightWidth: 1,
     borderRightColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#F8F8F8',
+    margin: 0,
+    padding: 0,
   },
   timeCell: {
-    height: 48,
+    height: 60, // Match hourHeight constant exactly
     paddingRight: 8,
-    paddingTop: 2,
-    alignItems: 'flex-end',
+    paddingTop: 0,
+    paddingBottom: 0,
+    alignItems: 'flex-start',
     justifyContent: 'flex-start',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   timeText: {
     fontSize: 11,
     color: '#9ca3af',
-    fontWeight: '500',
+    fontWeight: '400',
+    lineHeight: 11, // Match font size to prevent extra spacing
+    marginTop: 0,
+    marginBottom: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    ...(Platform.OS === 'web' && {
+      fontVariantNumeric: 'tabular-nums',
+    }),
   },
   dayColumnsContainer: {
     flex: 1,
     flexDirection: 'row',
+    margin: 0,
+    padding: 0,
+    ...(Platform.OS === 'web' && {
+      width: '100%',
+      maxWidth: '100%',
+      overflow: 'hidden',
+      boxSizing: 'border-box',
+    }),
   },
   dayColumn: {
     flex: 1,
     borderRightWidth: 1,
     borderRightColor: '#e5e7eb',
     position: 'relative',
-    minHeight: 24 * 48, // 24 hours * 48px
-    backgroundColor: '#ffffff',
+    minHeight: 780, // 13 hours * 60px = 780px
+    backgroundColor: 'transparent',
+    margin: 0,
+    padding: 0,
+    ...(Platform.OS === 'web' && {
+      minWidth: 0, // Allow flex shrinking
+      overflow: 'visible',
+      boxSizing: 'border-box',
+      pointerEvents: 'auto', // Allow events to pass through to children
+      cursor: 'default', // Default cursor, not pointer
+    }),
   },
   hourLine: {
     position: 'absolute',
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#F3F4F6',
     zIndex: 0,
+    pointerEvents: 'none',
+    boxSizing: 'border-box',
   },
   halfHourLine: {
     position: 'absolute',
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: '#fafbfc',
+    backgroundColor: '#FAFBFC',
     zIndex: 0,
+    pointerEvents: 'none',
   },
   eventBlock: {
     position: 'absolute',
-    paddingHorizontal: 2,
-    paddingVertical: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
     zIndex: 1,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  overflowIndicator: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  overflowText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '500',
   },
 });

@@ -82,7 +82,6 @@ export default function AdvancedInsightsTab({ familyId, children = [], selectedC
       );
 
       if (error) {
-        console.error('Error loading insights:', error);
         return;
       }
 
@@ -94,7 +93,6 @@ export default function AdvancedInsightsTab({ familyId, children = [], selectedC
 
       setInsights(filtered);
     } catch (err) {
-      console.error('Exception loading insights:', err);
     } finally {
       setLoading(false);
     }
@@ -112,14 +110,12 @@ export default function AdvancedInsightsTab({ familyId, children = [], selectedC
       );
 
       if (error) {
-        console.error('Error generating insights:', error);
         return;
       }
 
       // Reload insights after generation
       await loadInsights();
     } catch (err) {
-      console.error('Exception generating insights:', err);
     } finally {
       setGenerating(false);
     }

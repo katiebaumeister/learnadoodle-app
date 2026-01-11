@@ -43,14 +43,12 @@ export default function EditChildScreen({ route, navigation }) {
         .single()
 
       if (error) {
-        console.error('Error fetching child data:', error)
         Alert.alert('Error', 'Failed to load child information')
       } else if (data) {
         setChildName(data.first_name || '')
         setChildAge(data.age ? data.age.toString() : '')
       }
     } catch (error) {
-      console.error('Error fetching child data:', error)
       Alert.alert('Error', 'Failed to load child information')
     } finally {
       setIsLoadingData(false)
@@ -77,10 +75,6 @@ export default function EditChildScreen({ route, navigation }) {
     setIsLoading(true)
 
     try {
-      console.log('Updating child with ID:', childId)
-      console.log('New name:', childName.trim())
-      console.log('New age:', age)
-
       const { data, error } = await supabase
         .from('children')
         .update({
@@ -91,23 +85,17 @@ export default function EditChildScreen({ route, navigation }) {
         .eq('id', childId)
         .select()
 
-      console.log('Update result - data:', data)
-      console.log('Update result - error:', error)
-
       if (error) {
-        console.error('Error updating child:', error)
         Alert.alert(
           'Update Failed',
           'Failed to update child information. Please try again.',
           [{ text: 'OK' }]
         )
       } else {
-        console.log('Update successful, showing success message')
         setSuccessMessage('Child information updated successfully!')
         setShowSuccess(true)
       }
     } catch (error) {
-      console.error('Exception during update:', error)
       Alert.alert(
         'Update Failed',
         'An unexpected error occurred. Please try again.',
@@ -136,7 +124,6 @@ export default function EditChildScreen({ route, navigation }) {
                 .eq('id', childId)
 
               if (error) {
-                console.error('Error deleting child:', error)
                 Alert.alert(
                   'Delete Failed',
                   'Failed to delete child. Please try again.',
@@ -158,7 +145,6 @@ export default function EditChildScreen({ route, navigation }) {
                 )
               }
             } catch (error) {
-              console.error('Error:', error)
               Alert.alert(
                 'Delete Failed',
                 'An unexpected error occurred. Please try again.',

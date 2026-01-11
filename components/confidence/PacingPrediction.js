@@ -22,7 +22,6 @@ export default function PacingPrediction({ childId, subjectId = null }) {
       if (error) throw error;
       setData(result);
     } catch (error) {
-      console.error('Error loading pacing prediction:', error);
       toast.push('Failed to load prediction', 'error');
     } finally {
       setLoading(false);

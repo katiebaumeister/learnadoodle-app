@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
-import { LogOut, Users, Settings, User, Link2, Info, X } from 'lucide-react';
+import { LogOut, Users, Settings, User, Link2, Info, X, BookOpen } from 'lucide-react';
 import ProfilePanel from './ProfilePanel';
 import FamilyPanel from './FamilyPanel';
 import TutorsAccessPanel from './TutorsAccessPanel';
 import IntegrationsSettings from './IntegrationsSettings';
 import AboutPanel from './AboutPanel';
+import AcademicsPanel from './AcademicsPanel';
 
 const sections = [
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'family', label: 'Family & Members', icon: Users },
+  { id: 'academics', label: 'Academics', icon: BookOpen },
   { id: 'tutors', label: 'Invite Members', icon: Users },
   { id: 'integrations', label: 'Integrations', icon: Link2 },
   { id: 'about', label: 'About', icon: Info },
@@ -34,7 +36,6 @@ export default function SettingsModal({ visible, onClose, user, initialSection =
       await signOut();
       onClose();
     } catch (error) {
-      console.error('Logout error:', error);
     } finally {
       setLoggingOut(false);
     }
@@ -46,6 +47,8 @@ export default function SettingsModal({ visible, onClose, user, initialSection =
         return <ProfilePanel user={user} />;
       case 'family':
         return <FamilyPanel user={user} />;
+      case 'academics':
+        return <AcademicsPanel user={user} />;
       case 'tutors':
         return <TutorsAccessPanel user={user} />;
       case 'integrations':

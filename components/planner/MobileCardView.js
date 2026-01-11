@@ -48,6 +48,15 @@ export default function MobileCardView({
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
 
+  // Define getEventTime before useMemo to avoid temporal dead zone
+  const getEventTime = (event) => {
+    const startTime = event.start || event.start_ts || event.start_at || event.start_local;
+    if (!startTime) return 0;
+    const dateObj = parseDate(startTime);
+    if (!dateObj) return 0;
+    return dateObj.getHours() * 60 + dateObj.getMinutes();
+  };
+
   // Group events by date
   const eventsByDate = useMemo(() => {
     const grouped = new Map();
@@ -91,13 +100,6 @@ export default function MobileCardView({
 
     return grouped;
   }, [date, events]);
-
-  const getEventTime = (event) => {
-    const startTime = event.start || event.start_ts || event.start_at || event.start_local;
-    if (!startTime) return 0;
-    const date = typeof startTime === 'string' ? parseISO(startTime) : new Date(startTime);
-    return date.getHours() * 60 + date.getMinutes();
-  };
 
   const formatTime = (minutes) => {
     const hours = Math.floor(minutes / 60);
@@ -326,11 +328,18 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 1,
+      },
+    }),
   },
   eventCardCompleted: {
     opacity: 0.6,
@@ -387,4 +396,3 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
-

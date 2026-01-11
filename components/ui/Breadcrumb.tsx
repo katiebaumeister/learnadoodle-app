@@ -92,6 +92,9 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   labelDefault: {
     color: 'var(--ld-muted)',
@@ -112,6 +115,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(107,114,128,1)',
     lineHeight: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   linkWrapper: {
     flexDirection: 'row',

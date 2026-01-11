@@ -23,14 +23,12 @@ export default function TemplatePicker({
     if (familyId) {
       loadTemplates();
     } else {
-      console.warn('[TemplatePicker] No familyId provided');
       setTemplates([]);
     }
   }, [familyId, subjectId]);
 
   const loadTemplates = async () => {
     if (!familyId) {
-      console.warn('[TemplatePicker] Cannot load templates: familyId is missing');
       setTemplates([]);
       setLoading(false);
       return;
@@ -43,15 +41,12 @@ export default function TemplatePicker({
       });
       
       if (error) {
-        console.error('[TemplatePicker] Error loading templates:', error);
         setTemplates([]);
         return;
       }
-      
-      console.log('[TemplatePicker] Loaded templates:', data?.length || 0);
+
       setTemplates(data || []);
     } catch (error) {
-      console.error('[TemplatePicker] Exception loading templates:', error);
       setTemplates([]);
     } finally {
       setLoading(false);

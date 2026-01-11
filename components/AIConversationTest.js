@@ -124,8 +124,7 @@ export default function AIConversationTest() {
       addResult(`✅ Retrieved conversation with ${conversation.ai_messages?.length || 0} messages`);
       addResult(`📝 Conversation type: ${conversation.conversation_type}`);
       addResult(`📝 Title: ${conversation.title}`);
-      
-    } catch (error) {
+} catch (error) {
       addResult(`❌ Error getting conversation: ${error.message}`, false);
     } finally {
       setLoading(false);
@@ -154,8 +153,7 @@ export default function AIConversationTest() {
       );
       
       addResult(`✅ Recorded action: ${actionId}`);
-      
-    } catch (error) {
+} catch (error) {
       addResult(`❌ Error recording action: ${error.message}`, false);
     } finally {
       setLoading(false);
@@ -180,8 +178,7 @@ export default function AIConversationTest() {
       history.forEach((conv, index) => {
         addResult(`📝 Conversation ${index + 1}: ${conv.title} (${conv.ai_messages?.length || 0} messages)`);
       });
-      
-    } catch (error) {
+} catch (error) {
       addResult(`❌ Error getting history: ${error.message}`, false);
     } finally {
       setLoading(false);

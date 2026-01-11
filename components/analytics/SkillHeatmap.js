@@ -51,7 +51,6 @@ export default function SkillHeatmap({ childId, subjectId = null, daysBack = 90,
       if (result.error) throw result.error;
       setHeatmapData(result.data || []);
     } catch (err) {
-      console.error('Error loading skill heatmap:', err);
       setError(err.message || 'Failed to load skill heatmap');
       setHeatmapData([]);
     } finally {

@@ -33,7 +33,6 @@ export default function LearningStoryCard({ familyId, weekStart }) {
       }
       setStory(data);
     } catch (error) {
-      console.error('Error loading learning story:', error);
       const isNetworkError = error.message?.includes('Cannot connect') || error.message?.includes('Failed to fetch');
       if (!isNetworkError) {
         toast.push('Failed to load learning story', 'error');

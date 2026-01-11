@@ -21,7 +21,6 @@ function useDayView(date, childIds, familyId) {
       });
 
       if (error) {
-        console.error('get_day_view error', error);
         setLoading(false);
         return;
       }
@@ -152,53 +151,23 @@ export default function DayDrawer({ date, childIds, familyId, onAddActivity, onA
             <TouchableOpacity 
               key={e.id} 
               style={styles.eventCard}
-              onPress={() => console.log('Open event:', e)}
+              onPress={() => {}}
             >
               <View style={styles.eventContent}>
-                <Text style={styles.eventTitle}>
-                  {e.subject || e.title}
-                </Text>
-                <View style={styles.eventMeta}>
-                  <Clock size={14} color={colors.muted} />
+                <Text style={styles.eventTitle}>{e.title || 'Untitled Event'}</Text>
+                {e.start_time && (
                   <Text style={styles.eventTime}>
-                    {new Date(e.start_ts).toLocaleTimeString([], { 
-                      hour: '2-digit', 
-                      minute: '2-digit' 
-                    })}–{new Date(e.end_ts).toLocaleTimeString([], { 
-                      hour: '2-digit', 
-                      minute: '2-digit' 
-                    })}
+                    <Clock size={12} color={colors.muted} /> {e.start_time}
+                    {e.end_time && ` - ${e.end_time}`}
                   </Text>
-                </View>
-                {e.description && (
-                  <Text style={styles.eventLocation}>{e.description}</Text>
                 )}
               </View>
-              <Text style={styles.eventAction}>Open</Text>
             </TouchableOpacity>
           ))
         ) : (
-          <View style={styles.emptySchedule}>
-            <Text style={styles.emptyScheduleText}>
-              No items scheduled — try AI planner
-            </Text>
-          </View>
+          <Text style={styles.emptyText}>No events scheduled</Text>
         )}
       </View>
-
-      {/* Scheduled Minutes */}
-      {data.scheduled_minutes_today && data.scheduled_minutes_today.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Minutes Today</Text>
-          {data.scheduled_minutes_today.map((m, idx) => (
-            <View key={idx} style={styles.minutesCard}>
-              <Text style={styles.minutesText}>
-                {Math.round(m.scheduled_min)} min scheduled
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
     </ScrollView>
   );
 }

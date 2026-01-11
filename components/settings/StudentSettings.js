@@ -54,7 +54,6 @@ export default function StudentSettings({ childId, childName }) {
         }
       }
     } catch (error) {
-      console.error('Error loading student settings:', error);
       toast.push('Failed to load settings', 'error');
     } finally {
       setLoading(false);
@@ -75,7 +74,6 @@ export default function StudentSettings({ childId, childName }) {
       setSettings({ ...settings, [field]: value });
       toast.push('Settings updated', 'success');
     } catch (error) {
-      console.error('Error updating setting:', error);
       toast.push('Failed to update setting', 'error');
     } finally {
       setSaving(false);

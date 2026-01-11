@@ -570,7 +570,6 @@ export default function OnboardingStepper({ onComplete }) {
         // Try sign in first, then sign up if not found
         result = await signIn(email, password);
         if (result?.error) {
-          console.log('Sign in failed, trying sign up:', result.error.message);
           // If sign in fails, try sign up
           result = await signUp(email, password);
           if (result?.error) {
@@ -589,13 +588,6 @@ export default function OnboardingStepper({ onComplete }) {
         onComplete();
       }
     } catch (err) {
-      console.error('Onboarding error:', err);
-      console.error('Error details:', {
-        message: err.message,
-        details: err.details,
-        hint: err.hint,
-        code: err.code
-      });
       const errorMessage = err.message || 'Error saving onboarding data';
       setError(errorMessage);
       Alert.alert('Error', errorMessage);
@@ -673,7 +665,7 @@ export default function OnboardingStepper({ onComplete }) {
         p_from_date: startDate,
         p_to_date: endDate.toISOString().split('T')[0],
       });
-      if (refreshErr) console.warn('refresh_calendar_days_cache error:', refreshErr.message);
+      if (refreshErr) 
 
     // 10. Insert subjects
       for (const subject of subjects) {
@@ -681,7 +673,6 @@ export default function OnboardingStepper({ onComplete }) {
       const child = children[childIndex];
       
       if (!child) {
-        console.error('Child not found for subject:', subject);
         continue;
       }
       

@@ -90,7 +90,6 @@ export default function SyllabusTab({ child, familyId, onAddSyllabus }) {
 
       setSyllabusRows(formattedSyllabi);
     } catch (error) {
-      console.error('Error fetching syllabi:', error);
       setSyllabusRows([]);
     } finally {
       setLoading(false);
@@ -175,8 +174,7 @@ export default function SyllabusTab({ child, familyId, onAddSyllabus }) {
                         window.open(row.uploadUrl, '_blank');
                       } else {
                         // For React Native, you might want to use Linking
-                        console.log('Open URL:', row.uploadUrl);
-                      }
+}
                     }}>
                       <Text style={styles.linkText}>{row.linkLabel}</Text>
                     </TouchableOpacity>

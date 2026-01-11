@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#0f172a',
-    fontFamily: Platform.OS === 'web' ? 'Outfit' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Plus Jakarta Sans' : undefined,
   },
   subtitle: {
     fontSize: 14,
@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 360,
     lineHeight: 20,
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   reasonChip: {
     flexDirection: 'row',
@@ -132,7 +132,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1d4ed8',
     fontWeight: '600',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   helperBlock: {
     width: '100%',
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#334155',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
   helperActions: {
     flexDirection: 'row',
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#2563eb',
     fontWeight: '600',
-    fontFamily: Platform.OS === 'web' ? 'Inter' : undefined,
+    fontFamily: Platform.OS === 'web' ? 'Cooper Hewitt' : undefined,
   },
 });
 

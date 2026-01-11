@@ -99,7 +99,6 @@ const DayExceptionsStrip = ({
       setSelectedDate(null);
       onOverrideSaved();
     } catch (error) {
-      console.error('Error creating override:', error);
       alert('Failed to create override');
     } finally {
       setSaving(false);
@@ -126,7 +125,6 @@ const DayExceptionsStrip = ({
       setSelectedDate(null);
       onOverrideSaved();
     } catch (error) {
-      console.error('Error deleting override:', error);
       alert('Failed to delete override');
     } finally {
       setSaving(false);

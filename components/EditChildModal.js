@@ -56,7 +56,6 @@ export default function EditChildModal({
         .single();
 
       if (fetchError) {
-        console.error('Error fetching child data:', fetchError);
         setError('Failed to load child information');
         return;
       }
@@ -83,7 +82,6 @@ export default function EditChildModal({
         }
       }
     } catch (err) {
-      console.error('Error fetching child data:', err);
       setError('Failed to load child information');
     } finally {
       setLoadingChildData(false);
@@ -134,7 +132,6 @@ export default function EditChildModal({
           return;
         }
       } catch (err) {
-        console.error('Error getting family_id:', err);
       }
       
       setError('Family ID or Child ID not found. Please refresh and try again.');
@@ -145,7 +142,6 @@ export default function EditChildModal({
   };
 
   const performUpdate = async (formData, finalFamilyId) => {
-
     if (!formData.name?.trim()) {
       setError('Name is required');
       return;
@@ -198,7 +194,6 @@ export default function EditChildModal({
         onClose();
       }, 500);
     } catch (err) {
-      console.error('Error updating child:', err);
       setError(err.message || 'Failed to update child. Please try again.');
     } finally {
       setIsSubmitting(false);

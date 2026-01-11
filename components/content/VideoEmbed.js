@@ -105,7 +105,6 @@ export default function VideoEmbed({
 
       Alert.alert('Success', 'Video added successfully');
     } catch (error) {
-      console.error('Error adding video:', error);
       Alert.alert('Error', 'Failed to add video');
     } finally {
       setLoading(false);
@@ -133,7 +132,6 @@ export default function VideoEmbed({
         onVideoAdded(updatedVideos);
       }
     } catch (error) {
-      console.error('Error removing video:', error);
       Alert.alert('Error', 'Failed to remove video');
     }
   };

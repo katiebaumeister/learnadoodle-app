@@ -32,7 +32,6 @@ export default function UnitsReview({ syllabusId, units: initialUnits, onConfirm
         }
       }
     } catch (err) {
-      console.error('Error loading units:', err);
     } finally {
       setLoading(false);
     }

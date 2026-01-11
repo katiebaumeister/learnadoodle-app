@@ -106,8 +106,6 @@ eval("__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpac
   \*************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************/
 /***/ (() => {
 
-
-
 /***/ }),
 
 /***/ "(ssr)/./node_modules/next/dist/build/webpack/loaders/next-flight-client-entry-loader.js?modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2FHomePageClient.tsx&modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2FSection.tsx&modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2Fsections%2FLearn.tsx&modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2Fsections%2FPinnedViews.tsx&modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2Fsections%2FRecentlyVisited.tsx&modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2Fsections%2FTasks.tsx&modules=%2FUsers%2Fkatebaumeister%2Fapp%2Fhi-world-app%2Fcomponents%2Fsections%2FUpcomingEvents.tsx&server=true!":
@@ -330,7 +328,6 @@ const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/HomePageClient.tsx#HomePageClient`);
 
-
 /***/ }),
 
 /***/ "(rsc)/./components/Section.tsx":
@@ -356,7 +353,6 @@ const { __esModule, $$typeof } = proxy;
 const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/Section.tsx#Section`);
-
 
 /***/ }),
 
@@ -384,7 +380,6 @@ const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/sections/Learn.tsx#Learn`);
 
-
 /***/ }),
 
 /***/ "(rsc)/./components/sections/PinnedViews.tsx":
@@ -410,7 +405,6 @@ const { __esModule, $$typeof } = proxy;
 const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/sections/PinnedViews.tsx#PinnedViews`);
-
 
 /***/ }),
 
@@ -438,7 +432,6 @@ const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/sections/RecentlyVisited.tsx#RecentlyVisited`);
 
-
 /***/ }),
 
 /***/ "(rsc)/./components/sections/Tasks.tsx":
@@ -465,7 +458,6 @@ const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/sections/Tasks.tsx#Tasks`);
 
-
 /***/ }),
 
 /***/ "(rsc)/./components/sections/UpcomingEvents.tsx":
@@ -491,7 +483,6 @@ const { __esModule, $$typeof } = proxy;
 const __default__ = proxy.default;
 
 const e0 = (0,next_dist_build_webpack_loaders_next_flight_loader_module_proxy__WEBPACK_IMPORTED_MODULE_0__.createProxy)(String.raw`/Users/katebaumeister/app/hi-world-app/components/sections/UpcomingEvents.tsx#UpcomingEvents`);
-
 
 /***/ }),
 

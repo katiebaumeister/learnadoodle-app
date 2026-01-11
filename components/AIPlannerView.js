@@ -60,7 +60,7 @@ const AIPlannerView = ({ familyId, children, urlParams = {} }) => {
     // If AI top-off params are present, create a focused goal
     if (urlParams.ai_topoff_for_subject && urlParams.minutes_needed) {
       const minutesNeeded = parseInt(urlParams.minutes_needed) || 60;
-      console.log(`AI Planner pre-filled: ${urlParams.ai_topoff_for_subject} needs ${minutesNeeded} minutes`);
+
       setGoals([
         { 
           subject_id: urlParams.ai_topoff_for_subject, 
@@ -115,7 +115,6 @@ const AIPlannerView = ({ familyId, children, urlParams = {} }) => {
       setProposal(result);
       setSelectedEvents(new Set(result.events.map(event => event.id)));
     } catch (error) {
-      console.error('Error generating proposal:', error);
       showAlert('Error', 'Failed to generate scheduling proposal');
     } finally {
       setLoading(false);
@@ -150,7 +149,6 @@ const AIPlannerView = ({ familyId, children, urlParams = {} }) => {
       setProposal(null);
       setSelectedEvents(new Set());
     } catch (error) {
-      console.error('Error committing proposal:', error);
       showAlert('Error', 'Failed to commit proposal');
     } finally {
       setCommitting(false);

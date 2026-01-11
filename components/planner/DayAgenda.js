@@ -1,32 +1,21 @@
 import React, { useMemo, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Platform } from 'react-native';
 import { startOfWeek, addDays, format, isToday } from './utils/date';
-import { CheckCircle2, Circle } from 'lucide-react';
-import InlineNotesIndicator from '../events/InlineNotesIndicator';
+import EventChip from '../calendar/EventChip';
 
-// Pastel color palette matching reference design
-const PASTEL_COLORS = {
-  peach: { bg: '#FDF3F2', border: '#F5C2B8', text: '#C2410C' },
-  blue: { bg: '#F0F6FF', border: '#93C5FD', text: '#1E40AF' },
-  teal: { bg: '#F5FBF5', border: '#86EFAC', text: '#166534' },
-  yellow: { bg: '#FEFCE8', border: '#FDE047', text: '#854D0E' },
-  purple: { bg: '#F5F3FF', border: '#C4B5FD', text: '#6B21A8' },
-  pink: { bg: '#FDF2F8', border: '#F9A8D4', text: '#9F1239' },
-};
-
-// Map event colors to pastel palette
-const getPastelColor = (eventColor) => {
+// Map event colors to dot colors (simplified - only for timeline dots)
+const getEventDotColor = (eventColor) => {
   switch (eventColor) {
     case 'teal':
-      return PASTEL_COLORS.teal;
+      return '#166534';
     case 'violet':
-      return PASTEL_COLORS.purple;
+      return '#6B21A8';
     case 'amber':
-      return PASTEL_COLORS.yellow;
+      return '#854D0E';
     case 'sky':
-      return PASTEL_COLORS.blue;
+      return '#1E40AF';
     default:
-      return PASTEL_COLORS.peach;
+      return '#C2410C';
   }
 };
 
@@ -55,8 +44,8 @@ const getHeight = (startDate, endDate) => {
   return durationMinutes * PIXELS_PER_MINUTE;
 };
 
-// DayEventBlock component
-function DayEventBlock({ event, onPress, onRightClick, onComplete, showCheckmark = true }) {
+// DayEventBlock component - now uses EventChip like month view
+function DayEventBlock({ event, onPress, onRightClick, onComplete, showCheckmark = true, children = [], stackedTop, eventHeight }) {
   const startTime = event.start || event.start_ts || event.start_local;
   const endTime = event.end || event.end_ts || event.end_local;
   
@@ -67,96 +56,43 @@ function DayEventBlock({ event, onPress, onRightClick, onComplete, showCheckmark
   
   if (Number.isNaN(startDate.getTime())) return null;
   
-  const top = getYPosition(startDate);
-  const height = getHeight(startDate, endDate);
-  const pastelColor = getPastelColor(event.color || 'teal');
-  
-  // Format time range
-  const formatTime = (date) => {
-    const hours = date.getHours();
-    const minutes = date.getMinutes();
-    if (minutes === 0) {
-      return `${hours.toString().padStart(2, '0')}:00`;
-    }
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-  };
-  
-  const timeRange = `${formatTime(startDate)} - ${formatTime(endDate)}`;
+  // Use stackedTop if provided (for overlapping events), otherwise calculate from time
+  const top = stackedTop !== undefined ? stackedTop : getYPosition(startDate);
+  const height = eventHeight !== undefined ? eventHeight : Math.max(24, getHeight(startDate, endDate));
   
   return (
-    <TouchableOpacity
-      activeOpacity={0.8}
-      onPress={onPress ? () => onPress(event) : undefined}
-      onLongPress={onRightClick ? (e) => onRightClick(event, e.nativeEvent) : undefined}
+    <View
       style={{
         position: 'absolute',
         top,
         left: 0,
         right: 0,
-        height: Math.max(40, height), // Minimum height
-        backgroundColor: pastelColor.bg,
-        borderWidth: 1,
-        borderColor: pastelColor.border,
-        borderRadius: 10,
-        padding: 12,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 1,
-        opacity: event.status === 'done' ? 0.6 : 1
+        height: Math.max(24, height), // Minimum height
+        paddingHorizontal: 4,
+        paddingVertical: 2,
       }}
     >
-      {/* Time Range */}
-      <Text style={{
-        fontSize: 11,
-        fontWeight: '700',
-        color: pastelColor.text,
-        marginBottom: 4
-      }}>
-        {timeRange}
-      </Text>
-      
-      {/* Event Title */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-        {showCheckmark && onComplete && (
-          <TouchableOpacity
-            onPress={(e) => {
-              e.stopPropagation();
-              onComplete(event);
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            {event.status === 'done' ? (
-              <CheckCircle2 size={16} color={pastelColor.text} fill={pastelColor.text} />
-            ) : (
-              <Circle size={16} color={pastelColor.text} strokeWidth={2} />
-            )}
-          </TouchableOpacity>
-        )}
-        <Text style={{
-          fontSize: 14,
-          fontWeight: '500',
-          color: pastelColor.text,
-          flex: 1,
-          textDecorationLine: event.status === 'done' ? 'line-through' : 'none'
-        }}>
-          {event.title || 'Untitled Event'}
-        </Text>
-        {event.id && event.family_id && (
-          <InlineNotesIndicator
-            eventId={event.id}
-            familyId={event.family_id}
-            size="small"
-          />
-        )}
-      </View>
-    </TouchableOpacity>
+      <EventChip
+        ev={event}
+        compact={true}
+        fullWidth={true}
+        hideTime={false}
+        onPress={onPress ? () => onPress(event) : undefined}
+        onRightClick={onRightClick ? (event, nativeEvent) => onRightClick(event, nativeEvent) : undefined}
+        onComplete={onComplete ? () => onComplete(event) : undefined}
+        showCheckmark={showCheckmark}
+        children={children}
+        alignDotsNearTime={true}
+        titleFontSize={13}
+        timeFontSize={11}
+        hideDoneStyling={true}
+      />
+    </View>
   );
 }
 
 // Day Section Component
-function DaySection({ day, events, onEventPress, onEventRightClick, onEventComplete, isTodayDate }) {
+function DaySection({ day, events, onEventPress, onEventRightClick, onEventComplete, isTodayDate, children = [] }) {
   const dayStart = new Date(day);
   dayStart.setHours(START_HOUR, 0, 0, 0);
   
@@ -166,7 +102,7 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
   const totalHeight = (END_HOUR - START_HOUR) * 60 * PIXELS_PER_MINUTE;
   const hours = generateHours();
   
-  // Filter and sort events for this day
+  // Filter and sort events for this day, then calculate positions with stacking
   const dayEvents = useMemo(() => {
     const filtered = events.filter(e => {
       const startTime = e.start || e.start_ts || e.start_local;
@@ -181,13 +117,99 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
       return eventLocalDate.getTime() === dayLocalDate.getTime();
     });
     
-    return filtered.sort((a, b) => {
+    const sorted = filtered.sort((a, b) => {
       const aTime = a.start || a.start_ts || a.start_local;
       const bTime = b.start || b.start_ts || b.start_local;
       if (!aTime || !bTime) return 0;
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
+    
+    // Calculate positions with stacking for overlapping events
+    const eventSpacing = 2; // Spacing between stacked events
+    const positionedEvents = [];
+    const eventGroups = []; // Groups of overlapping events
+    
+    sorted.forEach(event => {
+      const startTime = event.start || event.start_ts || event.start_local;
+      const endTime = event.end || event.end_ts || event.end_local;
+      if (!startTime) return;
+      
+      const startDate = new Date(startTime);
+      const endDate = endTime ? new Date(endTime) : new Date(startDate.getTime() + 60 * 60 * 1000);
+      
+      if (Number.isNaN(startDate.getTime())) return;
+      
+      const eventTop = getYPosition(startDate);
+      const eventHeight = Math.max(24, getHeight(startDate, endDate));
+      const eventEnd = eventTop + eventHeight;
+      
+      // Find which group this event belongs to (overlaps with)
+      let addedToGroup = false;
+      
+      for (const group of eventGroups) {
+        // Check if event overlaps with any event in this group
+        const overlaps = group.some(e => {
+          const eStartTime = e.start || e.start_ts || e.start_local;
+          const eEndTime = e.end || e.end_ts || e.end_local;
+          if (!eStartTime) return false;
+          
+          const eStartDate = new Date(eStartTime);
+          const eEndDate = eEndTime ? new Date(eEndTime) : new Date(eStartDate.getTime() + 60 * 60 * 1000);
+          if (Number.isNaN(eStartDate.getTime())) return false;
+          
+          const eTop = getYPosition(eStartDate);
+          const eHeight = Math.max(24, getHeight(eStartDate, eEndDate));
+          const eEnd = eTop + eHeight;
+          
+          return eventTop < eEnd && eventEnd > eTop;
+        });
+        
+        if (overlaps) {
+          group.push({ ...event, eventTop, eventHeight, eventEnd });
+          addedToGroup = true;
+          break;
+        }
+      }
+      
+      // If no overlap found, create new group
+      if (!addedToGroup) {
+        eventGroups.push([{ ...event, eventTop, eventHeight, eventEnd }]);
+      }
+    });
+    
+    // Position events within each group (stack vertically)
+    eventGroups.forEach(group => {
+      // Sort group by start time
+      group.sort((a, b) => a.eventTop - b.eventTop);
+      
+      let currentTop = group[0].eventTop;
+      
+      group.forEach((event, index) => {
+        positionedEvents.push({
+          ...event,
+          stackedTop: currentTop,
+          stackedIndex: index,
+        });
+        
+        // Move down for next event (add spacing)
+        currentTop += event.eventHeight + eventSpacing;
+      });
+    });
+    
+    return positionedEvents.sort((a, b) => a.stackedTop - b.stackedTop);
   }, [events, day]);
+  
+  // Calculate actual height needed based on events
+  const actualContentHeight = useMemo(() => {
+    if (dayEvents.length === 0) return 120;
+    
+    // Find the bottom-most event
+    const lastEvent = dayEvents[dayEvents.length - 1];
+    const lastEventBottom = (lastEvent.stackedTop || 0) + (lastEvent.eventHeight || 24);
+    
+    // Return max of totalHeight (time range) or last event position + padding
+    return Math.max(totalHeight, lastEventBottom + 40);
+  }, [dayEvents, totalHeight]);
   
   // Get unique hours with events for timeline dots
   const hoursWithEvents = useMemo(() => {
@@ -208,7 +230,7 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
   const weekday = format(day, 'EEE');
   
   return (
-    <View style={{ marginBottom: 24 }}>
+    <View style={{ marginBottom: 8 }}>
       {/* Day Header */}
       <View style={{
         flexDirection: 'row',
@@ -219,8 +241,8 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
       }}>
         <Text style={{
           fontSize: 32,
-          fontWeight: '700',
-          color: isTodayDate ? '#0ea5e9' : '#0f141a',
+          fontWeight: '600',
+          color: '#1F2937',
           lineHeight: 36
         }}>
           {dayNumber}
@@ -228,7 +250,7 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
         <Text style={{
           fontSize: 16,
           fontWeight: '600',
-          color: isTodayDate ? '#0ea5e9' : '#6b7280',
+          color: '#6B7280',
           textTransform: 'uppercase'
         }}>
           {weekday}
@@ -239,13 +261,13 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
       <View style={{
         flexDirection: 'row',
         paddingHorizontal: 16,
-        minHeight: dayEvents.length === 0 ? 120 : totalHeight
       }}>
         {/* Time Rail */}
         <View style={{
           width: 70,
           position: 'relative',
-          paddingRight: 12
+          paddingRight: 12,
+          minHeight: actualContentHeight
         }}>
           {/* Vertical Timeline Line */}
           <View style={{
@@ -283,18 +305,16 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
                     const d = new Date(startTime);
                     return !Number.isNaN(d.getTime()) && d.getHours() === hour;
                   });
-                  const eventColor = firstEventAtHour?.color || 'teal';
-                  const pastelColor = getPastelColor(eventColor);
-                  
+                  // Use light grey dot for timeline indicator in day view (matching timeline line)
                   return (
                     <View style={{
                       position: 'absolute',
                       right: 31, // Align with timeline
-                      top: 8,
+                      top: 20, // Lowered to avoid covering hour labels
                       width: 8,
                       height: 8,
                       borderRadius: 4,
-                      backgroundColor: pastelColor.text,
+                      backgroundColor: '#E5E7EB', // Light grey to match timeline line
                       zIndex: 2
                     }} />
                   );
@@ -314,12 +334,24 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
           })}
         </View>
         
-        {/* Events Column */}
-        <View style={{
-          flex: 1,
-          position: 'relative',
-          minHeight: totalHeight
-        }}>
+        {/* Events Column - Scrollable */}
+        <ScrollView
+          style={{
+            flex: 1,
+            ...(Platform.OS === 'web' && {
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              maxHeight: '80vh', // Limit max height to viewport
+            }),
+          }}
+          contentContainerStyle={{
+            minHeight: actualContentHeight,
+            position: 'relative',
+            paddingBottom: 20,
+          }}
+          showsVerticalScrollIndicator={true}
+          nestedScrollEnabled={true}
+        >
           {dayEvents.length === 0 ? (
             <View style={{
               position: 'absolute',
@@ -346,22 +378,75 @@ function DaySection({ day, events, onEventPress, onEventRightClick, onEventCompl
                 onRightClick={onEventRightClick}
                 onComplete={onEventComplete}
                 showCheckmark={true}
+                children={children}
+                stackedTop={event.stackedTop}
+                eventHeight={event.eventHeight}
               />
             ))
           )}
-        </View>
+        </ScrollView>
       </View>
     </View>
   );
 }
 
 // Main DayAgenda Component
-export default function DayAgenda({ date, events = [], onEventPress, onEventRightClick, onEventComplete }) {
+export default function DayAgenda({ date, events = [], onEventPress, onEventRightClick, onEventComplete, children = [] }) {
   const scrollViewRef = useRef(null);
   const dayPositions = useRef({});
   const hasScrolledToToday = useRef(false);
-  const weekStart = startOfWeek(date); // Monday start
+  const weekStart = startOfWeek(date); // Sunday start
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  // Expand Project events to show on all days they span (if within a week)
+  const expandedEvents = useMemo(() => {
+    const expanded = [];
+    const seenIds = new Set();
+    
+    for (const e of events) {
+      if (!e || !e.id) continue;
+      if (seenIds.has(e.id)) continue;
+      seenIds.add(e.id);
+      
+      // Check if this is a Project event with start and end dates
+      if (e.event_type === 'Project' && e.start_ts && e.end_ts) {
+        const startDate = new Date(e.start_ts);
+        const endDate = new Date(e.end_ts);
+        
+        if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+          // Calculate days difference
+          const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          // If project spans within a week (7 days or less), expand it
+          if (daysDiff <= 7) {
+            // Create a copy for each day from start to end
+            for (let i = 0; i <= daysDiff; i++) {
+              const dayDate = new Date(startDate);
+              dayDate.setDate(startDate.getDate() + i);
+              
+              // Only include days that are in the current week view
+              const dayKey = dayDate.toDateString();
+              if (days.some(d => d.toDateString() === dayKey)) {
+                const expandedEvent = {
+                  ...e,
+                  id: `${e.id}-day-${i}`, // Unique ID for each day instance
+                  _originalId: e.id, // Keep reference to original
+                  _dayIndex: i,
+                };
+                expanded.push(expandedEvent);
+              }
+            }
+            continue; // Skip adding the original event
+          }
+        }
+      }
+      
+      // For non-Project events or Projects outside the week range, add as-is
+      expanded.push(e);
+    }
+    
+    return expanded;
+  }, [events, days]);
   
   // Find today's index
   const today = new Date();
@@ -404,9 +489,46 @@ export default function DayAgenda({ date, events = [], onEventPress, onEventRigh
   }, [date]);
   
   return (
+    <View style={{ 
+      flex: 1, 
+      margin: 8,
+      ...(Platform.OS === 'web' && {
+        width: 'calc(100% - 16px)',
+        maxWidth: 'calc(100% - 16px)',
+      }),
+    }}>
+      <View style={{
+        flex: 1,
+        backgroundColor: '#FAFBFC',
+        overflow: 'visible',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        ...(Platform.OS === 'web' && {
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+        }),
+        ...(Platform.OS !== 'web' && {
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          elevation: 2,
+        }),
+        ...(Platform.OS === 'web' && {
+          width: '100%',
+          maxWidth: '100%',
+        }),
+      }}>
     <ScrollView 
       ref={scrollViewRef} 
-      style={{ flex: 1, backgroundColor: 'white' }}
+          style={{ 
+            flex: 1, 
+            backgroundColor: 'white',
+            ...(Platform.OS === 'web' && {
+              width: '100%',
+              maxWidth: '100%',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              minHeight: 0,
+            }),
+          }}
       contentContainerStyle={{ paddingBottom: 40 }}
       showsVerticalScrollIndicator={true}
     >
@@ -435,15 +557,18 @@ export default function DayAgenda({ date, events = [], onEventPress, onEventRigh
           >
             <DaySection
               day={day}
-              events={events}
+              events={expandedEvents}
               onEventPress={onEventPress}
               onEventRightClick={onEventRightClick}
               onEventComplete={onEventComplete}
               isTodayDate={isTodayDate}
+              children={children}
             />
           </View>
         );
       })}
     </ScrollView>
+      </View>
+    </View>
   );
 }

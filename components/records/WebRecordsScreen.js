@@ -66,13 +66,11 @@ export default function WebRecordsScreen({ familyId, navigation }) {
         } else if (apiError?.status !== 404) {
           // Only log non-404 errors
           if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-            console.warn('[WebRecordsScreen] API children error, trying fallback:', apiError);
           }
         }
       } catch (apiErr) {
         // API unavailable, try fallback
         if (typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production') {
-          console.warn('[WebRecordsScreen] API unavailable, using Supabase fallback');
         }
       }
       
@@ -93,7 +91,6 @@ export default function WebRecordsScreen({ familyId, navigation }) {
                                  error.message?.includes('permission') ||
                                  error.message?.includes('RLS');
           if (!isExpectedError) {
-            console.error('[WebRecordsScreen] Error loading children:', error);
           }
         setChildren([]);
       } else {
@@ -167,7 +164,6 @@ export default function WebRecordsScreen({ familyId, navigation }) {
       } catch (error) {
         // Only log unexpected errors (not 404s which are expected)
         if (error?.status !== 404) {
-          console.error('Unexpected error loading summary data:', error);
           setSummaryError(error.message);
         }
       } finally {
@@ -199,9 +195,9 @@ export default function WebRecordsScreen({ familyId, navigation }) {
     handleNavigate(`/records?tab=portfolio&child=${childId}`);
   };
 
-  const handleOpenExplore = (provider) => {
-    handleNavigate(`/explore?provider=${provider}`);
-  };
+  // const handleOpenExplore = (provider) => { // Archived - explore page removed
+  //   handleNavigate(`/explore?provider=${provider}`);
+  // };
 
   // Quick actions
   const handleUploadEvidence = () => {
@@ -243,7 +239,6 @@ export default function WebRecordsScreen({ familyId, navigation }) {
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
       } catch (error) {
-        console.error('Error generating transcript:', error);
         alert('Failed to generate transcript. Please try again.');
       }
     } else {
@@ -277,7 +272,6 @@ export default function WebRecordsScreen({ familyId, navigation }) {
         URL.revokeObjectURL(url);
       }
     } catch (err) {
-      console.error('Error exporting compliance packet:', err);
       alert('Failed to export compliance packet. Please try again.');
     }
   };
@@ -297,7 +291,7 @@ export default function WebRecordsScreen({ familyId, navigation }) {
       onOpenPlanner: handleOpenPlanner,
       onOpenAnalytics: handleOpenAnalytics,
       onOpenPortfolio: handleOpenPortfolio,
-      onOpenExplore: handleOpenExplore,
+      // onOpenExplore: handleOpenExplore, // Archived - explore page removed
       onUploadEvidence: handleUploadEvidence,
       onAddNote: handleAddNote,
       onRefresh: () => {
@@ -335,7 +329,7 @@ export default function WebRecordsScreen({ familyId, navigation }) {
       case 'attendance':
         return <AttendanceLogsTab {...commonProps} />;
       case 'courses':
-        return <CoursesSyllabiTab {...commonProps} onOpenExplore={handleOpenExplore} />;
+        return <CoursesSyllabiTab {...commonProps} /* onOpenExplore={handleOpenExplore} */ />; // Archived - explore page removed
       case 'notes':
         return <NotesTab {...commonProps} />;
       case 'timeline':

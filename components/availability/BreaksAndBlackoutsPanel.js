@@ -126,7 +126,6 @@ const BreaksAndBlackoutsPanel = ({
       
       Alert.alert('Success', 'Break added successfully');
     } catch (error) {
-      console.error('Error creating blackout:', error);
       Alert.alert('Error', error.message || 'Failed to create break');
     } finally {
       setSaving(false);
@@ -181,7 +180,6 @@ const BreaksAndBlackoutsPanel = ({
 
               onBlackoutDeleted();
             } catch (error) {
-              console.error('Error deleting blackout:', error);
               Alert.alert('Error', 'Failed to delete break');
             }
           },

@@ -35,10 +35,8 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
         
         if (hasAccessToken || hasRefreshToken || isRecoveryType) {
           setHasResetTokens(true);
-          console.log('Password reset tokens detected');
-        }
+}
       } catch (error) {
-        console.error('Error in password reset check:', error);
       }
     };
 
@@ -73,9 +71,6 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
 
     // Debug: Log the current URL to see what tokens we have
     if (typeof window !== 'undefined') {
-      console.log('Current URL:', window.location.href);
-      console.log('URL Hash:', window.location.hash);
-      console.log('URL Search:', window.location.search);
     }
 
     // Validate password
@@ -115,12 +110,8 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
       // First, try to get the current session and user
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       const { data: { user: currentUser } } = await supabase.auth.getUser();
-      
-      console.log('Current session:', session ? 'exists' : 'none');
-      console.log('Current user:', currentUser ? 'exists' : 'none');
-      
+
       if (sessionError) {
-        console.error('Session error:', sessionError);
         setErrorMessage('Unable to verify your session. Please try requesting a new reset link.');
         setLoading(false);
         return;
@@ -130,52 +121,43 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
       
       if ((session && session.user) || currentUser) {
         // We have a valid session or user, update password normally
-        console.log('Updating password with existing session/user...');
+
         updateResult = await supabase.auth.updateUser({
           password: newPassword
         });
       } else {
         // No session yet - this is common in password reset flows
         // We need to wait for the session to be established from the reset tokens
-        console.log('No session yet, waiting for reset tokens to establish session...');
-        
+
         // Wait a bit for Supabase to process the reset tokens
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Try to get session again
         const { data: { session: newSession } } = await supabase.auth.getSession();
         const { data: { user: newUser } } = await supabase.auth.getUser();
-        
-        console.log('After waiting - Session:', newSession ? 'exists' : 'none', 'User:', newUser ? 'exists' : 'none');
-        
+
         if (newSession && newSession.user) {
-          console.log('Session established, updating password...');
           updateResult = await supabase.auth.updateUser({
             password: newPassword
           });
         } else if (newUser) {
-          console.log('User exists but no session, updating password...');
           updateResult = await supabase.auth.updateUser({
             password: newPassword
           });
         } else {
           // Still no session - this might be a timing issue
-          console.log('Still no session, trying alternative approach...');
-          
+
           // Try to refresh the session first
           const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
           
           if (refreshError) {
-            console.log('Session refresh failed:', refreshError);
           } else if (refreshData.session) {
-            console.log('Session refreshed, updating password...');
             updateResult = await supabase.auth.updateUser({
               password: newPassword
             });
           } else {
                       // As a last resort, try to update password directly
-          console.log('Trying direct password update as last resort...');
-          
+
           // Try to parse the hash and use the tokens directly
           if (typeof window !== 'undefined' && window.location.hash) {
             const hashParams = new URLSearchParams(window.location.hash.substring(1));
@@ -183,7 +165,6 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
             const refreshToken = hashParams.get('refresh_token');
             
             if (accessToken) {
-              console.log('Found access token in hash, trying to use it...');
               // Try to set the session with the tokens from the hash
               const { data: setSessionData, error: setSessionError } = await supabase.auth.setSession({
                 access_token: accessToken,
@@ -191,9 +172,7 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
               });
               
               if (setSessionError) {
-                console.log('Failed to set session with tokens:', setSessionError);
               } else if (setSessionData.session) {
-                console.log('Session set successfully with tokens, updating password...');
                 updateResult = await supabase.auth.updateUser({
                   password: newPassword
                 });
@@ -203,7 +182,6 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
           
           // If we still don't have a result, try the direct update
           if (!updateResult) {
-            console.log('Trying direct password update...');
             updateResult = await supabase.auth.updateUser({
               password: newPassword
             });
@@ -214,14 +192,11 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
 
       // Check if we have a result from any of the attempts
       if (!updateResult) {
-        console.error('All password update attempts failed - no result returned');
         setErrorMessage('Unable to update password. Your reset link may have expired or is invalid. Please request a new password reset link.');
         return;
       }
 
       if (updateResult.error) {
-        console.error('Password update error:', updateResult.error);
-        
         // Provide more helpful error messages
         if (updateResult.error.message.includes('Auth session missing')) {
           setErrorMessage('Your reset link has expired or is invalid. Please request a new password reset link.');
@@ -232,7 +207,6 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
         handlePasswordResetSuccess();
       }
     } catch (error) {
-      console.error('Password reset exception:', error);
       setErrorMessage('An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);

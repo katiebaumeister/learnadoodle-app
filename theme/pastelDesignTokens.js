@@ -9,9 +9,9 @@ export const sensoryModes = {
     description: 'Soft gradients and gentle colors create a calming, supportive visual experience.',
     tokens: {
       // Backgrounds
-      bg: '#FAF9F7',
+      bg: '#FFFFFF',
       bgCanvas: '#1A1A1A', // Dark speckled background (like OS)
-      bgSubtle: '#F5F4F2',
+      bgSubtle: '#FFFFFF',
       surface: '#FFFFFF',
       card: '#FFFFFF',
       
@@ -167,7 +167,7 @@ export const sensoryModes = {
 // Typography
 export const typography = {
   fonts: {
-    display: '"Outfit", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    display: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     sans: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     mono: '"SF Mono", "Monaco", "Inconsolata", "Fira Code", "Droid Sans Mono", monospace',
   },

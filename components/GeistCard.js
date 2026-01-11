@@ -31,20 +31,20 @@ export default function GeistCard({
     backgroundColor: tokens.surface,
     borderColor: tokens.border,
     borderRadius: material.radius,
-    ...(Platform.OS === 'web' && material.shadow
-      ? {
-          boxShadow: isHovered && hoverable && variant !== 'base'
-            ? (isFloating ? '0 6px 16px rgba(0, 0, 0, 0.16)' : '0 4px 12px rgba(0, 0, 0, 0.12)')
-            : (isFloating ? '0 4px 12px rgba(0, 0, 0, 0.12)' : '0 2px 8px rgba(0, 0, 0, 0.08)'),
-        }
-      : material.shadow
-      ? {
-          shadowColor: tokens.text,
-          shadowOffset: { width: 0, height: isFloating ? 4 : 2 },
-          shadowOpacity: isFloating ? 0.12 : 0.08,
-          shadowRadius: isFloating ? 12 : 8,
-          elevation: isFloating ? 8 : 4,
-        }
+    ...(material.shadow
+      ? Platform.OS === 'web'
+        ? {
+            boxShadow: isHovered && hoverable && variant !== 'base'
+              ? (isFloating ? '0 6px 16px rgba(0, 0, 0, 0.16)' : '0 4px 12px rgba(0, 0, 0, 0.12)')
+              : (isFloating ? '0 4px 12px rgba(0, 0, 0, 0.12)' : '0 2px 8px rgba(0, 0, 0, 0.08)'),
+          }
+        : {
+            shadowColor: tokens.text,
+            shadowOffset: { width: 0, height: isFloating ? 4 : 2 },
+            shadowOpacity: isFloating ? 0.12 : 0.08,
+            shadowRadius: isFloating ? 12 : 8,
+            elevation: isFloating ? 8 : 4,
+          }
       : {}
     ),
     ...(isHovered && hoverable && variant !== 'base' && Platform.OS !== 'web' && {

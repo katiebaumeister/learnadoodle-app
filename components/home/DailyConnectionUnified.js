@@ -120,14 +120,12 @@ export default function DailyConnectionUnified({
       );
       
       if (error) {
-        console.error('[DailyConnectionUnified] Error loading starters:', error);
         generateFallbackConnections();
         return;
       }
 
       transformConnections(data);
     } catch (err) {
-      console.error('[DailyConnectionUnified] Error:', err);
       generateFallbackConnections();
     } finally {
       setConnectionsLoading(false);
@@ -157,7 +155,7 @@ export default function DailyConnectionUnified({
           if (err?.status === 404 || err?.message?.includes('404')) {
             return [];
           }
-          console.warn('Error loading notes for reflection:', err);
+
           return [];
         });
         
@@ -165,7 +163,6 @@ export default function DailyConnectionUnified({
       } catch (error) {
         // Don't log errors for missing endpoints
         if (error?.status !== 404 && !error?.message?.includes('404')) {
-          console.warn('Error loading notes for reflection:', error);
         }
         setNotes([]);
       }

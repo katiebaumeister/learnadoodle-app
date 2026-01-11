@@ -40,8 +40,8 @@ export const designTokens = {
   radius: 12,
   ring: '0 0 0 3px rgba(139,124,246,0.15)',
   fonts: {
-    display: '"Outfit", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    sans: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    display: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    sans: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
 };
 
@@ -98,13 +98,29 @@ export const baseCssLayer = `
   --ld-pastel-sky: #F0F9FF;
   --ld-pastel-rose: #FFF1F2;
   --ld-pastel-yellow: #FEFCE8;
+  
+  /* Liquid Glass Design Tokens */
+  --bg: #F6F7FB;
+  --panel: rgba(255,255,255,.72);
+  --panel-strong: rgba(255,255,255,.88);
+  --stroke: rgba(15,23,42,0.08);
+  --stroke-strong: rgba(17,24,39,.12);
+  --shadow: 0 16px 40px rgba(17,24,39,.10);
+  --shadow-soft: 0 10px 24px rgba(17,24,39,.08);
+  --shadow-subtle: 0 2px 8px rgba(17,24,39,.04);
+  --blur: 14px;
+  --radius-lg: 24px;
+  --radius-md: 20px;
+  --radius-sm: 16px;
+  --highlight: rgba(255, 255, 255, 0.6);
+  
   font-family: var(--ld-font-sans);
 }
 
 body {
   margin: 0;
   color: var(--ld-text);
-  background: var(--ld-bg);
+  background: var(--bg);
   font-family: var(--ld-font-sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -238,6 +254,60 @@ body {
   transform: scaleX(1);
 }
 
+/* Liquid Glass Classes */
+.glass {
+  background: var(--panel);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow-soft);
+  border-radius: var(--radius-lg);
+}
+
+.glass-strong {
+  background: var(--panel-strong);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow-soft);
+  border-radius: var(--radius-lg);
+}
+
+.glass-frame {
+  background: var(--bg);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-subtle);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-frame::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--highlight), transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.glass-surface {
+  background: #FFFFFF;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.sidebarWash {
+  background: radial-gradient(900px 500px at 0% 0%,
+    rgba(227,240,255,.8), transparent 55%),
+    radial-gradient(700px 420px at 0% 100%,
+    rgba(237,230,255,.7), transparent 55%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .btn,
   .btn::after,
@@ -273,5 +343,4 @@ export function getSubjectAccent(subject) {
     soft: designTokens.softAccents[resolved],
   };
 }
-
 

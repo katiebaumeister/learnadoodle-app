@@ -32,7 +32,6 @@ export default function InviteChildButton({ childId, childName, onInviteCreated 
         onInviteCreated(data);
       }
     } catch (error) {
-      console.error('Error creating child invite:', error);
       toast.push('Failed to create invite', 'error');
     } finally {
       setLoading(false);

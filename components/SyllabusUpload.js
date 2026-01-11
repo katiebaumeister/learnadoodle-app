@@ -91,7 +91,6 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, 
       if (error) throw error;
       setSubjects(data || []);
     } catch (error) {
-      console.error('Error fetching subjects:', error);
       Alert.alert('Error', 'Failed to load subjects');
     } finally {
       setLoadingSubjects(false);
@@ -117,13 +116,11 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, 
         .eq('family_id', profile.family_id);
 
       if (error) {
-        console.error('Error fetching subjects:', error);
         return;
       }
 
       setExistingSubjects(subjects || []);
     } catch (error) {
-      console.error('Error fetching subjects:', error);
     }
   };
 
@@ -155,28 +152,27 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, 
             .from('evidence')
             .getPublicUrl(fileName);
           
-          // Create upload record
-          const { data: uploadRecord, error: recordError } = await supabase
-            .from('uploads')
-            .insert({
-              family_id: familyId,
-              child_id: child?.id || null,
-              subject_id: selectedSubjectId || null,
-              filename: file.name,
-              url: urlData.publicUrl,
-              kind: 'syllabus',
-              bytes: file.size,
-              mime: file.type
-            })
-            .select()
-            .single();
+          // Create material record (replaces uploads table)
+          const { createFileMaterial } = await import('../lib/services/materialsClient');
+          const uploadRecord = await createFileMaterial({
+            familyId,
+            storagePath: fileName,
+            title: file.name,
+            mime: file.type,
+            bytes: file.size,
+            childId: child?.id || null,
+            subjectId: selectedSubjectId || null,
+            tags: ['role:syllabus'],
+            url: urlData.publicUrl,
+          });
           
-          if (recordError) throw recordError;
+          if (!uploadRecord || !uploadRecord.id) {
+            throw new Error('Failed to create material record');
+          }
           
           setUploadedFileId(uploadRecord.id);
           Alert.alert('File Uploaded', 'File uploaded successfully! Fill in the form and click Save.');
         } catch (error) {
-          console.error('Error uploading file:', error);
           Alert.alert('Error', 'Failed to upload file: ' + error.message);
         } finally {
           setSaving(false);
@@ -199,25 +195,22 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, 
       
       let finalUploadId = uploadedFileId;
       
-      // If using link method and no upload yet, create a minimal upload record
+      // If using link method and no upload yet, create a material record
       if (!finalUploadId && uploadMethod === 'link' && fileUrl.trim()) {
-        const { data: linkUpload, error: linkError } = await supabase
-          .from('uploads')
-          .insert({
-            family_id: familyId,
-            child_id: child?.id || null,
-            subject_id: selectedSubjectId,
-            filename: fileUrl,
-            url: fileUrl,
-            kind: 'syllabus',
-            bytes: 0,
-            mime: 'text/uri-list'
-          })
-          .select()
-          .single();
+        const { createMaterial } = await import('../lib/services/materialsClient');
+        const linkMaterial = await createMaterial({
+          familyId,
+          title: fileUrl,
+          type: 'other',
+          url: fileUrl,
+          subjectId: selectedSubjectId,
+          tags: ['role:syllabus'],
+        });
         
-        if (linkError) throw linkError;
-        finalUploadId = linkUpload.id;
+        if (!linkMaterial || !linkMaterial.id) {
+          throw new Error('Failed to create material record for link');
+        }
+        finalUploadId = linkMaterial.id;
       }
       
       if (!finalUploadId && uploadMethod !== 'text') {
@@ -250,7 +243,6 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, 
       resetForm();
       onClose();
     } catch (error) {
-      console.error('Error creating syllabus:', error);
       Alert.alert('Error', 'Failed to create syllabus: ' + error.message);
     } finally {
       setSaving(false);
@@ -292,9 +284,7 @@ export default function SyllabusUpload({ visible, onClose, onSyllabusProcessed, 
       setTimeout(() => {
         onClose();
       }, 1000);
-      
-    } catch (error) {
-      console.error('Error processing syllabus:', error);
+} catch (error) {
       Alert.alert('Error', 'Failed to process syllabus. Please try again.');
     } finally {
       setIsProcessing(false);

@@ -65,7 +65,6 @@ export default function WeeklyOverviewEmailModal({
         setError(result.error || 'Failed to generate preview');
       }
     } catch (err) {
-      console.error('[WeeklyOverviewEmailModal] Error:', err);
       setError(err.message || 'Failed to generate preview');
     } finally {
       setPreviewing(false);
@@ -113,7 +112,6 @@ export default function WeeklyOverviewEmailModal({
         setError(result.error || 'Failed to send email');
       }
     } catch (err) {
-      console.error('[WeeklyOverviewEmailModal] Error:', err);
       setError(err.message || 'Failed to send email');
     } finally {
       setSending(false);

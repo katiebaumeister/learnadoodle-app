@@ -91,7 +91,6 @@ export default function CoachTab({ familyId, children = [], userRole = 'parent' 
       );
 
       if (error) {
-        console.error('Coach conversation error:', error);
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: 'Sorry, I encountered an error. Please try again.',
@@ -107,7 +106,6 @@ export default function CoachTab({ familyId, children = [], userRole = 'parent' 
         }
       }
     } catch (err) {
-      console.error('Coach conversation exception:', err);
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: 'Sorry, I encountered an error. Please try again.',

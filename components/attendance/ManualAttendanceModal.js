@@ -69,7 +69,6 @@ export default function ManualAttendanceModal({
       }
       onClose();
     } catch (err) {
-      console.error('Error saving manual attendance:', err);
       setError(err.message || 'Failed to save attendance record');
     } finally {
       setLoading(false);

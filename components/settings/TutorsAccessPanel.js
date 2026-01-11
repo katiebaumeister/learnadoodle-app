@@ -32,7 +32,6 @@ export default function TutorsAccessPanel({ user }) {
       if (err) throw err;
       setFamily(data);
     } catch (err) {
-      console.error('Error loading family:', err);
       setError(err.message || 'Failed to load family info');
     } finally {
       setLoading(false);
@@ -76,7 +75,6 @@ export default function TutorsAccessPanel({ user }) {
       // Optionally refresh family members
       // await fetchFamilyMembers();
     } catch (err) {
-      console.error('Error inviting tutor:', err);
       setError(err.message || 'Failed to invite tutor');
       toast.push('Failed to invite tutor', 'error');
     } finally {
@@ -109,7 +107,6 @@ export default function TutorsAccessPanel({ user }) {
       setSelectedChildForInvite(null);
       toast.push('Child invite sent successfully!', 'success');
     } catch (err) {
-      console.error('Error inviting child:', err);
       setError(err.message || 'Failed to invite child');
       toast.push('Failed to invite child', 'error');
     } finally {
@@ -128,7 +125,6 @@ export default function TutorsAccessPanel({ user }) {
         Alert.alert('Invite Link', inviteResultUrl);
       }
     } catch (e) {
-      console.error('Failed to copy invite URL', e);
       toast.push('Failed to copy link', 'error');
     }
   };
@@ -158,14 +154,12 @@ export default function TutorsAccessPanel({ user }) {
       });
       toast.push('Tutor access updated', 'success');
     } catch (err) {
-      console.error('Error updating tutor scope:', err);
       setError(err.message || 'Failed to update tutor access');
       toast.push('Failed to update tutor access', 'error');
     } finally {
       setUpdatingTutorId(null);
     }
   };
-
 
   return (
     <View style={styles.container}>

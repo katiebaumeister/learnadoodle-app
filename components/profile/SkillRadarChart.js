@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Dimensions, ScrollView } from 'react-native';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
+import { designTokens } from '../../theme/designTokens';
 import { supabase } from '../../lib/supabase';
 import GeistCard from '../GeistCard';
 
@@ -222,17 +223,21 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   subtitle: {
     fontSize: 14,
+    fontFamily: designTokens.fonts.sans,
   },
   loading: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   emptyText: {
     textAlign: 'center',
     padding: spacing.xl,
+    fontFamily: designTokens.fonts.sans,
   },
   content: {
     flex: 1,
@@ -243,6 +248,7 @@ const styles = StyleSheet.create({
   categoryTitle: {
     fontSize: 18,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
     marginBottom: spacing.md,
   },
   skillsList: {
@@ -266,9 +272,11 @@ const styles = StyleSheet.create({
   skillName: {
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
   },
   skillSubject: {
     fontSize: 12,
+    fontFamily: designTokens.fonts.sans,
   },
   skillBar: {
     height: 8,
@@ -288,6 +296,7 @@ const styles = StyleSheet.create({
   skillValue: {
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
   },
   masteryBadge: {
     paddingHorizontal: spacing.xs,
@@ -297,6 +306,7 @@ const styles = StyleSheet.create({
   masteryText: {
     fontSize: 11,
     fontWeight: '500',
+    fontFamily: designTokens.fonts.sans,
     textTransform: 'capitalize',
   },
   summaryCard: {
@@ -305,6 +315,7 @@ const styles = StyleSheet.create({
   summaryTitle: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: designTokens.fonts.display,
     marginBottom: spacing.md,
   },
   summaryGrid: {
@@ -319,8 +330,10 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 24,
     fontWeight: '700',
+    fontFamily: designTokens.fonts.display,
   },
   summaryLabel: {
     fontSize: 12,
+    fontFamily: designTokens.fonts.sans,
   },
 });

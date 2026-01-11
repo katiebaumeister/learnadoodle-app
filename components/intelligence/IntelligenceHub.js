@@ -14,6 +14,9 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
+  Modal,
+  Animated,
+  Linking,
 } from 'react-native';
 import { 
   Brain, 
@@ -27,6 +30,7 @@ import {
   Filter,
   X,
   ChevronRight,
+  Send,
   Flame,
   Target,
   Package,
@@ -37,12 +41,19 @@ import {
   BookOpen,
   Heart,
   Activity,
+  Users,
+  Zap,
+  Shield,
+  ChevronDown,
+  Search,
+  MapPin,
+  Star,
+  Compass,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
+import { designTokens } from '../../theme/designTokens';
 
 // Import unified UI components
-import PageHeader from '../ui/PageHeader';
-import TabBar from '../ui/TabBar';
 import AppContainer from '../ui/AppContainer';
 import SectionHeader from '../ui/SectionHeader';
 import Card from '../ui/Card';
@@ -71,13 +82,110 @@ import WebChildAffirmationTab from '../child/tabs/WebChildAffirmationTab';
 import WebChildUpdatesTab from '../child/tabs/WebChildUpdatesTab';
 import WebChildGrowthTab from '../child/tabs/WebChildGrowthTab';
 
+// Sample Question Item Component
+function SampleQuestionItem({ question, onPress }) {
+  const [isHovered, setIsHovered] = useState(false);
+  
+  // Capitalize first letter of question (handle edge cases)
+  const capitalizedQuestion = question && question.length > 0
+    ? question.charAt(0).toUpperCase() + question.slice(1)
+    : question;
+  
+  return (
+    <TouchableOpacity
+      style={[
+        styles.sampleQuestionItem,
+        isHovered && styles.sampleQuestionItemHovered,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.7}
+      {...(Platform.OS === 'web' && {
+        onMouseEnter: () => setIsHovered(true),
+        onMouseLeave: () => setIsHovered(false),
+      })}
+    >
+      <Text style={styles.sampleQuestionText}>{capitalizedQuestion}</Text>
+    </TouchableOpacity>
+  );
+}
+
+// Context Bar Component - Always Expanded Filters
+function ContextBar({
+  children = [],
+  selectedChildren,
+  onChildrenChange,
+  timeframe,
+  onTimeframeChange,
+  activeCategory,
+  onCategoryChange,
+  onChildToggle,
+}) {
+  const categories = [
+    { id: 'connection', label: 'Connection', icon: Users },
+    { id: 'identity', label: 'Identity', icon: UserCircle },
+    { id: 'strengths', label: 'Strengths', icon: Star },
+    { id: 'curiosity', label: 'Curiosity', icon: Lightbulb },
+    { id: 'motivation', label: 'Motivation', icon: Target },
+    { id: 'energy', label: 'Energy', icon: Zap },
+    { id: 'growth', label: 'Growth', icon: Activity },
+    { id: 'application', label: 'Application', icon: BookOpen },
+    { id: 'innovation', label: 'Innovation', icon: Sparkles },
+  ];
+
+  return (
+    <View style={styles.contextBarWrapper}>
+      {/* Filter Chips Row - Always Visible */}
+      <View style={styles.filterChipsRow}>
+        {/* Interest Section */}
+        <View style={styles.filterChipGroup}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            style={styles.filterChipScroll}
+            contentContainerStyle={styles.filterChipScrollContent}
+          >
+            {categories.map(category => {
+              const CategoryIcon = category.icon;
+              const isActive = activeCategory === category.id;
+              return (
+                <TouchableOpacity
+                  key={category.id}
+                  style={[
+                    styles.filterChip,
+                    isActive && styles.filterChipActive
+                  ]}
+                  onPress={() => onCategoryChange(category.id)}
+                >
+                  {CategoryIcon && (
+                    <CategoryIcon 
+                      size={14} 
+                      color={isActive ? '#4285f4' : colors.textSecondary} 
+                      style={{ marginRight: 6 }}
+                    />
+                  )}
+                  <Text style={[
+                    styles.filterChipText,
+                    isActive && styles.filterChipTextActive
+                  ]}>
+                    {category.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function IntelligenceHub({ familyId, children = [] }) {
   console.log('[IntelligenceHub] Component initializing, familyId:', familyId);
   
   // State management
-  const [activeTab, setActiveTab] = useState('planner'); // 'planner', 'analytics', 'insights', 'forecasting', 'coach', 'advanced-insights', 'templates', 'workload', 'reviews'
   const [selectedChildren, setSelectedChildren] = useState('all'); // string[] | 'all'
-  const [timeframe, setTimeframe] = useState('thisWeek'); // 'thisWeek' | 'twoWeeks' | 'thisMonth' | 'custom'
+  const [timeframe, setTimeframe] = useState('thisWeek'); // 'thisWeek' | 'twoWeeks' | 'thisMonth' | 'thisYear'
+  const [activeCategory, setActiveCategory] = useState('connection'); // 'connection' | 'social' | 'innovation' | 'wellbeing'
   const [activeTool, setActiveTool] = useState(null); // null | 'planWeek' | 'plan2Weeks' | 'reschedule' | 'packWeek' | 'catchUp' | 'whatIf' | 'summarize' | 'planYear'
   
   // Planner AI chat state
@@ -101,21 +209,6 @@ export default function IntelligenceHub({ familyId, children = [] }) {
     const readQueryParams = () => {
       const params = new URLSearchParams(window.location.search);
       
-      // Read tab param (can be 'planner-ai', 'analytics', or 'insights')
-      // Note: URL might have ?tab=intelligence&tab=analytics (double tab param)
-      // We want the second one if it exists, otherwise the first
-      const tabParams = params.getAll('tab');
-      const tabParam = tabParams.length > 1 ? tabParams[1] : tabParams[0];
-      if (tabParam === 'planner-ai' || tabParam === 'analytics' || tabParam === 'insights') {
-        const tabMap = {
-          'planner-ai': 'planner',
-          'analytics': 'analytics',
-          'insights': 'insights',
-        };
-        const newTab = tabMap[tabParam];
-        setActiveTab(prev => prev !== newTab ? newTab : prev);
-      }
-      
       // Read child param
       const childParam = params.get('child');
       if (childParam) {
@@ -135,7 +228,7 @@ export default function IntelligenceHub({ familyId, children = [] }) {
       
       // Read timeframe param
       const timeframeParam = params.get('timeframe');
-      if (timeframeParam === 'thisWeek' || timeframeParam === 'twoWeeks' || timeframeParam === 'thisMonth' || timeframeParam === 'custom') {
+      if (timeframeParam === 'thisWeek' || timeframeParam === 'twoWeeks' || timeframeParam === 'thisMonth' || timeframeParam === 'thisYear') {
         setTimeframe(prev => prev !== timeframeParam ? timeframeParam : prev);
       }
       
@@ -207,12 +300,11 @@ export default function IntelligenceHub({ familyId, children = [] }) {
         start.setDate(1);
         const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
         return { start, end };
-      case 'custom':
-        // For custom, you'd need a date picker - for now, default to this week
-        const dayOfWeek3 = start.getDay();
-        const diff3 = start.getDate() - dayOfWeek3 + (dayOfWeek3 === 0 ? -6 : 1);
-        start.setDate(diff3);
-        return { start, end: new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000) };
+      case 'thisYear':
+        start.setMonth(0);
+        start.setDate(1);
+        const yearEnd = new Date(start.getFullYear(), 11, 31);
+        return { start, end: yearEnd };
       default:
         return { start, end: new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000) };
     }
@@ -240,26 +332,6 @@ export default function IntelligenceHub({ familyId, children = [] }) {
     }
   };
 
-  // Handle quick action click
-  const handleQuickAction = (toolId) => {
-    // Pre-fill chat input with action
-    const actionLabels = {
-      'planWeek': 'Plan my week',
-      'plan2Weeks': 'Plan next 2 weeks',
-      'reschedule': 'Reschedule missed work',
-      'packWeek': 'Pack week',
-      'catchUp': 'Catch up on missed work',
-      'whatIf': 'What-if analysis',
-      'summarize': 'Summarize progress',
-      'planYear': 'Plan the year',
-    };
-    
-    const label = actionLabels[toolId] || toolId;
-    setChatInput(label);
-    
-    // Set active tool to open modal
-    setActiveTool(toolId);
-  };
 
   // Handle modal close - cleanup URL and state
   const handleModalClose = () => {
@@ -281,8 +353,6 @@ export default function IntelligenceHub({ familyId, children = [] }) {
   const handleModalComplete = ({ proposedChanges }) => {
     if (proposedChanges && proposedChanges.length > 0) {
       setProposedChanges(proposedChanges);
-      // Switch to Planner AI tab to show changes in Change Preview
-      setActiveTab('planner');
     }
     handleModalClose();
   };
@@ -349,246 +419,53 @@ export default function IntelligenceHub({ familyId, children = [] }) {
     }
   };
 
-  // Quick actions configuration
-  const quickActions = [
-    { id: 'planWeek', label: 'Plan My Week', icon: Calendar },
-    { id: 'plan2Weeks', label: 'Plan Next 2 Weeks', icon: Calendar },
-    { id: 'reschedule', label: 'Reschedule Missed Work', icon: RotateCcw },
-    { id: 'packWeek', label: 'Pack Week', icon: Package },
-    { id: 'catchUp', label: 'Catch Up', icon: TrendingUp },
-    { id: 'whatIf', label: 'What-If Analysis', icon: BarChart3 },
-    { id: 'summarize', label: 'Summarize Progress', icon: FileText },
-    { id: 'planYear', label: 'Plan the Year', icon: Target },
-  ];
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <PageHeader
-        title="Intelligence Hub"
-        subtitle="AI-powered planning, analytics, and insights"
-        icon={Brain}
-        iconColor={colors.indigo}
-      />
-
-      {/* Shared Filters Section - Above Tabs */}
-      <View style={styles.filtersSection}>
-        {/* Quick Actions Row */}
-        <View style={styles.quickActionsRow}>
-          {quickActions.map(action => (
-            <TouchableOpacity
-              key={action.id}
-              style={styles.quickActionButton}
-              onPress={() => handleQuickAction(action.id)}
-            >
-              <action.icon size={16} color={colors.indigo} />
-              <Text style={styles.quickActionLabel}>{action.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Children Filter Chips */}
-        <View style={styles.filterRow}>
-          <Text style={styles.filterLabel}>Children:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-            <TouchableOpacity
-              style={[
-                styles.chip,
-                selectedChildren === 'all' && styles.chipActive
-              ]}
-              onPress={() => setSelectedChildren('all')}
-            >
-              <Text style={[
-                styles.chipText,
-                selectedChildren === 'all' && styles.chipTextActive
-              ]}>
-                All
-              </Text>
-            </TouchableOpacity>
-            {children.map(child => {
-              const isSelected = selectedChildren === 'all' || 
-                (Array.isArray(selectedChildren) && selectedChildren.includes(child.id));
-              return (
-                <TouchableOpacity
-                  key={child.id}
-                  style={[styles.chip, isSelected && styles.chipActive]}
-                  onPress={() => handleChildToggle(child.id)}
-                >
-                  <Text style={[
-                    styles.chipText,
-                    isSelected && styles.chipTextActive
-                  ]}>
-                    {child.first_name || child.name}
-                  </Text>
-                  {isSelected && selectedChildren !== 'all' && (
-                    <X size={12} color={colors.white} style={{ marginLeft: 4 }} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* Timeframe Selector */}
-        <View style={styles.filterRow}>
-          <Text style={styles.filterLabel}>Timeframe:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-            {[
-              { value: 'thisWeek', label: 'This Week' },
-              { value: 'twoWeeks', label: '2 Weeks' },
-              { value: 'thisMonth', label: 'This Month' },
-              { value: 'custom', label: 'Custom' },
-            ].map(option => (
-              <TouchableOpacity
-                key={option.value}
-                style={[
-                  styles.chip,
-                  timeframe === option.value && styles.chipActive
-                ]}
-                onPress={() => setTimeframe(option.value)}
-              >
-                <Text style={[
-                  styles.chipText,
-                  timeframe === option.value && styles.chipTextActive
-                ]}>
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      </View>
-
-      {/* Section Tabs */}
-      <TabBar
-        tabs={[
-          { id: 'planner', label: 'Planner AI', icon: Calendar },
-          { id: 'affirmations', label: 'Affirmations', icon: Heart },
-          { id: 'updates', label: 'Updates', icon: Activity },
-          { id: 'growth', label: 'Growth', icon: TrendingUp },
-          { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-          { id: 'insights', label: 'Insights', icon: Lightbulb },
-          { id: 'forecasting', label: 'Forecasting', icon: TrendingUp },
-          { id: 'coach', label: 'Coach', icon: UserCircle },
-          { id: 'advanced-insights', label: 'Advanced Insights', icon: Layers },
-          { id: 'templates', label: 'Templates', icon: BookOpen },
-          { id: 'workload', label: 'Workload', icon: BarChart3 },
-          { id: 'reviews', label: 'Reviews', icon: RotateCcw },
-        ]}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
-
       {/* Content */}
-      <AppContainer paddingVertical={20}>
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {activeTab === 'planner' && (
-          <PlannerAITab
-            chatMessages={chatMessages}
-            chatInput={chatInput}
-            onChatInputChange={setChatInput}
-            onSendMessage={handleSendMessage}
-            selectedChildren={selectedChildren}
+      <View style={styles.contentWrapper}>
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContentContainer}
+      >
+        <View style={styles.contentInner}>
+          <IntelligenceAskGrid
+            familyId={familyId}
+            selectedChildren={resolvedChildIds}
+            children={children}
             timeframe={timeframe}
-            proposedChanges={proposedChanges}
-            familyId={familyId}
-            chatLoading={chatLoading}
-            chatError={chatError}
-          />
-        )}
-
-        {activeTab === 'affirmations' && (
-          <AffirmationsTab
-            familyId={familyId}
-            children={children}
-            selectedChildren={resolvedChildIds}
-          />
-        )}
-
-        {activeTab === 'updates' && (
-          <UpdatesTab
-            familyId={familyId}
-            children={children}
-            selectedChildren={resolvedChildIds}
-          />
-        )}
-
-        {activeTab === 'growth' && (
-          <GrowthTab
-            familyId={familyId}
-            children={children}
-            selectedChildren={resolvedChildIds}
-          />
-        )}
-
-        {activeTab === 'analytics' && (
-          <AnalyticsTab
-            familyId={familyId}
-            selectedChildren={resolvedChildIds}
             dateRange={dateRange}
-            onPlanYear={() => setActiveTool('planYear')}
+            activeCategory={activeCategory}
+            onCategoryChange={setActiveCategory}
+            propSelectedChildren={selectedChildren}
+            onChildrenChange={setSelectedChildren}
+            onTimeframeChange={setTimeframe}
+            onChildToggle={handleChildToggle}
           />
-        )}
-
-        {activeTab === 'insights' && (
-          <InsightsTab
-            familyId={familyId}
-            selectedChildren={resolvedChildIds}
-            dateRange={dateRange}
-            onGenerateDigest={() => setActiveTool('summarize')}
-            onApplyInsightChanges={(changes) => {
-              if (changes && changes.length > 0) {
-                setProposedChanges(changes);
+        </View>
+      </ScrollView>
+      
+      {/* Privacy Note - Fixed at bottom */}
+      <View style={styles.privacyNoteContainer}>
+        <Text style={styles.privacyNoteText}>
+          Learnadoodle never shares personal data.{' '}
+          <Text
+            style={styles.privacyNoteLink}
+            onPress={() => {
+              const url = 'https://learnadoodle.com/legal';
+              if (Platform.OS === 'web') {
+                window.open(url, '_blank');
+              } else {
+                Linking.openURL(url);
               }
             }}
-          />
-        )}
-
-        {activeTab === 'forecasting' && (
-          <TermForecastingDashboard
-            familyId={familyId}
-            selectedChildIds={resolvedChildIds.length > 0 ? resolvedChildIds : null}
-            children={children}
-          />
-        )}
-
-        {activeTab === 'coach' && (
-          <CoachTab
-            familyId={familyId}
-            children={children}
-            userRole="parent"
-          />
-        )}
-
-        {activeTab === 'advanced-insights' && (
-          <AdvancedInsightsTab
-            familyId={familyId}
-            children={children}
-            selectedChildId={resolvedChildIds.length === 1 ? resolvedChildIds[0] : null}
-          />
-        )}
-
-        {activeTab === 'templates' && (
-          <TemplateGenerationTab
-            familyId={familyId}
-          />
-        )}
-
-        {activeTab === 'workload' && (
-          <WorkloadBalancingTab
-            familyId={familyId}
-            children={children}
-          />
-        )}
-
-        {activeTab === 'reviews' && (
-          <ReviewRecommendationsTab
-            familyId={familyId}
-            children={children}
-          />
-        )}
-      </ScrollView>
-      </AppContainer>
+          >
+            Learn more
+          </Text>
+        </Text>
+      </View>
+      </View>
 
       {/* Conditional Modals - Properly Hooked Up with onComplete handlers */}
       <>
@@ -606,6 +483,8 @@ export default function IntelligenceHub({ familyId, children = [] }) {
         <CatchUpModal
           visible={true}
           familyId={familyId}
+          title="Catch Up"
+          description="Analyze gaps between subjects' required minutes and actual scheduled time, then generate catch-up sessions to meet requirements."
           onClose={handleModalClose}
           onComplete={handleModalComplete}
         />
@@ -615,7 +494,22 @@ export default function IntelligenceHub({ familyId, children = [] }) {
         <CatchUpModal
           visible={true}
           familyId={familyId}
+          title={activeTool === 'reschedule' ? "Reschedule Missed Work" : activeTool === 'planWeek' ? "Plan My Week" : "Plan Next 2 Weeks"}
+          description={
+            activeTool === 'reschedule'
+              ? "Select specific missed events and move them to new available time slots."
+              : activeTool === 'planWeek'
+              ? "Fill your upcoming week with scheduled learning activities from your backlog."
+              : "Fill your upcoming 2 weeks with scheduled learning activities from your backlog."
+          }
           onClose={handleModalClose}
+          onOpenScheduleRules={() => {
+            // Dispatch event that WebLayout can listen to
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('openScheduleRules'));
+            }
+            handleModalClose();
+          }}
           onComplete={handleModalComplete}
         />
       )}
@@ -640,103 +534,6 @@ export default function IntelligenceHub({ familyId, children = [] }) {
 
       {/* Note: What-If Analysis modal would go here when component is available */}
       </>
-    </View>
-  );
-}
-
-// Planner AI Tab Component
-function PlannerAITab({
-  chatMessages,
-  chatInput,
-  onChatInputChange,
-  onSendMessage,
-  selectedChildren,
-  timeframe,
-  proposedChanges = [],
-  familyId,
-  chatLoading = false,
-  chatError = null,
-}) {
-  return (
-    <View style={styles.tabContent}>
-      {/* Two-column layout: Chat (2/3) | Change Preview (1/3) */}
-      <View style={styles.plannerGrid}>
-        {/* Left 2/3 - Planner AI Chat */}
-        <View style={styles.chatColumn}>
-          <Card variant="default" padding="base" style={styles.chatSection}>
-            <SectionHeader
-              title="Planner AI"
-              icon={Sparkles}
-              iconColor={colors.indigo}
-            />
-            <View style={styles.chatContainer}>
-              {chatMessages.length === 0 ? (
-                <EmptyState
-                  icon={Sparkles}
-                  title="Start a conversation to plan your week"
-                  description='Try: "Plan my week" or "Reschedule missed work"'
-                  size="default"
-                />
-              ) : (
-                <ScrollView style={styles.chatMessages}>
-                  {chatMessages.map((msg, idx) => (
-                    <View
-                      key={idx}
-                      style={[
-                        styles.chatMessage,
-                        msg.role === 'user' ? styles.chatMessageUser : styles.chatMessageAssistant
-                      ]}
-                    >
-                      <Text style={styles.chatMessageText}>{msg.content}</Text>
-                    </View>
-                  ))}
-                </ScrollView>
-              )}
-              
-              {chatError && (
-                <View style={styles.chatError}>
-                  <AlertTriangle size={14} color={colors.red} />
-                  <Text style={styles.chatErrorText}>{chatError}</Text>
-                </View>
-              )}
-              <View style={styles.chatInputContainer}>
-                <TextInput
-                  style={styles.chatInput}
-                  placeholder="Ask the planner AI..."
-                  value={chatInput}
-                  onChangeText={onChatInputChange}
-                  onSubmitEditing={onSendMessage}
-                  multiline
-                  editable={!chatLoading}
-                />
-                <TouchableOpacity
-                  style={[styles.chatSendButton, chatLoading && styles.chatSendButtonDisabled]}
-                  onPress={onSendMessage}
-                  disabled={chatLoading}
-                >
-                  {chatLoading ? (
-                    <ActivityIndicator size="small" color={colors.white} />
-                  ) : (
-                    <MessageSquare size={18} color={colors.white} />
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Card>
-        </View>
-
-        {/* Right 1/3 - Change Preview */}
-        <View style={styles.previewColumn}>
-          <ChangePreviewPanel 
-            changes={proposedChanges} 
-            onApplyChanges={(changes) => {
-              // Changes are cleared in ChangePreviewPanel after successful apply
-              setProposedChanges([]);
-            }}
-            familyId={familyId}
-          />
-        </View>
-      </View>
     </View>
   );
 }
@@ -852,6 +649,389 @@ function ChangePreviewPanel({ changes = [], onApplyChanges, familyId }) {
         </>
       )}
     </Card>
+  );
+}
+
+// Intelligence Ask Grid Component
+function IntelligenceAskGrid({
+  familyId,
+  selectedChildren,
+  children = [],
+  timeframe,
+  dateRange,
+  activeCategory,
+  onCategoryChange,
+  propSelectedChildren,
+  onChildrenChange,
+  onTimeframeChange,
+  onChildToggle,
+}) {
+  const [askInput, setAskInput] = useState('');
+  const [askLoading, setAskLoading] = useState(false);
+  const [askResponse, setAskResponse] = useState(null);
+  const [askError, setAskError] = useState(null);
+  const textInputRef = useRef(null);
+
+  // Handle ask submission
+  const handleAskSubmit = async () => {
+    if (!askInput.trim() || askLoading) return;
+    
+    const question = askInput.trim();
+    setAskLoading(true);
+    setAskError(null);
+    setAskResponse(null);
+    
+    try {
+      // Call plannerAIChat API with the question
+      // The backend will gather:
+      // - Child data from onboarding (children table)
+      // - Progress on events (events table with status, outcomes)
+      // - Upcoming events/assignments (events and assignments tables)
+      // - General education recommendations
+      const { data, error } = await plannerAIChat(
+        familyId,
+        selectedChildren,
+        dateRange,
+        [{ role: 'user', content: question }]
+      );
+      
+      if (error) {
+        console.error('[IntelligenceAskGrid] Ask API error:', error);
+        setAskError(error.message || 'Failed to get AI response');
+        return;
+      }
+      
+      if (data) {
+        // Store the response
+        const responseText = data.assistant_message || data.response || 'I\'ve analyzed your question.';
+        setAskResponse({
+          question,
+          answer: responseText,
+          proposedChanges: data.proposed_changes || [],
+          insights: data.insights || [],
+        });
+        
+        // Clear the input after successful submission
+        setAskInput('');
+      }
+    } catch (err) {
+      console.error('[IntelligenceAskGrid] Ask exception:', err);
+      setAskError(err.message || 'Failed to submit question');
+    } finally {
+      setAskLoading(false);
+    }
+  };
+
+  // Remove focus outline on web and style placeholder
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const style = document.createElement('style');
+      style.textContent = `
+        #intelligence-ask-input:focus {
+          outline: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        #intelligence-ask-input {
+          outline: none !important;
+          border: none !important;
+          box-shadow: none !important;
+        }
+        #intelligence-ask-input::placeholder {
+          font-family: "League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+          font-weight: 700 !important;
+          text-transform: uppercase !important;
+        }
+      `;
+      document.head.appendChild(style);
+      return () => {
+        document.head.removeChild(style);
+      };
+    }
+  }, []);
+
+  // Get selected child name for question personalization
+  const selectedChild = children.find(c => selectedChildren.includes(c.id));
+  const childName = selectedChild?.first_name || selectedChild?.name || 'your child';
+
+  // Format timeframe label
+  const timeframeLabels = {
+    'thisWeek': 'This Week',
+    'twoWeeks': '2 Weeks',
+    'thisMonth': 'This Month',
+    'thisYear': 'This Year',
+  };
+  const timeframeLabel = timeframeLabels[timeframe] || 'This Week';
+
+  // Category configuration
+  const categories = [
+    {
+      id: 'connection',
+      label: 'Connection',
+      description: 'Family dynamics, motivation, trust',
+      icon: Users,
+      placeholder: 'Ask about trust, resistance, or family dynamics…',
+    },
+    {
+      id: 'identity',
+      label: 'Identity',
+      description: 'Self-awareness, values, personal growth',
+      icon: UserCircle,
+      placeholder: 'Ask about self-awareness, values, or personal identity…',
+    },
+    {
+      id: 'strengths',
+      label: 'Strengths',
+      description: 'Natural talents, abilities, capabilities',
+      icon: Star,
+      placeholder: 'Ask about natural talents, abilities, or strengths…',
+    },
+    {
+      id: 'curiosity',
+      label: 'Curiosity',
+      description: 'Interests, questions, exploration',
+      icon: Lightbulb,
+      placeholder: 'Ask about interests, questions, or curiosity…',
+    },
+    {
+      id: 'motivation',
+      label: 'Motivation',
+      description: 'Drivers, goals, aspirations',
+      icon: Target,
+      placeholder: 'Ask about drivers, goals, or motivation…',
+    },
+    {
+      id: 'energy',
+      label: 'Energy',
+      description: 'Vitality, stamina, engagement levels',
+      icon: Zap,
+      placeholder: 'Ask about energy levels, vitality, or engagement…',
+    },
+    {
+      id: 'growth',
+      label: 'Growth',
+      description: 'Development, improvement, evolution',
+      icon: Activity,
+      placeholder: 'Ask about development, improvement, or growth…',
+    },
+    {
+      id: 'application',
+      label: 'Application',
+      description: 'Practical use, relevance, connections',
+      icon: BookOpen,
+      placeholder: 'Ask about practical applications or real-world connections…',
+    },
+    {
+      id: 'innovation',
+      label: 'Innovation',
+      description: 'Curiosity, projects, creative momentum',
+      icon: Sparkles,
+      placeholder: 'Ask about projects, curiosity, or creative momentum…',
+    },
+  ];
+
+  const activeCategoryData = categories.find(c => c.id === activeCategory);
+
+  // Sample questions by category
+  const sampleQuestions = {
+    connection: [
+      `Who does ${childName} seem most energized by when learning—alone, with you, or with others?`,
+      `When ${childName} struggles, what kind of support helps them feel safe rather than pressured?`,
+      `Does ${childName} seem more confident when learning feels shared or independent?`,
+      `Who could be a positive learning role model for ${childName} right now?`,
+      `How connected does ${childName} feel to the people involved in their learning week?`,
+    ],
+    identity: [
+      `How does ${childName} talk about themselves when they succeed—or when they don't?`,
+      `Does this subject strengthen ${childName}'s confidence, or quietly undermine it?`,
+      `What labels might ${childName} be giving themselves that you'd want to gently rewrite?`,
+      `Where is ${childName} starting to see themselves as "good at something"?`,
+      `How can you reflect back a version of ${childName} that feels capable and growing?`,
+    ],
+    strengths: [
+      `What strengths is ${childName} showing that might not be captured by grades?`,
+      `Which skills seem to come most naturally to ${childName} across subjects?`,
+      `How could you help ${childName} notice what they're already doing well?`,
+      `What patterns do you see in how ${childName} solves problems?`,
+      `How might these strengths support ${childName}'s future interests or confidence?`,
+    ],
+    curiosity: [
+      `What topic has ${childName} been asking unexpected questions about lately?`,
+      `What fun fact could you share at lunch that connects to today's biology block?`,
+      `Which subjects spark curiosity without you having to push?`,
+      `What would ${childName} explore more if there were no expectations attached?`,
+      `How could you follow ${childName}'s curiosity just a little further this week?`,
+    ],
+    motivation: [
+      `What actually motivates ${childName}—praise, progress, autonomy, or novelty?`,
+      `When motivation drops, what's usually happening underneath?`,
+      `Is ${childName} more driven by finishing tasks or understanding ideas?`,
+      `What goal would feel meaningful to them, not just to you?`,
+      `How can you encourage effort without making success feel conditional?`,
+    ],
+    energy: [
+      `When does ${childName} seem most alert and engaged during the day?`,
+      `Which parts of the schedule seem to drain their energy the fastest?`,
+      `Is ${childName}'s learning pace matching their attention span right now?`,
+      `What signs tell you ${childName} needs a break before they ask for one?`,
+      `How could the week be adjusted to protect ${childName}'s energy?`,
+    ],
+    growth: [
+      `Where has ${childName} grown that you might not have noticed at first?`,
+      `What challenge feels just right for stretching ${childName} right now?`,
+      `How does ${childName} respond emotionally to mistakes or setbacks?`,
+      `What progress would reassure you that things are moving in the right direction?`,
+      `How can you celebrate growth without comparing it to others?`,
+    ],
+    application: [
+      `Where might ${childName} encounter this learning outside of school?`,
+      `How could you connect today's lesson to something ${childName} already loves?`,
+      `What real-world problem could this subject help ${childName} understand?`,
+      `How might this learning support ${childName}'s future independence?`,
+      `What story could you tell that makes today's work feel meaningful?`,
+    ],
+    innovation: [
+      `How could ${childName} express what they've learned in a creative way?`,
+      `What project might help ${childName} feel proud of their thinking?`,
+      `How could two of ${childName}'s interests be combined into one activity?`,
+      `What would learning look like if curiosity led instead of the schedule?`,
+      `How can you help ${childName} see learning as something they create, not just complete?`,
+    ],
+  };
+
+  const currentQuestions = sampleQuestions[activeCategory] || [];
+
+  return (
+    <View style={styles.askGridContainer}>
+      {/* Ask Input Box */}
+      <View style={styles.askInputSection}>
+        <TouchableOpacity
+          style={styles.askInputContainer}
+          onPress={() => textInputRef.current?.focus()}
+          activeOpacity={1}
+        >
+          <TextInput
+            ref={textInputRef}
+            style={[
+              styles.askInput,
+              Platform.OS === 'web' && {
+                outline: 'none !important',
+                border: 'none !important',
+                boxShadow: 'none !important',
+                WebkitAppearance: 'none',
+                MozAppearance: 'none',
+                WebkitFocusRingColor: 'transparent',
+              },
+            ]}
+            placeholder="ASK ANYTHING"
+            placeholderTextColor={colors.muted}
+            value={askInput}
+            onChangeText={setAskInput}
+            onSubmitEditing={handleAskSubmit}
+            returnKeyType="search"
+            {...(Platform.OS === 'web' && {
+              nativeID: 'intelligence-ask-input',
+            })}
+          />
+          {askInput.length === 0 ? (
+            <View style={styles.askIconContainer}>
+              <Search size={18} color={colors.muted} />
+            </View>
+          ) : (
+            <View style={styles.askActionsContainer}>
+              <TouchableOpacity
+                onPress={handleAskSubmit}
+                style={styles.askSendButton}
+                disabled={askLoading}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                {askLoading ? (
+                  <ActivityIndicator size="small" color={colors.indigo || '#4285f4'} />
+                ) : (
+                  <Send size={18} color={colors.indigo || '#4285f4'} />
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* Note about AI responses */}
+      <View style={styles.askNoteContainer}>
+        <Text style={styles.askNoteText}>
+          Note: Responses get better as more data is added and progress is completed.
+        </Text>
+      </View>
+
+      {/* Category Chips */}
+      <ContextBar
+        children={children}
+        selectedChildren={propSelectedChildren}
+        onChildrenChange={onChildrenChange}
+        timeframe={timeframe}
+        onTimeframeChange={onTimeframeChange}
+        activeCategory={activeCategory}
+        onCategoryChange={onCategoryChange}
+        onChildToggle={onChildToggle}
+      />
+      
+      {/* Sample Questions Section */}
+      {currentQuestions.length > 0 && (
+        <View style={styles.sampleQuestionsSection}>
+          <View style={styles.sampleQuestionsList}>
+            {currentQuestions.map((question, idx) => (
+              <View key={idx}>
+                <SampleQuestionItem
+                  question={question}
+                  onPress={() => setAskInput(question)}
+                />
+                {idx < currentQuestions.length - 1 && (
+                  <View style={styles.sampleQuestionDivider} />
+                )}
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Ask Response Section */}
+      {askError && (
+        <View style={styles.askResponseSection}>
+          <View style={styles.askErrorContainer}>
+            <AlertTriangle size={16} color={colors.red} />
+            <Text style={styles.askErrorText}>{askError}</Text>
+          </View>
+        </View>
+      )}
+
+      {askResponse && (
+        <View style={styles.askResponseSection}>
+          <Card variant="elevated" padding="base">
+            <View style={styles.askResponseHeader}>
+              <Text style={styles.askResponseQuestion}>{askResponse.question}</Text>
+              <TouchableOpacity
+                onPress={() => setAskResponse(null)}
+                style={styles.askResponseClose}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <X size={16} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.askResponseAnswer}>{askResponse.answer}</Text>
+            {askResponse.proposedChanges && askResponse.proposedChanges.length > 0 && (
+              <View style={styles.askResponseChanges}>
+                <Text style={styles.askResponseChangesTitle}>Proposed Changes:</Text>
+                {askResponse.proposedChanges.map((change, idx) => (
+                  <Text key={idx} style={styles.askResponseChangeItem}>
+                    • {change.description || JSON.stringify(change)}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </Card>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -1168,34 +1348,149 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  contentWrapper: {
+    flex: 1,
+    paddingVertical: 24,
+    position: 'relative',
+    zIndex: 1,
+    backgroundColor: 'transparent',
+  },
+  pageHeader: {
+    width: '100%',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  pageHeaderContent: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    paddingHorizontal: 48,
+    paddingTop: 24,
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pageSubtitle: {
+    fontSize: 14,
+    color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  contextBarWrapper: {
+    width: '100%',
+    backgroundColor: 'transparent',
+    position: 'relative',
+    zIndex: 1,
+  },
+  contextBarButton: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    backgroundColor: colors.background,
+    paddingHorizontal: 48,
+    paddingVertical: 12,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        boxSizing: 'border-box',
+      },
+    }),
+  },
+  contextBarText: {
+    fontSize: 14,
+    color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  filterChipsRow: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    backgroundColor: colors.background,
+    paddingLeft: 0,
+    paddingRight: 0,
+    paddingTop: 12,
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  filterChipGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+    width: '100%',
+  },
+  filterChipGroupLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    minWidth: 90,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  filterChipScroll: {
+    width: '100%',
+  },
+  filterChipScrollContent: {
+    alignItems: 'center',
+    paddingRight: 48,
+    paddingLeft: 0,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+    marginRight: 8,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  filterChipActive: {
+    borderColor: '#4285f4',
+    backgroundColor: '#e8f0fe',
+  },
+  filterChipText: {
+    fontSize: 13,
+    color: colors.text,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  filterChipTextActive: {
+    color: '#4285f4',
+    fontWeight: '800',
   },
   filtersSection: {
     backgroundColor: colors.white,
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-  },
-  quickActionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  quickActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  quickActionLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.text,
   },
   filterRow: {
     flexDirection: 'row',
@@ -1216,26 +1511,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: colors.background,
+    paddingVertical: 4,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#dadce0',
+    backgroundColor: '#ffffff',
     marginRight: 8,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
   },
   chipActive: {
-    backgroundColor: colors.indigo,
-    borderColor: colors.indigo,
+    borderColor: '#4285f4',
+    backgroundColor: '#e8f0fe',
   },
   chipText: {
-    fontSize: 13,
-    color: colors.text,
+    fontSize: 12,
+    color: '#3c4043',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   chipTextActive: {
-    color: colors.white,
+    color: '#4285f4',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   content: {
     flex: 1,
+    position: 'relative',
+    zIndex: 1,
+  },
+  scrollContentContainer: {
+    paddingBottom: 80, // Space for fixed privacy note at bottom
+  },
+  contentInner: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    paddingHorizontal: 48,
+    position: 'relative',
+    zIndex: 1,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   tabContent: {
     gap: 20,
@@ -1574,6 +1896,302 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: colors.indigo,
+  },
+  // Intelligence Ask Grid Styles
+  askGridContainer: {
+    flex: 1,
+    paddingBottom: 24,
+    width: '100%',
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#dadce0',
+    backgroundColor: '#ffffff',
+    marginRight: 8,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  categoryChipActive: {
+    borderColor: '#4285f4',
+    backgroundColor: '#e8f0fe',
+  },
+  categoryChipText: {
+    fontSize: 12,
+    fontFamily: designTokens.fonts.sans,
+    color: colors.textSecondary,
+    fontWeight: '400',
+  },
+  categoryChipTextActive: {
+    color: '#4285f4',
+    fontWeight: '500',
+  },
+  sampleQuestionsSection: {
+    marginBottom: 32,
+  },
+  sampleQuestionsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sampleQuestionsList: {
+    gap: 0,
+  },
+  sampleQuestionItem: {
+    paddingVertical: 16,
+    paddingHorizontal: 0,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        transition: 'opacity 0.2s ease',
+      },
+    }),
+  },
+  sampleQuestionItemHovered: {
+    opacity: 0.7,
+  },
+  sampleQuestionDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 0,
+  },
+  sampleQuestionText: {
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '400',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askInputSection: {
+    marginBottom: 16,
+  },
+  askResponseSection: {
+    marginTop: 24,
+    marginBottom: 24,
+  },
+  askErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    backgroundColor: colors.red + '10',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.red + '30',
+  },
+  askErrorText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.red,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askResponseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    gap: 12,
+  },
+  askResponseQuestion: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askResponseClose: {
+    padding: 4,
+  },
+  askResponseAnswer: {
+    fontSize: 15,
+    color: colors.text,
+    lineHeight: 22,
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askResponseChanges: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  askResponseChangesTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askResponseChangeItem: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  conversationalCenterContainer: {
+    backgroundColor: '#fafafa',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  conversationalCenter: {
+    marginBottom: 0,
+  },
+  conversationalCenterTitle: {
+    marginBottom: 8,
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  conversationalCenterDescription: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: '#ffffff',
+    height: 40,
+    ...Platform.select({
+      web: {
+        cursor: 'text',
+      },
+    }),
+  },
+  askInput: {
+    flex: 1,
+    fontSize: 16,
+    color: colors.text,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  askIconContainer: {
+    padding: 4,
+  },
+  askActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  askSendButton: {
+    padding: 4,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
+  },
+  askClearButton: {
+    padding: 4,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
+  },
+  askNoteContainer: {
+    marginTop: -6,
+    marginLeft: 12,
+    marginBottom: 24,
+  },
+  askNoteText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: 'italic',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  privacyNoteContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 16,
+    paddingBottom: 24,
+    paddingHorizontal: 48,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.background,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  privacyNoteText: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  privacyNoteLink: {
+    color: colors.indigo || '#4285f4',
+    textDecorationLine: 'underline',
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
+  },
+  quickActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  quickAction: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  quickActionText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
 
