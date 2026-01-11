@@ -20,7 +20,7 @@ import WebContent from './WebContent';
 import SettingsModal from './settings/SettingsModal';
 import SearchModal from './SearchModal';
 import GlobalNewMenu from './GlobalNewMenu';
-import AppShell from './layout/AppShell';
+import AppShell from './layout/AppShell.js';
 import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
 import EventModal from './events/EventModal';
