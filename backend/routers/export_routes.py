@@ -89,6 +89,13 @@ class CaregiverPacketInput(BaseModel):
     include_progress: bool = True
     include_materials: bool = True
 
+class ReportCardExportInput(BaseModel):
+    child_id: str
+    term: str
+    grades: List[Dict[str, Any]]
+    behavior_comment: str = ""
+    format: str = Field(default="pdf", description="'pdf' or 'docx'")
+
 # ============================================================
 # Helper Functions
 # ============================================================
@@ -1161,6 +1168,9 @@ async def export_attendance_log(
             "check_in_time, check_out_time, total_minutes, note"
         ).eq("child_id", child_id).gte("check_in_time", range_start.isoformat()).lte("check_in_time", range_end.isoformat()).order("check_in_time").execute()
 
+        attendance_records = attendance_res.data if attendance_res and attendance_res.data else []
+        checkin_records = checkin_res.data if checkin_res and checkin_res.data else []
+
         if format == "pdf":
             if not REPORTLAB_AVAILABLE:
                 raise HTTPException(status_code=503, detail="PDF generation requires reportlab library")
@@ -1169,8 +1179,8 @@ async def export_attendance_log(
                 child_name,
                 range_start,
                 range_end,
-                attendance_res.data or [],
-                checkin_res.data or []
+                attendance_records,
+                checkin_records
             )
             
             filename = f"attendance_log_{child_name}_{range_start}_{range_end}.pdf"
@@ -1191,12 +1201,12 @@ async def export_attendance_log(
             writer.writerow(["Date", "Status", "Minutes", "Hours", "Note"])
             
             total_minutes = 0
-            for record in attendance_res.data or []:
-                day_date = record.get("day_date", "")
-                status = record.get("status", "")
-                minutes = record.get("minutes", 0) or 0
-                hours = round(minutes / 60, 2)
-                note = record.get("note", "") or ""
+            for record in attendance_records:
+                day_date = record.get("day_date", "") if record else ""
+                status = record.get("status", "") if record else ""
+                minutes = record.get("minutes", 0) or 0 if record else 0
+                hours = round(minutes / 60, 2) if minutes > 0 else 0
+                note = record.get("note", "") or "" if record else ""
                 total_minutes += minutes
                 
                 writer.writerow([day_date, status, minutes, hours, note])
@@ -1247,9 +1257,9 @@ def generate_attendance_log_pdf(
     story.append(Spacer(1, 0.3*inch))
 
     # Summary
-    total_days = len([a for a in attendance_records if a.get("status") in ["present", "partial"]])
-    total_minutes = sum(a.get("minutes", 0) for a in attendance_records)
-    total_hours = round(total_minutes / 60, 2)
+    total_days = len([a for a in attendance_records if a and a.get("status") in ["present", "partial"]])
+    total_minutes = sum(a.get("minutes", 0) or 0 for a in attendance_records if a)
+    total_hours = round(total_minutes / 60, 2) if total_minutes > 0 else 0
 
     summary_data = [
         ["Metric", "Value"],
@@ -1277,11 +1287,14 @@ def generate_attendance_log_pdf(
     if attendance_records:
         log_data = [["Date", "Status", "Minutes", "Hours", "Note"]]
         for record in attendance_records:
-            day_date = record.get("day_date", "")
-            status = record.get("status", "").capitalize()
-            minutes = record.get("minutes", 0) or 0
+            if not record:
+                continue
+            day_date = record.get("day_date", "") if record else ""
+            status_str = record.get("status", "") if record else ""
+            status = status_str.capitalize() if status_str else ""
+            minutes = record.get("minutes", 0) or 0 if record else 0
             hours = round(minutes / 60, 2) if minutes > 0 else "—"
-            note = record.get("note", "")[:40] or "—"
+            note = (record.get("note", "") or "")[:40] if record and record.get("note") else "—"
 
             log_data.append([day_date, status, str(minutes), str(hours), note])
 
@@ -1977,3 +1990,379 @@ def generate_caregiver_packet_pdf(
     doc.build(story)
     return buffer
 
+
+# ============================================================
+# Learning Log Export
+# ============================================================
+
+@router.post("/learning-log")
+async def export_learning_log(
+    child_id: str = Query(...),
+    range_start: date = Query(...),
+    range_end: date = Query(...),
+    format: str = Query(default="pdf"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Export learning log (lessons, activities, materials, assignments) for a child
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id:
+            raise HTTPException(status_code=403, detail="No family associated with user")
+
+        supabase = get_admin_client()
+
+        # Get child info
+        child_res = supabase.table("children").select("id, first_name").eq("id", child_id).eq("family_id", family_id).single().execute()
+        if not child_res.data:
+            raise HTTPException(status_code=404, detail="Child not found")
+        child_name = child_res.data.get("first_name") or "Student"
+
+        # Get all events for the child in the date range
+        events_res = supabase.table("events").select(
+            "id, title, description, subject_id, unit, grade, start_ts, child_id, event_type"
+        ).eq("child_id", child_id).eq("family_id", family_id).is_("deleted_at", None).gte("start_ts", range_start.isoformat()).lte("start_ts", range_end.isoformat()).order("start_ts", desc=True).execute()
+
+        events = events_res.data or []
+        
+        # Separate by type
+        lessons = [e for e in events if e.get("event_type") == "Lesson"]
+        activities = [e for e in events if e.get("event_type") == "Activity"]
+        assignments = [e for e in events if e.get("event_type") in ["Project", "Exam", "Assignment", "Assessment"]]
+
+        # Get subject names
+        subject_ids = list(set([e.get("subject_id") for e in events if e.get("subject_id")]))
+        subjects_map = {}
+        if subject_ids:
+            subjects_res = supabase.table("subject").select("id, name").in_("id", subject_ids).execute()
+            subjects_map = {s["id"]: s["name"] for s in (subjects_res.data or [])}
+
+        # Get materials for the family (we can't filter by child via material_children due to RLS)
+        # Get materials created in the date range for the family
+        materials_res = supabase.table("materials").select("id, title, type, subject_id, created_at").eq("family_id", family_id).is_("deleted_at", None).gte("created_at", range_start.isoformat()).lte("created_at", range_end.isoformat()).execute()
+        materials = materials_res.data or []
+
+        if format == "pdf":
+            if not REPORTLAB_AVAILABLE:
+                raise HTTPException(status_code=503, detail="PDF generation requires reportlab library")
+            
+            buffer = generate_learning_log_pdf(
+                child_name,
+                range_start,
+                range_end,
+                lessons,
+                activities,
+                assignments,
+                materials,
+                subjects_map
+            )
+            
+            filename = f"learning_log_{child_name}_{range_start}_{range_end}.pdf"
+            return StreamingResponse(
+                io.BytesIO(buffer.getvalue()),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        else:
+            # DOCX format - for now return PDF (can be enhanced later)
+            if not REPORTLAB_AVAILABLE:
+                raise HTTPException(status_code=503, detail="PDF generation requires reportlab library")
+            
+            buffer = generate_learning_log_pdf(
+                child_name,
+                range_start,
+                range_end,
+                lessons,
+                activities,
+                assignments,
+                materials,
+                subjects_map
+            )
+            
+            filename = f"learning_log_{child_name}_{range_start}_{range_end}.pdf"
+            return StreamingResponse(
+                io.BytesIO(buffer.getvalue()),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("export.learning_log.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error generating learning log: {str(e)}")
+
+@router.post("/report-card")
+async def export_report_card(
+    body: ReportCardExportInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Export report card for a child
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id:
+            raise HTTPException(status_code=403, detail="No family associated with user")
+
+        supabase = get_admin_client()
+
+        # Get child info
+        child_res = supabase.table("children").select("id, first_name").eq("id", body.child_id).eq("family_id", family_id).single().execute()
+        if not child_res.data:
+            raise HTTPException(status_code=404, detail="Child not found")
+        child_name = child_res.data.get("first_name") or "Student"
+
+        if body.format == "pdf":
+            if not REPORTLAB_AVAILABLE:
+                raise HTTPException(status_code=503, detail="PDF generation requires reportlab library")
+            
+            buffer = generate_report_card_pdf(
+                child_name,
+                body.term,
+                body.grades,
+                body.behavior_comment
+            )
+            
+            sanitized_term = body.term.replace(" ", "_").replace("/", "_").lower()
+            filename = f"report_card_{child_name}_{sanitized_term}.pdf"
+            return StreamingResponse(
+                io.BytesIO(buffer.getvalue()),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        else:
+            # DOCX format - for now return PDF (can be enhanced later)
+            if not REPORTLAB_AVAILABLE:
+                raise HTTPException(status_code=503, detail="PDF generation requires reportlab library")
+            
+            buffer = generate_report_card_pdf(
+                child_name,
+                body.term,
+                body.grades,
+                body.behavior_comment
+            )
+            
+            sanitized_term = body.term.replace(" ", "_").replace("/", "_").lower()
+            filename = f"report_card_{child_name}_{sanitized_term}.pdf"
+            return StreamingResponse(
+                io.BytesIO(buffer.getvalue()),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("export.report_card.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error generating report card: {str(e)}")
+
+def generate_report_card_pdf(
+    child_name: str,
+    term: str,
+    grades: List[Dict[str, Any]],
+    behavior_comment: str
+) -> io.BytesIO:
+    """Generate report card PDF"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=22,
+        textColor=reportlab_colors.HexColor('#1e40af'),
+        spaceAfter=10,
+        alignment=TA_CENTER,
+    )
+    story.append(Paragraph("REPORT CARD", title_style))
+    story.append(Paragraph(f"<b>Student:</b> {child_name}", styles['Normal']))
+    story.append(Paragraph(f"<b>School:</b> Homeschool", styles['Normal']))
+    story.append(Paragraph(f"<b>Term:</b> {term}", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+
+    # Grades Section
+    if grades:
+        story.append(Paragraph("<b>Grades</b>", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        
+        grade_data = [["Subject", "Grade"]]
+        for grade_item in grades:
+            subject_name = grade_item.get("subjectName", "Unknown")
+            grade = grade_item.get("grade", "N/A")
+            grade_data.append([subject_name, grade])
+        
+        grade_table = Table(grade_data, colWidths=[4*inch, 2*inch])
+        grade_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.HexColor('#1e40af')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 11),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        story.append(grade_table)
+        story.append(Spacer(1, 0.3*inch))
+    else:
+        story.append(Paragraph("<i>No grades available for this term.</i>", styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
+
+    # Behavior Comments Section
+    if behavior_comment:
+        story.append(Paragraph("<b>Behavior Comments</b>", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph(behavior_comment, styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+def generate_learning_log_pdf(
+    child_name: str,
+    range_start: date,
+    range_end: date,
+    lessons: List[Dict[str, Any]],
+    activities: List[Dict[str, Any]],
+    assignments: List[Dict[str, Any]],
+    materials: List[Dict[str, Any]],
+    subjects_map: Dict[str, str]
+) -> io.BytesIO:
+    """Generate formatted learning log PDF"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=reportlab_colors.HexColor('#1e40af'),
+        spaceAfter=10,
+    )
+    story.append(Paragraph("Learning Log", title_style))
+    story.append(Paragraph(f"<b>Student:</b> {child_name}", styles['Normal']))
+    story.append(Paragraph(f"<b>Date Range:</b> {range_start.strftime('%B %d, %Y')} - {range_end.strftime('%B %d, %Y')}", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+
+    # Lessons Section
+    if lessons:
+        story.append(Paragraph(f"<b>Lessons ({len(lessons)})</b>", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        for lesson in lessons:
+            title = lesson.get("title", "Untitled Lesson")
+            subject_name = subjects_map.get(lesson.get("subject_id", ""), "")
+            unit = lesson.get("unit", "")
+            notes = lesson.get("description", "") or lesson.get("notes", "")
+            date_str = ""
+            if lesson.get("start_ts"):
+                try:
+                    date_obj = datetime.fromisoformat(lesson["start_ts"].replace("Z", "+00:00"))
+                    date_str = date_obj.strftime("%B %d, %Y")
+                except:
+                    pass
+            
+            lesson_text = f"<b>{title}</b>"
+            if date_str:
+                lesson_text += f"<br/>Date: {date_str}"
+            if subject_name:
+                lesson_text += f"<br/>Subject: {subject_name}"
+            if unit:
+                lesson_text += f"<br/>Unit: {unit}"
+            if notes:
+                lesson_text += f"<br/>{notes[:200]}{'...' if len(notes) > 200 else ''}"
+            
+            story.append(Paragraph(lesson_text, styles['Normal']))
+            story.append(Spacer(1, 0.15*inch))
+        story.append(Spacer(1, 0.3*inch))
+
+    # Activities Section
+    if activities:
+        story.append(Paragraph(f"<b>Educational Activities ({len(activities)})</b>", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        for activity in activities:
+            title = activity.get("title", "Untitled Activity")
+            subject_name = subjects_map.get(activity.get("subject_id", ""), "")
+            notes = activity.get("description", "") or activity.get("notes", "")
+            date_str = ""
+            if activity.get("start_ts"):
+                try:
+                    date_obj = datetime.fromisoformat(activity["start_ts"].replace("Z", "+00:00"))
+                    date_str = date_obj.strftime("%B %d, %Y")
+                except:
+                    pass
+            
+            activity_text = f"<b>{title}</b>"
+            if date_str:
+                activity_text += f"<br/>Date: {date_str}"
+            if subject_name:
+                activity_text += f"<br/>Subject: {subject_name}"
+            if notes:
+                activity_text += f"<br/>{notes[:200]}{'...' if len(notes) > 200 else ''}"
+            
+            story.append(Paragraph(activity_text, styles['Normal']))
+            story.append(Spacer(1, 0.15*inch))
+        story.append(Spacer(1, 0.3*inch))
+
+    # Materials Section
+    if materials:
+        story.append(Paragraph(f"<b>Materials Used ({len(materials)})</b>", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        for material in materials:
+            title = material.get("title", "Untitled Material")
+            material_type = material.get("type", "Other")
+            subject_name = subjects_map.get(material.get("subject_id", ""), "")
+            
+            material_text = f"<b>{title}</b>"
+            material_text += f"<br/>Type: {material_type}"
+            if subject_name:
+                material_text += f"<br/>Subject: {subject_name}"
+            
+            story.append(Paragraph(material_text, styles['Normal']))
+            story.append(Spacer(1, 0.15*inch))
+        story.append(Spacer(1, 0.3*inch))
+
+    # Assignments Section
+    if assignments:
+        story.append(Paragraph(f"<b>Assignments ({len(assignments)})</b>", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        for assignment in assignments:
+            title = assignment.get("title", "Untitled Assignment")
+            subject_name = subjects_map.get(assignment.get("subject_id", ""), "")
+            grade = assignment.get("grade", "")
+            notes = assignment.get("description", "") or assignment.get("notes", "")
+            date_str = ""
+            if assignment.get("start_ts"):
+                try:
+                    date_obj = datetime.fromisoformat(assignment["start_ts"].replace("Z", "+00:00"))
+                    date_str = date_obj.strftime("%B %d, %Y")
+                except:
+                    pass
+            
+            assignment_text = f"<b>{title}</b>"
+            if date_str:
+                assignment_text += f"<br/>Date: {date_str}"
+            if subject_name:
+                assignment_text += f"<br/>Subject: {subject_name}"
+            if grade:
+                assignment_text += f"<br/>Grade: {grade}"
+            if notes:
+                assignment_text += f"<br/>{notes[:200]}{'...' if len(notes) > 200 else ''}"
+            
+            story.append(Paragraph(assignment_text, styles['Normal']))
+            story.append(Spacer(1, 0.15*inch))
+        story.append(Spacer(1, 0.3*inch))
+
+    doc.build(story)
+    return buffer

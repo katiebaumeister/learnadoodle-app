@@ -1,16 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { X, BookOpen } from 'lucide-react';
+import { X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
-const COMMON_SUBJECTS = [
-  'Math', 'ELA', 'English', 'Science', 'Social Studies', 'History',
-  'Art', 'Music', 'PE', 'Health', 'World Language', 'Spanish', 'French',
-  'Technology', 'Coding', 'Handwriting', 'Reading', 'Writing'
-];
 
 export default function AddSubjectModal({ 
   visible, 
@@ -21,8 +16,9 @@ export default function AddSubjectModal({
   defaultSubjectName = null
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
-  const [selectedChildId, setSelectedChildId] = useState(defaultChildId || '');
-  const [grade, setGrade] = useState('');
+  const [selectedChildIds, setSelectedChildIds] = useState([]);
+  const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
+  const [credits, setCredits] = useState('');
   const [notes, setNotes] = useState('');
   const [children, setChildren] = useState([]);
   const [loadingChildren, setLoadingChildren] = useState(false);
@@ -37,17 +33,25 @@ export default function AddSubjectModal({
         setSubjectName(defaultSubjectName);
       }
       if (defaultChildId) {
-        setSelectedChildId(defaultChildId);
+        setSelectedChildIds([defaultChildId]);
       }
     } else if (!visible) {
       // Reset form when modal closes
       setSubjectName('');
-      setSelectedChildId(defaultChildId || '');
-      setGrade('');
+      setSelectedChildIds([]);
+      setGrade(GRADE_OPTIONS[0] || '');
+      setCredits('');
       setNotes('');
       setError(null);
     }
   }, [visible, defaultChildId, defaultSubjectName]);
+
+  // Set default to first child when children are loaded (if no defaultChildId and no children selected)
+  useEffect(() => {
+    if (visible && children.length > 0 && selectedChildIds.length === 0 && !defaultChildId) {
+      setSelectedChildIds([children[0].id]);
+    }
+  }, [children, visible, defaultChildId, selectedChildIds.length]);
 
   const fetchChildren = async () => {
     try {
@@ -139,24 +143,29 @@ export default function AddSubjectModal({
         throw new Error('User not authenticated');
       }
 
-      // Create subject record
-      const subjectData = {
-        family_id: familyId,
-        name: subjectName.trim(),
-        grade: grade || null,
-        notes: notes.trim() || null,
-      };
+      // Create subject records - one for each selected child, or one family-wide if none selected
+      const subjectsToCreate = selectedChildIds.length > 0
+        ? selectedChildIds.map(childId => ({
+            family_id: familyId,
+            name: subjectName.trim(),
+            child_id: childId,
+            grade: grade || null,
+            credits: credits ? parseFloat(credits) : null,
+            notes: notes.trim() || null,
+          }))
+        : [{
+            family_id: familyId,
+            name: subjectName.trim(),
+            child_id: null,
+            grade: grade || null,
+            credits: credits ? parseFloat(credits) : null,
+            notes: notes.trim() || null,
+          }];
 
-      // Add child_id if a child is selected
-      if (selectedChildId) {
-        subjectData.child_id = selectedChildId;
-      }
-
-      const { data: newSubject, error: insertError } = await supabase
+      const { data: newSubjects, error: insertError } = await supabase
         .from('subject')
-        .insert(subjectData)
-        .select()
-        .single();
+        .insert(subjectsToCreate)
+        .select();
 
       if (insertError) {
         // Check if it's a duplicate subject error
@@ -167,14 +176,16 @@ export default function AddSubjectModal({
       }
 
       // Success
+      const subjectCount = newSubjects?.length || 1;
       if (toast && toast.push) {
         toast.push(`Subject "${subjectName}" added successfully!`, 'success');
       } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
         alert(`Subject "${subjectName}" added successfully!`);
       }
       
-      if (onSubjectAdded) {
-        onSubjectAdded(newSubject);
+      if (onSubjectAdded && newSubjects && newSubjects.length > 0) {
+        // Call callback with first subject (or all if needed)
+        onSubjectAdded(newSubjects[0]);
       }
       
       // Close modal after a brief delay
@@ -199,24 +210,15 @@ export default function AddSubjectModal({
     >
       <View style={styles.overlay}>
         <View style={styles.modal}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <View style={styles.titleRow}>
-                <BookOpen size={24} color={colors.accent} />
-                <Text style={styles.title}>Add Subject</Text>
-              </View>
-              <Text style={styles.subtitle}>Create a new subject for your family</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              accessibilityLabel="Close modal"
-              accessibilityRole="button"
-            >
-              <X size={20} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
+          {/* Close Button */}
+          <TouchableOpacity
+            style={styles.closeButtonTop}
+            onPress={onClose}
+            accessibilityLabel="Close modal"
+            accessibilityRole="button"
+          >
+            <X size={20} color="#6b7280" />
+          </TouchableOpacity>
 
           {/* Content - Scrollable */}
           <ScrollView 
@@ -232,7 +234,9 @@ export default function AddSubjectModal({
 
             {/* Subject Name */}
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Subject Name *</Text>
+              <Text style={styles.label}>
+                Subject Name <Text style={{ color: '#dc2626' }}>*</Text>
+              </Text>
               <TextInput
                 style={styles.input}
                 value={subjectName}
@@ -241,22 +245,6 @@ export default function AddSubjectModal({
                 placeholderTextColor="#9ca3af"
                 autoFocus={!defaultSubjectName}
               />
-              
-              {/* Quick suggestions */}
-              <View style={styles.suggestionsContainer}>
-                <Text style={styles.suggestionsLabel}>Quick add:</Text>
-                <View style={styles.suggestionsRow}>
-                  {COMMON_SUBJECTS.slice(0, 9).map((subject) => (
-                    <TouchableOpacity
-                      key={subject}
-                      style={styles.suggestionChip}
-                      onPress={() => setSubjectName(subject)}
-                    >
-                      <Text style={styles.suggestionChipText}>{subject}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
             </View>
 
             {/* Child Selection (Optional) */}
@@ -273,37 +261,32 @@ export default function AddSubjectModal({
                   showsHorizontalScrollIndicator={false}
                   style={styles.childrenScroll}
                 >
-                  <TouchableOpacity
-                    style={[
-                      styles.childChip,
-                      !selectedChildId && styles.childChipSelected
-                    ]}
-                    onPress={() => setSelectedChildId('')}
-                  >
-                    <Text style={[
-                      styles.childChipText,
-                      !selectedChildId && styles.childChipTextSelected
-                    ]}>
-                      All Children
-                    </Text>
-                  </TouchableOpacity>
-                  {children.map((child) => (
-                    <TouchableOpacity
-                      key={child.id}
-                      style={[
-                        styles.childChip,
-                        selectedChildId === child.id && styles.childChipSelected
-                      ]}
-                      onPress={() => setSelectedChildId(child.id)}
-                    >
-                      <Text style={[
-                        styles.childChipText,
-                        selectedChildId === child.id && styles.childChipTextSelected
-                      ]}>
-                        {child.first_name || child.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {children.map((child) => {
+                    const isSelected = selectedChildIds.includes(child.id);
+                    return (
+                      <TouchableOpacity
+                        key={child.id}
+                        style={[
+                          styles.childChip,
+                          isSelected && styles.childChipSelected
+                        ]}
+                        onPress={() => {
+                          if (isSelected) {
+                            setSelectedChildIds(selectedChildIds.filter(id => id !== child.id));
+                          } else {
+                            setSelectedChildIds([...selectedChildIds, child.id]);
+                          }
+                        }}
+                      >
+                        <Text style={[
+                          styles.childChipText,
+                          isSelected && styles.childChipTextSelected
+                        ]}>
+                          {child.first_name || child.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </ScrollView>
               </View>
             ) : null}
@@ -316,20 +299,6 @@ export default function AddSubjectModal({
                 showsHorizontalScrollIndicator={false}
                 style={styles.gradeScroll}
               >
-                <TouchableOpacity
-                  style={[
-                    styles.gradeChip,
-                    !grade && styles.gradeChipSelected
-                  ]}
-                  onPress={() => setGrade('')}
-                >
-                  <Text style={[
-                    styles.gradeChipText,
-                    !grade && styles.gradeChipTextSelected
-                  ]}>
-                    Any
-                  </Text>
-                </TouchableOpacity>
                 {GRADE_OPTIONS.map((g) => (
                   <TouchableOpacity
                     key={g}
@@ -348,6 +317,28 @@ export default function AddSubjectModal({
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+            </View>
+
+            {/* Credits (Optional) */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Credits (Optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={credits}
+                onChangeText={(text) => {
+                  // Allow only numbers and decimal point
+                  const numericValue = text.replace(/[^0-9.]/g, '');
+                  // Prevent multiple decimal points
+                  const parts = numericValue.split('.');
+                  const filteredValue = parts.length > 2 
+                    ? parts[0] + '.' + parts.slice(1).join('')
+                    : numericValue;
+                  setCredits(filteredValue);
+                }}
+                placeholder="e.g., 0.5, 1.0, 1.5"
+                placeholderTextColor="#9ca3af"
+                keyboardType="numeric"
+              />
             </View>
 
             {/* Notes (Optional) */}
@@ -404,7 +395,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     maxWidth: 600,
     width: '100%',
-    maxHeight: '90vh',
+    maxHeight: '85vh',
     ...Platform.select({
       web: {
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
@@ -418,61 +409,28 @@ const styles = StyleSheet.create({
       },
     }),
     overflow: 'hidden',
+    position: 'relative',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingHorizontal: 32,
-    paddingTop: 32,
-    paddingBottom: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fafbfc',
-  },
-  headerContent: {
-    flex: 1,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    fontFamily: Platform.select({
-      web: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      default: 'System',
-    }),
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '400',
-    fontFamily: Platform.select({
-      web: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      default: 'System',
-    }),
-  },
-  closeButton: {
+  closeButtonTop: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
     width: 32,
     height: 32,
     borderRadius: 16,
     backgroundColor: '#f3f4f6',
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 16,
+    zIndex: 10,
   },
   scrollContainer: {
     flex: 1,
     backgroundColor: '#ffffff',
   },
   scrollContent: {
-    padding: 32,
-    paddingBottom: 100,
+    padding: 24,
+    paddingTop: 60,
+    paddingBottom: 24,
   },
   errorContainer: {
     backgroundColor: '#fef2f2',
@@ -488,7 +446,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   formGroup: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   label: {
     fontSize: 14,
@@ -509,32 +467,6 @@ const styles = StyleSheet.create({
     minHeight: 80,
     paddingTop: 12,
   },
-  suggestionsContainer: {
-    marginTop: 12,
-  },
-  suggestionsLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 8,
-  },
-  suggestionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  suggestionChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  suggestionChipText: {
-    fontSize: 12,
-    color: '#374151',
-    fontWeight: '500',
-  },
   loadingText: {
     fontSize: 14,
     color: '#6b7280',
@@ -546,24 +478,24 @@ const styles = StyleSheet.create({
   childChip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+    borderRadius: 20,
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     marginRight: 8,
   },
   childChipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: '#e8f0fe',
+    borderColor: '#4285f4',
   },
   childChipText: {
     fontSize: 14,
     color: '#374151',
-    fontWeight: '500',
+    fontWeight: '400',
   },
   childChipTextSelected: {
-    color: colors.accentContrast,
-    fontWeight: '600',
+    color: '#4285f4',
+    fontWeight: '500',
   },
   gradeScroll: {
     marginTop: 8,
@@ -571,31 +503,31 @@ const styles = StyleSheet.create({
   gradeChip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+    borderRadius: 20,
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     marginRight: 8,
   },
   gradeChipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: '#e8f0fe',
+    borderColor: '#4285f4',
   },
   gradeChipText: {
     fontSize: 14,
     color: '#374151',
-    fontWeight: '500',
+    fontWeight: '400',
   },
   gradeChipTextSelected: {
-    color: colors.accentContrast,
-    fontWeight: '600',
+    color: '#4285f4',
+    fontWeight: '500',
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
     backgroundColor: '#ffffff',

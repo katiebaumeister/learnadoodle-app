@@ -2400,12 +2400,38 @@ async def ai_chat_endpoint(
             "conversation_history": body.messages[-10:],  # Last 10 messages
         }
         
-        # Get child data from onboarding (children table)
+        # Get comprehensive child data from onboarding (children table)
         children_data = []
         for child_id in body.selected_children:
             child_result = supabase.table("children").select("*").eq("id", child_id).single().execute()
             if child_result.data:
-                children_data.append(child_result.data)
+                child_data = child_result.data
+                
+                # Get support profile (diagnoses, learning modalities, support needs)
+                # Gracefully handle if table doesn't exist or RLS blocks access
+                try:
+                    support_profile_result = supabase.table("child_support_profiles").select("*").eq("child_id", child_id).maybe_single().execute()
+                    if support_profile_result.data:
+                        child_data["support_profile"] = support_profile_result.data
+                    else:
+                        child_data["support_profile"] = None
+                except Exception as e:
+                    # Table might not exist or RLS issue - continue without support profile
+                    child_data["support_profile"] = None
+                
+                # Get learner profile (strengths, interests, academic profile)
+                # Gracefully handle if table doesn't exist or RLS blocks access
+                try:
+                    learner_profile_result = supabase.table("child_learner_profile").select("*").eq("child_id", child_id).maybe_single().execute()
+                    if learner_profile_result.data:
+                        child_data["learner_profile"] = learner_profile_result.data
+                    else:
+                        child_data["learner_profile"] = None
+                except Exception as e:
+                    # Table might not exist or RLS issue - continue without learner profile
+                    child_data["learner_profile"] = None
+                
+                children_data.append(child_data)
         context["children_info"] = children_data
         
         # Get progress on events (events with status and outcomes)
@@ -2450,9 +2476,60 @@ async def ai_chat_endpoint(
         assignments_result = assignments_query.order("due_date", desc=False).limit(50).execute()
         context["assignments"] = assignments_result.data or []
         
-        # Get general education recommendations (from recommendations table if it exists)
-        # For now, we'll include this in the LLM context
-        context["recommendations_context"] = "General education recommendations based on child progress and learning patterns"
+        # Get grades data for selected children (gracefully handle if table doesn't exist)
+        try:
+            grades_query = supabase.table("grades").select(
+                "id, child_id, subject_id, term_label, score, grade, rubric, notes, created_at"
+            ).eq("family_id", family_id).in_("child_id", body.selected_children)
+            
+            if body.timeframe_start:
+                grades_query = grades_query.gte("created_at", body.timeframe_start)
+            if body.timeframe_end:
+                grades_query = grades_query.lte("created_at", body.timeframe_end)
+            
+            grades_result = grades_query.order("created_at", desc=True).limit(100).execute()
+            context["grades"] = grades_result.data or [] if not grades_result.error else []
+        except Exception as e:
+            # Table might not exist - continue without grades
+            context["grades"] = []
+        
+        # Get attendance data for selected children (gracefully handle if table doesn't exist)
+        try:
+            attendance_query = supabase.table("attendance_records").select(
+                "id, child_id, event_id, day_date, minutes, status, note"
+            ).eq("family_id", family_id).in_("child_id", body.selected_children)
+            
+            if body.timeframe_start:
+                attendance_query = attendance_query.gte("day_date", body.timeframe_start.split("T")[0])
+            if body.timeframe_end:
+                attendance_query = attendance_query.lte("day_date", body.timeframe_end.split("T")[0])
+            
+            attendance_result = attendance_query.order("day_date", desc=True).limit(100).execute()
+            context["attendance"] = attendance_result.data or [] if not attendance_result.error else []
+        except Exception as e:
+            # Table might not exist - continue without attendance
+            context["attendance"] = []
+        
+        # Get subject details (what they're learning)
+        # Get unique subject IDs from events
+        subject_ids = set()
+        for event in context["recent_events"]:
+            if event.get("subject_id"):
+                subject_ids.add(event["subject_id"])
+        for event in context["upcoming_events"]:
+            if event.get("subject_id"):
+                subject_ids.add(event["subject_id"])
+        for assignment in context["assignments"]:
+            if assignment.get("related_subject"):
+                subject_ids.add(assignment["related_subject"])
+        
+        subjects_data = []
+        if subject_ids:
+            subjects_result = supabase.table("subject").select(
+                "id, name, grade, notes, child_id"
+            ).in_("id", list(subject_ids)).execute()
+            subjects_data = subjects_result.data or []
+        context["subjects"] = subjects_data
         
         # Call LLM for response
         from llm import llm_coach_conversation
@@ -2476,6 +2553,9 @@ async def ai_chat_endpoint(
                 "event_outcomes": context.get("event_outcomes", []),
                 "upcoming_events": context["upcoming_events"],
                 "assignments": context["assignments"],
+                "grades": context.get("grades", []),
+                "attendance": context.get("attendance", []),
+                "subjects": context.get("subjects", []),
             },
             "goals": [],
         }
@@ -2494,10 +2574,12 @@ async def ai_chat_endpoint(
         # Format response
         response_text = coach_response.get("response", "I've analyzed your question based on the available data.")
         recommendations = coach_response.get("recommendations", [])
+        evidence = coach_response.get("evidence", [])  # Extract evidence citations from LLM response
         
         return {
             "assistant_message": response_text,
             "response": response_text,  # Alias for compatibility
+            "evidence": evidence,  # List of specific evidence cited
             "recommendations": recommendations,
             "proposed_changes": [],  # Can be populated if LLM suggests schedule changes
             "insights": recommendations,  # Use recommendations as insights

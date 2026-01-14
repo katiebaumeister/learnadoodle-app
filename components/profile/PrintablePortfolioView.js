@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform, Alert, Image, Animated, Easing, ActivityIndicator, Modal, TextInput } from 'react-native';
-import { BookOpen, FileText, Plus, Calendar, Settings, Users, MessageSquare, Clock, Target, TrendingUp, Upload, BarChart3, Shield, X, ExternalLink, CheckCircle2, MapPin, TrendingDown, Award, AlertCircle, Activity, ChevronDown, ChevronUp, Download, TrendingDown as TrendingDownIcon } from 'lucide-react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform, Alert, Image, Animated, Easing, ActivityIndicator, Modal, TextInput, Dimensions } from 'react-native';
+import { BookOpen, FileText, Plus, Calendar, Settings, Users, MessageSquare, Clock, Target, TrendingUp, Upload, BarChart3, Shield, X, ExternalLink, CheckCircle2, MapPin, TrendingDown, Award, AlertCircle, Activity, ChevronDown, ChevronUp, Download, TrendingDown as TrendingDownIcon, ArrowRight, ArrowUp, ArrowDown, Minus, GraduationCap, Palette, Brain, Heart, Sparkles } from 'lucide-react';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
 import { designTokens } from '../../theme/designTokens';
@@ -47,6 +47,119 @@ const resolveAvatarSource = (avatarKey) => {
     .replace(/.*\//, '')
     .replace(/\.(png|jpg|jpeg|webp|gif)$/i, '');
   return avatarSources[normalized] || avatarSources.prof1;
+};
+
+// Helper to parse grade value to 0-100
+const parseGradeValue = (grade) => {
+  if (typeof grade === 'number') return Math.min(100, Math.max(0, grade));
+  if (typeof grade === 'string') {
+    const percentMatch = grade.match(/(\d+(?:\.\d+)?)%/);
+    if (percentMatch) return parseFloat(percentMatch[1]);
+    const letterGrade = grade.toUpperCase().trim();
+    const letterMap = { 'A+': 95, 'A': 95, 'A-': 90, 'B+': 85, 'B': 85, 'B-': 80, 'C+': 75, 'C': 75, 'C-': 70, 'D+': 65, 'D': 65, 'D-': 60, 'F': 55 };
+    if (letterMap[letterGrade]) return letterMap[letterGrade];
+    const num = parseFloat(grade);
+    if (!isNaN(num)) return num;
+  }
+  return null;
+};
+
+// Build holistic skills model from grades
+const buildSkillsModel = (grades, subjects = []) => {
+  const numericGrades = grades
+    .map(g => ({ value: parseGradeValue(g.grade), subject: g.subject_name || g.subject?.name || null, date: g.date || g.created_at }))
+    .filter(g => g.value != null && g.value >= 0 && g.value <= 100);
+
+  if (numericGrades.length === 0) {
+    // Return defaults with low confidence
+    return {
+      axes: [
+        { label: 'Math/Logic', value: 50, confidence: 'low' },
+        { label: 'Reading/Language', value: 50, confidence: 'low' },
+        { label: 'Science/Inquiry', value: 50, confidence: 'low' },
+        { label: 'Creative Arts', value: 55, confidence: 'low' },
+        { label: 'Collaboration', value: 55, confidence: 'low' },
+        { label: 'Emotional Regulation', value: 55, confidence: 'low' },
+        { label: 'Curiosity/Initiative', value: 55, confidence: 'low' },
+      ],
+      confidence: 'low',
+      gradeCount: 0,
+    };
+  }
+
+  // Group by subject category
+  const mathSubjects = ['math', 'algebra', 'geometry', 'calculus', 'statistics'];
+  const readingSubjects = ['reading', 'language', 'english', 'literature', 'writing'];
+  const scienceSubjects = ['science', 'biology', 'chemistry', 'physics', 'inquiry'];
+  const creativeSubjects = ['art', 'music', 'drama', 'creative', 'arts'];
+
+  const mathGrades = numericGrades.filter(g => {
+    const subj = (g.subject || '').toLowerCase();
+    return mathSubjects.some(m => subj.includes(m));
+  });
+  const readingGrades = numericGrades.filter(g => {
+    const subj = (g.subject || '').toLowerCase();
+    return readingSubjects.some(r => subj.includes(r));
+  });
+  const scienceGrades = numericGrades.filter(g => {
+    const subj = (g.subject || '').toLowerCase();
+    return scienceSubjects.some(s => subj.includes(s));
+  });
+  const creativeGrades = numericGrades.filter(g => {
+    const subj = (g.subject || '').toLowerCase();
+    return creativeSubjects.some(c => subj.includes(c));
+  });
+
+  // Calculate averages
+  const mathAvg = mathGrades.length > 0 ? mathGrades.reduce((sum, g) => sum + g.value, 0) / mathGrades.length : null;
+  const readingAvg = readingGrades.length > 0 ? readingGrades.reduce((sum, g) => sum + g.value, 0) / readingGrades.length : null;
+  const scienceAvg = scienceGrades.length > 0 ? scienceGrades.reduce((sum, g) => sum + g.value, 0) / scienceGrades.length : null;
+  const creativeAvg = creativeGrades.length > 0 ? creativeGrades.reduce((sum, g) => sum + g.value, 0) / creativeGrades.length : null;
+  const overallAvg = numericGrades.reduce((sum, g) => sum + g.value, 0) / numericGrades.length;
+
+  // Build axes data
+  const axes = [
+    { 
+      label: 'Math/Logic', 
+      value: mathAvg != null ? Math.round(mathAvg) : Math.round(overallAvg * 0.9),
+      confidence: mathGrades.length >= 2 ? 'medium' : 'low'
+    },
+    { 
+      label: 'Reading/Language', 
+      value: readingAvg != null ? Math.round(readingAvg) : Math.round(overallAvg * 0.95),
+      confidence: readingGrades.length >= 2 ? 'medium' : 'low'
+    },
+    { 
+      label: 'Science/Inquiry', 
+      value: scienceAvg != null ? Math.round(scienceAvg) : Math.round(overallAvg * 0.9),
+      confidence: scienceGrades.length >= 2 ? 'medium' : 'low'
+    },
+    { 
+      label: 'Creative Arts', 
+      value: creativeAvg != null ? Math.round(creativeAvg) : (numericGrades.length >= 5 ? 65 : 55),
+      confidence: creativeGrades.length >= 1 ? 'medium' : 'low'
+    },
+    { 
+      label: 'Collaboration', 
+      value: numericGrades.length >= 5 ? 60 : 55,
+      confidence: 'low' // TODO: Add reflection data
+    },
+    { 
+      label: 'Emotional Regulation', 
+      value: numericGrades.length >= 5 ? 58 : 55,
+      confidence: 'low' // TODO: Add reflection data
+    },
+    { 
+      label: 'Curiosity/Initiative', 
+      value: numericGrades.length >= 5 ? 62 : 55,
+      confidence: 'low' // TODO: Add reflection data
+    },
+  ];
+
+  // Determine overall confidence
+  const confidence = numericGrades.length >= 10 ? 'high' : numericGrades.length >= 5 ? 'medium' : 'low';
+
+  return { axes, confidence, gradeCount: numericGrades.length };
 };
 
 // Helper to validate URLs
@@ -314,11 +427,34 @@ function createOverviewStyles(tokens) {
       fontWeight: '600',
     },
     avatarContainer: {
-      paddingHorizontal: spacing.xl,
       marginTop: spacing.xl,
       marginBottom: spacing.xl,
       alignItems: 'center',
       gap: spacing.md,
+    },
+    childCard: {
+      backgroundColor: '#ffffff',
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+      width: '100%',
+      maxWidth: '100%',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: tokens.border || '#e5e7eb',
+      ...Platform.select({
+        web: {
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06)',
+        },
+        ios: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+        },
+        android: {
+          elevation: 2,
+        },
+      }),
     },
     avatarFlipContainer: {
       width: 120,
@@ -349,9 +485,10 @@ function createOverviewStyles(tokens) {
       height: '100%',
     },
     childInfoContainer: {
-      alignItems: 'center',
-      gap: spacing.sm,
+      alignItems: 'flex-start',
+      gap: spacing.md,
       marginTop: spacing.sm,
+      width: '100%',
     },
     childName: {
       fontSize: 18,
@@ -359,6 +496,75 @@ function createOverviewStyles(tokens) {
       color: tokens.text,
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       textTransform: 'uppercase',
+    },
+    heroMetricsParagraph: {
+      width: '100%',
+      marginTop: spacing.sm,
+      marginBottom: spacing.xs,
+      alignItems: 'flex-start',
+    },
+    heroMetricsText: {
+      fontSize: 13,
+      fontWeight: '400',
+      color: tokens.text,
+      fontFamily: designTokens.fonts.sans,
+      lineHeight: 20,
+      textAlign: 'left',
+    },
+    heroMetricsText: {
+      fontSize: 13,
+      fontWeight: '400',
+      color: tokens.text,
+      fontFamily: designTokens.fonts.sans,
+      lineHeight: 20,
+    },
+    heroMetricsLabel: {
+      fontSize: 13,
+      fontWeight: '400',
+      color: tokens.textSecondary,
+      fontFamily: designTokens.fonts.sans,
+    },
+    heroMetricsValue: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: tokens.text,
+      fontFamily: designTokens.fonts.sans,
+    },
+    chipsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+    },
+    chip: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.full,
+      backgroundColor: tokens.background || '#f9fafb',
+      borderWidth: 1,
+      borderColor: tokens.border || '#e5e7eb',
+    },
+    chipText: {
+      fontSize: 12,
+      fontWeight: '500',
+      color: tokens.text,
+      fontFamily: designTokens.fonts.sans,
+    },
+    chipsSentence: {
+      fontSize: 13,
+      fontWeight: '400',
+      color: tokens.text,
+      fontFamily: designTokens.fonts.sans,
+      textAlign: 'left',
+    },
+    statusSentence: {
+      fontSize: 13,
+      fontWeight: '400',
+      color: tokens.text,
+      fontFamily: designTokens.fonts.sans,
+      textAlign: 'left',
+      marginTop: spacing.xs,
     },
     childInfoRow: {
       flexDirection: 'row',
@@ -410,9 +616,12 @@ function createOverviewStyles(tokens) {
     subjectList: {
       flexDirection: 'column',
       marginBottom: spacing.xl,
+      width: '100%',
+      alignItems: 'flex-start',
     },
     subjectListItem: {
       width: '100%',
+      alignSelf: 'stretch',
       ...Platform.select({
         web: {
           transition: 'background-color 0.2s ease',
@@ -425,15 +634,20 @@ function createOverviewStyles(tokens) {
       justifyContent: 'space-between',
       paddingVertical: spacing.md,
       paddingHorizontal: 0,
+      width: '100%',
+      alignSelf: 'stretch',
     },
     subjectListItemMain: {
       flex: 1,
       flexDirection: 'column',
       gap: spacing.xs,
+      minWidth: 0,
+      alignSelf: 'flex-start',
     },
     subjectListItemTitle: {
       fontSize: 15,
       fontWeight: '600',
+      textAlign: 'left',
       color: tokens.text,
       marginBottom: 2,
     },
@@ -940,6 +1154,7 @@ function createOverviewStyles(tokens) {
       borderWidth: 1,
       borderColor: tokens.border || '#e5e7eb',
       overflow: 'hidden',
+      width: '100%',
     },
     masteryCardHeader: {
       flexDirection: 'row',
@@ -1061,6 +1276,245 @@ function createOverviewStyles(tokens) {
     masteryTipLabel: {
       fontWeight: '600',
       fontStyle: 'italic',
+    },
+    masteryPreviewSkeleton: {
+      width: '100%',
+      maxWidth: 300,
+      marginTop: spacing.md,
+      marginBottom: spacing.lg,
+      padding: spacing.md,
+      backgroundColor: tokens.background || '#f9fafb',
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: tokens.border || '#e5e7eb',
+      opacity: 0.6,
+    },
+    masteryPreviewHeader: {
+      marginBottom: spacing.sm,
+      alignItems: 'center',
+    },
+    masteryPreviewBar: {
+      width: '100%',
+      height: 20,
+      backgroundColor: tokens.border || '#e5e7eb',
+      borderRadius: radius.sm,
+      overflow: 'hidden',
+      marginBottom: spacing.xs,
+    },
+    masteryPreviewBarFill: {
+      height: '100%',
+      backgroundColor: tokens.accent || '#3b82f6',
+      borderRadius: radius.sm,
+    },
+    masteryPreviewLabel: {
+      fontSize: 10,
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.textSecondary,
+      fontWeight: '500',
+    },
+    masteryPreviewBars: {
+      gap: spacing.xs,
+    },
+    masteryPreviewBarRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    masteryEmptyActions: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.md,
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+    },
+    masteryEmptyButton: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.md,
+      backgroundColor: tokens.accent || colors.accent,
+      borderWidth: 1,
+      borderColor: tokens.accent || colors.accent,
+      ...Platform.select({
+        web: {
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+        },
+      }),
+    },
+    masteryEmptyButtonSecondary: {
+      backgroundColor: 'transparent',
+      borderColor: tokens.border || '#e5e7eb',
+    },
+    masteryEmptyButtonText: {
+      fontSize: 13,
+      fontWeight: '600',
+      fontFamily: designTokens.fonts.sans,
+      color: '#ffffff',
+    },
+    masteryEmptyButtonTextSecondary: {
+      color: tokens.text || '#111827',
+    },
+    // New Holistic Skill Map Styles
+    radarChartContainer: {
+      width: '100%',
+      alignItems: 'center',
+      paddingVertical: spacing.lg,
+    },
+    radarChartWrapper: {
+      position: 'relative',
+      width: 280,
+      height: 280,
+      ...Platform.select({
+        web: {
+          maxWidth: '100%',
+        },
+      }),
+    },
+    radarChartGrid: {
+      position: 'absolute',
+      width: '100%',
+      height: '100%',
+    },
+    radarChartPolygon: {
+      position: 'absolute',
+      width: '100%',
+      height: '100%',
+    },
+    radarChartLabels: {
+      position: 'absolute',
+      width: '100%',
+      height: '100%',
+    },
+    radarLabel: {
+      position: 'absolute',
+      fontSize: 11,
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.textSecondary,
+      fontWeight: '500',
+    },
+    domainTilesRow: {
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginTop: spacing.lg,
+      ...Platform.select({
+        web: {
+          flexWrap: 'wrap',
+        },
+      }),
+    },
+    domainTile: {
+      flex: 1,
+      minWidth: 120,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: tokens.background || '#f9fafb',
+      borderWidth: 1,
+      borderColor: tokens.border || '#e5e7eb',
+      ...Platform.select({
+        web: {
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+          ':hover': {
+            borderColor: tokens.accent,
+            backgroundColor: tokens.accent + '08',
+          },
+        },
+      }),
+    },
+    domainTileHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    domainTileIcon: {
+      width: 20,
+      height: 20,
+    },
+    domainTileTitle: {
+      fontSize: 12,
+      fontWeight: '600',
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    domainTileStatus: {
+      fontSize: 14,
+      fontWeight: '600',
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.text,
+      marginTop: spacing.xs,
+    },
+    domainTileSparkline: {
+      height: 20,
+      marginTop: spacing.xs,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 2,
+    },
+    sparklineBar: {
+      flex: 1,
+      minHeight: 2,
+      borderRadius: 1,
+    },
+    momentumEngagementRow: {
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginTop: spacing.lg,
+      paddingTop: spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: tokens.border || '#e5e7eb',
+      ...Platform.select({
+        web: {
+          flexWrap: 'wrap',
+        },
+      }),
+    },
+    momentumCard: {
+      flex: 1,
+      minWidth: 140,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: tokens.background || '#f9fafb',
+    },
+    momentumCardTitle: {
+      fontSize: 11,
+      fontWeight: '600',
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: spacing.xs,
+    },
+    momentumCardValue: {
+      fontSize: 13,
+      fontWeight: '500',
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.text,
+      marginTop: spacing.xs,
+    },
+    momentumSparkline: {
+      height: 30,
+      marginTop: spacing.xs,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 2,
+    },
+    confidencePill: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      borderRadius: radius.full,
+      backgroundColor: tokens.background || '#f9fafb',
+      borderWidth: 1,
+      borderColor: tokens.border || '#e5e7eb',
+      alignSelf: 'flex-start',
+      marginTop: spacing.xs,
+    },
+    confidencePillText: {
+      fontSize: 10,
+      fontWeight: '500',
+      fontFamily: designTokens.fonts.sans,
+      color: tokens.textSecondary,
     },
     // Attendance Styles (similar to mastery)
     attendanceSection: {
@@ -1860,6 +2314,9 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
   const [projectEvents, setProjectEvents] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [selectedSubjectForProjects, setSelectedSubjectForProjects] = useState(null);
+  const [showEventsModal, setShowEventsModal] = useState(false);
+  const [eventsForGrade, setEventsForGrade] = useState([]);
+  const [loadingEventsForGrade, setLoadingEventsForGrade] = useState(false);
   const [showGradesList, setShowGradesList] = useState(false);
   const [gradesList, setGradesList] = useState([]);
   const [loadingGradesList, setLoadingGradesList] = useState(false);
@@ -4081,6 +4538,83 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
     }
   };
 
+  const handleOpenEventsForGrade = async () => {
+    if (!effectiveChildId || !familyId) {
+      Alert.alert('Error', 'Please select a child to view events.');
+      return;
+    }
+
+    setLoadingEventsForGrade(true);
+    setShowEventsModal(true);
+
+    try {
+      // Fetch all events for the selected child
+      const { data: events, error } = await supabase
+        .from('events')
+        .select('id, title, description, start_ts, end_ts, child_id, child_ids, subject_id, status, created_at, updated_at, event_type, grade')
+        .eq('family_id', familyId)
+        .is('deleted_at', null)
+        .order('start_ts', { ascending: false });
+
+      if (error) {
+        console.error('[PrintablePortfolioView] Error fetching events:', error);
+        setEventsForGrade([]);
+        return;
+      }
+
+      // Filter events to only include those for the selected child
+      const filteredEvents = (events || []).filter(event => {
+        const hasChildIdMatch = event.child_id === effectiveChildId;
+        const hasChildIdsMatch = event.child_ids && Array.isArray(event.child_ids) && 
+          event.child_ids.includes(effectiveChildId);
+        return hasChildIdMatch || hasChildIdsMatch;
+      });
+
+      // Fetch subject names for all events
+      const allSubjectIds = [...new Set(filteredEvents.map(e => e.subject_id).filter(Boolean))];
+      const subjectMap = {};
+      if (allSubjectIds.length > 0) {
+        const { data: subjectsData } = await supabase
+          .from('subject')
+          .select('id, name')
+          .eq('family_id', familyId)
+          .in('id', allSubjectIds);
+        (subjectsData || []).forEach(s => { subjectMap[s.id] = s; });
+      }
+
+      // Add subject names to events
+      const eventsWithSubjects = filteredEvents.map(event => ({
+        ...event,
+        subject: event.subject_id ? subjectMap[event.subject_id] : null
+      }));
+
+      setEventsForGrade(eventsWithSubjects);
+    } catch (error) {
+      console.error('[PrintablePortfolioView] Error in handleOpenEventsForGrade:', error);
+      setEventsForGrade([]);
+    } finally {
+      setLoadingEventsForGrade(false);
+    }
+  };
+
+  const handleSelectEventForGrade = async (event) => {
+    console.log('[PrintablePortfolioView] Event selected for grade:', event);
+    
+    // Close the events modal
+    setShowEventsModal(false);
+    
+    // Dispatch event to open the event details modal
+    // WebContent will listen for this event and open the EventModal
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && event?.id) {
+      window.dispatchEvent(new CustomEvent('openEventModal', {
+        detail: {
+          eventId: event.id,
+          initialEvent: event
+        }
+      }));
+    }
+  };
+
   const handleSelectGradeEvent = (gradeItem) => {
     console.log('[PrintablePortfolioView] Grade event selected:', gradeItem);
     
@@ -4569,8 +5103,9 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
   const overviewBg = backgroundColor || '#ffffff';
   
   return (
-    <View style={[overviewStyles.overviewContainer, { backgroundColor: containerBg }]}>
-      <View style={[overviewStyles.overview, { backgroundColor: overviewBg }]}>
+    <>
+      <View style={[overviewStyles.overviewContainer, { backgroundColor: containerBg }]}>
+        <View style={[overviewStyles.overview, { backgroundColor: overviewBg }]}>
         {/* Child Selector - Pill Segmented Control */}
         {children && children.length > 0 && (
           <View style={overviewStyles.childChipsRow}>
@@ -4642,6 +5177,21 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
             return `rgba(${r}, ${g}, ${b}, ${opacity})`;
           };
           const avatarBgColor = childColor ? hexToRgba(childColor, 0.55) : null;
+          
+          // Blend color with white for card background (10% color, 90% white)
+          const blendWithWhite = (hex, ratio = 0.1) => {
+            if (!hex) return null;
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            if (!result) return hex;
+            const r = parseInt(result[1], 16);
+            const g = parseInt(result[2], 16);
+            const b = parseInt(result[3], 16);
+            const blendedR = Math.round(255 * (1 - ratio) + r * ratio);
+            const blendedG = Math.round(255 * (1 - ratio) + g * ratio);
+            const blendedB = Math.round(255 * (1 - ratio) + b * ratio);
+            return `#${blendedR.toString(16).padStart(2, '0')}${blendedG.toString(16).padStart(2, '0')}${blendedB.toString(16).padStart(2, '0')}`;
+          };
+          const childCardBg = childColor ? blendWithWhite(childColor, 0.1) : (tokens.card || '#ffffff');
           
           // Create flip animation style
           const flipInterpolate = avatarFlipAnim.interpolate({
@@ -4723,102 +5273,171 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
               ? childStandards.map(s => `${s.state_code} ${s.grade_level}${s.standards_set ? ` (${s.standards_set})` : ''}`).join(', ')
               : null);
           
+          // Calculate this week's logged days
+          const getWeekStart = (date) => {
+            const d = new Date(date);
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+            return new Date(d.setDate(diff));
+          };
+          
+          const today = new Date();
+          const weekStart = getWeekStart(today);
+          weekStart.setHours(0, 0, 0, 0);
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 6);
+          weekEnd.setHours(23, 59, 59, 999);
+          
+          const thisWeekLogs = attendanceData.filter(log => {
+            const logDate = new Date(log.day_date);
+            return logDate >= weekStart && logDate <= weekEnd;
+          });
+          const loggedDays = thisWeekLogs.length;
+          const expectedDays = 5; // Weekdays
+          
+          // Find next event from subjects
+          let nextEvent = null;
+          let nextEventTime = null;
+          let nextEventSubjectName = null;
+          if (subjects.length > 0) {
+            const now = new Date();
+            const upcomingEventsWithSubject = subjects
+              .map(s => ({
+                event: s.nextEvent,
+                subjectName: s.name
+              }))
+              .filter(item => item.event && item.event.start_ts && new Date(item.event.start_ts) >= now)
+              .sort((a, b) => new Date(a.event.start_ts) - new Date(b.event.start_ts));
+            
+            if (upcomingEventsWithSubject.length > 0) {
+              nextEvent = upcomingEventsWithSubject[0].event;
+              nextEventSubjectName = upcomingEventsWithSubject[0].subjectName;
+              nextEventTime = new Date(nextEvent.start_ts);
+            }
+          }
+          
+          // Calculate progress status (placeholder - can be enhanced)
+          const progressStatus = loggedDays >= expectedDays ? 'On track' : 'Needs attention';
+          const progressTrend = loggedDays >= expectedDays ? 'up' : 'down';
+          
+          // Count subjects needing attention (placeholder - can be enhanced)
+          const subjectsNeedingAttention = subjects.filter(s => s.hasOverdue || (s.nextEvent && new Date(s.nextEvent.start_ts) < new Date())).length;
+          
+          // Build chips
+          const chips = [];
+          if (grade) {
+            chips.push(`Grade ${grade}`);
+          }
+          // Get location from state code
+          const stateCode = childStandards.length > 0 ? childStandards[0].state_code : (childStateCode || null);
+          if (stateCode) {
+            chips.push(stateCode);
+          }
+          if (learningStyle) {
+            // Capitalize learning style
+            const formattedStyle = learningStyle.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+            chips.push(formattedStyle + ' learner');
+          }
+          // Combine interests/subjects for last chip
+          if (interests) {
+            const interestList = interests.split(',').slice(0, 2).join(' + ');
+            if (interestList) {
+              chips.push(interestList);
+            }
+          }
+          
+          // Status sentence
+          const statusSentence = subjectsNeedingAttention > 0
+            ? `On track this week. ${subjectsNeedingAttention} subject${subjectsNeedingAttention > 1 ? 's' : ''} need attention.`
+            : 'On track this week. All subjects up to date.';
+          
           return (
             <View style={overviewStyles.avatarContainer}>
-              <TouchableOpacity
-                style={overviewStyles.avatarFlipContainer}
-                onPress={() => {
-                  // Open settings modal to family page
-                  if (onOpenSettings) {
-                    onOpenSettings('family');
-                  }
-                  // Open edit child modal for the selected child
-                  if (onEditChild && effectiveChild) {
-                    onEditChild(effectiveChild);
-                  }
-                }}
-                activeOpacity={0.7}
-                {...(Platform.OS === 'web' && {
-                  cursor: 'pointer',
-                })}
-              >
-                <Animated.View
-                  style={[
-                    overviewStyles.avatarImage,
-                    avatarBgColor && { backgroundColor: avatarBgColor },
-                    {
-                      transform: [{ rotateY: flipInterpolate }],
-                    },
-                  ]}
+              <View style={[overviewStyles.childCard, { backgroundColor: childCardBg }]}>
+                <TouchableOpacity
+                  style={[overviewStyles.avatarFlipContainer, { alignSelf: 'flex-start' }]}
+                  onPress={() => {
+                    // Open settings modal to family page
+                    if (onOpenSettings) {
+                      onOpenSettings('family');
+                    }
+                    // Open edit child modal for the selected child
+                    if (onEditChild && effectiveChild) {
+                      onEditChild(effectiveChild);
+                    }
+                  }}
+                  activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && {
+                    cursor: 'pointer',
+                  })}
                 >
-                  <Image
-                    source={resolveAvatarSource(effectiveChild.avatar)}
-                    style={overviewStyles.avatarImageInner}
-                    resizeMode="cover"
-                  />
-                </Animated.View>
-              </TouchableOpacity>
-              
-              {/* Child Information */}
-              <View style={overviewStyles.childInfoContainer}>
-                <Text style={overviewStyles.childName}>{childName}</Text>
+                  <Animated.View
+                    style={[
+                      overviewStyles.avatarImage,
+                      avatarBgColor && { backgroundColor: avatarBgColor },
+                      {
+                        transform: [{ rotateY: flipInterpolate }],
+                      },
+                    ]}
+                  >
+                    <Image
+                      source={resolveAvatarSource(effectiveChild.avatar)}
+                      style={overviewStyles.avatarImageInner}
+                      resizeMode="cover"
+                    />
+                  </Animated.View>
+                </TouchableOpacity>
                 
-                <View style={overviewStyles.childInfoRow}>
-                  {age !== null && (
-                    <Text style={overviewStyles.childInfoText}>{age} YEARS OLD</Text>
+                {/* Child Information */}
+                <View style={overviewStyles.childInfoContainer}>
+                  <Text style={overviewStyles.childName}>{childName}</Text>
+                  
+                  {/* Chips as Sentence */}
+                  {chips.length > 0 && (
+                    <Text style={overviewStyles.chipsSentence}>
+                      {chips.join(' · ')}
+                    </Text>
                   )}
-                  {grade && (
-                    <>
-                      {age !== null && <Text style={overviewStyles.childInfoText}> • </Text>}
-                      <Text style={overviewStyles.childInfoText}>GRADE {grade}</Text>
-                    </>
-                  )}
-                </View>
-                
-                {standardsText && (
-                  <Text style={overviewStyles.childInfoText}>STATE STANDARDS: {standardsText.toUpperCase()}</Text>
-                )}
-                
-                {interests && (
-                  <Text style={overviewStyles.childInfoText}>INTERESTS: {interests.toUpperCase()}</Text>
-                )}
-                
-                {learningStyle && (
-                  <Text style={overviewStyles.childInfoText}>LEARNING STYLE: {learningStyle.toUpperCase()}</Text>
-                )}
-              </View>
-            </View>
-          );
-        })()}
-
-        {/* Content */}
-        <View style={overviewStyles.tabContent}>
-            {/* Chart Tab: Subject Overview Grid */}
-            {!hasLoadedOnce && subjects.length === 0 ? (
-              <View style={overviewStyles.emptyContainer}>
-                <Text style={overviewStyles.emptyText}>
-                  Loading subjects...
-                </Text>
-              </View>
-            ) : hasLoadedOnce && subjects.length === 0 ? (
-              <View style={overviewStyles.emptyContainer}>
-                <Text style={overviewStyles.emptyText}>
-                  No subjects found. Add events with subjects to see them here.
-                </Text>
-              </View>
-            ) : subjects.length > 0 ? (
-              <>
-                {/* Header - Term and Year */}
-                <View style={overviewStyles.headerContainer}>
-                  <View style={overviewStyles.headerLeft}>
-                    <Text style={overviewStyles.headerText}>
-                      {termName} {schoolYearEnd} - {childName}
+                  
+                  {/* Hero Metrics Paragraph */}
+                  <View style={overviewStyles.heroMetricsParagraph}>
+                    <Text style={overviewStyles.heroMetricsText}>
+                      <Text style={overviewStyles.heroMetricsLabel}>This week logged: </Text>
+                      <Text style={overviewStyles.heroMetricsValue}>{loggedDays}/{expectedDays} days</Text>
+                      {' · '}
+                      <Text style={overviewStyles.heroMetricsLabel}>Progress: </Text>
+                      <Text style={overviewStyles.heroMetricsValue}>
+                        {progressStatus}
+                        {progressTrend === 'up' && ' ↑'}
+                        {progressTrend === 'down' && ' ↓'}
+                        {progressTrend === 'neutral' && ' →'}
+                      </Text>
+                      {' · '}
+                      <Text style={overviewStyles.heroMetricsLabel}>Next up: </Text>
+                      {nextEvent && nextEventTime ? (
+                        <Text style={overviewStyles.heroMetricsValue}>
+                          {nextEventSubjectName || 'Event'} @ {nextEventTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                      ) : (
+                        <Text style={[overviewStyles.heroMetricsValue, { color: tokens.textSecondary }]}>
+                          No plan today → Generate
+                        </Text>
+                      )}
                     </Text>
                   </View>
-                </View>
-                
-                {/* Subject Overview List */}
-                <View style={overviewStyles.subjectList}>
+                  
+                  {/* Status Sentence */}
+                  <Text style={overviewStyles.statusSentence}>{statusSentence}</Text>
+                  
+                  {/* Header - Term and Year */}
+                  {subjects.length > 0 && (
+                    <View style={{ marginTop: spacing.lg, paddingTop: spacing.lg, borderTopWidth: 1, borderTopColor: tokens.border, width: '100%', alignSelf: 'stretch' }}>
+                      <Text style={[overviewStyles.headerText, { fontSize: 20, marginBottom: spacing.md, textAlign: 'left' }]}>
+                        {termName} {schoolYearEnd}
+                      </Text>
+                      
+                      {/* Subject Overview List */}
+                      <View style={[overviewStyles.subjectList, { width: '100%', alignSelf: 'stretch' }]}>
                 {subjects.map((subject, index) => {
                   // Format next event text
                   let nextEventText = null;
@@ -4844,10 +5463,11 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                   const isHovered = hoveredSubjectId === subject.id;
                   
                   return (
-                    <View key={subject.id}>
+                    <View key={subject.id} style={{ width: '100%', alignSelf: 'stretch' }}>
                       <View
                         style={[
                           overviewStyles.subjectListItem,
+                          { width: '100%', alignSelf: 'stretch' },
                           Platform.OS === 'web' && { cursor: 'pointer' }
                         ]}
                         {...(Platform.OS === 'web' && {
@@ -4856,7 +5476,7 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                         })}
                       >
                         <TouchableOpacity 
-                          style={overviewStyles.subjectListItemContent}
+                          style={[overviewStyles.subjectListItemContent, { width: '100%', alignSelf: 'stretch' }]}
                           onPress={() => {
                             setSelectedSubjectId(subject.id);
                           }}
@@ -4997,12 +5617,17 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                     </View>
                   );
                 })}
+                      </View>
+                    </View>
+                  )}
                 </View>
-              </>
-            ) : null}
+              </View>
+            </View>
+          );
+        })()}
 
-            {/* Mastery Charts Section - Only show for selected child */}
-            {effectiveChildId && children && children.length > 0 && (() => {
+        {/* Mastery Charts Section - Only show for selected child */}
+        {effectiveChildId && children && children.length > 0 && (() => {
               const effectiveChild = child || sortedChildren.find(c => c.id === effectiveChildId);
               if (!effectiveChild) return null;
 
@@ -5017,7 +5642,7 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                     (() => {
                       const childGrades = gradesByChild[effectiveChild.id] || [];
                       const gradeCount = childGrades.length;
-                      const hasEnoughGrades = gradeCount >= 20;
+                      const hasEnoughGrades = gradeCount >= 3;
                       const childName = effectiveChild.first_name || effectiveChild.name || 'Child';
                       // Use child's own data (from children array or loaded child data)
                       const learningStyle = effectiveChild.learning_style || effectiveChild.style || null;
@@ -5033,7 +5658,16 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                       }
                       const qualities = effectiveChild.qualities || null;
 
-                      // Get child's avatar color for mastery card background
+                      // Different header colors for each card (pastel palette)
+                      const cardHeaderColors = {
+                        childCard: '#E0F2FE', // Light blue
+                        masteryCard: '#F3E8FF', // Light purple
+                        attendanceCard: '#FEF3C7', // Light yellow
+                        complianceCard: '#D1FAE5', // Light green
+                        gradesCard: '#FEE2E2', // Light pink/rose
+                      };
+                      
+                      // Get child's avatar color for child card background only
                       const childColor = effectiveChild.avatar ? getChildColorFromAvatar(effectiveChild.avatar) : null;
                       // Blend color with white at 10% color / 90% white ratio for subtle background
                       const blendWithWhite = (hex, ratio = 0.1) => {
@@ -5049,12 +5683,18 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                         const blendedB = Math.round(255 * (1 - ratio) + b * ratio);
                         return `#${blendedR.toString(16).padStart(2, '0')}${blendedG.toString(16).padStart(2, '0')}${blendedB.toString(16).padStart(2, '0')}`;
                       };
-                      const masteryCardBg = childColor ? blendWithWhite(childColor, 0.1) : (tokens.card || '#ffffff');
+                      const childCardBg = childColor ? blendWithWhite(childColor, 0.1) : cardHeaderColors.childCard;
+                      const masteryCardBg = cardHeaderColors.masteryCard;
 
                       return (
                         <View key={effectiveChild.id} style={overviewStyles.masteryCard}>
                           <View style={[overviewStyles.masteryCardHeader, { backgroundColor: masteryCardBg }]}>
-                            <Text style={overviewStyles.masteryCardTitle}>{childName.toUpperCase()}'S MASTERY AND SKILLS</Text>
+                            <View>
+                              <Text style={overviewStyles.masteryCardTitle}>Mastery & Skills</Text>
+                              {hasEnoughGrades && (
+                                <Text style={overviewStyles.masteryCardSubtitle}>Last 4 weeks</Text>
+                              )}
+                            </View>
                             {hasEnoughGrades && (
                               <Text style={overviewStyles.masteryCardSubtitle}>{gradeCount} grades</Text>
                             )}
@@ -5063,364 +5703,372 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
 
                           {hasEnoughGrades ? (
                             <View style={overviewStyles.masteryChartContainer}>
-                              {/* Calculate mastery metrics */}
                               {(() => {
-                                const numericGrades = childGrades
-                                  .filter(g => g.grade != null)
-                                  .map(g => {
-                                    // Handle different grade formats
-                                    const grade = g.grade;
-                                    if (typeof grade === 'number') return grade;
-                                    if (typeof grade === 'string') {
-                                      // Try to parse percentage (e.g., "85%")
-                                      const percentMatch = grade.match(/(\d+(?:\.\d+)?)%/);
-                                      if (percentMatch) return parseFloat(percentMatch[1]);
-                                      // Try to parse letter grade (A=95, B=85, C=75, D=65, F=55)
-                                      const letterGrade = grade.toUpperCase().trim();
-                                      if (letterGrade === 'A' || letterGrade === 'A+') return 95;
-                                      if (letterGrade === 'A-') return 90;
-                                      if (letterGrade === 'B' || letterGrade === 'B+') return 85;
-                                      if (letterGrade === 'B-') return 80;
-                                      if (letterGrade === 'C' || letterGrade === 'C+') return 75;
-                                      if (letterGrade === 'C-') return 70;
-                                      if (letterGrade === 'D' || letterGrade === 'D+') return 65;
-                                      if (letterGrade === 'D-') return 60;
-                                      if (letterGrade === 'F') return 55;
-                                      // Try to parse as number
-                                      const num = parseFloat(grade);
-                                      if (!isNaN(num)) return num;
-                                    }
-                                    return null;
-                                  })
-                                  .filter(g => g != null && g >= 0 && g <= 100);
-
-                                if (numericGrades.length === 0) {
-                                  return (
-                                    <View style={overviewStyles.masteryEmpty}>
-                                      <Text style={overviewStyles.masteryEmptyText}>
-                                        No valid grades found to calculate mastery.
-                                      </Text>
-                                    </View>
-                                  );
-                                }
-
-                                const average = numericGrades.reduce((sum, g) => sum + g, 0) / numericGrades.length;
-                                const excellent = numericGrades.filter(g => g >= 90).length;
-                                const good = numericGrades.filter(g => g >= 80 && g < 90).length;
-                                const needsImprovement = numericGrades.filter(g => g < 80).length;
-                                const total = numericGrades.length;
-
-                                // Log feedback about learning style, interests, and qualities
-                                if (learningStyle || interests || qualities) {
-                                  console.log(`[Mastery Charts] ${childName} - Learning insights:`, {
-                                    learningStyle,
-                                    interests,
-                                    qualities,
-                                    averageGrade: average.toFixed(1),
-                                    totalGrades: total,
-                                    message: 'Learning style, interests, and qualities help personalize instruction and improve results'
-                                  });
-                                }
-
+                                // Build holistic skills model
+                                const skillsModel = buildSkillsModel(childGrades, subjects);
+                                const { axes, confidence, gradeCount } = skillsModel;
+                                
+                                // Calculate recent grades for momentum
+                                const recentGrades = childGrades.slice(0, 6).map(g => parseGradeValue(g.grade)).filter(v => v != null);
+                                const attendanceRate = attendanceData.length > 0
+                                  ? (attendanceData.filter(a => a.status === 'present').length / attendanceData.length) * 100
+                                  : 0;
+                                
+                                // Pastel color palette
+                                const pastelColors = {
+                                  academic: '#7DD3FC', // Sky blue
+                                  creative: '#C084FC', // Purple
+                                  social: '#F87171', // Coral
+                                  habits: '#34D399', // Green
+                                  curiosity: '#FCD34D', // Yellow
+                                };
+                                
+                                // Radar chart configuration
+                                const chartSize = 280;
+                                const center = chartSize / 2;
+                                const radius = chartSize / 2 - 40;
+                                const numAxes = axes.length;
+                                const angleStep = (2 * Math.PI) / numAxes;
+                                
+                                // Calculate polygon points
+                                const polygonPoints = axes.map((axis, index) => {
+                                  const angle = index * angleStep - Math.PI / 2; // Start from top
+                                  const distance = (axis.value / 100) * radius;
+                                  const x = center + distance * Math.cos(angle);
+                                  const y = center + distance * Math.sin(angle);
+                                  return { x, y, label: axis.label, value: axis.value, angle };
+                                });
+                                
+                                // Create path string for polygon
+                                const pathString = polygonPoints.map((p, i) => 
+                                  i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`
+                                ).join(' ') + ' Z';
+                                
+                                // Domain status calculation
+                                const academicAvg = (axes[0].value + axes[1].value + axes[2].value) / 3;
+                                const academicStatus = academicAvg >= 80 ? 'Strong' : academicAvg >= 70 ? 'On track' : 'Developing';
+                                const creativeStatus = axes[3].value >= 70 ? 'Strong' : axes[3].value >= 60 ? 'On track' : 'Developing';
+                                const habitsStatus = attendanceRate >= 95 ? 'Excellent' : attendanceRate >= 85 ? 'Good' : 'Steady';
+                                
+                                // Momentum calculation
+                                const momentum = recentGrades.length >= 3 
+                                  ? (() => {
+                                      const trend = recentGrades.slice(-3).reduce((sum, g, i, arr) => {
+                                        if (i === 0) return 0;
+                                        return sum + (g - arr[i - 1]);
+                                      }, 0) / (recentGrades.length - 1);
+                                      if (trend > 2) return { label: 'Improving steadily', direction: 'up', values: recentGrades };
+                                      if (trend < -2) return { label: 'Early signals', direction: 'down', values: recentGrades };
+                                      return { label: 'Stable', direction: 'neutral', values: recentGrades };
+                                    })()
+                                  : { label: 'Early signals', direction: 'neutral', values: recentGrades };
+                                
                                 return (
-                                  <View style={overviewStyles.masteryMetrics}>
-                                    <View style={overviewStyles.masteryMetric}>
-                                      <Text style={overviewStyles.masteryMetricLabel}>Average</Text>
-                                      <Text style={overviewStyles.masteryMetricValue}>{average.toFixed(1)}%</Text>
+                                  <>
+                                    {/* Radar Chart */}
+                                    <View style={overviewStyles.radarChartContainer}>
+                                      <Text style={[overviewStyles.masteryMetricLabel, { marginBottom: spacing.md, textAlign: 'center' }]}>
+                                        Learning Profile (last 4 weeks)
+                                      </Text>
+                                      <View style={overviewStyles.radarChartWrapper}>
+                                        {/* Grid circles */}
+                                        {[0.25, 0.5, 0.75, 1].map((scale, i) => (
+                                          <View
+                                            key={i}
+                                            style={{
+                                              position: 'absolute',
+                                              left: center - radius * scale,
+                                              top: center - radius * scale,
+                                              width: radius * scale * 2,
+                                              height: radius * scale * 2,
+                                              borderRadius: radius * scale,
+                                              borderWidth: 1,
+                                              borderColor: tokens.border + '40',
+                                            }}
+                                          />
+                                        ))}
+                                        
+                                        {/* Grid lines */}
+                                        {axes.map((_, index) => {
+                                          const angle = index * angleStep - Math.PI / 2;
+                                          const x2 = center + radius * Math.cos(angle);
+                                          const y2 = center + radius * Math.sin(angle);
+                                          return (
+                                            <View
+                                              key={`grid-${index}`}
+                                              style={{
+                                                position: 'absolute',
+                                                left: center,
+                                                top: center,
+                                                width: 1,
+                                                height: radius,
+                                                backgroundColor: tokens.border + '40',
+                                                transform: [{ rotate: `${angle}rad` }],
+                                                transformOrigin: '0 0',
+                                              }}
+                                            />
+                                          );
+                                        })}
+                                        
+                                        {/* Polygon fill - using web SVG if available, otherwise View-based approximation */}
+                                        {Platform.OS === 'web' && typeof document !== 'undefined' ? (
+                                          <View
+                                            style={{
+                                              position: 'absolute',
+                                              width: chartSize,
+                                              height: chartSize,
+                                            }}
+                                            dangerouslySetInnerHTML={{
+                                              __html: `
+                                                <svg width="${chartSize}" height="${chartSize}" style="position: absolute; top: 0; left: 0;">
+                                                  <polygon 
+                                                    points="${polygonPoints.map(p => `${p.x},${p.y}`).join(' ')}"
+                                                    fill="${pastelColors.academic}40"
+                                                    stroke="${pastelColors.academic}"
+                                                    stroke-width="2"
+                                                  />
+                                                </svg>
+                                              `
+                                            }}
+                                          />
+                                        ) : (
+                                          <View
+                                            style={{
+                                              position: 'absolute',
+                                              width: chartSize,
+                                              height: chartSize,
+                                              backgroundColor: pastelColors.academic + '20',
+                                              opacity: 0.6,
+                                            }}
+                                          />
+                                        )}
+                                        
+                                        {/* Axis labels */}
+                                        {polygonPoints.map((point, index) => {
+                                          const labelRadius = radius + 25;
+                                          const labelX = center + labelRadius * Math.cos(point.angle);
+                                          const labelY = center + labelRadius * Math.sin(point.angle);
+                                          return (
+                                            <View
+                                              key={`label-${index}`}
+                                              style={{
+                                                position: 'absolute',
+                                                left: labelX - 40,
+                                                top: labelY - 8,
+                                                width: 80,
+                                                alignItems: 'center',
+                                              }}
+                                            >
+                                              <Text style={[overviewStyles.radarLabel, { textAlign: 'center', fontSize: 10 }]}>
+                                                {point.label.split('/')[0]}
+                                              </Text>
+                                            </View>
+                                          );
+                                        })}
+                                      </View>
+                                      
+                                      {/* Confidence pill */}
+                                      {confidence !== 'high' && (
+                                        <View style={overviewStyles.confidencePill}>
+                                          <Text style={overviewStyles.confidencePillText}>
+                                            {confidence === 'low' ? 'Early insights' : 'Refining'} — add more logs to improve
+                                          </Text>
+                                        </View>
+                                      )}
                                     </View>
-                                    <View style={overviewStyles.masteryBars}>
-                                      <View style={overviewStyles.masteryBar}>
-                                        <View style={overviewStyles.masteryBarLabel}>
-                                          <Text style={overviewStyles.masteryBarText}>Excellent (90+)</Text>
-                                          <Text style={overviewStyles.masteryBarCount}>{excellent}</Text>
+                                    
+                                    {/* Domain Tiles */}
+                                    <View style={overviewStyles.domainTilesRow}>
+                                      {/* Academic Tile */}
+                                      <TouchableOpacity 
+                                        style={overviewStyles.domainTile}
+                                        activeOpacity={0.7}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <View style={overviewStyles.domainTileHeader}>
+                                          <GraduationCap size={16} color={pastelColors.academic} />
+                                          <Text style={overviewStyles.domainTileTitle}>Academic</Text>
                                         </View>
-                                        <View style={overviewStyles.masteryBarTrack}>
-                                          <View style={[
-                                            overviewStyles.masteryBarFill,
-                                            { width: `${(excellent / total) * 100}%`, backgroundColor: '#10b981' }
-                                          ]} />
+                                        <Text style={[overviewStyles.domainTileStatus, { color: pastelColors.academic }]}>
+                                          {academicStatus}
+                                        </Text>
+                                        {/* Mini sparkline */}
+                                        {recentGrades.length >= 2 && (
+                                          <View style={overviewStyles.domainTileSparkline}>
+                                            {recentGrades.slice(-4).map((val, i) => (
+                                              <View
+                                                key={i}
+                                                style={[
+                                                  overviewStyles.sparklineBar,
+                                                  {
+                                                    height: `${(val / 100) * 100}%`,
+                                                    backgroundColor: pastelColors.academic,
+                                                    minHeight: 2,
+                                                  }
+                                                ]}
+                                              />
+                                            ))}
+                                          </View>
+                                        )}
+                                      </TouchableOpacity>
+                                      
+                                      {/* Creative & Social Tile */}
+                                      <TouchableOpacity 
+                                        style={overviewStyles.domainTile}
+                                        activeOpacity={0.7}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <View style={overviewStyles.domainTileHeader}>
+                                          <Palette size={16} color={pastelColors.creative} />
+                                          <Text style={overviewStyles.domainTileTitle}>Creative & Social</Text>
                                         </View>
+                                        <Text style={[overviewStyles.domainTileStatus, { color: pastelColors.creative }]}>
+                                          {creativeStatus}
+                                        </Text>
+                                        <Text style={[overviewStyles.masteryEmptyText, { fontSize: 11, marginTop: spacing.xs }]}>
+                                          {axes[3].confidence === 'low' ? 'Signals: Participation, expression' : 'High participation, steady expression'}
+                                        </Text>
+                                      </TouchableOpacity>
+                                      
+                                      {/* Learning Habits Tile */}
+                                      <TouchableOpacity 
+                                        style={overviewStyles.domainTile}
+                                        activeOpacity={0.7}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <View style={overviewStyles.domainTileHeader}>
+                                          <Heart size={16} color={pastelColors.habits} />
+                                          <Text style={overviewStyles.domainTileTitle}>Learning Habits</Text>
+                                        </View>
+                                        <Text style={[overviewStyles.domainTileStatus, { color: pastelColors.habits }]}>
+                                          {habitsStatus}
+                                        </Text>
+                                        <Text style={[overviewStyles.masteryEmptyText, { fontSize: 11, marginTop: spacing.xs }]}>
+                                          Attendance: {attendanceRate.toFixed(0)}% • Consistency strong
+                                        </Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                    
+                                    {/* Momentum + Engagement Row */}
+                                    <View style={overviewStyles.momentumEngagementRow}>
+                                      {/* Momentum Card */}
+                                      <View style={overviewStyles.momentumCard}>
+                                        <Text style={overviewStyles.momentumCardTitle}>Momentum</Text>
+                                        {momentum.values.length >= 2 ? (
+                                          <>
+                                            <View style={overviewStyles.momentumSparkline}>
+                                              {momentum.values.map((val, i) => (
+                                                <View
+                                                  key={i}
+                                                  style={[
+                                                    overviewStyles.sparklineBar,
+                                                    {
+                                                      height: `${(val / 100) * 100}%`,
+                                                      backgroundColor: momentum.direction === 'up' ? pastelColors.habits : momentum.direction === 'down' ? pastelColors.social : tokens.textSecondary,
+                                                      minHeight: 2,
+                                                    }
+                                                  ]}
+                                                />
+                                              ))}
+                                            </View>
+                                            <Text style={overviewStyles.momentumCardValue}>{momentum.label}</Text>
+                                          </>
+                                        ) : (
+                                          <Text style={overviewStyles.momentumCardValue}>Early signals</Text>
+                                        )}
                                       </View>
-                                      <View style={overviewStyles.masteryBar}>
-                                        <View style={overviewStyles.masteryBarLabel}>
-                                          <Text style={overviewStyles.masteryBarText}>Good (80-89)</Text>
-                                          <Text style={overviewStyles.masteryBarCount}>{good}</Text>
-                                        </View>
-                                        <View style={overviewStyles.masteryBarTrack}>
-                                          <View style={[
-                                            overviewStyles.masteryBarFill,
-                                            { width: `${(good / total) * 100}%`, backgroundColor: '#3b82f6' }
-                                          ]} />
-                                        </View>
-                                      </View>
-                                      <View style={overviewStyles.masteryBar}>
-                                        <View style={overviewStyles.masteryBarLabel}>
-                                          <Text style={overviewStyles.masteryBarText}>Needs Improvement (&lt;80)</Text>
-                                          <Text style={overviewStyles.masteryBarCount}>{needsImprovement}</Text>
-                                        </View>
-                                        <View style={overviewStyles.masteryBarTrack}>
-                                          <View style={[
-                                            overviewStyles.masteryBarFill,
-                                            { width: `${(needsImprovement / total) * 100}%`, backgroundColor: '#ef4444' }
-                                          ]} />
-                                        </View>
+                                      
+                                      {/* Engagement Card */}
+                                      <View style={overviewStyles.momentumCard}>
+                                        <Text style={overviewStyles.momentumCardTitle}>Engagement</Text>
+                                        <Text style={[overviewStyles.masteryEmptyText, { fontSize: 12, marginTop: spacing.xs }]}>
+                                          {attendanceRate >= 90 
+                                            ? `Strong attendance (${attendanceRate.toFixed(0)}%) provides a solid foundation for growth.`
+                                            : `Attendance: ${attendanceRate.toFixed(0)}% • Building consistency`
+                                          }
+                                        </Text>
                                       </View>
                                     </View>
-                                  </View>
+                                  </>
                                 );
                               })()}
-
-                              {/* Enhanced Analytics Sections - Only show when hasEnoughGrades */}
-                              {hasEnoughGrades && (
-                                <>
-                                  {/* Skills Overview (Learning Map) */}
-                                  {skillsData.length > 0 && (
-                                    <View style={{ marginTop: spacing.xl, paddingTop: spacing.xl, borderTopWidth: 1, borderTopColor: tokens.border }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
-                                        <MapPin size={18} color={tokens.accent} style={{ marginRight: spacing.sm }} />
-                                        <Text style={[overviewStyles.masteryMetricLabel, { marginBottom: 0 }]}>SKILLS OVERVIEW (LEARNING MAP)</Text>
-                                      </View>
-                                      {loadingSkills ? (
-                                        <ActivityIndicator size="small" color={tokens.accent} />
-                                      ) : (
-                                        <View style={{ gap: spacing.sm }}>
-                                          <Text style={[overviewStyles.masteryEmptyText, { marginBottom: spacing.sm }]}>
-                                            {skillsData.length} skills tracked across subjects
-                                          </Text>
-                                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
-                                            {skillsData.slice(0, 10).map((skill, idx) => {
-                                              const proficiency = skill.proficiency || 'beginner';
-                                              const colorMap = {
-                                                beginner: '#ef4444',
-                                                developing: '#f59e0b',
-                                                proficient: '#3b82f6',
-                                                advanced: '#10b981',
-                                                expert: '#8b5cf6'
-                                              };
-                                              const bgColor = colorMap[proficiency] || '#6b7280';
-                                              return (
-                                                <View
-                                                  key={skill.id || idx}
-                                                  style={{
-                                                    paddingHorizontal: spacing.sm,
-                                                    paddingVertical: 4,
-                                                    borderRadius: radius.sm,
-                                                    backgroundColor: bgColor + '20',
-                                                    borderWidth: 1,
-                                                    borderColor: bgColor + '40'
-                                                  }}
-                                                >
-                                                  <Text style={{ fontSize: 11, color: bgColor, fontWeight: '600', textTransform: 'capitalize' }}>
-                                                    {skill.name || 'Unknown'}
-                                                  </Text>
-                                                </View>
-                                              );
-                                            })}
-                                            {skillsData.length > 10 && (
-                                              <Text style={{ fontSize: 12, color: tokens.textSecondary, alignSelf: 'center' }}>
-                                                +{skillsData.length - 10} more
-                                              </Text>
-                                            )}
-                                          </View>
-                                        </View>
-                                      )}
-                                    </View>
-                                  )}
-
-                                  {/* Mastery Over Time (Charts/Heatmap) */}
-                                  {masteryOverTime.length > 0 && (
-                                    <View style={{ marginTop: spacing.xl, paddingTop: spacing.xl, borderTopWidth: 1, borderTopColor: tokens.border }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
-                                        <TrendingUp size={18} color={tokens.accent} style={{ marginRight: spacing.sm }} />
-                                        <Text style={[overviewStyles.masteryMetricLabel, { marginBottom: 0 }]}>MASTERY OVER TIME</Text>
-                                      </View>
-                                      {loadingMasteryTime ? (
-                                        <ActivityIndicator size="small" color={tokens.accent} />
-                                      ) : (
-                                        <View style={{ gap: spacing.sm }}>
-                                          <Text style={[overviewStyles.masteryEmptyText, { marginBottom: spacing.sm }]}>
-                                            Tracking mastery trends over {Math.ceil(masteryOverTime.length / 4)} weeks
-                                          </Text>
-                                          {/* Simple trend visualization */}
-                                          <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 60, gap: 2 }}>
-                                            {masteryOverTime.slice(-12).map((period, idx) => {
-                                              const avgConfidence = parseFloat(period.avg_confidence) || 0;
-                                              const height = Math.max((avgConfidence / 5) * 100, 5);
-                                              return (
-                                                <View
-                                                  key={idx}
-                                                  style={{
-                                                    flex: 1,
-                                                    height: '100%',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'flex-end'
-                                                  }}
-                                                >
-                                                  <View
-                                                    style={{
-                                                      width: '100%',
-                                                      height: `${height}%`,
-                                                      backgroundColor: avgConfidence >= 4 ? '#10b981' : avgConfidence >= 3 ? '#3b82f6' : '#f59e0b',
-                                                      borderRadius: 2,
-                                                      minHeight: 4
-                                                    }}
-                                                  />
-                                                </View>
-                                              );
-                                            })}
-                                          </View>
-                                        </View>
-                                      )}
-                                    </View>
-                                  )}
-
-                                  {/* Strengths & Areas for Improvement */}
-                                  {strengthsWeaknesses.length > 0 && (
-                                    <View style={{ marginTop: spacing.xl, paddingTop: spacing.xl, borderTopWidth: 1, borderTopColor: tokens.border }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
-                                        <Target size={18} color={tokens.accent} style={{ marginRight: spacing.sm }} />
-                                        <Text style={[overviewStyles.masteryMetricLabel, { marginBottom: 0 }]}>STRENGTHS & AREAS FOR IMPROVEMENT</Text>
-                                      </View>
-                                      {loadingStrengths ? (
-                                        <ActivityIndicator size="small" color={tokens.accent} />
-                                      ) : (
-                                        <View style={{ gap: spacing.md }}>
-                                          {(() => {
-                                            const strengths = strengthsWeaknesses.filter(s => s.is_strength).slice(0, 5);
-                                            const weaknesses = strengthsWeaknesses.filter(s => s.is_weakness).slice(0, 5);
-                                            return (
-                                              <>
-                                                {strengths.length > 0 && (
-                                                  <View>
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm }}>
-                                                      <Award size={14} color="#10b981" style={{ marginRight: spacing.xs }} />
-                                                      <Text style={[overviewStyles.masteryBarText, { color: '#10b981' }]}>Strengths</Text>
-                                                    </View>
-                                                    <View style={{ gap: spacing.xs }}>
-                                                      {strengths.map((skill, idx) => (
-                                                        <View key={skill.skill_id || idx} style={overviewStyles.masteryBar}>
-                                                          <View style={overviewStyles.masteryBarLabel}>
-                                                            <Text style={overviewStyles.masteryBarText}>{skill.skill_name || 'Unknown Skill'}</Text>
-                                                            <Text style={[overviewStyles.masteryBarCount, { color: '#10b981' }]}>
-                                                              {skill.proficiency || 'proficient'}
-                                                            </Text>
-                                                          </View>
-                                                          <View style={overviewStyles.masteryBarTrack}>
-                                                            <View style={[
-                                                              overviewStyles.masteryBarFill,
-                                                              { width: `${((parseFloat(skill.avg_confidence) || 0) / 5) * 100}%`, backgroundColor: '#10b981' }
-                                                            ]} />
-                                                          </View>
-                                                        </View>
-                                                      ))}
-                                                    </View>
-                                                  </View>
-                                                )}
-                                                {weaknesses.length > 0 && (
-                                                  <View>
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm }}>
-                                                      <AlertCircle size={14} color="#f59e0b" style={{ marginRight: spacing.xs }} />
-                                                      <Text style={[overviewStyles.masteryBarText, { color: '#f59e0b' }]}>Areas for Improvement</Text>
-                                                    </View>
-                                                    <View style={{ gap: spacing.xs }}>
-                                                      {weaknesses.map((skill, idx) => (
-                                                        <View key={skill.skill_id || idx} style={overviewStyles.masteryBar}>
-                                                          <View style={overviewStyles.masteryBarLabel}>
-                                                            <Text style={overviewStyles.masteryBarText}>{skill.skill_name || 'Unknown Skill'}</Text>
-                                                            <Text style={[overviewStyles.masteryBarCount, { color: '#f59e0b' }]}>
-                                                              {skill.proficiency || 'developing'}
-                                                            </Text>
-                                                          </View>
-                                                          <View style={overviewStyles.masteryBarTrack}>
-                                                            <View style={[
-                                                              overviewStyles.masteryBarFill,
-                                                              { width: `${((parseFloat(skill.avg_confidence) || 0) / 5) * 100}%`, backgroundColor: '#f59e0b' }
-                                                            ]} />
-                                                          </View>
-                                                        </View>
-                                                      ))}
-                                                    </View>
-                                                  </View>
-                                                )}
-                                              </>
-                                            );
-                                          })()}
-                                        </View>
-                                      )}
-                                    </View>
-                                  )}
-
-                                  {/* Behavior Trends */}
-                                  <View style={{ marginTop: spacing.xl, paddingTop: spacing.xl, borderTopWidth: 1, borderTopColor: tokens.border }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
-                                      <Activity size={18} color={tokens.accent} style={{ marginRight: spacing.sm }} />
-                                      <Text style={[overviewStyles.masteryMetricLabel, { marginBottom: 0 }]}>BEHAVIOR TRENDS</Text>
-                                    </View>
-                                    <View style={{ gap: spacing.sm }}>
-                                      {/* Calculate behavior trends from attendance and grades */}
-                                      {(() => {
-                                        const recentGrades = childGrades.slice(0, 10);
-                                        const recentAttendance = attendanceData.slice(0, 30);
-                                        const avgGrade = recentGrades.length > 0 
-                                          ? recentGrades.reduce((sum, g) => {
-                                              const grade = typeof g.grade === 'number' ? g.grade : parseFloat(g.grade);
-                                              return sum + (isNaN(grade) ? 0 : grade);
-                                            }, 0) / recentGrades.length
-                                          : 0;
-                                        const attendanceRate = recentAttendance.length > 0
-                                          ? (recentAttendance.filter(a => a.status === 'present').length / recentAttendance.length) * 100
-                                          : 0;
-                                        
-                                        return (
-                                          <View style={{ gap: spacing.sm }}>
-                                            <View style={overviewStyles.masteryBar}>
-                                              <View style={overviewStyles.masteryBarLabel}>
-                                                <Text style={overviewStyles.masteryBarText}>Recent Performance</Text>
-                                                <Text style={overviewStyles.masteryBarCount}>{avgGrade.toFixed(1)}% avg</Text>
-                                              </View>
-                                              <View style={overviewStyles.masteryBarTrack}>
-                                                <View style={[
-                                                  overviewStyles.masteryBarFill,
-                                                  { width: `${avgGrade}%`, backgroundColor: avgGrade >= 90 ? '#10b981' : avgGrade >= 80 ? '#3b82f6' : '#f59e0b' }
-                                                ]} />
-                                              </View>
-                                            </View>
-                                            <View style={overviewStyles.masteryBar}>
-                                              <View style={overviewStyles.masteryBarLabel}>
-                                                <Text style={overviewStyles.masteryBarText}>Attendance Rate</Text>
-                                                <Text style={overviewStyles.masteryBarCount}>{attendanceRate.toFixed(0)}%</Text>
-                                              </View>
-                                              <View style={overviewStyles.masteryBarTrack}>
-                                                <View style={[
-                                                  overviewStyles.masteryBarFill,
-                                                  { width: `${attendanceRate}%`, backgroundColor: attendanceRate >= 90 ? '#10b981' : attendanceRate >= 80 ? '#3b82f6' : '#f59e0b' }
-                                                ]} />
-                                              </View>
-                                            </View>
-                                          </View>
-                                        );
-                                      })()}
-                                    </View>
-                                  </View>
-                                </>
-                              )}
                             </View>
                           ) : (
                             <View style={overviewStyles.masteryEmptyState}>
-                              <BarChart3 size={32} color={tokens.textSecondary} style={{ opacity: 0.5, marginBottom: spacing.sm }} />
-                              <Text style={overviewStyles.masteryEmptyTitle}>
-                                Need at least 20 grades to show mastery charts
-                              </Text>
                               <Text style={overviewStyles.masteryEmptyText}>
-                                Currently have {gradeCount} grade{gradeCount !== 1 ? 's' : ''}. Add {20 - gradeCount} more grade{20 - gradeCount !== 1 ? 's' : ''} to see mastery insights.
+                                Add 3 quick grades to unlock mastery insights.
                               </Text>
-                              {/* Tip - shown when there's learning style, interests, or qualities info */}
-                              {(learningStyle || interests || qualities) && (
-                                <Text style={overviewStyles.masteryTip}>
-                                  <Text style={overviewStyles.masteryTipLabel}>Tip: </Text>
-                                  Adding information about {childName}'s learning style, interests, and qualities helps personalize instruction and improve results.
-                                </Text>
-                              )}
+                              
+                              {/* Preview Skeleton Chart */}
+                              <View style={overviewStyles.masteryPreviewSkeleton}>
+                                <View style={overviewStyles.masteryPreviewHeader}>
+                                  <View style={overviewStyles.masteryPreviewBar}>
+                                    <View style={[overviewStyles.masteryPreviewBarFill, { width: '65%' }]} />
+                                  </View>
+                                  <Text style={overviewStyles.masteryPreviewLabel}>Average</Text>
+                                </View>
+                                <View style={overviewStyles.masteryPreviewBars}>
+                                  <View style={overviewStyles.masteryPreviewBarRow}>
+                                    <View style={[overviewStyles.masteryPreviewBar, { width: '30%' }]}>
+                                      <View style={[overviewStyles.masteryPreviewBarFill, { width: '80%', backgroundColor: '#10b981' }]} />
+                                    </View>
+                                  </View>
+                                  <View style={overviewStyles.masteryPreviewBarRow}>
+                                    <View style={[overviewStyles.masteryPreviewBar, { width: '50%' }]}>
+                                      <View style={[overviewStyles.masteryPreviewBarFill, { width: '60%', backgroundColor: '#3b82f6' }]} />
+                                    </View>
+                                  </View>
+                                  <View style={overviewStyles.masteryPreviewBarRow}>
+                                    <View style={[overviewStyles.masteryPreviewBar, { width: '20%' }]}>
+                                      <View style={[overviewStyles.masteryPreviewBarFill, { width: '40%', backgroundColor: '#ef4444' }]} />
+                                    </View>
+                                  </View>
+                                </View>
+                              </View>
+                              
+                              {/* Action Buttons */}
+                              <View style={overviewStyles.masteryEmptyActions}>
+                                <TouchableOpacity
+                                  style={overviewStyles.masteryEmptyButton}
+                                  onPress={() => {
+                                    handleOpenEventsForGrade();
+                                  }}
+                                  activeOpacity={0.7}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text style={overviewStyles.masteryEmptyButtonText}>Add a grade</Text>
+                                </TouchableOpacity>
+                                
+                                <TouchableOpacity
+                                  style={[overviewStyles.masteryEmptyButton, overviewStyles.masteryEmptyButtonSecondary]}
+                                  onPress={() => {
+                                    // Navigate to planner month view
+                                    if (onTabChange) {
+                                      // Update URL to set planner month view
+                                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                                        const url = new URL(window.location.href);
+                                        url.searchParams.set('tab', 'planner');
+                                        url.searchParams.set('view', 'month');
+                                        window.history.replaceState({}, '', url.toString());
+                                      }
+                                      
+                                      // Switch to planner tab
+                                      onTabChange('planner');
+                                      
+                                      // Dispatch event to ensure view switches to month view
+                                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                                        setTimeout(() => {
+                                          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
+                                        }, 100);
+                                      }
+                                    }
+                                  }}
+                                  activeOpacity={0.7}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text style={[overviewStyles.masteryEmptyButtonText, overviewStyles.masteryEmptyButtonTextSecondary]}>Jump to planner</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
                           )}
                           </View>
@@ -5438,20 +6086,8 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                     }
 
                     const childName = effectiveChild.first_name || effectiveChild.name || 'Child';
-                    const childColor = effectiveChild.avatar ? getChildColorFromAvatar(effectiveChild.avatar) : null;
-                    const blendWithWhite = (hex, ratio = 0.1) => {
-                      if (!hex) return null;
-                      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                      if (!result) return hex;
-                      const r = parseInt(result[1], 16);
-                      const g = parseInt(result[2], 16);
-                      const b = parseInt(result[3], 16);
-                      const blendedR = Math.round(255 * (1 - ratio) + r * ratio);
-                      const blendedG = Math.round(255 * (1 - ratio) + g * ratio);
-                      const blendedB = Math.round(255 * (1 - ratio) + b * ratio);
-                      return `#${blendedR.toString(16).padStart(2, '0')}${blendedG.toString(16).padStart(2, '0')}${blendedB.toString(16).padStart(2, '0')}`;
-                    };
-                    const attendanceCardBg = childColor ? blendWithWhite(childColor, 0.1) : (tokens.card || '#ffffff');
+                    // Use distinct header color for attendance card
+                    const attendanceCardBg = '#FEF3C7'; // Light yellow
 
                     // Get attendance for last 30 days
                     const thirtyDaysAgo = new Date();
@@ -5583,316 +6219,14 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                     );
                   })()}
 
-                  {/* Compliance Dashboard Container */}
-                  {effectiveChildId && children && children.length > 0 && (() => {
-                    const effectiveChild = child || sortedChildren.find(c => c.id === effectiveChildId);
-                    if (!effectiveChild) return null;
-
-                    const childName = effectiveChild.first_name || effectiveChild.name || 'Child';
-                    const childColor = effectiveChild.avatar ? getChildColorFromAvatar(effectiveChild.avatar) : null;
-                    const blendWithWhite = (hex, ratio = 0.1) => {
-                      if (!hex) return null;
-                      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                      if (!result) return hex;
-                      const r = parseInt(result[1], 16);
-                      const g = parseInt(result[2], 16);
-                      const b = parseInt(result[3], 16);
-                      const blendedR = Math.round(255 * (1 - ratio) + r * ratio);
-                      const blendedG = Math.round(255 * (1 - ratio) + g * ratio);
-                      const blendedB = Math.round(255 * (1 - ratio) + b * ratio);
-                      return `#${blendedR.toString(16).padStart(2, '0')}${blendedG.toString(16).padStart(2, '0')}${blendedB.toString(16).padStart(2, '0')}`;
-                    };
-                    const complianceCardBg = childColor ? blendWithWhite(childColor, 0.1) : (tokens.card || '#ffffff');
-
-                    // Get state and grade from child details - use standards/standards_state field (same as Edit Child modal)
-                    const childState = effectiveChild.standards || effectiveChild.standards_state || effectiveChild.state_code || effectiveChild.state || childStateCode || complianceStateCode || 'CA';
-                    const childGrade = effectiveChild.grade ? effectiveChild.grade.replace(/^(K|Kindergarten)$/i, 'K').replace(/(\d+)(st|nd|rd|th)?\s*Grade/i, '$1').trim() : complianceGrade || '6';
-                    const stateNames = { 
-                      'CA': 'California', 
-                      'NY': 'New York', 
-                      'TX': 'Texas', 
-                      'FL': 'Florida',
-                      'DC': 'District of Columbia',
-                      'MD': 'Maryland',
-                      'VA': 'Virginia'
-                    };
-                    const stateName = stateNames[childState] || childState;
-
-
-                    // Get compliance checklist for this child
-                    const childComplianceItems = (complianceData || []).filter(item => 
-                      item.child_id === effectiveChildId && 
-                      (item.requirement?.state_code === childState || !item.requirement?.state_code || item.state_code === childState)
-                    );
-
-                    // Calculate coverage from attendance data
-                    const childAttendance = attendanceData?.filter(a => a.child_id === effectiveChildId) || [];
-                    const totalSchoolDays = 180; // Standard school year
-                    const loggedDays = new Set(childAttendance.map(a => a.day_date)).size;
-                    const coveragePercent = totalSchoolDays > 0 ? Math.round((loggedDays / totalSchoolDays) * 100) : 0;
-                    const isOnTrack = coveragePercent >= 90;
-
-                    // Calculate credits from grades (sum of credits field)
-                    const childGradesList = gradesByChild[effectiveChildId] || [];
-                    const earnedCredits = childGradesList.reduce((sum, grade) => {
-                      const credits = grade.credits ? parseFloat(grade.credits) : 0;
-                      return sum + (isNaN(credits) ? 0 : credits);
-                    }, 0);
-                    const requiredCredits = 6; // Default, could come from state requirements
-                    const complianceCredits = {
-                      earned: Math.round(earnedCredits * 10) / 10, // Round to 1 decimal
-                      required: requiredCredits
-                    };
-
-                    // Calculate portfolio evidence count
-                    const portfolioEvidenceCount = portfolioUploads?.filter(upload => 
-                      upload.child_id === effectiveChildId
-                    ).length || 0;
-                    const hasPortfolioEvidence = portfolioEvidenceCount > 0;
-
-                    // Build the 4 required compliance checklist items
-                    // These are always shown regardless of database state
-                    const checklistItems = [
-                      {
-                        id: 'attendance-logged',
-                        item: 'Attendance logged',
-                        status: loggedDays >= 180 ? 'completed' : loggedDays > 0 ? 'in_progress' : 'pending',
-                        evidence: `${loggedDays}/${totalSchoolDays} days`,
-                        category: 'Attendance',
-                        evidenceLink: () => {
-                          // Open attendance modal when tapped
-                          setShowAttendanceModal(true);
-                        },
-                        tooltip: 'Required for state compliance. Most states require 180 days of instruction per year.'
-                      },
-                      {
-                        id: 'subjects-covered',
-                        item: 'Required subjects covered',
-                        status: subjects.length >= 3 ? 'completed' : subjects.length > 0 ? 'in_progress' : 'pending',
-                        evidence: `${subjects.length} subject${subjects.length !== 1 ? 's' : ''}`,
-                        category: 'Subjects',
-                        evidenceLink: () => {
-                          // Could navigate to subjects view
-                        },
-                        tooltip: 'Ensure core subjects are covered according to your state requirements.'
-                      },
-                      {
-                        id: 'portfolio-evidence',
-                        item: 'Portfolio evidence attached',
-                        status: hasPortfolioEvidence ? 'completed' : 'pending',
-                        evidence: hasPortfolioEvidence ? `${portfolioEvidenceCount} file${portfolioEvidenceCount !== 1 ? 's' : ''}` : 'No files',
-                        category: 'Documentation',
-                        evidenceLink: () => {
-                          // Navigate to portfolio/evidence view
-                          onTabChange('records');
-                        },
-                        tooltip: 'Maintain a portfolio of student work samples for compliance reviews.'
-                      },
-                      {
-                        id: 'standardized-testing',
-                        item: 'Standardized testing',
-                        status: 'pending',
-                        evidence: null,
-                        category: 'Assessments',
-                        evidenceLink: () => {
-                          // Could navigate to assessments view
-                        },
-                        tooltip: 'Optional in most states, but recommended for tracking academic progress.',
-                        isOptional: true
-                      }
-                    ];
-
-                    // Group by category
-                    const checklistByCategory = {
-                      'Attendance': [],
-                      'Subjects': [],
-                      'Documentation': [],
-                      'Assessments': []
-                    };
-
-                    checklistItems.forEach(item => {
-                      if (!checklistByCategory[item.category]) {
-                        checklistByCategory[item.category] = [];
-                      }
-                      checklistByCategory[item.category].push(item);
-                    });
-
-                    return (
-                      <View style={overviewStyles.attendanceSection}>
-                        <View style={overviewStyles.attendanceCard}>
-                          <View style={[overviewStyles.attendanceCardHeader, { backgroundColor: complianceCardBg }]}>
-                            <View style={{ flex: 1 }}>
-                              <Text style={overviewStyles.attendanceCardTitle}>Compliance</Text>
-                              <Text style={[overviewStyles.attendanceCardSubtitle, { marginTop: 2, fontSize: 12 }]}>
-                                {stateName} · Grade {childGrade}
-                              </Text>
-                            </View>
-                            {isOnTrack && (
-                              <Text style={{ fontSize: 14, fontWeight: '600', color: '#10B981' }}>✓ On track</Text>
-                            )}
-                          </View>
-                          <View style={overviewStyles.attendanceCardContent}>
-                            {/* Top metrics */}
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.md, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: tokens.border || '#e5e7eb' }}>
-                              <View style={{ flex: 1 }}>
-                                <Text style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 4 }}>Coverage</Text>
-                                <Text style={{ fontSize: 24, fontWeight: '700', fontFamily: designTokens.fonts.display, color: tokens.text }}>
-                                  {coveragePercent}%
-                                </Text>
-                              </View>
-                              <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                                <Text style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 4 }}>Credits</Text>
-                                <Text style={{ fontSize: 24, fontWeight: '700', fontFamily: designTokens.fonts.display, color: tokens.text }}>
-                                  {complianceCredits.earned} / {complianceCredits.required}
-                                </Text>
-                                <Text style={{ fontSize: 11, color: tokens.textSecondary, marginTop: 2 }}>required</Text>
-                              </View>
-                            </View>
-
-                            {/* Progress ring visualization (simplified as progress bar) */}
-                            <View style={{ marginBottom: spacing.md }}>
-                              <View style={{ height: 8, backgroundColor: tokens.border || '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
-                                <View style={{ 
-                                  height: '100%', 
-                                  width: `${coveragePercent}%`, 
-                                  backgroundColor: isOnTrack ? '#10B981' : '#3b82f6',
-                                  borderRadius: 4
-                                }} />
-                              </View>
-                            </View>
-
-                            {/* Compliance Checklist - Collapsed preview */}
-                            <View style={{ marginBottom: spacing.md }}>
-                              <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm }}
-                                onPress={() => setShowComplianceChecklist(!showComplianceChecklist)}
-                              >
-                                <Text style={{ fontSize: 13, fontWeight: '600', color: tokens.text }}>Compliance Checklist</Text>
-                                {showComplianceChecklist ? (
-                                  <ChevronUp size={16} color={tokens.textSecondary} />
-                                ) : (
-                                  <ChevronDown size={16} color={tokens.textSecondary} />
-                                )}
-                              </TouchableOpacity>
-                              {!showComplianceChecklist && (
-                                <View style={{ gap: spacing.xs }}>
-                                  {checklistItems.map((item) => (
-                                    <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-                                      {item.status === 'completed' ? (
-                                        <Text style={{ fontSize: 14, color: '#10B981' }}>✓</Text>
-                                      ) : item.status === 'in_progress' ? (
-                                        <Text style={{ fontSize: 14, color: '#3b82f6' }}>○</Text>
-                                      ) : (
-                                        <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 1.5, borderColor: tokens.border || '#e5e7eb' }} />
-                                      )}
-                                      <Text style={{ fontSize: 12, color: tokens.text, flex: 1 }}>
-                                        {item.item} {item.evidence && `(${item.evidence})`} {item.isOptional && '(optional)'}
-                                      </Text>
-                                    </View>
-                                  ))}
-                                </View>
-                              )}
-                              {showComplianceChecklist && (
-                                <View style={{ gap: spacing.md }}>
-                                  {Object.entries(checklistByCategory).map(([category, items]) => {
-                                    if (!items || items.length === 0) return null;
-                                    return (
-                                      <View key={category} style={{ marginBottom: spacing.sm }}>
-                                        <Text style={{ fontSize: 11, fontWeight: '600', color: tokens.textSecondary, textTransform: 'uppercase', marginBottom: spacing.xs }}>
-                                          {category}
-                                        </Text>
-                                        {items.map((item) => (
-                                          <TouchableOpacity
-                                            key={item.id}
-                                            onPress={item.evidenceLink || undefined}
-                                            activeOpacity={item.evidenceLink ? 0.7 : 1}
-                                            style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, marginBottom: spacing.xs }}
-                                          >
-                                            {item.status === 'completed' ? (
-                                              <Text style={{ fontSize: 14, color: '#10B981', marginTop: 2 }}>✓</Text>
-                                            ) : item.status === 'in_progress' ? (
-                                              <Text style={{ fontSize: 14, color: '#3b82f6', marginTop: 2 }}>○</Text>
-                                            ) : (
-                                              <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 1.5, borderColor: tokens.border || '#e5e7eb', marginTop: 2 }} />
-                                            )}
-                                            <View style={{ flex: 1 }}>
-                                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' }}>
-                                                <Text style={{ fontSize: 12, color: tokens.text }}>
-                                                  {item.item} {item.isOptional && <Text style={{ fontSize: 11, color: tokens.textSecondary, fontStyle: 'italic' }}>(optional)</Text>}
-                                                </Text>
-                                              </View>
-                                              {item.evidence && (
-                                                <TouchableOpacity
-                                                  onPress={item.evidenceLink}
-                                                  activeOpacity={0.7}
-                                                  style={{ marginTop: 2 }}
-                                                >
-                                                  <Text style={{ fontSize: 11, color: '#3b82f6', textDecorationLine: 'underline' }}>
-                                                    {item.evidence} →
-                                                  </Text>
-                                                </TouchableOpacity>
-                                              )}
-                                              {item.tooltip && (
-                                                <View style={{ marginTop: 2 }}>
-                                                  <Text style={{ fontSize: 9, color: tokens.textSecondary, fontStyle: 'italic' }}>
-                                                    {item.tooltip}
-                                                  </Text>
-                                                </View>
-                                              )}
-                                            </View>
-                                          </TouchableOpacity>
-                                        ))}
-                                      </View>
-                                    );
-                                  })}
-                                </View>
-                              )}
-                            </View>
-
-
-                            {/* Generate Log */}
-                            <View style={{ paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: tokens.border || '#e5e7eb' }}>
-                              <View style={{ marginBottom: spacing.sm }}>
-                                <Text style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 16, marginBottom: spacing.sm }}>
-                                  Generate a log of highlighted activities completed, lessons taught, materials used, and work completed. We'll compile the collection using the most applicable examples for state reporting purposes.
-                                </Text>
-                              </View>
-                              <TouchableOpacity
-                                style={overviewStyles.attendanceViewAllButton}
-                                onPress={() => {
-                                  setShowGenerateLogModal(true);
-                                  loadLogSamples();
-                                }}
-                              >
-                                <Text style={overviewStyles.attendanceViewAllText}>Generate Log →</Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        </View>
-                      </View>
-                    );
-                  })()}
-
                   {/* Grades & Goals Container */}
                   {effectiveChildId && children && children.length > 0 && (() => {
                     const effectiveChild = child || sortedChildren.find(c => c.id === effectiveChildId);
                     if (!effectiveChild) return null;
 
                     const childName = effectiveChild.first_name || effectiveChild.name || 'Child';
-                    const childColor = effectiveChild.avatar ? getChildColorFromAvatar(effectiveChild.avatar) : null;
-                    const blendWithWhite = (hex, ratio = 0.1) => {
-                      if (!hex) return null;
-                      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                      if (!result) return hex;
-                      const r = parseInt(result[1], 16);
-                      const g = parseInt(result[2], 16);
-                      const b = parseInt(result[3], 16);
-                      const blendedR = Math.round(255 * (1 - ratio) + r * ratio);
-                      const blendedG = Math.round(255 * (1 - ratio) + g * ratio);
-                      const blendedB = Math.round(255 * (1 - ratio) + b * ratio);
-                      return `#${blendedR.toString(16).padStart(2, '0')}${blendedG.toString(16).padStart(2, '0')}${blendedB.toString(16).padStart(2, '0')}`;
-                    };
-                    const gradesCardBg = childColor ? blendWithWhite(childColor, 0.1) : (tokens.card || '#ffffff');
+                    // Use distinct header color for grades & goals card
+                    const gradesCardBg = '#FEE2E2'; // Light pink/rose
 
                     // Get child's grades grouped by subject
                     const childGrades = gradesByChild[effectiveChildId] || [];
@@ -6319,10 +6653,10 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                 </View>
               );
             })()}
-          </View>
-
+        </View>
       </View>
-
+      
+      {/* Modals */}
       <AddSubjectModal
         visible={showAddSubjectModal}
         onClose={() => setShowAddSubjectModal(false)}
@@ -6880,6 +7214,195 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                           <Text style={overviewStyles.lessonPlanListItemDate}>
                             {dateRangeString}
                           </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        </Modal>
+      )}
+
+      {/* Events for Grade Modal */}
+      {showEventsModal && (
+        <Modal
+          visible={showEventsModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowEventsModal(false)}
+        >
+          <View style={overviewStyles.pdfModalOverlay}>
+            <TouchableOpacity
+              style={overviewStyles.pdfModalOverlayTouchable}
+              activeOpacity={1}
+              onPress={() => {
+                setShowEventsModal(false);
+              }}
+            />
+            {loadingEventsForGrade ? (
+              <View
+                style={overviewStyles.noSyllabusModalContainer}
+                onStartShouldSetResponder={() => true}
+              >
+                <TouchableOpacity
+                  style={[overviewStyles.pdfModalCloseButton, { position: 'absolute', top: 0, right: 0, zIndex: 1 }]}
+                  onPress={() => {
+                    setShowEventsModal(false);
+                  }}
+                >
+                  <X size={20} color={colors.text} />
+                </TouchableOpacity>
+                <View style={{ padding: 32, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={colors.accent} />
+                  <Text style={{ marginTop: 16, color: colors.textSecondary }}>Loading events...</Text>
+                </View>
+              </View>
+            ) : eventsForGrade.length === 0 ? (
+              <View
+                style={overviewStyles.noSyllabusModalContainer}
+                onStartShouldSetResponder={() => true}
+              >
+                <TouchableOpacity
+                  style={[overviewStyles.pdfModalCloseButton, { position: 'absolute', top: 0, right: 0, zIndex: 1 }]}
+                  onPress={() => {
+                    setShowEventsModal(false);
+                  }}
+                >
+                  <X size={20} color={colors.text} />
+                </TouchableOpacity>
+                <View style={overviewStyles.noSyllabusContent}>
+                  <Text style={overviewStyles.noSyllabusText}>
+                    NO EVENTS FOUND FOR THIS CHILD.
+                  </Text>
+                  <Text style={overviewStyles.noSyllabusSubtext}>
+                    Add events in the Planner to get started.
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View
+                style={[overviewStyles.pdfModalContainer, { maxWidth: 600 }]}
+                onStartShouldSetResponder={() => true}
+              >
+                <View style={overviewStyles.pdfModalHeader}>
+                  <Text style={overviewStyles.pdfModalTitle} numberOfLines={1}>
+                    All Events
+                  </Text>
+                  <TouchableOpacity
+                    style={overviewStyles.pdfModalCloseButton}
+                    onPress={() => {
+                      setShowEventsModal(false);
+                    }}
+                  >
+                    <X size={20} color={colors.text} />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={overviewStyles.lessonPlanListContainer}>
+                  {eventsForGrade.map((event, index) => {
+                    // Get all children attached to this event
+                    const eventChildIds = [];
+                    if (event.child_id) {
+                      eventChildIds.push(event.child_id);
+                    }
+                    if (event.child_ids && Array.isArray(event.child_ids)) {
+                      eventChildIds.push(...event.child_ids);
+                    }
+                    // Remove duplicates
+                    const uniqueChildIds = [...new Set(eventChildIds)];
+                    const eventChildren = uniqueChildIds
+                      .map(childId => children.find(c => c.id === childId))
+                      .filter(Boolean);
+                    
+                    const subjectName = event.subject?.name || null;
+                    
+                    // Format date
+                    const dateString = event.start_ts 
+                      ? new Date(event.start_ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                      : null;
+                    
+                    // Format time
+                    const timeString = event.start_ts 
+                      ? new Date(event.start_ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : null;
+                    
+                    // Format date range if it's a multi-day event
+                    let dateRangeString = dateString;
+                    if (event.start_ts && event.end_ts) {
+                      const startDate = new Date(event.start_ts);
+                      const endDate = new Date(event.end_ts);
+                      if (startDate.toDateString() !== endDate.toDateString()) {
+                        dateRangeString = `${new Date(event.start_ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${new Date(event.end_ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                      }
+                    }
+                    
+                    return (
+                      <TouchableOpacity
+                        key={event.id || index}
+                        style={overviewStyles.lessonPlanListItem}
+                        onPress={() => handleSelectEventForGrade(event)}
+                      >
+                        <View style={overviewStyles.lessonPlanListItemContent}>
+                          <View style={overviewStyles.lessonPlanListItemTitleRow}>
+                            <Text style={overviewStyles.lessonPlanListItemTitle} numberOfLines={2}>
+                              {event.title || 'Untitled Event'}
+                            </Text>
+                          </View>
+                          <View style={overviewStyles.lessonPlanListItemSubtitleRow}>
+                            {subjectName && (
+                              <Text style={overviewStyles.lessonPlanListItemSubtitle} numberOfLines={1}>
+                                {subjectName}
+                              </Text>
+                            )}
+                            {event.event_type && (
+                              <>
+                                {subjectName && <Text style={overviewStyles.lessonPlanListItemSubtitle}> • </Text>}
+                                <Text style={overviewStyles.lessonPlanListItemSubtitle} numberOfLines={1}>
+                                  {event.event_type}
+                                </Text>
+                              </>
+                            )}
+                            {eventChildren.length > 0 && (
+                              <>
+                                {(subjectName || event.event_type) && <Text style={overviewStyles.lessonPlanListItemSubtitle}> • </Text>}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                  {eventChildren.map((child, childIndex) => {
+                                    const childColor = child?.avatar ? getChildColorFromAvatar(child.avatar) : '#9CA3AF';
+                                    const childName = child?.first_name || child?.name || 'Child';
+                                    return (
+                                      <View key={child.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                        <View
+                                          style={[
+                                            overviewStyles.lessonPlanChildDot,
+                                            { backgroundColor: childColor }
+                                          ]}
+                                        />
+                                        <Text style={overviewStyles.lessonPlanListItemSubtitle} numberOfLines={1}>
+                                          {childName}
+                                        </Text>
+                                        {childIndex < eventChildren.length - 1 && (
+                                          <Text style={overviewStyles.lessonPlanListItemSubtitle}>, </Text>
+                                        )}
+                                      </View>
+                                    );
+                                  })}
+                                </View>
+                              </>
+                            )}
+                          </View>
+                        </View>
+                        {dateRangeString && (
+                          <View style={{ alignItems: 'flex-end', gap: 2 }}>
+                            <Text style={overviewStyles.lessonPlanListItemDate}>
+                              {dateRangeString}
+                            </Text>
+                            {timeString && (
+                              <Text style={[overviewStyles.lessonPlanListItemDate, { fontSize: 11 }]}>
+                                {timeString}
+                              </Text>
+                            )}
+                          </View>
                         )}
                       </TouchableOpacity>
                     );
@@ -8766,6 +9289,6 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
           </View>
         </TouchableOpacity>
       </Modal>
-    </View>
+    </>
   );
 }

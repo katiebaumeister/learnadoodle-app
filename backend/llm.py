@@ -2516,8 +2516,9 @@ async def llm_coach_conversation(context: Dict[str, Any]) -> Dict[str, Any]:
     session_type = context.get("session_type", "parent")
     conversation_history = context.get("conversation_history", [])
     child_info = context.get("child_info", {})
-    recent_events = context.get("recent_events", [])
-    recent_assignments = context.get("recent_assignments", [])
+    context_data = context.get("context_data", {})
+    recent_events = context_data.get("recent_events", context.get("recent_events", []))
+    recent_assignments = context_data.get("assignments", context.get("recent_assignments", []))
     
     # Build context summary
     child_name = child_info.get("first_name", "the student") if child_info else "your child"
@@ -2532,24 +2533,172 @@ async def llm_coach_conversation(context: Dict[str, Any]) -> Dict[str, Any]:
     if session_type == "parent":
         system_prompt = """You are a supportive AI learning coach for homeschooling parents. 
 You help parents understand their child's learning journey, provide encouragement, suggest strategies, 
-and offer practical advice. Be warm, empathetic, and actionable. Keep responses concise (2-4 sentences) 
-unless the parent asks for more detail."""
+and offer practical advice. Be warm, empathetic, and actionable.
+
+IMPORTANT: When making recommendations, be SPECIFIC and CONCRETE. Instead of generic advice like 
+"provide materials to explore art techniques," give specific suggestions like "try finding a new 
+craft on Pinterest that interweaves elements of the color wheel" or "set up a science experiment 
+matching the one from last week's Science Fair Project." Reference actual events, subjects, or 
+activities from the evidence provided. Make suggestions that parents can act on immediately."""
     else:
         system_prompt = f"""You are a friendly AI learning coach for {child_name}. 
 You help students understand their learning, stay motivated, and develop good study habits. 
 Be encouraging, age-appropriate, and supportive. Keep responses concise and engaging."""
     
+    # Get context data for evidence building
+    context_data = context.get("context_data", {})
+    children_info = context_data.get("children_info", [])
+    recent_events = context_data.get("recent_events", context.get("recent_events", []))
+    grades = context_data.get("grades", [])
+    attendance = context_data.get("attendance", [])
+    subjects = context_data.get("subjects", [])
+    
+    # Build evidence list from available data
+    evidence_list = []
+    if recent_events:
+        event_titles = [e.get("title", "Event") for e in recent_events[:5] if e.get("title")]
+        if event_titles:
+            evidence_list.append(f"Recent events: {', '.join(event_titles)}")
+    
+    if grades:
+        grade_items = []
+        for grade in grades[:5]:
+            subject_name = next((s.get("name", "Unknown") for s in subjects if s.get("id") == grade.get("subject_id")), "Unknown subject")
+            grade_val = grade.get("grade", "N/A")
+            if grade_val and grade_val != "N/A":
+                grade_items.append(f"{subject_name} ({grade_val})")
+        if grade_items:
+            evidence_list.append(f"Recent grades: {', '.join(grade_items)}")
+    
+    if attendance:
+        present_count = sum(1 for a in attendance if a.get("status") == "present")
+        if present_count > 0:
+            evidence_list.append(f"Attendance: {present_count} present out of {len(attendance)} sessions")
+    
+    if children_info:
+        child = children_info[0] if children_info else {}
+        
+        # Get interests - handle various formats
+        interests = None
+        if child.get("learner_profile") and isinstance(child.get("learner_profile"), dict):
+            interests = child.get("learner_profile", {}).get("interests")
+        if not interests:
+            interests = child.get("interests")
+        
+        if interests:
+            # Clean up interests - handle string that might be JSON, or array
+            clean_interests = []
+            if isinstance(interests, str):
+                # Try to parse if it's JSON string (may be nested)
+                try:
+                    parsed = json.loads(interests)
+                    # If it's a list, extract items
+                    if isinstance(parsed, list):
+                        for item in parsed:
+                            # Handle nested JSON strings
+                            if isinstance(item, str):
+                                try:
+                                    nested = json.loads(item)
+                                    if isinstance(nested, list):
+                                        clean_interests.extend([str(i) for i in nested if i])
+                                    else:
+                                        clean_interests.append(str(nested))
+                                except (json.JSONDecodeError, TypeError):
+                                    clean_interests.append(item)
+                            else:
+                                clean_interests.append(str(item))
+                    else:
+                        clean_interests.append(str(parsed))
+                except (json.JSONDecodeError, TypeError):
+                    # Not JSON, just use as string
+                    clean_interests = [interests]
+            elif isinstance(interests, list):
+                for item in interests:
+                    if isinstance(item, str):
+                        # Check if item is a JSON string
+                        try:
+                            nested = json.loads(item)
+                            if isinstance(nested, list):
+                                clean_interests.extend([str(i) for i in nested if i])
+                            else:
+                                clean_interests.append(str(nested))
+                        except (json.JSONDecodeError, TypeError):
+                            clean_interests.append(item)
+                    else:
+                        clean_interests.append(str(item))
+            
+            if clean_interests:
+                # Remove any remaining quotes/brackets and clean up
+                final_interests = []
+                for item in clean_interests:
+                    cleaned = str(item).strip().strip('"').strip("'").strip('[').strip(']')
+                    if cleaned and cleaned not in final_interests:
+                        final_interests.append(cleaned)
+                if final_interests:
+                    evidence_list.append(f"Interests: {', '.join(final_interests[:3])}")
+        
+        # Get learning style - handle various formats
+        learning_style = None
+        if child.get("learner_profile") and isinstance(child.get("learner_profile"), dict):
+            learning_style = child.get("learner_profile", {}).get("learning_preferences")
+        if not learning_style:
+            learning_style = child.get("learning_style")
+        
+        if learning_style:
+            # Clean up learning style
+            clean_learning_style = []
+            if isinstance(learning_style, str):
+                try:
+                    parsed = json.loads(learning_style)
+                    if isinstance(parsed, list):
+                        clean_learning_style = [str(item) for item in parsed if item]
+                    else:
+                        clean_learning_style = [str(parsed)]
+                except (json.JSONDecodeError, TypeError):
+                    clean_learning_style = [learning_style]
+            elif isinstance(learning_style, list):
+                clean_learning_style = [str(item) for item in learning_style if item]
+            
+            if clean_learning_style:
+                # Remove any remaining quotes/brackets and clean up
+                final_learning_style = []
+                for item in clean_learning_style:
+                    cleaned = str(item).strip().strip('"').strip("'").strip('[').strip(']')
+                    if cleaned and cleaned not in final_learning_style:
+                        final_learning_style.append(cleaned)
+                if final_learning_style:
+                    evidence_list.append(f"Learning style: {', '.join(final_learning_style[:2])}")
+    
+    # Build detailed evidence summary for more specific recommendations
+    detailed_evidence_text = ""
+    if evidence_list:
+        detailed_evidence_text = "\nAvailable Evidence:\n" + "\n".join([f"- {e}" for e in evidence_list])
+    
     user_prompt = f"""Context:
 - Session type: {session_type}
 - {recent_activity}
-- Current conversation:
+{detailed_evidence_text}
+
+Current conversation:
 {conversation_text}
 
-Provide a helpful, personalized response. If appropriate, suggest 1-2 actionable recommendations.
+Provide a helpful, personalized response. Keep the response text clean and natural - do NOT embed citations in the response itself.
+
+CRITICAL: Make your recommendations SPECIFIC and ACTIONABLE by:
+1. Referencing actual events, subjects, or activities from the evidence (e.g., "try finding a new craft on Pinterest that interweaves elements of the color wheel" instead of "explore art")
+2. Suggesting concrete next steps that build on recent activities (e.g., "extend yesterday's Algebra hw with a related problem" instead of "do more math")
+3. Tying suggestions directly to the child's interests and learning style from the evidence
+4. Providing specific resources, platforms, or activities when relevant (Pinterest, Khan Academy, specific experiments, etc.)
+
+Example: If evidence shows "Recent events: Creating Historical Art, Creating a Color Wheel" and "Interests: Arts", 
+instead of saying "provide art materials," say "try finding a new craft on Pinterest that interweaves elements 
+of the color wheel from last week" or "explore historical art techniques from different cultures to build on 
+the Creating Historical Art session."
 
 Return JSON:
 {{
-  "response": "your response text",
+  "response": "your clean response text with SPECIFIC, actionable suggestions that reference actual events/activities from evidence",
+  "evidence": {json.dumps(evidence_list) if evidence_list else "[]"},
   "recommendations": [
     {{
       "type": "learning_strategy|resource|schedule_adjustment|goal_setting|motivation",
@@ -2575,16 +2724,23 @@ Return JSON:
         content = response.choices[0].message.content
         result = json.loads(content)
         
+        # Extract evidence from LLM response or use the pre-built evidence list
+        llm_evidence = result.get("evidence", [])
+        # Use LLM's evidence if provided, otherwise fall back to our pre-built list
+        final_evidence = llm_evidence if llm_evidence else evidence_list
+        
         return {
             "response": result.get("response", "I'm here to help with your learning journey!"),
+            "evidence": final_evidence,
             "recommendations": result.get("recommendations", []),
             "context_updates": {},
             "goals": []
         }
     except Exception as e:
-        # Fallback response
+        # Fallback response - use pre-built evidence if available
         return {
             "response": "I'm here to help! How can I support your learning today?",
+            "evidence": evidence_list if evidence_list else [],
             "recommendations": [],
             "context_updates": {},
             "goals": []

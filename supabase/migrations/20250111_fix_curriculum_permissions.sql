@@ -21,3 +21,6 @@ WHERE grantee = 'service_role'
     AND table_name IN ('curriculum_units', 'curriculum_lessons', 'curriculum_pacing')
 ORDER BY table_name, privilege_type;
 
+
+
+

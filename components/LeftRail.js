@@ -122,7 +122,8 @@ export default function LeftRail({
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'intelligence', label: 'Intelligence', icon: Brain },
         { key: 'materials', label: 'Library', icon: BookOpen },
-        { key: 'profile', label: 'Family', icon: UserCircle },
+        { key: 'new', label: 'Settings', icon: null },
+        // { key: 'profile', label: 'Family', icon: UserCircle }, // Hidden for now
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
       ];
@@ -132,7 +133,7 @@ export default function LeftRail({
         // Children only see Home
         return allItems.filter(item => item.key === 'home');
       } else if (userRole === 'tutor') {
-        // Tutors see Home, Planner (no Records, no Explore - archived)
+        // Tutors see Home, Planner, New (no Records, no Explore - archived)
         return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       } else {
         // Parents see everything except archived items
@@ -189,12 +190,7 @@ export default function LeftRail({
       <View style={[styles.wrap, isCollapsed && styles.wrapCollapsed]}>
         {/* Top Icon - Only shown when expanded */}
         {!isCollapsed && (
-          <TouchableOpacity 
-            style={styles.topIconContainer}
-            onPress={onOpenSettings}
-            activeOpacity={0.7}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
+          <View style={styles.topIconContainer}>
             <View style={styles.topIconWrapper}>
               <Image 
                 source={require('../assets/learnadoodle-logo.png')} 
@@ -202,7 +198,7 @@ export default function LeftRail({
                 resizeMode="cover"
               />
             </View>
-          </TouchableOpacity>
+          </View>
         )}
 
         {/* Main menu section */}
@@ -213,6 +209,7 @@ export default function LeftRail({
             const isHovered = hoveredItem === item.key && !active;
             const isHome = item.key === 'home';
             const isPlanner = item.key === 'planner';
+            const isNew = item.key === 'new';
             const isLibrary = item.key === 'materials';
             const isFamily = item.key === 'profile';
             const isIntelligence = item.key === 'intelligence';
@@ -272,6 +269,14 @@ export default function LeftRail({
                       <Image 
                         source={require('../assets/planner.png')} 
                         style={styles.plannerIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : isNew ? (
+                    <View style={styles.newIconContainer}>
+                      <Image 
+                        source={require('../assets/family.png')} 
+                        style={styles.newIcon}
                         resizeMode="contain"
                       />
                     </View>
@@ -599,6 +604,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   plannerIcon: {
+    width: 46, // Slightly smaller than container to prevent cropping
+    height: 46,
+  },
+  newIconContainer: {
+    width: 48,
+    height: 48,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newIcon: {
     width: 46, // Slightly smaller than container to prevent cropping
     height: 46,
   },

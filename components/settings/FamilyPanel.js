@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform } from 'react-native';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Edit } from 'lucide-react';
 import { getFamilyMembers } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -17,6 +17,7 @@ export default function FamilyPanel({ user }) {
   const [editingChild, setEditingChild] = useState(null);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [familyId, setFamilyId] = useState(null);
+  const [hoveredChildId, setHoveredChildId] = useState(null);
 
   const styles = createStyles(tokens);
 
@@ -90,16 +91,6 @@ export default function FamilyPanel({ user }) {
   return (
     <View>
       <Text style={styles.sectionTitle}>Family & Members</Text>
-      <Text style={styles.sectionSubtitle}>
-        Show family name and list of members. Later: invite links + roles.
-      </Text>
-
-      {family?.family_name && (
-        <View style={styles.familyNameCard}>
-          <Text style={styles.familyNameLabel}>Family Name</Text>
-          <Text style={styles.familyName}>{family.family_name}</Text>
-        </View>
-      )}
 
       <View style={styles.membersList}>
         <Text style={styles.membersSectionTitle}>Parents</Text>
@@ -108,7 +99,7 @@ export default function FamilyPanel({ user }) {
         ) : (
           parents.map((member) => (
             <View key={member.id} style={styles.memberItem}>
-              <Text style={styles.memberName}>{member.name || member.email || 'Parent'}</Text>
+              <Text style={styles.memberName}>{family?.family_name || member.email || 'Parent'}</Text>
               {member.email && (
                 <Text style={styles.memberEmail}>{member.email}</Text>
               )}
@@ -120,22 +111,43 @@ export default function FamilyPanel({ user }) {
         {children.length === 0 ? (
           <Text style={styles.emptyText}>No children added yet</Text>
         ) : (
-          children.map((child) => (
-            <ChildManagementItem 
-              key={child.id} 
-              child={child} 
-              familyId={family?.id}
-              onEdit={() => {
-                setEditingChild(child);
-                setShowEditChildModal(true);
-              }}
-            />
-          ))
+          children.map((child) => {
+            const childName = child.name || child.first_name || 'Child';
+            const isHovered = hoveredChildId === child.id;
+            return (
+              <TouchableOpacity
+                key={child.id}
+                style={styles.childListItem}
+                onPress={() => {
+                  setEditingChild(child);
+                  setShowEditChildModal(true);
+                }}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && {
+                  onMouseEnter: () => setHoveredChildId(child.id),
+                  onMouseLeave: () => setHoveredChildId(null),
+                })}
+              >
+                <View style={styles.childListItemContent}>
+                  <Text style={[
+                    styles.childListItemText,
+                    isHovered && styles.childListItemTextHovered
+                  ]}>
+                    {childName}
+                    {child.archived && ' (Archived)'}
+                  </Text>
+                  <View style={styles.childEditIcon}>
+                    <Edit size={14} color={tokens.textSecondary} />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })
         )}
 
         <Text style={styles.membersSectionTitle}>Tutors</Text>
         {tutors.length === 0 ? (
-          <Text style={styles.emptyText}>No tutors yet. Invite one in the Tutors & Access tab.</Text>
+          <Text style={styles.emptyText}>No tutors yet. Invite one in the Invite Members tab.</Text>
         ) : (
           tutors.map((tutor) => (
             <View key={tutor.id} style={styles.memberItem}>
@@ -336,6 +348,30 @@ function createStyles(tokens) {
       color: tokens.textMuted,
       fontStyle: 'italic',
     },
+    childListItem: {
+      paddingVertical: 0,
+      ...Platform.select({
+        web: {
+          cursor: 'pointer',
+        },
+      }),
+    },
+    childListItemContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    childListItemText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.sans,
+      color: tokens.text,
+    },
+    childListItemTextHovered: {
+      color: '#2563eb',
+    },
+    childEditIcon: {
+      marginLeft: 8,
+    },
     childHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -462,30 +498,5 @@ function createStyles(tokens) {
       color: '#ffffff',
     },
   });
-}
-
-function ChildManagementItem({ child, familyId, onEdit }) {
-  const { mode } = useSensoryMode();
-  const tokens = getModeTokens(mode);
-  const childStyles = createStyles(tokens);
-  const childName = child.name || child.first_name || 'Child';
-
-  return (
-    <TouchableOpacity 
-      style={childStyles.memberItem}
-      onPress={onEdit}
-      activeOpacity={0.7}
-    >
-      <View style={childStyles.childHeader}>
-        <View style={childStyles.childInfo}>
-          <Text style={childStyles.memberName}>{childName}</Text>
-          {child.archived && (
-            <Text style={childStyles.archivedBadge}>Archived</Text>
-          )}
-        </View>
-        <Text style={childStyles.editHint}>Tap to edit</Text>
-      </View>
-    </TouchableOpacity>
-  );
 }
 

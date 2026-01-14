@@ -47,14 +47,6 @@ export default function ProfilePanel({ user }) {
           <Text style={styles.infoLabel}>Email:</Text>
           <Text style={styles.infoValue}>{profile?.email || user?.email || '—'}</Text>
         </View>
-        {profile?.family_id && (
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Family ID:</Text>
-            <Text style={styles.infoValue} numberOfLines={1}>
-              {profile.family_id}
-            </Text>
-          </View>
-        )}
       </View>
     </View>
   );

@@ -50,11 +50,11 @@ export default function TabBar({
               {Icon && (
                 <Icon 
                   size={16} 
-                  color={isActive ? colors.indigo : tokens.textSecondary} 
+                  color={isActive ? '#4285f4' : tokens.textSecondary} 
                 />
               )}
               <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-                {tab.label}
+                {tab.label.toUpperCase()}
               </Text>
             </TouchableOpacity>
           );
@@ -97,18 +97,26 @@ function createStyles(tokens) {
       }),
     },
     tabActive: {
-      borderBottomColor: colors.indigo,
+      borderBottomColor: '#4285f4',
     },
     tabLabel: {
       fontSize: 14,
-      fontWeight: '500',
-      fontFamily: designTokens.fonts.sans,
+      fontWeight: '700',
+      textTransform: 'uppercase',
       color: tokens.textSecondary,
       lineHeight: 20,
+      ...Platform.select({
+        web: {
+          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        },
+        default: {
+          fontFamily: designTokens.fonts.sans,
+        },
+      }),
     },
     tabLabelActive: {
-      color: colors.indigo,
-      fontWeight: '600',
+      color: '#4285f4',
+      fontWeight: '700',
     },
   });
 }

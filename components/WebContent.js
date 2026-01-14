@@ -600,7 +600,7 @@ import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], familyId: propFamilyId = null, children: propChildren = [] }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -719,7 +719,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const rightSidebarRef = useRef(null);
   
   // Family ID state (must be declared early to avoid TDZ errors)
-  const [familyId, setFamilyId] = useState(null);
+  // Use propFamilyId if provided (preloaded from WebLayout), otherwise load it
+  const [familyId, setFamilyId] = useState(propFamilyId);
   
   // Materials cache for pre-loading
   const [materialsCache, setMaterialsCache] = useState(null);
@@ -2844,36 +2845,37 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   }
 
   // State variables
-  const [children, setChildren] = useState([])
+  // Use propChildren if provided (preloaded from WebLayout), otherwise load them
+  const [children, setChildren] = useState(propChildren)
   const [archivedChildren, setArchivedChildren] = useState([])
   const [showArchived, setShowArchived] = useState(false)
   const [familyScreenSelectedChildId, setFamilyScreenSelectedChildId] = useState(null) // null = "All Children"
-  const [subjects, setSubjects] = useState([])
+  // Use subjects from props (preloaded and cached in WebLayout), fallback to empty array
+  const [subjects, setSubjects] = useState(propSubjects)
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
 
-  // Load subjects when familyId is available
+  // Update subjects when propSubjects changes (but don't reload from database)
   useEffect(() => {
-    if (!familyId) return;
-    
-    const loadSubjects = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('subject')
-          .select('id, name')
-          .eq('family_id', familyId)
-          .order('name');
-        
-        if (error) throw error;
-        setSubjects(data || []);
-      } catch (error) {
-        console.error('Error loading subjects:', error);
-      }
-    };
-    
-    loadSubjects();
-  }, [familyId]);
+    if (propSubjects && propSubjects.length > 0) {
+      setSubjects(propSubjects);
+    }
+  }, [propSubjects]);
+
+  // Sync familyId from props
+  useEffect(() => {
+    if (propFamilyId && propFamilyId !== familyId) {
+      setFamilyId(propFamilyId);
+    }
+  }, [propFamilyId]);
+
+  // Sync children from props
+  useEffect(() => {
+    if (propChildren && propChildren.length > 0 && propChildren !== children) {
+      setChildren(propChildren);
+    }
+  }, [propChildren]);
   
   // Calendar data caching
   const [calendarDataCache, setCalendarDataCache] = useState({})
@@ -5056,8 +5058,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
 
   // Fetch children on mount
   useEffect(() => {
-    fetchChildren()
-    fetchFamilyId()
+    // Only fetch if not already provided via props (preloaded in WebLayout)
+    if (!propFamilyId) {
+      fetchFamilyId();
+    }
+    if (!propChildren || propChildren.length === 0) {
+      fetchChildren();
+    }
     fetchTodaysLearning()
   }, [])
 
@@ -5371,6 +5378,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   }
 
   const fetchChildren = async () => {
+    // Skip if we already have children from props (preloaded)
+    if (propChildren && propChildren.length > 0) {
+      setChildren(propChildren);
+      return;
+    }
+    
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -5522,6 +5535,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   };
 
   const fetchFamilyId = async () => {
+    // Skip if we already have familyId from props
+    if (propFamilyId) {
+      setFamilyId(propFamilyId);
+      return;
+    }
+    
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -6007,6 +6026,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return <TutorDashboard accessibleChildren={accessibleChildren} />
       // case 'explore': // Archived - explore page removed
       //   return <ExploreContent familyId={familyId} children={children} />
+      case 'new':
+        return renderNewContent()
       case 'materials':
         if (!familyId) {
           return (
@@ -7100,11 +7121,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onToggleTask={(taskId) => {
                 // Handle task toggle
               }}
-              onGenerateTasks={() => {
-                // Generate tasks from subjects
-                const dateStr = validSelectedDate.toISOString().split('T')[0];
-                onTabChange(`planner?date=${dateStr}&action=generate_tasks`);
-              }}
               onAddFromBacklog={() => {
                 const dateStr = validSelectedDate.toISOString().split('T')[0];
                 onTabChange(`planner?date=${dateStr}&action=add_from_backlog`);
@@ -7692,6 +7708,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   if (error) throw error
 
                   // refresh
+                  // Always fetch children after adding a new child to refresh the list
                   await fetchChildren()
                   setShowSubjectSelectForChild(inserted)
                   Alert.alert('Success', `${payload.first_name} has been added! Now pick subjects…`)
@@ -8022,6 +8039,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           <Text style={{ fontSize: 16, color: '#6b7280', textAlign: 'center' }}>
             We're working on this feature. Check back soon!
           </Text>
+        </View>
+      </View>
+    )
+  }
+
+  const renderNewContent = () => {
+    return (
+      <View style={styles.newContentContainer}>
+        <View style={styles.newContentGrid}>
+          <Text style={styles.newContentText}>Coming Soon</Text>
         </View>
       </View>
     )
@@ -15803,6 +15830,36 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     overflow: 'auto',
+  },
+  newContentContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  newContentGrid: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: {
+        display: 'grid',
+        placeItems: 'center',
+        minHeight: '60vh',
+      },
+      default: {
+        flex: 1,
+        minHeight: 400,
+      },
+    }),
+  },
+  newContentText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#6b7280',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   notificationsContainer: {
     marginBottom: 16,

@@ -48,6 +48,7 @@ import QuickRescheduleModal from './planner/modals/QuickRescheduleModal';
 import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
+import RebalanceModal from './planner/modals/RebalanceModal';
 
 export default function WebLayout({ navigation, routeParams }) {
   const { user } = useAuth();
@@ -75,6 +76,7 @@ export default function WebLayout({ navigation, routeParams }) {
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
+  const [subjectsLoaded, setSubjectsLoaded] = useState(false); // Cache flag for subjects
   const [familyId, setFamilyId] = useState(null);
   const [activeRightTool, setActiveRightTool] = useState(null);
   const prevActiveTabRef = useRef(null);
@@ -1012,17 +1014,22 @@ export default function WebLayout({ navigation, routeParams }) {
             setChildren(cleaned);
           }
           
-          // Also fetch subjects for diff modal
-          try {
-            const { data: subjectsData } = await supabase
-              .from('subject')
-              .select('id, name')
-              .eq('family_id', profileData.family_id)
-              .order('name');
-            setSubjects(subjectsData || []);
-          } catch (subjectsErr) {
-            console.warn('[WebLayout] Error fetching subjects:', subjectsErr);
-            setSubjects([]);
+          // Also fetch subjects for diff modal (only if not already loaded)
+          // Subjects are static backend data - load once and cache
+          if (!subjectsLoaded) {
+            try {
+              const { data: subjectsData } = await supabase
+                .from('subject')
+                .select('id, name')
+                .eq('family_id', profileData.family_id)
+                .order('name');
+              setSubjects(subjectsData || []);
+              setSubjectsLoaded(true); // Mark as loaded so we don't reload
+            } catch (subjectsErr) {
+              console.warn('[WebLayout] Error fetching subjects:', subjectsErr);
+              setSubjects([]);
+              setSubjectsLoaded(true); // Mark as loaded even on error to prevent retry loops
+            }
           }
         } catch (err) {
           console.warn('[WebLayout] Exception fetching children:', err);
@@ -1035,7 +1042,7 @@ export default function WebLayout({ navigation, routeParams }) {
       console.error('[WebLayout] Unable to load family children', error);
       setChildren([]);
     }
-  }, [user]);
+  }, [user, subjectsLoaded]);
 
   useEffect(() => {
     fetchFamilyMembers();
@@ -1253,6 +1260,12 @@ export default function WebLayout({ navigation, routeParams }) {
     }
   }, [handleSearchNavigate]);
 
+  // Handler for Settings chip
+  const handleOpenSettings = useCallback(() => {
+    setSettingsInitialSection('profile');
+    setShowAuthSettings(true);
+  }, []);
+
   const handleTopSelect = useCallback(
     (key) => {
       setActiveTopNav(key);
@@ -1266,6 +1279,9 @@ export default function WebLayout({ navigation, routeParams }) {
         case 'planner':
           updateUrlParams({ view: null });
           handleTabChange('planner');
+          break;
+        case 'new':
+          handleOpenSettings();
           break;
         case 'materials':
           handleTabChange('materials');
@@ -1286,7 +1302,7 @@ export default function WebLayout({ navigation, routeParams }) {
           handleTabChange('home');
       }
     },
-    [handleTabChange]
+    [handleTabChange, handleOpenSettings]
   );
 
   const handleChildSelect = useCallback(
@@ -1419,13 +1435,6 @@ export default function WebLayout({ navigation, routeParams }) {
 
     return crumbs;
   }, [user, activeTab, activeChildName, activeChildSection, handleTabChange]);
-
-
-  // Handler for Settings chip
-  const handleOpenSettings = useCallback(() => {
-    setSettingsInitialSection('profile');
-    setShowAuthSettings(true);
-  }, []);
 
   // Handler for Feedback chip
   const handleOpenFeedback = useCallback(() => {
@@ -2440,6 +2449,9 @@ export default function WebLayout({ navigation, routeParams }) {
             selectedEventTypes={selectedEventTypes}
             onSelectedEventTypesChange={setSelectedEventTypes}
             onCurrentMonthChange={setCurrentMonth}
+            subjects={subjects}
+            familyId={familyId}
+            children={children}
           />
         </AppShell>
 
@@ -2657,18 +2669,20 @@ export default function WebLayout({ navigation, routeParams }) {
       />
 
       {/* Rebalance Modal */}
-      {showRebalanceModal && (
-        <AIModal
-          visible={showRebalanceModal}
-          onClose={() => setShowRebalanceModal(false)}
-          title="Rebalance Schedule"
-          prompt={`Rebalance the schedule for ${children.map(c => c.first_name || c.name).join(', ')}. Analyze current workload and redistribute tasks evenly.`}
-          onComplete={(result) => {
-            console.log('Rebalance result:', result);
-            setShowRebalanceModal(false);
-          }}
-        />
-      )}
+      <RebalanceModal
+        visible={showRebalanceModal}
+        onClose={() => setShowRebalanceModal(false)}
+        familyId={familyId}
+        children={children}
+        selectedChildIds={selectedCalendarChildren}
+        onComplete={(result) => {
+          console.log('Rebalance completed:', result);
+          setShowRebalanceModal(false);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshCalendar'));
+          }
+        }}
+      />
 
       {/* What-If Analysis Modal */}
       {showWhatIfModal && (

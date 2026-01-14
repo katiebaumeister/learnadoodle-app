@@ -1926,12 +1926,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       };
 
       // If moving from backlog to schedule, set is_backlog to false and set date/time
-      if (isBacklog && startDateObj) {
+      // Only move to schedule if user explicitly changed placement to 'calendar' or is in scheduling mode
+      if (isBacklog && (placement === 'calendar' || schedulingBacklog) && startDateObj) {
         updates.is_backlog = false;
         updates.start_ts = startDateObj.toISOString();
         updates.end_ts = endDateObj?.toISOString() || null;
         toast.push('Task moved to schedule', 'success');
-      } else if (startDateObj) {
+      } else if (startDateObj && !isBacklog) {
         updates.start_ts = startDateObj.toISOString();
         // Always set end_ts - use calculated endDateObj or default to start + 1 hour
         if (endDateObj) {

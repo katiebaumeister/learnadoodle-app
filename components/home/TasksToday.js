@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { Plus, ClipboardList, List } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 
-export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGenerateTasks, backlogCount = 0, onAddFromBacklog, onViewPlanner, onTaskClick }) {
+export default function TasksToday({ tasks = [], onAddTask, onToggleTask, backlogCount = 0, onAddFromBacklog, onViewPlanner, onTaskClick }) {
 
   const handleContainerPress = () => {
     if (onViewPlanner) {
@@ -103,21 +103,6 @@ export default function TasksToday({ tasks = [], onAddTask, onToggleTask, onGene
                 </Text>
               </TouchableOpacity>
             )}
-          <TouchableOpacity 
-            style={styles.generateTasksButton}
-            onPress={(e) => {
-              if (e && e.stopPropagation) {
-                e.stopPropagation();
-              }
-              if (onGenerateTasks) {
-                onGenerateTasks();
-              }
-            }}
-              activeOpacity={0.7}
-          >
-              <Plus size={14} color={colors.text} />
-              <Text style={styles.generateTasksText}>Generate suggested tasks</Text>
-          </TouchableOpacity>
           </View>
         </View>
       ) : (
@@ -279,29 +264,6 @@ const styles = StyleSheet.create({
     }),
   },
   addFromBacklogText: {
-    fontSize: 13,
-    color: colors.text,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  generateTasksButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: colors.radiusMd,
-    backgroundColor: colors.bgSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-    }),
-  },
-  generateTasksText: {
     fontSize: 13,
     color: colors.text,
     fontWeight: '600',

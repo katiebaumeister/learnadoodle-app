@@ -97,11 +97,16 @@ const styles = StyleSheet.create({
     // On web, typography-section-header class handles styling
     ...(Platform.OS === 'web' ? {} : {
       fontSize: 14, // typography-section-header: 14px
-      fontWeight: '600',
+      fontWeight: '700',
       letterSpacing: 0.06,
       textTransform: 'uppercase',
       color: colors.text,
       lineHeight: 18.2, // 1.3 line-height
+      ...Platform.select({
+        web: {
+          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        },
+      }),
     }),
     marginBottom: 4, // --spacing-xs (strict spacing: 4px)
   },

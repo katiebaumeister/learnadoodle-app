@@ -1,20 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, Platform } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
-import { LogOut, Users, Settings, User, Link2, Info, X, BookOpen } from 'lucide-react';
+import { LogOut, Users, Settings, User, Info, X } from 'lucide-react';
 import ProfilePanel from './ProfilePanel';
 import FamilyPanel from './FamilyPanel';
 import TutorsAccessPanel from './TutorsAccessPanel';
-import IntegrationsSettings from './IntegrationsSettings';
 import AboutPanel from './AboutPanel';
-import AcademicsPanel from './AcademicsPanel';
 
 const sections = [
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'family', label: 'Family & Members', icon: Users },
-  { id: 'academics', label: 'Academics', icon: BookOpen },
   { id: 'tutors', label: 'Invite Members', icon: Users },
-  { id: 'integrations', label: 'Integrations', icon: Link2 },
   { id: 'about', label: 'About', icon: Info },
 ];
 
@@ -38,25 +34,6 @@ export default function SettingsModal({ visible, onClose, user, initialSection =
     } catch (error) {
     } finally {
       setLoggingOut(false);
-    }
-  };
-
-  const renderContent = () => {
-    switch (activeSection) {
-      case 'profile':
-        return <ProfilePanel user={user} />;
-      case 'family':
-        return <FamilyPanel user={user} />;
-      case 'academics':
-        return <AcademicsPanel user={user} />;
-      case 'tutors':
-        return <TutorsAccessPanel user={user} />;
-      case 'integrations':
-        return <IntegrationsSettings user={user} />;
-      case 'about':
-        return <AboutPanel />;
-      default:
-        return null;
     }
   };
 
@@ -115,14 +92,25 @@ export default function SettingsModal({ visible, onClose, user, initialSection =
 
             {/* Right Content Panel */}
             <ScrollView style={styles.contentPanel} contentContainerStyle={styles.contentPanelContent}>
-              {renderContent()}
+              <View style={[styles.panelContainer, activeSection !== 'profile' && styles.panelHidden]}>
+                <ProfilePanel user={user} />
+              </View>
+              <View style={[styles.panelContainer, activeSection !== 'family' && styles.panelHidden]}>
+                <FamilyPanel user={user} />
+              </View>
+              <View style={[styles.panelContainer, activeSection !== 'tutors' && styles.panelHidden]}>
+                <TutorsAccessPanel user={user} />
+              </View>
+              <View style={[styles.panelContainer, activeSection !== 'about' && styles.panelHidden]}>
+                <AboutPanel />
+              </View>
             </ScrollView>
           </View>
 
           {/* Footer */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>
-              You're signed in. Manage your account and integrations here.
+              You're signed in. Manage your account here.
             </Text>
             <TouchableOpacity
               style={[styles.logoutButton, loggingOut && styles.logoutButtonDisabled]}
@@ -245,6 +233,22 @@ const styles = StyleSheet.create({
   },
   contentPanelContent: {
     padding: 16,
+  },
+  panelContainer: {
+    width: '100%',
+  },
+  panelHidden: {
+    ...Platform.select({
+      web: {
+        display: 'none',
+      },
+      default: {
+        position: 'absolute',
+        left: -9999,
+        opacity: 0,
+        pointerEvents: 'none',
+      },
+    }),
   },
   footer: {
     padding: 16,

@@ -2719,7 +2719,7 @@ const styles = StyleSheet.create({
   recentlyDeletedLabelContainer: {
     paddingHorizontal: 12,
     paddingBottom: 8,
-    paddingTop: 4,
+    paddingTop: 10,
   },
   recentlyDeletedLabelText: {
     fontSize: 15,
