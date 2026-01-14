@@ -49,6 +49,7 @@ import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import RebalanceModal from './planner/modals/RebalanceModal';
+import PlannerWalkthrough from './planner/PlannerWalkthrough';
 
 export default function WebLayout({ navigation, routeParams }) {
   const { user } = useAuth();
@@ -143,6 +144,13 @@ export default function WebLayout({ navigation, routeParams }) {
   const progressForecastButtonRef = useRef(null);
   const buildCurriculumButtonRef = useRef(null);
   const planWeekButtonRef = useRef(null);
+  
+  // Walkthrough refs
+  const newButtonRef = useRef(null);
+  const middleButtonsRef = useRef(null);
+  const sidebarRef = useRef(null);
+  const [showPlannerWalkthrough, setShowPlannerWalkthrough] = useState(false);
+  const [hasAnyEvents, setHasAnyEvents] = useState(null); // null = not checked yet
   
   // Get default view from localStorage
   const getDefaultView = () => {
@@ -1360,6 +1368,53 @@ export default function WebLayout({ navigation, routeParams }) {
   }, [activeTab]);
 
 
+  // Check if walkthrough has been completed
+  const getWalkthroughCompleted = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem('plannerWalkthroughCompleted') === 'true';
+    }
+    return false;
+  };
+
+  const setWalkthroughCompleted = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem('plannerWalkthroughCompleted', 'true');
+    }
+  };
+
+  // Check for events when planner screen loads
+  useEffect(() => {
+    if (activeTab === 'planner' && familyId && hasAnyEvents === null) {
+      const checkEvents = async () => {
+        try {
+          const { count, error } = await supabase
+            .from('events')
+            .select('*', { count: 'exact', head: true })
+            .eq('family_id', familyId)
+            .is('deleted_at', null);
+          
+          if (!error) {
+            const hasEvents = count > 0;
+            setHasAnyEvents(hasEvents);
+            
+            // Show walkthrough if no events and not completed
+            if (!hasEvents && !getWalkthroughCompleted()) {
+              // Small delay to ensure DOM is ready
+              setTimeout(() => {
+                setShowPlannerWalkthrough(true);
+              }, 100);
+            }
+          }
+        } catch (err) {
+          console.warn('[PlannerWalkthrough] Error checking for events:', err);
+          setHasAnyEvents(true); // Default to true to not show walkthrough on error
+        }
+      };
+      
+      checkEvents();
+    }
+  }, [activeTab, familyId, hasAnyEvents]);
+
   // Determine if we're on a calendar screen
   const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';
 
@@ -1611,13 +1666,16 @@ export default function WebLayout({ navigation, routeParams }) {
                 </View>
                 
                 {/* Center: View State Controls (View Mode + Filters + Plan & Optimize) */}
-                <View style={{ 
-                  flexDirection: 'row', 
-                  alignItems: 'center', 
-                  gap: 8,
-                  flex: 1,
-                  justifyContent: 'center',
-                }}>
+                <View 
+                  ref={middleButtonsRef}
+                  style={{ 
+                    flexDirection: 'row', 
+                    alignItems: 'center', 
+                    gap: 8,
+                    flex: 1,
+                    justifyContent: 'center',
+                  }}
+                >
                   {/* View Mode Dropdown */}
                   <View style={{ position: 'relative' }}>
                     <TouchableOpacity
@@ -2306,6 +2364,7 @@ export default function WebLayout({ navigation, routeParams }) {
 
                   {/* New Event Button */}
                   <TouchableOpacity
+                    ref={newButtonRef}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -2816,6 +2875,26 @@ export default function WebLayout({ navigation, routeParams }) {
         visible={false}
         onClose={() => {}}
       />
+
+      {/* Planner Walkthrough */}
+      {isCalendarScreen && (
+        <PlannerWalkthrough
+          visible={showPlannerWalkthrough}
+          onClose={() => {
+            setShowPlannerWalkthrough(false);
+            setWalkthroughCompleted();
+          }}
+          onComplete={() => {
+            setShowPlannerWalkthrough(false);
+            setWalkthroughCompleted();
+          }}
+          targetRefs={{
+            newButtonRef,
+            middleButtonsRef,
+            sidebarRef,
+          }}
+        />
+      )}
 
       {/* Edit Child Modal */}
       <EditChildModal

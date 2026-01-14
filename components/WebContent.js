@@ -660,6 +660,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [hasWeeklyGoal, setHasWeeklyGoal] = useState(false);
   const [hasBacklogItems, setHasBacklogItems] = useState(false);
   const [backlogCount, setBacklogCount] = useState(0);
+  const [hasAnyEvents, setHasAnyEvents] = useState(null); // null = not checked yet, true/false = checked
   
   // Home filters (date and children)
   const [homeSelectedDate, setHomeSelectedDate] = useState(() => {
@@ -2165,6 +2166,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
               setHomeData(updatedData);
               saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
               
+              // Update hasAnyEvents since an event was created
+              setHasAnyEvents(true);
+              
               // Also refresh fetchTodaysLearning
               await fetchTodaysLearning();
             }
@@ -2238,6 +2242,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
               
               setHomeData(updatedData);
               saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
+              
+              // Check if there are any remaining events after deletion
+              try {
+                const { count, error } = await supabase
+                  .from('events')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('family_id', profileData.family_id)
+                  .is('deleted_at', null);
+                
+                if (!error) {
+                  setHasAnyEvents(count > 0);
+                }
+              } catch (err) {
+                console.warn('[Home] Error checking for events after deletion:', err);
+              }
               
               // Also refresh fetchTodaysLearning
               await fetchTodaysLearning();
@@ -2400,6 +2419,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
             setHomeLoading(false);
             if (onHomeLoadingChange) onHomeLoadingChange(false);
             
+            // Check if family has any events in the events table
+            (async () => {
+              try {
+                const { count, error } = await supabase
+                  .from('events')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('family_id', profileData.family_id)
+                  .is('deleted_at', null);
+                
+                if (!error) {
+                  setHasAnyEvents(count > 0);
+                } else {
+                  console.warn('[Home] Error checking for events:', error);
+                  // Default to true to show normal insights if check fails
+                  setHasAnyEvents(true);
+                }
+              } catch (err) {
+                console.warn('[Home] Error checking for events:', err);
+                setHasAnyEvents(true);
+              }
+            })();
+            
             // Check for updated CTA stories in background (in case goals/backlog changed)
             checkGoalsAndBacklogForCTAs(profileData.family_id, cachedData?.children || [], selectedChildId)
               .then(ctaStories => {
@@ -2496,6 +2537,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
             
             // Cache the initial data
             saveHomeDataToCache(profileData.family_id, selectedDateStr, initialData);
+            
+            // Check if family has any events in the events table
+            (async () => {
+              try {
+                const { count, error } = await supabase
+                  .from('events')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('family_id', profileData.family_id)
+                  .is('deleted_at', null);
+                
+                if (!error) {
+                  setHasAnyEvents(count > 0);
+                } else {
+                  console.warn('[Home] Error checking for events:', error);
+                  // Default to true to show normal insights if check fails
+                  setHasAnyEvents(true);
+                }
+              } catch (err) {
+                console.warn('[Home] Error checking for events:', err);
+                setHasAnyEvents(true);
+              }
+            })();
             
             // Load CTA stories in background (non-blocking)
             checkGoalsAndBacklogForCTAs(profileData.family_id, data?.children || [], selectedChildId)
@@ -6807,6 +6870,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     try {
       const context = buildInsightContext(homeData, validSelectedDate);
       dailyInsightsData = generateInsights(context);
+      
+      // If no events exist for the family, show welcome message
+      if (hasAnyEvents === false) {
+        dailyInsightsData = {
+          ...dailyInsightsData,
+          primary: "Welcome to Learnadoodle - Let's get learning!",
+        };
+      }
     } catch (err) {
       console.warn('Insight Engine error, using fallback:', err);
       // Fallback to legacy format
@@ -6814,6 +6885,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       ? homeSummary.insights.slice(0, 3).map(i => i.summary || i.text || i.title)
       : generateDailyInsights(homeData.children || [], homeData.learning || []);
       dailyInsightsData = { bullets: dailyInsightsBullets };
+      
+      // If no events exist for the family, show welcome message
+      if (hasAnyEvents === false) {
+        dailyInsightsData = {
+          ...dailyInsightsData,
+          primary: "Welcome to Learnadoodle - Let's get learning!",
+        };
+      }
     }
     
     // Resolve child IDs for filtering
@@ -6988,6 +7067,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               learning={filteredLearning}
               currentDate={validSelectedDate}
               onViewPlanner={() => onTabChange('planner')}
+              onAddBlock={() => {
+                setTaskModalDate(validSelectedDate);
+                setTaskModalDefaultPlacement('calendar'); // Default to calendar for new blocks
+                setShowTaskModal(true);
+              }}
               onEventClick={(event) => {
                 // Navigate to planner screen month view showing today's date
                 const todayStr = validSelectedDate.toISOString().split('T')[0];
@@ -7116,6 +7200,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               }}
               onAddTask={() => {
                 setTaskModalDate(validSelectedDate);
+                setTaskModalDefaultPlacement('backlog'); // Default to backlog when opened from backlog container
                 setShowTaskModal(true);
               }}
               onToggleTask={(taskId) => {
@@ -7175,7 +7260,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             setShowTaskModal(false);
             setTaskModalDate(null);
             setTaskModalChildId(null);
-            setTaskModalDefaultPlacement('calendar'); // Reset to default
+            setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
           }}
           defaultDate={taskModalDate || validSelectedDate}
           defaultChildId={taskModalChildId}

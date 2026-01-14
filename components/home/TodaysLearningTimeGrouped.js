@@ -85,7 +85,8 @@ export default function TodaysLearningTimeGrouped({
   currentDate = new Date(),
   onViewPlanner,
   onEventComplete,
-  onEventClick
+  onEventClick,
+  onAddBlock
 }) {
   const [completingEventId, setCompletingEventId] = useState(null);
   const [isQuickAddHovered, setIsQuickAddHovered] = useState(false);
@@ -234,7 +235,9 @@ export default function TodaysLearningTimeGrouped({
               isQuickAddHovered && styles.quickAddCardHovered,
             ]}
                 onPress={() => {
-              if (onViewPlanner) {
+              if (onAddBlock) {
+                onAddBlock();
+              } else if (onViewPlanner) {
                 onViewPlanner();
               }
             }}

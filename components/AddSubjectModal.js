@@ -210,15 +210,21 @@ export default function AddSubjectModal({
     >
       <View style={styles.overlay}>
         <View style={styles.modal}>
-          {/* Close Button */}
-          <TouchableOpacity
-            style={styles.closeButtonTop}
-            onPress={onClose}
-            accessibilityLabel="Close modal"
-            accessibilityRole="button"
-          >
-            <X size={20} color="#6b7280" />
-          </TouchableOpacity>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.headerContent}>
+              <Text style={styles.title}>Add Subject</Text>
+              <Text style={styles.subtitle}>Create a new subject for your learning plan</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={onClose}
+              accessibilityLabel="Close modal"
+              accessibilityRole="button"
+            >
+              <X size={20} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
 
           {/* Content - Scrollable */}
           <ScrollView 
@@ -411,26 +417,57 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  closeButtonTop: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
+  scrollContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  scrollContent: {
+    padding: 32,
+    paddingBottom: 100, // Extra padding for fixed footer
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingHorizontal: 32,
+    paddingTop: 32,
+    paddingBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    backgroundColor: '#fafbfc',
+  },
+  headerContent: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
+    ...Platform.select({
+      web: {
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+      },
+    }),
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...Platform.select({
+      web: {
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+      },
+    }),
+  },
+  closeButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
     backgroundColor: '#f3f4f6',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
-  },
-  scrollContainer: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  scrollContent: {
-    padding: 24,
-    paddingTop: 60,
-    paddingBottom: 24,
+    marginLeft: 16,
   },
   errorContainer: {
     backgroundColor: '#fef2f2',

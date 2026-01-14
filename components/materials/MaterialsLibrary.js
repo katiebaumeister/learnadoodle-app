@@ -16,7 +16,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import MaterialCard from './MaterialCard';
@@ -1096,6 +1096,9 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
         </View>
       ) : hasNoMaterials ? (
         <View style={styles.emptyState}>
+          <View style={styles.emptyIconContainer}>
+            <BookOpen size={64} color={colors.muted || '#9ca3af'} strokeWidth={1.5} />
+          </View>
           <Text style={styles.emptyTitle}>
             Your family library starts here
           </Text>
@@ -2973,6 +2976,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
+  },
+  emptyIconContainer: {
+    marginBottom: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyFilteredState: {
     flex: 1,

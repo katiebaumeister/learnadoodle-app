@@ -170,72 +170,70 @@ function ContextBar({
   return (
     <View style={styles.contextBarWrapper}>
       {/* Children Filter Chips */}
-      {children.length > 0 && (
-        <>
-          <View style={styles.filterLabelContainer}>
-            <Text style={styles.filterSectionLabel}>CHILDREN</Text>
-          </View>
-          <View style={styles.filterChipRow}>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              style={styles.filterScroll}
-              contentContainerStyle={styles.filterScrollContent}
-            >
-              {children.map(child => {
-                const childId = child.id;
-                const isSelected = isChildSelected(childId);
-                const childName = child.first_name || child.name || 'Child';
-                
-                return (
-                  <TouchableOpacity
-                    key={childId}
-                    style={[
-                      styles.filterChip,
-                      isSelected && styles.filterChipActive
-                    ]}
-                    onPress={() => onChildToggle(childId)}
-                  >
-                    <Text style={[
-                      styles.filterChipText,
-                      isSelected && styles.filterChipTextActive
-                    ]}>
-                      {childName}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-              {onAddChild && (
+      <>
+        <View style={styles.filterLabelContainer}>
+          <Text style={styles.filterSectionLabel}>CHILDREN</Text>
+        </View>
+        <View style={styles.filterChipRow}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            style={styles.filterScroll}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {children.map(child => {
+              const childId = child.id;
+              const isSelected = isChildSelected(childId);
+              const childName = child.first_name || child.name || 'Child';
+              
+              return (
                 <TouchableOpacity
-                  style={[styles.filterChip, styles.filterChipAdd]}
-                  onPress={onAddChild}
+                  key={childId}
+                  style={[
+                    styles.filterChip,
+                    isSelected && styles.filterChipActive
+                  ]}
+                  onPress={() => onChildToggle(childId)}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Plus size={14} color={colors.textSecondary || '#6b7280'} style={{ marginRight: 4 }} />
-                    <Text style={styles.filterChipText}>
-                      Add New Child
-                    </Text>
-                  </View>
+                  <Text style={[
+                    styles.filterChipText,
+                    isSelected && styles.filterChipTextActive
+                  ]}>
+                    {childName}
+                  </Text>
                 </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
-        </>
-      )}
+              );
+            })}
+            {onAddChild && (
+              <TouchableOpacity
+                style={[styles.filterChip, styles.filterChipAdd]}
+                onPress={onAddChild}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Plus size={14} color={colors.textSecondary || '#6b7280'} style={{ marginRight: 4 }} />
+                  <Text style={styles.filterChipText}>
+                    Add New Child
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
+        </View>
+      </>
 
       {/* Subjects Filter Chips */}
-      {subjects.length > 0 && (
-        <>
-          <View style={styles.filterLabelContainer}>
-            <Text style={styles.filterSectionLabel}>SUBJECTS</Text>
-      </View>
-          <View style={styles.filterChipRow}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-              style={styles.filterScroll}
-              contentContainerStyle={styles.filterScrollContent}
-            >
+      <>
+        <View style={styles.filterLabelContainer}>
+          <Text style={styles.filterSectionLabel}>SUBJECTS</Text>
+        </View>
+        <View style={styles.filterChipRow}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            style={styles.filterScroll}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {subjects.length > 0 && (
               <TouchableOpacity
                 style={[
                   styles.filterChip,
@@ -250,43 +248,43 @@ function ContextBar({
                   All Subjects
                 </Text>
               </TouchableOpacity>
-              {subjects.map(subject => {
-                const isSelected = selectedSubject === subject.id;
-            return (
-              <TouchableOpacity
-                    key={subject.id}
-                style={[
-                  styles.filterChip,
-                      isSelected && styles.filterChipActive
-                    ]}
-                    onPress={() => handleSubjectChange(subject.id)}
-                  >
-                <Text style={[
-                  styles.filterChipText,
-                      isSelected && styles.filterChipTextActive
-                ]}>
-                      {subject.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-              {onAddSubject && (
+            )}
+            {subjects.map(subject => {
+              const isSelected = selectedSubject === subject.id;
+              return (
                 <TouchableOpacity
-                  style={[styles.filterChip, styles.filterChipAdd]}
-                  onPress={onAddSubject}
+                  key={subject.id}
+                  style={[
+                    styles.filterChip,
+                    isSelected && styles.filterChipActive
+                  ]}
+                  onPress={() => handleSubjectChange(subject.id)}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Plus size={14} color={colors.textSecondary || '#6b7280'} style={{ marginRight: 4 }} />
-                    <Text style={styles.filterChipText}>
-                      Add New Subject
-                    </Text>
-                  </View>
+                  <Text style={[
+                    styles.filterChipText,
+                    isSelected && styles.filterChipTextActive
+                  ]}>
+                    {subject.name}
+                  </Text>
                 </TouchableOpacity>
-              )}
-        </ScrollView>
-      </View>
-        </>
-      )}
+              );
+            })}
+            {onAddSubject && (
+              <TouchableOpacity
+                style={[styles.filterChip, styles.filterChipAdd]}
+                onPress={onAddSubject}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Plus size={14} color={colors.textSecondary || '#6b7280'} style={{ marginRight: 4 }} />
+                  <Text style={styles.filterChipText}>
+                    Add New Subject
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
+        </View>
+      </>
     </View>
   );
 }
@@ -895,9 +893,14 @@ export default function IntelligenceHub({ familyId, children = [] }) {
             />
           </View>
           <View style={{ display: activeTab === 'analytics' ? 'flex' : 'none' }}>
-            <View style={styles.tabPlaceholder}>
-              <Text style={styles.placeholderText}>Analytics content coming soon</Text>
-            </View>
+            <AnalyticsTab
+              familyId={familyId}
+              selectedChildren={resolvedChildIds}
+              dateRange={dateRange}
+              onPlanYear={() => setActiveTool('planYear')}
+              children={children}
+              subjects={subjects}
+            />
           </View>
         </View>
       </ScrollView>
@@ -1696,7 +1699,7 @@ function AnalyticsTab({
   return (
     <View style={styles.tabContent}>
         <View style={{ padding: 40, alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={colors.indigo} />
+          <ActivityIndicator size="large" color="#4285f4" />
           <Text style={{ marginTop: 16, color: colors.textSecondary }}>Loading analytics...</Text>
         </View>
       </View>
@@ -1726,7 +1729,7 @@ function AnalyticsTab({
                         style={{ 
                           height: '100%', 
                           width: `${Math.min((time / Math.max(...Object.values(coverageData.subjectTotals))) * 100, 100)}%`,
-                          backgroundColor: colors.indigo,
+                          backgroundColor: '#4285f4',
                         }} 
                       />
                     </View>
@@ -1949,7 +1952,7 @@ function AnalyticsTab({
             <View style={{ marginTop: 16 }}>
               {/* Progress ring visualization */}
               <View style={{ alignItems: 'center', marginBottom: 16 }}>
-                <View style={{ width: 80, height: 80, borderRadius: 40, borderWidth: 8, borderColor: colors.border, borderTopColor: colors.indigo, justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ width: 80, height: 80, borderRadius: 40, borderWidth: 8, borderColor: colors.border, borderTopColor: '#4285f4', justifyContent: 'center', alignItems: 'center' }}>
                   <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{yearPlanData.progress}%</Text>
                 </View>
                 <Text style={{ fontSize: 12, color: colors.text, marginTop: 8 }}>On pace for June goals</Text>
