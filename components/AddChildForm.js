@@ -108,7 +108,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
     else setList([...list, value]);
   };
 
-  const canSubmit = name.trim() && age;
+  const canSubmit = name.trim() && age && grade && standardsState && avatar;
 
   // Notify parent of validation changes
   useEffect(() => {
@@ -161,7 +161,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
         <Text style={styles.sectionSubtitle}>Shown in planner, AI summaries, and child dashboard.</Text>
 
         <View style={styles.field}> 
-          <Text style={styles.label}>Name or Nickname</Text>
+          <Text style={styles.label}>Name or Nickname<Text style={styles.required}> *</Text></Text>
           <TextInput
             style={styles.input}
             placeholder="e.g., Lily"
@@ -174,7 +174,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
 
         <View style={styles.fieldRow}> 
           <View style={[styles.field, styles.fieldHalf]}>
-            <Text style={styles.label}>Age</Text>
+            <Text style={styles.label}>Age<Text style={styles.required}> *</Text></Text>
             <View style={styles.chipsWrap}>
               {Array.from({ length: 18 }, (_, i) => i + 3).map(n => (
                 <TouchableOpacity 
@@ -190,8 +190,8 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
             </View>
           </View>
           <View style={[styles.field, styles.fieldHalf]}>
-            <Text style={styles.label}>Grade</Text>
-            <Text style={styles.hint}>(Optional)</Text>
+            <Text style={styles.label}>Grade<Text style={styles.required}> *</Text></Text>
+            <Text style={[styles.hint, { marginTop: 2, marginBottom: 8 }]}>(This can be a guess!)</Text>
             <View style={styles.chipsWrap}>
               {GRADES.map(g => (
                 <TouchableOpacity 
@@ -207,7 +207,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
         </View>
 
         <View style={styles.field}> 
-          <Text style={styles.label}>Follow State Standards?</Text>
+          <Text style={styles.label}>Follow State Standards?<Text style={styles.required}> *</Text></Text>
           <View style={styles.chipsWrap}>
             {STATES.map(s => (
               <TouchableOpacity 
@@ -222,7 +222,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
         </View>
 
         <View style={styles.field}> 
-          <Text style={styles.label}>Choose Avatar</Text>
+          <Text style={styles.label}>Choose Avatar<Text style={styles.required}> *</Text></Text>
           <View style={styles.avatarsWrap}>
             {AVATAR_KEYS.map(key => (
               <TouchableOpacity 
@@ -426,6 +426,11 @@ const styles = StyleSheet.create({
       web: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
       default: 'System',
     }),
+  },
+  required: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '600',
   },
   input: {
     borderWidth: 1,

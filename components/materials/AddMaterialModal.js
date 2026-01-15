@@ -2,7 +2,7 @@
  * Add Material Modal
  * Form for adding a new material to the library
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -95,6 +95,7 @@ export default function AddMaterialModal({
   const [allSubjects, setAllSubjects] = useState([]);
   const [filteredSubjects, setFilteredSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const loadingSubjectsRef = useRef(false);
   
   // Calendar picker state
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
@@ -115,28 +116,48 @@ export default function AddMaterialModal({
 
   // Use pre-loaded subjects if available, otherwise load from database
   useEffect(() => {
-    if (visible && familyId) {
-      if (propAllSubjects.length > 0) {
-        // Use pre-loaded subjects from parent
-        setAllSubjects(propAllSubjects);
-        filterSubjectsByChildren(propAllSubjects, selectedChildIds);
-      } else {
-        // Fallback: load from database if not provided
-        loadSubjects(selectedChildIds);
+    if (!visible || !familyId) {
+      // Reset when modal closes
+      if (!visible) {
+        setAllSubjects([]);
+        setFilteredSubjects([]);
+        loadingSubjectsRef.current = false;
+        setLoadingSubjects(false);
       }
+      return;
     }
-  }, [visible, familyId, propAllSubjects]);
+
+    if (propAllSubjects.length > 0) {
+      // Use pre-loaded subjects from parent
+      setAllSubjects(propAllSubjects);
+      filterSubjectsByChildren(propAllSubjects, selectedChildIds);
+    } else {
+      // Fallback: load from database if not provided
+      loadSubjects(selectedChildIds);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, familyId, propAllSubjects.length]); // Use length instead of array to avoid re-renders
 
   // Filter subjects when children selection changes (if using pre-loaded subjects)
   useEffect(() => {
     if (visible && propAllSubjects.length > 0 && allSubjects.length > 0) {
       filterSubjectsByChildren(allSubjects, selectedChildIds);
     }
-  }, [selectedChildIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChildIds, visible, propAllSubjects.length, allSubjects.length]);
+
+  // Reload subjects when selectedChildIds changes (when NOT using pre-loaded subjects)
+  useEffect(() => {
+    if (visible && familyId && propAllSubjects.length === 0 && !loadingSubjectsRef.current) {
+      loadSubjects(selectedChildIds);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChildIds.join(',')]); // Use join to create stable dependency
 
   const loadSubjects = async (childIds = []) => {
-    if (!familyId) return;
+    if (!familyId || loadingSubjectsRef.current) return; // Prevent concurrent loads
     
+    loadingSubjectsRef.current = true;
     setLoadingSubjects(true);
     try {
       let query = supabase
@@ -191,6 +212,7 @@ export default function AddMaterialModal({
       setAllSubjects([]);
       setFilteredSubjects([]);
     } finally {
+      loadingSubjectsRef.current = false;
       setLoadingSubjects(false);
     }
   };
