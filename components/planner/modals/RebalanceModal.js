@@ -510,7 +510,10 @@ export default function RebalanceModal({
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity 
+              onPress={onClose}
+              style={{ paddingVertical: 10, paddingHorizontal: 20 }}
+            >
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
             {!hasRun ? (
@@ -704,25 +707,27 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: BORDER,
+    gap: 12,
   },
   cancelText: {
-    color: SUB,
+    color: '#666666',
     fontSize: 14,
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   primaryButton: {
-    backgroundColor: '#111827',
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 12,
+    backgroundColor: '#4285F4',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
   },
   buttonDisabled: {
     opacity: 0.5,

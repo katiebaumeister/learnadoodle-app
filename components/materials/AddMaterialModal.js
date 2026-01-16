@@ -1847,7 +1847,7 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 20,
@@ -1859,18 +1859,18 @@ const styles = StyleSheet.create({
   cancelButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
+    backgroundColor: 'transparent',
   },
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '500',
-    color: colors.text,
+    color: '#666666',
   },
   saveButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#000000',
+    borderRadius: 20,
+    backgroundColor: '#4285F4',
   },
   saveButtonDisabled: {
     opacity: 0.5,

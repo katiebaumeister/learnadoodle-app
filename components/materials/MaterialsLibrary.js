@@ -16,7 +16,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen } from 'lucide-react';
+import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen, Edit2 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import MaterialCard from './MaterialCard';
@@ -546,6 +546,19 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
     }
   };
 
+  const handleEditAttachment = async (item) => {
+    // Reload material to ensure we have latest data including reviews
+    try {
+      const { getMaterial } = await import('../../lib/services/materialsClient');
+      const freshMaterial = await getMaterial(item.data.id);
+      setEditingMaterial(freshMaterial);
+    } catch (error) {
+      console.error('[MaterialsLibrary] Error loading material for edit:', error);
+      // Fallback to using the data we have
+      setEditingMaterial(item.data);
+    }
+  };
+
   const handleDeleteFromDetails = async (material) => {
     // Use the same delete handler
     const item = { data: material };
@@ -626,6 +639,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
     
      const menuItems = [
        { text: 'Attachment details', action: () => handleEditDetails(item), icon: FileText },
+       { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
        { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
        { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
      ];
@@ -719,6 +733,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         if (menuItem.icon === FileText) {
           path.setAttribute('d', 'M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8');
+        } else if (menuItem.icon === Edit2) {
+          path.setAttribute('d', 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z');
         } else if (menuItem.icon === ExternalLink) {
           path.setAttribute('d', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6 M15 3h6v6 M10 14L21 3');
         } else if (menuItem.icon === Trash2) {

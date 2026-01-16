@@ -945,14 +945,96 @@ async def export_transcript_enhanced(
         
         child_name = child_res.data.get("first_name", "Student")
 
-        # Get grades with full details
+        # Get grades from grades table
+        # Note: We don't filter by created_at date range because grades don't have a term_date field
+        # The date range is used for display purposes only. We get all grades for the child.
         grades_res = supabase.table("grades").select(
             "term_label, subject_id, grade, score, credits, gpa_type, weight_multiplier, course_rigor_notes, syllabus_attachment_id, notes, created_at"
-        ).eq("child_id", child_id).gte("created_at", range_start.isoformat()).lte("created_at", range_end.isoformat()).order("created_at").execute()
+        ).eq("child_id", child_id).order("created_at").execute()
+        
+        # Also get grades from events table (grades stored directly on events)
+        events_res = supabase.table("events").select(
+            "id, subject_id, grade, created_at, updated_at"
+        ).eq("child_id", child_id).eq("family_id", family_id).is_("deleted_at", None).not_.is_("grade", "null").neq("grade", "").order("created_at").execute()
+        
+        # Convert events with grades to grade format
+        grades_from_events = []
+        if events_res.data:
+            for event in events_res.data:
+                if event.get("grade"):
+                    grades_from_events.append({
+                        "term_label": None,  # Events don't have term_label column
+                        "subject_id": event.get("subject_id"),
+                        "grade": event.get("grade"),
+                        "score": None,
+                        "credits": 0,
+                        "gpa_type": "unweighted",
+                        "weight_multiplier": 1.0,
+                        "course_rigor_notes": None,
+                        "syllabus_attachment_id": None,
+                        "notes": None,
+                        "created_at": event.get("updated_at") or event.get("created_at")
+                    })
+        
+        # Combine grades from both sources
+        all_grades = (grades_res.data or []) + grades_from_events
 
-        # Get subjects
-        subjects_res = supabase.table("subject").select("id, name").eq("family_id", family_id).execute()
-        subjects_map = {s["id"]: s["name"] for s in (subjects_res.data or [])}
+        # Get all subjects for the child (family-wide + child-specific)
+        # This matches the modal logic which shows all subjects, even ungraded ones
+        # First get all subjects for the family
+        subjects_res = supabase.table("subject").select("id, name, child_id").eq("family_id", family_id).order("name").execute()
+        all_subjects = subjects_res.data or []
+        
+        # Filter: Show family-wide subjects (child_id is null) or subjects for this child
+        filtered_subjects = [s for s in all_subjects if s.get("child_id") is None or s.get("child_id") == child_id]
+        
+        # Deduplicate by name, preferring child-specific over family-wide
+        subject_map = {}
+        for subject in filtered_subjects:
+            existing = subject_map.get(subject["name"])
+            if not existing or (existing.get("child_id") is None and subject.get("child_id") is not None):
+                subject_map[subject["name"]] = subject
+        
+        subjects_map = {s["id"]: s["name"] for s in subject_map.values()}
+        
+        # Build course list: include all subjects, even if they don't have grades
+        course_list = []
+        for subject_id, subject_name in subjects_map.items():
+            # Find grades for this subject
+            subject_grades = [g for g in all_grades if g.get("subject_id") == subject_id]
+            
+            if subject_grades:
+                # If there are multiple grades, use the most recent one
+                subject_grades.sort(key=lambda g: g.get("created_at") or "", reverse=True)
+                latest_grade = subject_grades[0]
+                course_list.append({
+                    "term_label": latest_grade.get("term_label"),
+                    "subject_id": subject_id,
+                    "subject_name": subject_name,
+                    "grade": latest_grade.get("grade"),
+                    "score": latest_grade.get("score"),
+                    "credits": latest_grade.get("credits", 0),
+                    "gpa_type": latest_grade.get("gpa_type", "unweighted"),
+                    "weight_multiplier": latest_grade.get("weight_multiplier", 1.0),
+                    "course_rigor_notes": latest_grade.get("course_rigor_notes"),
+                    "syllabus_attachment_id": latest_grade.get("syllabus_attachment_id"),
+                    "notes": latest_grade.get("notes"),
+                })
+            else:
+                # Include subject even if it has no grades
+                course_list.append({
+                    "term_label": None,
+                    "subject_id": subject_id,
+                    "subject_name": subject_name,
+                    "grade": None,
+                    "score": None,
+                    "credits": 0,
+                    "gpa_type": "unweighted",
+                    "weight_multiplier": 1.0,
+                    "course_rigor_notes": None,
+                    "syllabus_attachment_id": None,
+                    "notes": None,
+                })
 
         # Calculate GPA
         total_credits = 0
@@ -961,7 +1043,7 @@ async def export_transcript_enhanced(
         
         grade_points = {"A": 4.0, "B": 3.0, "C": 2.0, "D": 1.0, "F": 0.0}
         
-        for grade in grades_res.data or []:
+        for grade in all_grades:
             grade_letter = grade.get("grade", "").upper()
             if grade_letter in grade_points:
                 credits = float(grade.get("credits", 0) or 0)
@@ -984,7 +1066,7 @@ async def export_transcript_enhanced(
                 child_name,
                 range_start,
                 range_end,
-                grades_res.data or [],
+                course_list,
                 subjects_map,
                 unweighted_gpa,
                 weighted_gpa,
@@ -1003,7 +1085,7 @@ async def export_transcript_enhanced(
             output = io.StringIO()
             writer = csv.writer(output)
             
-            writer.writerow(["Official Transcript"])
+            writer.writerow(["unofficial transcript"])
             writer.writerow([f"Student: {child_name}"])
             writer.writerow([f"Date Range: {range_start} to {range_end}"])
             writer.writerow([])
@@ -1011,19 +1093,18 @@ async def export_transcript_enhanced(
             headers = ["Term", "Subject", "Grade", "Score", "Credits", "GPA Type", "Weight", "Rigor Notes", "Syllabus", "Notes"]
             writer.writerow(headers)
             
-            for grade in grades_res.data or []:
-                subject_name = subjects_map.get(grade.get("subject_id", ""), "")
+            for course in course_list:
                 row = [
-                    grade.get("term_label", ""),
-                    subject_name,
-                    grade.get("grade", ""),
-                    grade.get("score", "") or "",
-                    grade.get("credits", 0),
-                    grade.get("gpa_type", "unweighted"),
-                    grade.get("weight_multiplier", 1.0),
-                    grade.get("course_rigor_notes", "") or "",
-                    "Yes" if grade.get("syllabus_attachment_id") else "No",
-                    grade.get("notes", "") or "",
+                    course.get("term_label", "") or "",
+                    course.get("subject_name", ""),
+                    course.get("grade", "") or "",
+                    str(course.get("score", "")) if course.get("score") else "—",
+                    course.get("credits", 0),
+                    course.get("gpa_type", "unweighted"),
+                    course.get("weight_multiplier", 1.0),
+                    course.get("course_rigor_notes", "") or "",
+                    "Yes" if course.get("syllabus_attachment_id") else "No",
+                    course.get("notes", "") or "",
                 ]
                 writer.writerow(row)
             
@@ -1052,7 +1133,7 @@ def generate_transcript_pdf(
     child_name: str,
     range_start: date,
     range_end: date,
-    grades: List[Dict[str, Any]],
+    course_list: List[Dict[str, Any]],
     subjects_map: Dict[str, str],
     unweighted_gpa: float,
     weighted_gpa: float,
@@ -1074,7 +1155,7 @@ def generate_transcript_pdf(
         spaceAfter=10,
         alignment=TA_CENTER,
     )
-    story.append(Paragraph("OFFICIAL TRANSCRIPT", title_style))
+    story.append(Paragraph("UNOFFICIAL TRANSCRIPT", title_style))
     story.append(Paragraph(f"<b>Student:</b> {child_name}", styles['Normal']))
     story.append(Paragraph(f"<b>Date Range:</b> {range_start.strftime('%B %d, %Y')} - {range_end.strftime('%B %d, %Y')}", styles['Normal']))
     story.append(Spacer(1, 0.3*inch))
@@ -1103,16 +1184,15 @@ def generate_transcript_pdf(
     story.append(Spacer(1, 0.2*inch))
 
     course_data = [["Term", "Subject", "Grade", "Score", "Credits", "GPA Type", "Weight"]]
-    for grade in grades:
-        subject_name = subjects_map.get(grade.get("subject_id", ""), "")
+    for course in course_list:
         course_data.append([
-            grade.get("term_label", ""),
-            subject_name,
-            grade.get("grade", ""),
-            str(grade.get("score", "") or "—"),
-            str(grade.get("credits", 0)),
-            grade.get("gpa_type", "unweighted"),
-            str(grade.get("weight_multiplier", 1.0)),
+            course.get("term_label", "") or "",
+            course.get("subject_name", ""),
+            course.get("grade", "") or "",
+            str(course.get("score", "")) if course.get("score") else "—",
+            str(course.get("credits", 0)),
+            course.get("gpa_type", "unweighted"),
+            str(course.get("weight_multiplier", 1.0)),
         ])
 
     course_table = Table(course_data, colWidths=[1.2*inch, 2*inch, 0.8*inch, 0.8*inch, 0.8*inch, 1*inch, 0.8*inch])

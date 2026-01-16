@@ -1323,47 +1323,24 @@ export default function BuildCurriculumModal({
       <View style={styles.inputSection}>
         <Text style={styles.label}>Total Weeks <Text style={styles.optionalLabel}>(optional)</Text></Text>
         <View style={styles.weeksRow}>
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(week => (
+          {[
+            { value: 1, label: 'This week' },
+            { value: 2, label: 'Next 2 weeks' }
+          ].map(option => (
             <TouchableOpacity
-              key={week}
-              style={[styles.weekButton, weeks === week && !customWeeks && styles.weekButtonSelected]}
+              key={option.value}
+              style={[styles.weekButton, weeks === option.value && !customWeeks && styles.weekButtonSelected]}
               onPress={() => {
-                setWeeks(week);
+                setWeeks(option.value);
                 setCustomWeeks('');
               }}
             >
-              <Text style={[styles.weekButtonText, weeks === week && !customWeeks && styles.weekButtonTextSelected]}>
-                {week}
+              <Text style={[styles.weekButtonText, weeks === option.value && !customWeeks && styles.weekButtonTextSelected]}>
+                {option.label}
               </Text>
             </TouchableOpacity>
           ))}
-          <TextInput
-            style={[
-              styles.weekButton,
-              styles.weekButtonInput,
-              customWeeks && styles.weekButtonSelected
-            ]}
-            value={customWeeks}
-            onChangeText={(text) => {
-              const num = parseInt(text);
-              if (text === '' || (!isNaN(num) && num > 0)) {
-                setCustomWeeks(text);
-                if (num > 0) {
-                  setWeeks(num);
-                }
-              }
-            }}
-            keyboardType="numeric"
-            placeholder="..."
-            placeholderTextColor={MUTED}
-            maxLength={3}
-          />
         </View>
-        {weeks > 8 && (
-          <Text style={styles.weeksWarning}>
-            Generating curriculum for {weeks} weeks may take longer. Consider splitting into smaller units for better results.
-          </Text>
-        )}
       </View>
 
       <View style={styles.inputSection}>
@@ -2329,6 +2306,7 @@ export default function BuildCurriculumModal({
                   onClose();
                 }
               }}
+              style={{ paddingVertical: 10, paddingHorizontal: 20 }}
             >
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
@@ -3310,15 +3288,18 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: BORDER,
+    gap: 12,
   },
   cancelText: {
-    color: SUB,
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3381,10 +3362,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryButton: {
-    backgroundColor: '#111827',
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 12,
+    backgroundColor: '#4285F4',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
   },
   buttonDisabled: {
     backgroundColor: '#d1d5db',

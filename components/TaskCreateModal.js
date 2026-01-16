@@ -9,7 +9,6 @@ import { getMaterials } from '../lib/services/materialsClient';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { apiRequest } from '../lib/apiClient';
 import { Search } from 'lucide-react';
-import StandardsSearchModal from './standards/StandardsSearchModal';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -3260,62 +3259,6 @@ export default function TaskCreateModal({
                 </View>
               </SafeFieldRow>
               
-              {familyId && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>Standards (optional)</Text>
-                    <View style={styles.standardsSelectorContainer}>
-                      <TouchableOpacity
-                        style={styles.standardsSelector}
-                        onPress={() => {
-                          setShowStandardsModal(true);
-                        }}
-                      >
-                        <Text style={[
-                          styles.standardsSelectorText,
-                          attachedStandards.length === 0 && styles.standardsSelectorPlaceholder
-                        ]}>
-                          {attachedStandards.length > 0
-                            ? `${attachedStandards.length} standard${attachedStandards.length > 1 ? 's' : ''} selected`
-                            : 'Select standards...'}
-                        </Text>
-                        <ChevronDown size={16} color={MUTED} />
-                      </TouchableOpacity>
-                      {attachedStandards.length > 0 && (
-                        <TouchableOpacity
-                          style={styles.clearStandardsButton}
-                          onPress={() => {
-                            setAttachedStandards([]);
-                          }}
-                        >
-                          <Text style={styles.clearStandardsText}>Clear</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                </SafeFieldRow>
-              )}
-              {familyId && attachedStandards.length > 0 && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
-                    <View style={styles.standardsList}>
-                      {attachedStandards.map(standard => (
-                        <View key={standard.id} style={styles.standardChip}>
-                          <Text style={styles.standardChipText}>
-                            {standard.standard_code || standard.code || 'Standard'}
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => setAttachedStandards(prev => prev.filter(s => s.id !== standard.id))}
-                            style={styles.removeStandardButton}
-                          >
-                            <X size={14} color={MUTED} />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                </SafeFieldRow>
-              )}
 
               {/* Tags input - moved to Academic Details */}
               <SafeFieldRow style={styles.fieldRow}>
@@ -3634,15 +3577,6 @@ export default function TaskCreateModal({
             )}
 
 
-            {/* Standards Search Modal */}
-            <StandardsSearchModal
-              visible={showStandardsModal}
-              onClose={() => setShowStandardsModal(false)}
-              onSelect={handleStandardsSelect}
-              subjectId={subjectId}
-              initialSelected={attachedStandards}
-            />
-
             {/* Notes */}
             <TextInput
               placeholder="Notes (optional)"
@@ -3656,7 +3590,10 @@ export default function TaskCreateModal({
 
           {/* Footer */}
           <View style={styles.footer}>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity 
+              onPress={onClose}
+              style={{ paddingVertical: 10, paddingHorizontal: 20 }}
+            >
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -4702,24 +4639,27 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: BORDER,
+    gap: 12,
   },
   cancelText: {
-    color: SUB,
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   createButton: {
-    backgroundColor: '#111827',
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 12,
+    backgroundColor: '#4285F4',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
   },
   createButtonDisabled: {
     backgroundColor: '#d1d5db',
