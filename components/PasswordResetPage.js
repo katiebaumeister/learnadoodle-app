@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 
@@ -54,16 +55,23 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
     const hasUpperCase = /[A-Z]/.test(password);
     const hasLowerCase = /[a-z]/.test(password);
     const hasDigits = /\d/.test(password);
-    const hasSymbols = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
+    const hasMinLength = password.length >= 10;
     
     return {
-      isValid: hasUpperCase && hasLowerCase && hasDigits && hasSymbols,
+      isValid: hasUpperCase && hasLowerCase && hasDigits && hasMinLength,
       hasUpperCase,
       hasLowerCase,
       hasDigits,
-      hasSymbols
+      hasMinLength
     };
   };
+
+  // Check if form is valid
+  const isFormValid = useMemo(() => {
+    if (!newPassword || !confirmPassword) return false;
+    const passwordValidation = validatePassword(newPassword);
+    return passwordValidation.isValid && newPassword === confirmPassword;
+  }, [newPassword, confirmPassword]);
 
   const handlePasswordReset = async () => {
     setErrorMessage('');
@@ -87,17 +95,12 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
     const passwordValidation = validatePassword(newPassword);
     if (!passwordValidation.isValid) {
       const missingRequirements = [];
+      if (!passwordValidation.hasMinLength) missingRequirements.push('10 characters');
       if (!passwordValidation.hasUpperCase) missingRequirements.push('uppercase letter');
       if (!passwordValidation.hasLowerCase) missingRequirements.push('lowercase letter');
-      if (!passwordValidation.hasDigits) missingRequirements.push('digit');
-      if (!passwordValidation.hasSymbols) missingRequirements.push('symbol');
+      if (!passwordValidation.hasDigits) missingRequirements.push('number');
       
-      setErrorMessage(`Password must contain at least one: ${missingRequirements.join(', ')}`);
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      setErrorMessage('Password must be at least 6 characters');
+      setErrorMessage(`Password must contain: ${missingRequirements.join(', ')}`);
       return;
     }
 
@@ -277,43 +280,79 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
         
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>New Password</Text>
-          <TextInput
-            style={styles.textInput}
-            value={newPassword}
-            onChangeText={setNewPassword}
-            placeholder="Enter your new password"
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          <View style={styles.passwordInputContainer}>
+            <TextInput
+              style={styles.passwordInput}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              placeholder="Enter your new password"
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              {showPassword ? (
+                <EyeOff size={20} color="#6b7280" />
+              ) : (
+                <Eye size={20} color="#6b7280" />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
         
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>Confirm New Password</Text>
-          <TextInput
-            style={styles.textInput}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Confirm your new password"
-            secureTextEntry={!showConfirmPassword}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          <View style={styles.passwordInputContainer}>
+            <TextInput
+              style={styles.passwordInput}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Confirm your new password"
+              secureTextEntry={!showConfirmPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+            >
+              {showConfirmPassword ? (
+                <EyeOff size={20} color="#6b7280" />
+              ) : (
+                <Eye size={20} color="#6b7280" />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
         
         <View style={styles.passwordRequirements}>
           <Text style={styles.requirementsTitle}>Password Requirements:</Text>
-          <Text style={styles.requirement}>• At least 6 characters long</Text>
-          <Text style={styles.requirement}>• Contains uppercase letter</Text>
-          <Text style={styles.requirement}>• Contains lowercase letter</Text>
-          <Text style={styles.requirement}>• Contains number</Text>
-          <Text style={styles.requirement}>• Contains special character</Text>
+          <Text style={[styles.requirement, newPassword.length >= 10 && styles.requirementMet]}>
+            • At least 10 characters long
+          </Text>
+          <Text style={[styles.requirement, /[A-Z]/.test(newPassword) && styles.requirementMet]}>
+            • Contains uppercase letter
+          </Text>
+          <Text style={[styles.requirement, /[a-z]/.test(newPassword) && styles.requirementMet]}>
+            • Contains lowercase letter
+          </Text>
+          <Text style={[styles.requirement, /\d/.test(newPassword) && styles.requirementMet]}>
+            • Contains number
+          </Text>
+          {newPassword && confirmPassword && (
+            <Text style={[styles.requirement, newPassword === confirmPassword && styles.requirementMet]}>
+              • Passwords match
+            </Text>
+          )}
         </View>
         
         <TouchableOpacity
-          style={[styles.resetButton, loading && styles.disabledButton]}
+          style={[styles.resetButton, (loading || !isFormValid) && styles.disabledButton]}
           onPress={handlePasswordReset}
-          disabled={loading}
+          disabled={loading || !isFormValid}
         >
           <Text style={styles.resetButtonText}>
             {loading ? 'Updating Password...' : 'Update Password'}
@@ -392,6 +431,28 @@ const styles = StyleSheet.create({
     color: '#374151',
     backgroundColor: '#ffffff',
   },
+  passwordInputContainer: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingRight: 48,
+    fontSize: 16,
+    color: '#374151',
+    backgroundColor: '#ffffff',
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: 12,
+    padding: 4,
+  },
   passwordRequirements: {
     backgroundColor: '#f9fafb',
     borderRadius: 8,
@@ -408,6 +469,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6b7280',
     marginBottom: 4,
+  },
+  requirementMet: {
+    color: '#16a34a',
   },
   resetButton: {
     backgroundColor: '#38B6FF',

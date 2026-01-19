@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
+import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function WebAuthScreen() {
@@ -32,16 +33,24 @@ export default function WebAuthScreen() {
     const hasUpperCase = /[A-Z]/.test(password);
     const hasLowerCase = /[a-z]/.test(password);
     const hasDigits = /\d/.test(password);
-    const hasSymbols = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
+    const hasMinLength = password.length >= 10;
     
     return {
-      isValid: hasUpperCase && hasLowerCase && hasDigits && hasSymbols,
+      isValid: hasUpperCase && hasLowerCase && hasDigits && hasMinLength,
       hasUpperCase,
       hasLowerCase,
       hasDigits,
-      hasSymbols
+      hasMinLength
     };
   };
+
+  // Check if form is valid for sign up
+  const isSignUpFormValid = useMemo(() => {
+    if (!isSignUp) return true; // Not relevant for sign in
+    if (!email || !password || !confirmPassword) return false;
+    const passwordValidation = validatePassword(password);
+    return passwordValidation.isValid && password === confirmPassword;
+  }, [isSignUp, email, password, confirmPassword]);
 
   const handleAuth = async () => {
     clearMessages();
@@ -52,28 +61,22 @@ export default function WebAuthScreen() {
     }
 
     if (isSignUp) {
-      // Check password requirements
-      const passwordValidation = validatePassword(password);
-      if (!passwordValidation.isValid) {
-        const missingRequirements = [];
-        if (!passwordValidation.hasUpperCase) missingRequirements.push('uppercase letter');
-        if (!passwordValidation.hasLowerCase) missingRequirements.push('lowercase letter');
-        if (!passwordValidation.hasDigits) missingRequirements.push('digit');
-        if (!passwordValidation.hasSymbols) missingRequirements.push('symbol');
-        
-        setErrorMessage(`Password must contain at least one: ${missingRequirements.join(', ')}`);
-        return;
-      }
-
       // Check password confirmation
       if (password !== confirmPassword) {
         setErrorMessage('Passwords do not match');
         return;
       }
 
-      // Check minimum length
-      if (password.length < 6) {
-        setErrorMessage('Password must be at least 6 characters');
+      // Check password requirements
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.isValid) {
+        const missingRequirements = [];
+        if (!passwordValidation.hasMinLength) missingRequirements.push('10 characters');
+        if (!passwordValidation.hasUpperCase) missingRequirements.push('uppercase letter');
+        if (!passwordValidation.hasLowerCase) missingRequirements.push('lowercase letter');
+        if (!passwordValidation.hasDigits) missingRequirements.push('number');
+        
+        setErrorMessage(`Password must contain: ${missingRequirements.join(', ')}`);
         return;
       }
     }
@@ -86,11 +89,25 @@ export default function WebAuthScreen() {
         : await signIn(email, password);
 
       if (error) {
-        setErrorMessage(error.message);
+        // Check if error is due to unverified email
+        const errorMessage = error.message || '';
+        const errorLower = errorMessage.toLowerCase();
+        const isEmailNotVerified = 
+          errorLower.includes('email not confirmed') ||
+          errorLower.includes('email not verified') ||
+          errorLower.includes('email address not verified') ||
+          errorLower.includes('confirm your email') ||
+          errorLower.includes('verification');
+        
+        if (isEmailNotVerified && !isSignUp) {
+          setErrorMessage('Please check your email for verification!');
+        } else {
+          setErrorMessage(error.message);
+        }
       } else if (isSignUp) {
         // Check if user needs email confirmation
         if (data?.user && !data?.session) {
-          setSuccessMessage('Account Created! Please check your email and click the confirmation link to verify your account. You can then sign in.');
+          setSuccessMessage('Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.');
           setIsSignUp(false); // Switch to sign in mode
         } else {
           setSuccessMessage('Account created and signed in successfully!');
@@ -124,7 +141,7 @@ export default function WebAuthScreen() {
       if (error) {
         setErrorMessage(error.message);
       } else {
-        setSuccessMessage('Password reset email sent! Please check your inbox and follow the instructions.');
+        setSuccessMessage('Success! If an account is associated with the provided email, you will receive an email to reset. If you do not receive an email, please create a new account.');
         setIsResetPassword(false);
       }
     } catch (error) {
@@ -234,36 +251,87 @@ export default function WebAuthScreen() {
         
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>Password</Text>
-          <TextInput
-            style={styles.textInput}
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Enter your password"
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-        
-        {isSignUp && (
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Confirm Password</Text>
+          <View style={styles.passwordInputContainer}>
             <TextInput
-              style={styles.textInput}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm your password"
-              secureTextEntry={!showConfirmPassword}
+              style={styles.passwordInput}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Enter your password"
+              secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
             />
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              {showPassword ? (
+                <EyeOff size={20} color="#6b7280" />
+              ) : (
+                <Eye size={20} color="#6b7280" />
+              )}
+            </TouchableOpacity>
           </View>
+        </View>
+        
+        {isSignUp && (
+          <>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Confirm Password</Text>
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="Confirm your password"
+                  secureTextEntry={!showConfirmPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  style={styles.eyeButton}
+                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                >
+                  {showConfirmPassword ? (
+                    <EyeOff size={20} color="#6b7280" />
+                  ) : (
+                    <Eye size={20} color="#6b7280" />
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+            {isSignUp && (
+              <View style={styles.passwordRequirements}>
+                <Text style={styles.requirementsTitle}>Password Requirements:</Text>
+                <Text style={[styles.requirement, password.length >= 10 && styles.requirementMet]}>
+                  • At least 10 characters long
+                </Text>
+                <Text style={[styles.requirement, /[A-Z]/.test(password) && styles.requirementMet]}>
+                  • Contains uppercase letter
+                </Text>
+                <Text style={[styles.requirement, /[a-z]/.test(password) && styles.requirementMet]}>
+                  • Contains lowercase letter
+                </Text>
+                <Text style={[styles.requirement, /\d/.test(password) && styles.requirementMet]}>
+                  • Contains number
+                </Text>
+                {password && confirmPassword && (
+                  <Text style={[styles.requirement, password === confirmPassword && styles.requirementMet]}>
+                    • Passwords match
+                  </Text>
+                )}
+              </View>
+            )}
+          </>
         )}
         
         <TouchableOpacity
-          style={[styles.authButton, loading && styles.disabledButton]}
+          style={[
+            styles.authButton, 
+            (loading || (isSignUp && !isSignUpFormValid)) && styles.disabledButton
+          ]}
           onPress={handleAuth}
-          disabled={loading}
+          disabled={loading || (isSignUp && !isSignUpFormValid)}
         >
           <Text style={styles.authButtonText}>
             {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
@@ -426,5 +494,47 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
     marginTop: 8,
+  },
+  passwordInputContainer: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingRight: 48,
+    fontSize: 16,
+    color: '#374151',
+    backgroundColor: '#ffffff',
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: 12,
+    padding: 4,
+  },
+  passwordRequirements: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 20,
+  },
+  requirementsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  requirement: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  requirementMet: {
+    color: '#16a34a',
   },
 });
