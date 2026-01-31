@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
+import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal } from 'react-native';
 
 // For web portal rendering
 let ReactDOM;
@@ -17,7 +17,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
 import { useGlobalSearch } from '../contexts/GlobalSearchContext';
 import WebContent from './WebContent';
-import SettingsModal from './settings/SettingsModal';
 import SearchModal from './SearchModal';
 import GlobalNewMenu from './GlobalNewMenu';
 import AppShell from './layout/AppShell.js';
@@ -31,7 +30,7 @@ import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
 import AIModal from './AIModal';
-import { proposeReschedule } from '../lib/apiClient';
+import { proposeReschedule, getFamilyMembers } from '../lib/apiClient';
 import AnalyticsDashboard from './analytics/AnalyticsDashboard';
 import ProgressReport from './analytics/ProgressReport';
 import ScheduleSettingsModal from './modals/ScheduleSettingsModal';
@@ -60,12 +59,11 @@ export default function WebLayout({ navigation, routeParams }) {
   const [activeChildId, setActiveChildId] = useState(null);
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
-  const [showAuthSettings, setShowAuthSettings] = useState(false);
-  const [settingsInitialSection, setSettingsInitialSection] = useState('profile');
   const [showDoodleSearchModal, setShowDoodleSearchModal] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const [editingSubject, setEditingSubject] = useState(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventModalEventId, setEventModalEventId] = useState(null);
@@ -79,6 +77,8 @@ export default function WebLayout({ navigation, routeParams }) {
   const [subjects, setSubjects] = useState([]);
   const [subjectsLoaded, setSubjectsLoaded] = useState(false); // Cache flag for subjects
   const [familyId, setFamilyId] = useState(null);
+  const [family, setFamily] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [activeRightTool, setActiveRightTool] = useState(null);
   const prevActiveTabRef = useRef(null);
   // AI Tool Modals
@@ -96,6 +96,7 @@ export default function WebLayout({ navigation, routeParams }) {
   const [quickRescheduleInitialEvent, setQuickRescheduleInitialEvent] = useState(null);
   const [showBuildCurriculumModal, setShowBuildCurriculumModal] = useState(false);
   const [showProgressForecastModal, setShowProgressForecastModal] = useState(false);
+  const [showSchedulingAssistantModal, setShowSchedulingAssistantModal] = useState(false);
   const [plannerSearchQuery, setPlannerSearchQuery] = useState('');
   const plannerSearchInputRef = useRef(null);
   const [plannerSearchResults, setPlannerSearchResults] = useState([]);
@@ -913,7 +914,7 @@ export default function WebLayout({ navigation, routeParams }) {
     return child?.first_name || child?.name || null;
   }, [activeSubtab, children]);
 
-  // Fetch user role
+  // Fetch user role and profile
   useEffect(() => {
     const fetchUserRole = async () => {
       if (!user) return;
@@ -924,30 +925,114 @@ export default function WebLayout({ navigation, routeParams }) {
         // Handle 401 errors gracefully (backend might not be running or auth not ready)
         const isAuthError = meError?.status === 401 || meError?.response?.status === 401;
         
+        // Always fetch profile table for freshest name/phone
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('role, email, name, first_name, phone, avatar_url')
+          .eq('id', user.id)
+          .maybeSingle();
+
         if (!meError && meData) {
-          setUserRole(meData.role || 'parent');
+          const mergedProfile = {
+            ...meData,
+            // Prefer profiles table for editable fields
+            name: profileData?.name || profileData?.first_name || meData.name || meData.first_name || '',
+            first_name: profileData?.first_name || meData.first_name || '',
+            email: profileData?.email || meData.email || user.email,
+            phone: profileData?.phone || meData.phone || '',
+            avatar_url: profileData?.avatar_url || meData.avatar_url || null,
+          };
+          setUserRole(meData.role || profileData?.role || 'parent');
+          setProfile(mergedProfile);
         } else if (!isAuthError) {
           // Only log non-auth errors
           console.warn('[WebLayout] getMe error (non-critical):', meError);
         }
         
         // Always fallback to profile table (works even if backend is down)
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .maybeSingle();
         if (profileData) {
           setUserRole(profileData.role || 'parent');
+          // If we don't have profile from API, create a minimal profile object
+          if (!meData) {
+            setProfile({
+              role: profileData.role || 'parent',
+              email: profileData.email || user.email,
+              name: profileData.name || profileData.first_name || '',
+              first_name: profileData.first_name || '',
+              phone: profileData.phone || '',
+              avatar_url: profileData.avatar_url || null
+            });
+          }
         } else {
           setUserRole('parent'); // Default fallback
+          if (!meData) {
+            setProfile({
+              role: 'parent',
+              email: user.email
+            });
+          }
         }
       } catch (error) {
         // Silent fallback - don't log errors here
         setUserRole('parent');
+        setProfile({
+          role: 'parent',
+          email: user.email
+        });
       }
     };
     fetchUserRole();
+  }, [user]);
+
+  // Refresh profile when settings updates it
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !user) return;
+
+    const handleRefreshProfile = async () => {
+      try {
+        const { getMe } = await import('../lib/apiClient');
+        const { data: meData, error: meError } = await getMe();
+
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('role, email, name, first_name, phone, avatar_url')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (!meError && meData) {
+          const mergedProfile = {
+            ...meData,
+            name: profileData?.name || profileData?.first_name || meData.name || meData.first_name || '',
+            first_name: profileData?.first_name || meData.first_name || '',
+            email: profileData?.email || meData.email || user.email,
+            phone: profileData?.phone || meData.phone || '',
+            avatar_url: profileData?.avatar_url || meData.avatar_url || null,
+          };
+          setUserRole(meData.role || profileData?.role || 'parent');
+          setProfile(mergedProfile);
+          return;
+        }
+
+        if (profileData) {
+          setUserRole(profileData.role || 'parent');
+          setProfile({
+            role: profileData.role || 'parent',
+            email: profileData.email || user.email,
+            name: profileData.name || profileData.first_name || '',
+            first_name: profileData.first_name || '',
+            phone: profileData.phone || '',
+            avatar_url: profileData.avatar_url || null
+          });
+        }
+      } catch (error) {
+        // Silent fallback
+      }
+    };
+
+    window.addEventListener('refreshProfile', handleRefreshProfile);
+    return () => {
+      window.removeEventListener('refreshProfile', handleRefreshProfile);
+    };
   }, [user]);
 
   // Helper function to validate and clean avatar URLs
@@ -1052,21 +1137,87 @@ export default function WebLayout({ navigation, routeParams }) {
     }
   }, [user, subjectsLoaded]);
 
+  const fetchFamilyData = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { data, error } = await getFamilyMembers();
+      if (!error && data) {
+        setFamily(data);
+        if (data.id) {
+          setFamilyId(data.id);
+        }
+      }
+    } catch (error) {
+      console.error('[WebLayout] Unable to load family data', error);
+    }
+  }, [user]);
+
   useEffect(() => {
     fetchFamilyMembers();
-  }, [fetchFamilyMembers]);
+    fetchFamilyData();
+  }, [fetchFamilyMembers, fetchFamilyData]);
 
   // Listen for children refresh events
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handleRefreshChildren = () => {
       fetchFamilyMembers();
+      fetchFamilyData();
     };
     window.addEventListener('refreshChildren', handleRefreshChildren);
     return () => {
       window.removeEventListener('refreshChildren', handleRefreshChildren);
     };
-  }, []);
+  }, [fetchFamilyData]);
+
+  // Handle URL-based routing for subject detail pages
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const checkUrlRoute = () => {
+      const pathname = window.location.pathname;
+      const subjectDetailMatch = pathname.match(/^\/subjects\/([^/]+)$/);
+      
+      if (subjectDetailMatch) {
+        const subjectId = subjectDetailMatch[1];
+        const expectedTab = `subject-${subjectId}`;
+        if (activeTab !== expectedTab) {
+          setActiveTab(expectedTab);
+          setActiveTopNav('intelligence');
+        }
+      } else if (pathname === '/subjects') {
+        // Legacy subjects list route now points to Intelligence Hub
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/intelligence');
+        }
+        if (activeTab !== 'intelligence') {
+          setActiveTab('intelligence');
+          setActiveTopNav('intelligence');
+        }
+      } else if (pathname === '/intelligence') {
+        if (activeTab !== 'intelligence') {
+          setActiveTab('intelligence');
+          setActiveTopNav('intelligence');
+        }
+      } else if (pathname === '/' || pathname === '/home') {
+        // On home page - always set tab if URL matches
+        if (activeTab !== 'home') {
+          setActiveTab('home');
+          setActiveTopNav('home');
+        }
+      }
+    };
+
+    // Only check on mount and popstate, not on every activeTab change
+    checkUrlRoute();
+    
+    // Listen for popstate (back/forward navigation)
+    window.addEventListener('popstate', checkUrlRoute);
+    
+    return () => {
+      window.removeEventListener('popstate', checkUrlRoute);
+    };
+  }, []); // Empty deps - only run on mount and popstate
 
   useEffect(() => {
     // Handle child tabs from sidebar (child-{id})
@@ -1090,10 +1241,14 @@ export default function WebLayout({ navigation, routeParams }) {
       setActiveTopNav('planner');
     } else if (activeTab === 'materials') {
       setActiveTopNav('materials');
+    } else if (activeTab === 'subjects' || (activeTab && activeTab.startsWith('subject-'))) {
+      setActiveTopNav('subjects');
     } else if (activeTab === 'intelligence') {
       setActiveTopNav('intelligence');
     } else if (activeTab === 'profile') {
       setActiveTopNav('profile');
+    } else if (activeTab === 'settings') {
+      setActiveTopNav('new');
     } else if ((activeTab === 'children-list' || (activeTab && activeTab.startsWith('child-'))) && activeChildId) {
       setActiveTopNav('family');
     }
@@ -1104,6 +1259,18 @@ export default function WebLayout({ navigation, routeParams }) {
     const handler = () => setShowAddChildModal(true);
     window.addEventListener('openAddChildModal', handler);
     return () => window.removeEventListener('openAddChildModal', handler);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handler = (e) => {
+      // If event has detail (subject object), it's edit mode
+      const subject = e.detail?.subject || null;
+      setEditingSubject(subject);
+      setShowAddSubjectModal(true);
+    };
+    window.addEventListener('openAddSubjectModal', handler);
+    return () => window.removeEventListener('openAddSubjectModal', handler);
   }, []);
 
   // Listen for openTaskModal event to open the global TaskCreateModal
@@ -1269,10 +1436,6 @@ export default function WebLayout({ navigation, routeParams }) {
   }, [handleSearchNavigate]);
 
   // Handler for Settings chip
-  const handleOpenSettings = useCallback(() => {
-    setSettingsInitialSection('profile');
-    setShowAuthSettings(true);
-  }, []);
 
   const handleTopSelect = useCallback(
     (key) => {
@@ -1280,6 +1443,9 @@ export default function WebLayout({ navigation, routeParams }) {
       switch (key) {
         case 'home':
           handleTabChange('home');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/');
+          }
           break;
         // case 'explore': // Archived - explore page removed
         //   handleTabChange('explore');
@@ -1289,10 +1455,16 @@ export default function WebLayout({ navigation, routeParams }) {
           handleTabChange('planner');
           break;
         case 'new':
-          handleOpenSettings();
+          handleTabChange('settings', 'profile');
           break;
         case 'materials':
           handleTabChange('materials');
+          break;
+        case 'subjects':
+          handleTabChange('subjects');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/subjects');
+          }
           break;
         case 'records':
           handleTabChange('records');
@@ -1310,7 +1482,7 @@ export default function WebLayout({ navigation, routeParams }) {
           handleTabChange('home');
       }
     },
-    [handleTabChange, handleOpenSettings]
+    [handleTabChange]
   );
 
   const handleChildSelect = useCallback(
@@ -1465,6 +1637,21 @@ export default function WebLayout({ navigation, routeParams }) {
       }
     } else if (activeTab === 'materials') {
       crumbs.push({ label: 'Library' });
+    } else if (activeTab === 'subjects') {
+      crumbs.push({ label: 'Subjects' });
+    } else if (activeTab && activeTab.startsWith('subject-')) {
+      crumbs.push({ 
+        label: 'Subjects',
+        onPress: () => handleTabChange('subjects'),
+      });
+      // Try to get subject name from subjects list
+      const subjectId = activeTab.replace('subject-', '');
+      const subject = subjects.find(s => s.id === subjectId);
+      if (subject) {
+        crumbs.push({ label: subject.name });
+      } else {
+        crumbs.push({ label: 'Subject Details' });
+      }
     } else if (activeTab === 'records') {
       crumbs.push({ label: 'Records' });
     } else if (activeTab === 'intelligence') {
@@ -1514,11 +1701,13 @@ export default function WebLayout({ navigation, routeParams }) {
             onSelectChildSection: handleChildSectionSelect,
             onOpenNew: handleOpenNewMenu,
             onOpenSearch: openSearch,
-            onAvatarPress: () => setShowAuthSettings(true),
+            onAvatarPress: () => handleTabChange('settings', 'profile'),
             user: user,
             userRole: userRole || 'parent',
           }}
-          onOpenSettings={handleOpenSettings}
+          onOpenSettings={(section = 'profile') => {
+            handleTabChange('settings', section);
+          }}
           onOpenFeedback={handleOpenFeedback}
         >
           {/* Toolbars - moved inside main content */}
@@ -2143,6 +2332,7 @@ export default function WebLayout({ navigation, routeParams }) {
                         {[
                           { id: 'buildCurriculum', label: 'Build Curriculum', icon: BookOpen },
                           { id: 'rebalance', label: 'Rebalance', icon: RefreshCw },
+                          { id: 'schedulingAssistant', label: 'Scheduling Assistant', icon: Clock },
                         ].map((action) => {
                           const ActionIcon = action.icon;
                           return (
@@ -2167,6 +2357,13 @@ export default function WebLayout({ navigation, routeParams }) {
                                     break;
                                   case 'rebalance':
                                     setShowRebalanceModal(true);
+                                    break;
+                                  case 'schedulingAssistant':
+                                    // Open Scheduling Assistant - this will be integrated into planner view
+                                    // For now, show a message that it's available in week view
+                                    if (Platform.OS === 'web') {
+                                      alert('Scheduling Assistant is now available! Switch to Week view to use it.');
+                                    }
                                     break;
                                 }
                               }}
@@ -2493,10 +2690,12 @@ export default function WebLayout({ navigation, routeParams }) {
             showAddChildModal={showAddChildModal}
             onCloseAddChildModal={() => setShowAddChildModal(false)}
             showAddSubjectModal={showAddSubjectModal}
-            onCloseAddSubjectModal={() => setShowAddSubjectModal(false)}
+            onCloseAddSubjectModal={() => {
+              setShowAddSubjectModal(false);
+              setEditingSubject(null);
+            }}
             onOpenSettings={(section = 'profile') => {
-              setSettingsInitialSection(section);
-              setShowAuthSettings(true);
+              handleTabChange('settings', section);
             }}
             onEditChild={(child) => {
               setEditingChild(child);
@@ -2511,18 +2710,14 @@ export default function WebLayout({ navigation, routeParams }) {
             subjects={subjects}
             familyId={familyId}
             children={children}
+            family={family}
+            onFamilyUpdate={(updatedFamily) => {
+              setFamily(updatedFamily);
+            }}
+            profile={profile}
           />
         </AppShell>
 
-      <SettingsModal
-        visible={showAuthSettings}
-        onClose={() => {
-          setShowAuthSettings(false);
-          setSettingsInitialSection('profile'); // Reset to default when closing
-        }}
-        user={user}
-        initialSection={settingsInitialSection}
-      />
 
       {/* Doodle bot search modal - only opened via floating icon */}
       {showDoodleSearchModal && (
@@ -2593,6 +2788,7 @@ export default function WebLayout({ navigation, routeParams }) {
         visible={showEventModal}
         eventId={eventModalEventId}
         initialEvent={eventModalInitialEvent}
+        schedulingMode={false}
         familyId={familyId}
         children={children}
         familyMembers={children.map(child => ({
@@ -2742,6 +2938,98 @@ export default function WebLayout({ navigation, routeParams }) {
           }
         }}
       />
+
+      {/* Scheduling Assistant Coming Soon Modal */}
+      <Modal
+        visible={showSchedulingAssistantModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowSchedulingAssistantModal(false)}
+      >
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            ...(Platform.OS === 'web' && {
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10000,
+            }),
+          }}
+          activeOpacity={1}
+          onPress={() => setShowSchedulingAssistantModal(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 400,
+              width: '90%',
+              ...(Platform.OS === 'web' && {
+                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+              }),
+            }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <Clock size={48} color="#A78BFA" />
+            </View>
+            <Text style={{
+              fontSize: 24,
+              fontWeight: 'bold',
+              color: '#111827',
+              textAlign: 'center',
+              marginBottom: 12,
+              ...(Platform.OS === 'web' && {
+                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }),
+            }}>
+              Coming Soon!
+            </Text>
+            <Text style={{
+              fontSize: 16,
+              color: '#6B7280',
+              textAlign: 'center',
+              marginBottom: 24,
+              lineHeight: 24,
+              ...(Platform.OS === 'web' && {
+                fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }),
+            }}>
+              The Scheduling Assistant is currently in development. This feature will help you automatically optimize your schedule, suggest optimal times for activities, and balance workloads across your family.
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowSchedulingAssistantModal(false)}
+              style={{
+                backgroundColor: '#A78BFA',
+                borderRadius: 8,
+                paddingVertical: 12,
+                paddingHorizontal: 24,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '600',
+                color: '#FFFFFF',
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  textTransform: 'uppercase',
+                }),
+              }}>
+                Got It
+              </Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* What-If Analysis Modal */}
       {showWhatIfModal && (
@@ -2913,13 +3201,21 @@ export default function WebLayout({ navigation, routeParams }) {
         }}
       />
 
-      {/* Add Child Modal */}
+      {/* Add/Edit Subject Modal */}
       <AddSubjectModal
         visible={showAddSubjectModal}
-        onClose={() => setShowAddSubjectModal(false)}
+        onClose={() => {
+          setShowAddSubjectModal(false);
+          setEditingSubject(null);
+        }}
         familyId={familyId}
+        subject={editingSubject}
         onSubjectAdded={() => {
           // Refresh subjects
+          setEditingSubject(null);
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
         }}
       />
 

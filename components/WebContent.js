@@ -14,6 +14,7 @@ import {
   Platform,
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
+import { getSubjectsWithOverview } from '../lib/services/subjectsClient'
 
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
@@ -110,20 +111,22 @@ if (typeof window !== 'undefined') {
     const element = originalCreateElement.call(document, tagName, ...args);
     const tagLower = tagName.toLowerCase();
     
-    if (tagLower === 'img' || tagLower === 'iframe') {
-      const originalSetAttribute = element.setAttribute;
-      element.setAttribute = function(name, value) {
-        if (name === 'src' && value && typeof value === 'string') {
-          const isJustUuid = uuidPattern.test(value) && !value.includes('http') && !value.includes('data:');
-          if (isJustUuid) {
-            // Don't set invalid UUID URLs
-            console.warn(`[WebContent] Blocked invalid UUID URL for ${tagLower}:`, value);
-            return;
-          }
+        if (tagLower === 'img' || tagLower === 'iframe') {
+          const originalSetAttribute = element.setAttribute;
+          element.setAttribute = function(name, value) {
+            if (name === 'src' && value && typeof value === 'string') {
+              // Check for UUIDs with or without suffixes (like -day-0)
+              const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
+              const isJustUuid = (uuidPattern.test(value) || uuidWithSuffixPattern.test(value)) && !value.includes('http') && !value.includes('data:');
+              if (isJustUuid) {
+                // Don't set invalid UUID URLs
+                console.warn(`[WebContent] Blocked invalid UUID URL for ${tagLower}:`, value);
+                return;
+              }
+            }
+            return originalSetAttribute.call(this, name, value);
+          };
         }
-        return originalSetAttribute.call(this, name, value);
-      };
-    }
     return element;
   };
   
@@ -133,20 +136,22 @@ if (typeof window !== 'undefined') {
     const originalSrcSetter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src')?.set;
     if (originalSrcSetter) {
       Object.defineProperty(img, 'src', {
-        set: function(value) {
-          // Validate URL before setting
-          if (value && typeof value === 'string') {
-            const isJustUuid = uuidPattern.test(value) && !value.includes('http') && !value.includes('data:');
-            if (isJustUuid) {
-              // Don't set invalid UUID URLs - prevent the browser from attempting to load
-              if (this.style) {
-                this.style.display = 'none';
+          set: function(value) {
+            // Validate URL before setting
+            if (value && typeof value === 'string') {
+              // Check for UUIDs with or without suffixes (like -day-0)
+              const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
+              const isJustUuid = (uuidPattern.test(value) || uuidWithSuffixPattern.test(value)) && !value.includes('http') && !value.includes('data:');
+              if (isJustUuid) {
+                // Don't set invalid UUID URLs - prevent the browser from attempting to load
+                if (this.style) {
+                  this.style.display = 'none';
+                }
+                return;
               }
-              return;
             }
-          }
-          originalSrcSetter.call(this, value);
-        },
+            originalSrcSetter.call(this, value);
+          },
         get: function() {
           return this.getAttribute('src') || '';
         },
@@ -161,23 +166,25 @@ if (typeof window !== 'undefined') {
   const originalImageSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
   if (originalImageSrcDescriptor && originalImageSrcDescriptor.set) {
     Object.defineProperty(HTMLImageElement.prototype, 'src', {
-      set: function(value) {
-        // Validate URL before setting - this catches React Native Image components
-        if (value && typeof value === 'string') {
-          const isJustUuid = uuidPattern.test(value) && !value.includes('http') && !value.includes('data:');
-          if (isJustUuid) {
-            // Don't set invalid UUID URLs - prevent the browser from attempting to load
-            if (this.style) {
-              this.style.display = 'none';
-            }
-            // Set a data attribute so we know it was blocked
-            this.setAttribute('data-blocked-uuid', 'true');
-            return; // Don't call the original setter
-          }
-        }
-        // Valid URL - proceed normally
-        originalImageSrcDescriptor.set.call(this, value);
-      },
+            set: function(value) {
+              // Validate URL before setting - this catches React Native Image components
+              if (value && typeof value === 'string') {
+                // Check for UUIDs with or without suffixes (like -day-0)
+                const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
+                const isJustUuid = (uuidPattern.test(value) || uuidWithSuffixPattern.test(value)) && !value.includes('http') && !value.includes('data:');
+                if (isJustUuid) {
+                  // Don't set invalid UUID URLs - prevent the browser from attempting to load
+                  if (this.style) {
+                    this.style.display = 'none';
+                  }
+                  // Set a data attribute so we know it was blocked
+                  this.setAttribute('data-blocked-uuid', 'true');
+                  return; // Don't call the original setter
+                }
+              }
+              // Valid URL - proceed normally
+              originalImageSrcDescriptor.set.call(this, value);
+            },
       get: function() {
         // Return empty string if this was blocked
         if (this.getAttribute('data-blocked-uuid') === 'true') {
@@ -414,6 +421,7 @@ if (typeof window !== 'undefined') {
     const keysToCheck = ['home_data_', 'calendar_cache_', 'children_cache', 'calendar_data_', 'month_data_', 'week_data_'];
     const allKeys = Object.keys(localStorage);
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
     
     // Recursively clean invalid UUID URLs in cached data
     const cleanData = (obj) => {
@@ -424,7 +432,8 @@ if (typeof window !== 'undefined') {
         for (const [k, v] of Object.entries(obj)) {
           // Check avatar fields, url fields, and thumbnailUrl fields
           if ((k === 'avatar_url' || k === 'avatar' || k === 'url' || k === 'thumbnailUrl') && typeof v === 'string') {
-            if (uuidPattern.test(v.trim()) && !v.includes('http') && !v.includes('data:')) {
+            // Remove invalid UUIDs (with or without suffixes like -day-0)
+            if ((uuidPattern.test(v.trim()) || uuidWithSuffixPattern.test(v.trim())) && !v.includes('http') && !v.includes('data:')) {
               cleaned[k] = null; // Remove invalid UUID
             } else {
               cleaned[k] = v;
@@ -487,6 +496,7 @@ import TaskCreateModal from './TaskCreateModal'
 import EventModal from './events/EventModal'
 // import ExploreContent from './archived/ExploreContent' // Archived - explore page removed
 import QuickReviewModal from './materials/QuickReviewModal'
+import AddMaterialModal from './materials/AddMaterialModal'
 import RebalanceModal from './year/RebalanceModal'
 import EventOutcomeModal from './events/EventOutcomeModal'
 import ChildDashboard from './dashboards/ChildDashboard'
@@ -510,6 +520,7 @@ import HomeTileMissingLogs from './home/tiles/HomeTileMissingLogs'
 import HomeTilePortfolioSuggestions from './home/tiles/HomeTilePortfolioSuggestions'
 import HomeTileAreasOfMastery from './home/tiles/HomeTileAreasOfMastery'
 import HomeTileReflectionPrompt from './home/tiles/HomeTileReflectionPrompt'
+import QuickAddCard from './home/QuickAddCard'
 import GroupsPage from './social/GroupsPage'
 import MarketplacePage from './social/MarketplacePage'
 
@@ -543,9 +554,10 @@ import AddSubjectModal from './AddSubjectModal'
 import AddOptions from './AddOptions'
 import SubjectGoalsManager from './SubjectGoalsManager'
 import StudentDetailsModal from './StudentDetailsModal'
-import ScheduleRulesButton from './ScheduleRulesButton'
+// NOTE: schedule_overrides removed - Schedule Rules feature disabled
+// import ScheduleRulesButton from './ScheduleRulesButton'
 import PlannerButton from './PlannerButton'
-import ScheduleRulesView from './ScheduleRulesView'
+// import ScheduleRulesView from './ScheduleRulesView'
 import AIPlannerView from './AIPlannerView'
 import PageHeader from './PageHeader'
 import StoriesRow from './home/StoriesRow'
@@ -569,6 +581,7 @@ import { getTodaySummary, getTodayInsights, getMultiDaySummary, getHomeTilesSumm
 import { generateInsights, buildInsightContext } from '../lib/services/insightEngine'
 import AIActions from './planner/AIActions'
 import CenterPane from './planner/CenterPane'
+import SchedulingAssistant from './planner/SchedulingAssistant'
 import ChildProfile from './ChildProfile'
 // import Attendance from './records/Attendance' // Archived - records screen removed
 import Uploads from './documents/Uploads'
@@ -581,10 +594,13 @@ import LessonPlans from './lesson-plans/LessonPlans'
 import PortfolioTimeline from './portfolio/PortfolioTimeline'
 import MaterialsLibrary from './materials/MaterialsLibrary'
 import IntelligenceHub from './intelligence/IntelligenceHub'
+import SubjectDetailPage from './subjects/SubjectDetailPage'
+import SubjectsPage from './subjects/SubjectsPage'
 import { getMaterials } from '../lib/services/materialsClient'
 import CoachTab from './ai/CoachTab'
 import ProfileScreen from '../app/profile';
 import ComprehensiveProfile from './profile/ComprehensiveProfile';
+import SettingsScreen from './settings/SettingsScreen';
 import SectionHeader from './ui/SectionHeader'
 import SuggestionActionModal from './planner/SuggestionActionModal'
 // import NoteEditorModal from './records/NoteEditorModal' // Archived - records screen removed
@@ -600,7 +616,7 @@ import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], familyId: propFamilyId = null, children: propChildren = [] }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -608,9 +624,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     const trimmed = url.trim();
     if (!trimmed) return null;
     
-    // Check if it's just a UUID (invalid URL format)
+    // Check if it's just a UUID (invalid URL format) or UUID with suffix (like -day-0)
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (uuidPattern.test(trimmed)) {
+    const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
+    if (uuidPattern.test(trimmed) || uuidWithSuffixPattern.test(trimmed)) {
       return null; // It's just a UUID, not a valid URL
     }
     
@@ -713,6 +730,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [selectedSuggestion, setSelectedSuggestion] = useState(null);
   const [showSuggestionModal, setShowSuggestionModal] = useState(false);
   const [showCurriculumWizard, setShowCurriculumWizard] = useState(false);
+
+  // Scheduling Assistant (Outlook-style) modal state
+  const [showSchedulingAssistant, setShowSchedulingAssistant] = useState(false);
+  const [schedulingAssistantSeedEvent, setSchedulingAssistantSeedEvent] = useState(null);
+  const [schedulingAssistantChildId, setSchedulingAssistantChildId] = useState(null);
+  const [schedulingAssistantWeekStart, setSchedulingAssistantWeekStart] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    // Sunday start to match WeekGrid
+    d.setDate(d.getDate() - d.getDay());
+    return d;
+  });
   
   
   // Adaptive layout tier (1 = base, 2 = expanded, 3 = full)
@@ -839,6 +868,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const cleanAvatarUrls = (data) => {
     if (!data) return data;
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
     const cleanValue = (val) => {
       if (Array.isArray(val)) {
         return val.map(cleanValue);
@@ -846,8 +876,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         const cleaned = {};
         for (const [k, v] of Object.entries(val)) {
           if ((k === 'avatar_url' || k === 'avatar') && typeof v === 'string') {
-            // Remove invalid UUIDs
-            if (uuidPattern.test(v.trim()) && !v.includes('http') && !v.includes('data:')) {
+            // Remove invalid UUIDs (with or without suffixes like -day-0)
+            if ((uuidPattern.test(v.trim()) || uuidWithSuffixPattern.test(v.trim())) && !v.includes('http') && !v.includes('data:')) {
               cleaned[k] = null;
             } else {
               cleaned[k] = v;
@@ -2105,12 +2135,40 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
           
           if (profileData?.family_id) {
             invalidateHomeDataCache(profileData.family_id);
-            // If we're on home tab, trigger a refresh
-            if (activeTab === 'home') {
+            // Always refresh home data in background (even if not on home tab)
+            // This ensures data is fresh when user switches to home tab
+            if (homeData) {
+              const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                ? homeSelectedDate
+                : new Date();
+              validDate.setHours(0, 0, 0, 0);
+              const selectedDateStr = validDate.toISOString().split('T')[0];
+              
+              // Refetch in background without setting loading state
+              supabase.rpc('get_home_data', {
+                _family_id: profileData.family_id,
+                _date: selectedDateStr,
+                _horizon_days: 14,
+              }).then(({ data: rawData, error }) => {
+                if (!error && rawData) {
+                  const data = cleanAvatarUrls(rawData);
+                  const stories = (data?.stories || []).filter(s => 
+                    s && s.title && s.body && s.title.trim() && s.body.trim()
+                  );
+                  const updatedData = {
+                    ...data,
+                    stories: stories,
+                  };
+                  setHomeData(updatedData);
+                  saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
+                }
+              }).catch(err => {
+                console.error('[WebContent] Error refreshing home data:', err);
+              });
+            } else if (activeTab === 'home') {
+              // If homeData is null and we're on home tab, trigger a full refresh with loading
               setHomeLoading(true);
-        if (onHomeLoadingChange) onHomeLoadingChange(true);
-              // Trigger re-fetch by clearing homeData
-              setHomeData(null);
+              if (onHomeLoadingChange) onHomeLoadingChange(true);
             }
           }
         } catch (err) {
@@ -2688,41 +2746,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       }
     };
     
-    const handleRefreshCalendar = async (event) => {
-      // Only handle if not skipping home refresh
-      if (event?.detail?.skipHomeRefresh) return;
-      
-      try {
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('family_id')
-          .eq('id', user.id)
-          .maybeSingle();
-        
-        if (!profileData?.family_id) return;
-        
-        // Invalidate all home cache when calendar refreshes (events might have changed)
-        invalidateHomeDataCache(profileData.family_id);
-        
-        // If we're on home tab, trigger a refetch
-        if (activeTab === 'home') {
-          setHomeData(null); // Clear homeData to trigger refetch
-        }
-      } catch (err) {
-        console.error('[WebContent] Error invalidating home cache on calendar refresh:', err);
-      }
-    };
+    // Note: refreshCalendar is handled by the main handler in the earlier useEffect
+    // This handler only deals with eventCreated, eventDeleted, and eventRescheduled
     
     window.addEventListener('eventCreated', handleEventChange);
     window.addEventListener('eventDeleted', handleEventChange);
     window.addEventListener('eventRescheduled', handleEventChange);
-    window.addEventListener('refreshCalendar', handleRefreshCalendar);
     
     return () => {
       window.removeEventListener('eventCreated', handleEventChange);
       window.removeEventListener('eventDeleted', handleEventChange);
       window.removeEventListener('eventRescheduled', handleEventChange);
-      window.removeEventListener('refreshCalendar', handleRefreshCalendar);
     };
   }, [user, activeTab, homeSelectedDate]);
   
@@ -2878,7 +2912,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       // If avatarKey is a UUID (invalid), return default
       if (avatarKey && typeof avatarKey === 'string') {
         const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidPattern.test(avatarKey.trim())) {
+        const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
+        if (uuidPattern.test(avatarKey.trim()) || uuidWithSuffixPattern.test(avatarKey.trim())) {
           // It's a UUID, not a valid avatar key - return default
           return avatarSources.prof1;
         }
@@ -2915,6 +2950,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [familyScreenSelectedChildId, setFamilyScreenSelectedChildId] = useState(null) // null = "All Children"
   // Use subjects from props (preloaded and cached in WebLayout), fallback to empty array
   const [subjects, setSubjects] = useState(propSubjects)
+  // Cache for subjects with overview data
+  const [subjectsOverviewCache, setSubjectsOverviewCache] = useState(null)
+  // Cache for subject detail data (for SubjectDetailPage) - keyed by subjectId
+  const [subjectDetailCache, setSubjectDetailCache] = useState({})
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
@@ -2925,6 +2964,69 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       setSubjects(propSubjects);
     }
   }, [propSubjects]);
+
+  // Preload subjects overview once when the app initializes (per family)
+  // so that Subjects screens don't need to block on their own fetches.
+  useEffect(() => {
+    if (!familyId || subjectsOverviewCache) return;
+
+    let isCancelled = false;
+
+    const loadInitialSubjectsOverview = async () => {
+      try {
+        const data = await getSubjectsWithOverview(familyId, null);
+        if (!isCancelled) {
+          setSubjectsOverviewCache(data);
+        }
+      } catch (err) {
+        console.error('[WebContent] Error preloading subjects overview:', err);
+      }
+    };
+
+    loadInitialSubjectsOverview();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [familyId, subjectsOverviewCache]);
+
+  // Handle subjects overview cache updates
+  const handleSubjectsOverviewUpdate = useCallback((overviewData) => {
+    setSubjectsOverviewCache(overviewData);
+  }, []);
+
+  // Handle subject detail cache updates
+  const handleSubjectDetailUpdate = useCallback((subjectId, detailData) => {
+    setSubjectDetailCache(prev => ({
+      ...prev,
+      [subjectId]: detailData,
+    }));
+  }, []);
+
+  // Clear cache when subjects are added/updated
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handleRefresh = () => {
+      setSubjectsOverviewCache(null); // Clear overview cache to force reload
+      setSubjectDetailCache({}); // Clear detail cache to force reload
+    };
+    const handleSubjectDetailRefresh = (e) => {
+      // Clear cache for specific subject
+      if (e.detail?.subjectId) {
+        setSubjectDetailCache(prev => {
+          const updated = { ...prev };
+          delete updated[e.detail.subjectId];
+          return updated;
+        });
+      }
+    };
+    window.addEventListener('refreshSubjects', handleRefresh);
+    window.addEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
+    return () => {
+      window.removeEventListener('refreshSubjects', handleRefresh);
+      window.removeEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
+    };
+  }, []);
 
   // Sync familyId from props
   useEffect(() => {
@@ -2964,7 +3066,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [doodleInput, setDoodleInput] = useState('')
   const [doodleConversationId, setDoodleConversationId] = useState(null)
   const [tasksData, setTasksData] = useState({ todo: [], inProgress: [], done: [] })
-  const [scheduleRulesModalOpen, setScheduleRulesModalOpen] = useState(false)
+  // NOTE: schedule_overrides removed - Schedule Rules feature disabled
+  // const [scheduleRulesModalOpen, setScheduleRulesModalOpen] = useState(false)
   const [aiPlannerModalOpen, setAIPlannerModalOpen] = useState(false)
   const [addChildModalOpen, setAddChildModalOpen] = useState(false)
   const [subjectGoalsModalOpen, setSubjectGoalsModalOpen] = useState(false)
@@ -2972,7 +3075,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
 
   // Animate modal opacity for fast fade in/out
   useEffect(() => {
-    if (scheduleRulesModalOpen || aiPlannerModalOpen || addChildModalOpen) {
+    // NOTE: scheduleRulesModalOpen removed - schedule_overrides feature disabled
+    if (/* scheduleRulesModalOpen || */ aiPlannerModalOpen || addChildModalOpen) {
       Animated.timing(modalOpacity, {
         toValue: 1,
         duration: 150, // Fast fade in (150ms)
@@ -2985,7 +3089,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         useNativeDriver: false,
       }).start();
     }
-  }, [scheduleRulesModalOpen, aiPlannerModalOpen, addChildModalOpen]);
+  }, [/* scheduleRulesModalOpen, */ aiPlannerModalOpen, addChildModalOpen]);
 
   const [progressData, setProgressData] = useState({ yearLabel: '', start: '', end: '', percent: 0 })
   const [todaysLearning, setTodaysLearning] = useState([])
@@ -3006,6 +3110,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [eventModalVisible, setEventModalVisible] = useState(false)
   const [eventModalEventId, setEventModalEventId] = useState(null)
+  const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false)
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [noteEditorProps, setNoteEditorProps] = useState({
     linkedEventId: null,
@@ -3054,6 +3159,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [taskModalDate, setTaskModalDate] = useState(null);
   const [taskModalChildId, setTaskModalChildId] = useState(null);
   const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
+  const [taskModalDefaultSubjectId, setTaskModalDefaultSubjectId] = useState(null);
+  
+  // Add Material Modal state
+  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  const [addMaterialModalDefaultRole, setAddMaterialModalDefaultRole] = useState(null);
+  const [addMaterialModalDefaultSubjectId, setAddMaterialModalDefaultSubjectId] = useState(null);
   
   // Debug: Log when showTaskModal changes
   useEffect(() => {
@@ -3488,10 +3599,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
           family_year_id: (await supabase.from('family_years').select('id').eq('is_current', true).single()).data?.id
         };
 
-        // Write as schedule_overrides 'off' instead of holidays
-        result = await supabase
-          .from('schedule_overrides')
-          .insert([{ scope_type: 'family', scope_id: familyId, date: holidayData.holiday_date, override_kind: 'off', start_time: '00:00', end_time: '23:59', notes: holidayData.holiday_name, is_active: true }]);
+        // NOTE: schedule_overrides removed - holidays feature disabled
+        // Previously wrote holidays as schedule_overrides, but this is no longer used
+        // result = await supabase
+        //   .from('schedule_overrides')
+        //   .insert([{ scope_type: 'family', scope_id: familyId, date: holidayData.holiday_date, override_kind: 'off', start_time: '00:00', end_time: '23:59', notes: holidayData.holiday_name, is_active: true }]);
+        // For now, skip saving holiday (or save to a different table if needed)
+        result = { data: null, error: null };
       }
 
       if (result.error) {
@@ -3749,11 +3863,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
           holidaysToCreate.push(holidayData);
         }
 
-        // Save all holidays as overrides
-        const overrideRows = holidaysToCreate.map(h => ({ scope_type: 'family', scope_id: familyId, date: h.holiday_date, override_kind: 'off', start_time: '00:00', end_time: '23:59', notes: h.holiday_name, is_active: true }));
-        result = await supabase
-          .from('schedule_overrides')
-          .insert(overrideRows);
+        // NOTE: schedule_overrides removed - holidays feature disabled
+        // Previously saved holidays as schedule_overrides, but this is no longer used
+        // const overrideRows = holidaysToCreate.map(h => ({ scope_type: 'family', scope_id: familyId, date: h.holiday_date, override_kind: 'off', start_time: '00:00', end_time: '23:59', notes: h.holiday_name, is_active: true }));
+        // result = await supabase
+        //   .from('schedule_overrides')
+        //   .insert(overrideRows);
+        // For now, skip saving holidays (or save to a different table if needed)
+        result = { data: null, error: null };
       }
 
       if (result.error) {
@@ -5364,13 +5481,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         .is('deleted_at', null) // Exclude soft-deleted events
         .is('canceled_at', null) // Exclude canceled events
 
-      const { data: holidays } = await supabase
-        .from('schedule_overrides')
-        .select('date, notes, override_kind')
-        .eq('scope_type', 'family')
-        .eq('scope_id', profile.family_id)
-        .eq('override_kind', 'off')
-        .eq('date', todayStr)
+      // NOTE: schedule_overrides removed - holidays feature disabled
+      // const { data: holidays } = await supabase
+      //   .from('schedule_overrides')
+      //   .select('date, notes, override_kind')
+      //   .eq('scope_type', 'family')
+      //   .eq('scope_id', profile.family_id)
+      //   .eq('override_kind', 'off')
+      //   .eq('date', todayStr)
+      const holidays = []; // Return empty array since schedule_overrides is no longer used
 
       const events = []
       ;(instances || []).forEach(i => {
@@ -5939,6 +6058,79 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   }
 
   const renderContent = () => {
+    // Check if it's a subject detail tab (from routing)
+    if (activeTab && activeTab.startsWith('subject-')) {
+      const subjectId = activeTab.replace('subject-', '');
+      if (!familyId) {
+        return (
+          <View style={styles.content}>
+            <Text style={styles.title}>Loading...</Text>
+          </View>
+        )
+      }
+      try {
+        return (
+          <SubjectDetailPage
+            subjectId={subjectId}
+            familyId={familyId}
+            children={children || []}
+            preloadedSubjectData={subjectDetailCache[subjectId]}
+            onSubjectDataUpdate={(data) => handleSubjectDetailUpdate(subjectId, data)}
+            onBack={() => {
+              if (onTabChange) {
+                onTabChange('intelligence');
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.history.pushState({}, '', '/intelligence');
+                }
+              } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.history.pushState({}, '', '/intelligence');
+                window.location.reload();
+              }
+            }}
+            onEditSubject={(subject) => {
+              // Dispatch event to open AddSubjectModal in edit mode
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+                  detail: { subject }
+                }));
+              }
+            }}
+            onNavigateToPlanner={(params) => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                const queryParams = new URLSearchParams();
+                if (params.subjectId) queryParams.set('subjectId', params.subjectId);
+                if (params.childId) queryParams.set('childId', params.childId);
+                if (params.date) queryParams.set('date', params.date);
+                if (onTabChange) {
+                  onTabChange('planner');
+                  window.location.href = `/planner?${queryParams.toString()}`;
+                } else {
+                  window.location.href = `/planner?${queryParams.toString()}`;
+                }
+              }
+            }}
+            onNavigateToLibrary={(subjectId) => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                if (onTabChange) {
+                  onTabChange('materials');
+                  window.location.href = `/materials?subjectId=${subjectId}`;
+                } else {
+                  window.location.href = `/materials?subjectId=${subjectId}`;
+                }
+              }
+            }}
+          />
+        );
+      } catch (err) {
+        console.error('[WebContent] Error rendering SubjectDetailPage:', err);
+        return (
+          <View style={styles.content}>
+            <Text style={styles.title}>Error Loading Subject</Text>
+            <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+          </View>
+        )
+      }
+    }
     // Check if it's a child profile tab (from sidebar)
     if (activeTab.startsWith('child-')) {
       const childId = activeTab.replace('child-', '');
@@ -6045,11 +6237,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     if (activeTab === 'planner') {
       return renderPlannerContent()
     }
+    // NOTE: schedule_overrides removed - Schedule Rules feature disabled
     // Schedule Rules and AI Planner are now modals, not separate tabs
     // If somehow navigated to these tabs, redirect to planner
-    if (activeTab === 'schedule-rules') {
-      return renderPlannerContent()
-    }
+    // if (activeTab === 'schedule-rules') {
+    //   return renderPlannerContent()
+    // }
     if (activeTab === 'ai-planner') {
       return renderPlannerContent()
     }
@@ -6103,6 +6296,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           return <MaterialsLibrary 
             familyId={familyId} 
             children={children || []}
+            preloadedSubjects={subjects || []}
             preloadedMaterials={materialsCache}
             onMaterialsUpdate={(newMaterials) => {
               setMaterialsCache(newMaterials);
@@ -6118,6 +6312,68 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             </View>
           )
         }
+      case 'subjects':
+        if (!familyId) {
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Loading...</Text>
+            </View>
+          )
+        }
+        try {
+          return (
+            <SubjectsPage
+              familyId={familyId}
+              children={children || []}
+              preloadedSubjects={subjectsOverviewCache}
+              onSubjectsUpdate={handleSubjectsOverviewUpdate}
+              onAddSubject={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+                }
+              }}
+              onAddSyllabus={(subject) => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openSyllabusUpload', {
+                    detail: { subjectId: subject.id }
+                  }));
+                }
+              }}
+              onAddEvent={(subject) => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openTaskCreateModal', {
+                    detail: { subjectId: subject.id }
+                  }));
+                }
+              }}
+              onEditSubject={(subject) => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+                    detail: { subject }
+                  }));
+                }
+              }}
+              onNavigateToPlanner={(params) => {
+                if (onTabChange) {
+                  onTabChange('planner');
+                }
+              }}
+              onNavigateToLibrary={(subjectId) => {
+                if (onTabChange) {
+                  onTabChange('library');
+                }
+              }}
+            />
+          );
+        } catch (err) {
+          console.error('[WebContent] Error rendering SubjectsPage:', err);
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Error Loading Subjects</Text>
+              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+            </View>
+          )
+        }
       case 'intelligence':
         if (!familyId) {
           return (
@@ -6127,7 +6383,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           )
         }
         try {
-          return <IntelligenceHub familyId={familyId} children={children || []} />
+          return (
+            <IntelligenceHub
+              familyId={familyId}
+              children={children || []}
+              // Reuse the same cached subjects overview used by the standalone Subjects screen
+              preloadedSubjects={subjectsOverviewCache}
+              onSubjectsUpdate={handleSubjectsOverviewUpdate}
+            />
+          );
         } catch (err) {
           console.error('[WebContent] Error rendering IntelligenceHub:', err);
           return (
@@ -6200,8 +6464,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         // Default to "All Children" (null) instead of first child
         return <ComprehensiveProfile childId={null} familyId={familyId} children={children || []} onOpenSettings={onOpenSettings} onEditChild={onEditChild} onTabChange={onTabChange} />
       case 'integrations':
-      case 'settings':
         return <IntegrationsSettings user={user} />
+      case 'settings':
+        // Get initial section from subtab or default to 'profile'
+        const settingsSection = activeSubtab || 'profile';
+        return <SettingsScreen user={user} initialSection={settingsSection} family={propFamily} familyId={propFamilyId} onFamilyUpdate={onFamilyUpdate} profile={propProfile} />
       case 'templates':
         // Route to Records with templates subtab
         if (onSubtabChange) onSubtabChange('templates');
@@ -7054,6 +7321,33 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           onViewFull={() => onTabChange('records')}
         />
         
+        {/* Quick Add Card */}
+        <QuickAddCard
+          onAddEvent={() => {
+            setTaskModalDate(validSelectedDate);
+            setTaskModalDefaultPlacement('calendar');
+            setShowTaskModal(true);
+          }}
+          onAddGrade={() => {
+            // Navigate to records/portfolio where grades can be added
+            onTabChange('records');
+          }}
+          onAddMaterial={() => {
+            setShowAddMaterialModal(true);
+          }}
+          onAddSubject={() => {
+            // This uses the callback from WebLayout.js
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+            }
+          }}
+          onAddChild={() => {
+            // This uses the callback from WebLayout.js
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('openAddChildModal'));
+            }
+          }}
+        />
 
         {/* Single Column Layout: Learning + Tasks */}
         <View style={styles.homeMainLayout}>
@@ -7299,10 +7593,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           visible={eventModalVisible}
           eventId={eventModalEventId}
           initialEvent={eventModalInitialEvent}
+          schedulingMode={eventModalSchedulingMode}
           onClose={() => {
             setEventModalVisible(false);
             setEventModalEventId(null);
             setEventModalInitialEvent(null);
+            setEventModalSchedulingMode(false);
           }}
           onEventUpdated={async () => {
             console.log('[WebContent] onEventUpdated callback triggered');
@@ -8274,6 +8570,51 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   const [calendarEvents, setCalendarEvents] = useState({});
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
+
+  const flattenedCalendarEvents = useMemo(() => {
+    const values = Object.values(calendarEvents || {});
+    const out = [];
+    for (const v of values) {
+      if (Array.isArray(v)) out.push(...v.filter(Boolean));
+    }
+    return out;
+  }, [calendarEvents]);
+
+  const resolveChildIdFromEvent = useCallback((ev) => {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const normalize = (val) => {
+      if (!val) return null;
+      if (typeof val !== 'string') return null;
+      const trimmed = val.trim();
+      if (!trimmed) return null;
+      // Support selectors like "child:<uuid>"
+      const maybeUuid = trimmed.startsWith('child:') ? trimmed.split(':')[1] : trimmed;
+      if (UUID_RE.test(maybeUuid)) return maybeUuid;
+      return null;
+    };
+
+    const directRaw =
+      ev?.child_id ??
+      ev?.childId ??
+      ev?.data?.child_id ??
+      ev?.data?.childId ??
+      ev?.ev?.child_id ??
+      ev?.ev?.childId;
+    const direct = normalize(directRaw);
+    if (direct) return direct;
+
+    const arrRaw =
+      ev?.child_ids ??
+      ev?.data?.child_ids ??
+      ev?.ev?.child_ids;
+    if (Array.isArray(arrRaw)) {
+      for (const v of arrRaw) {
+        const n = normalize(v);
+        if (n) return n;
+      }
+    }
+    return null;
+  }, []);
   
   // Web-compatible alert function
   const showAlert = (title, message) => {
@@ -8363,9 +8704,27 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return;
       }
       
-      // Skip refresh to avoid loading state - optimistic update already handles UI
-      // The server state will sync on next natural refresh (tab switch, date change, etc.)
-      // This provides instant feedback without the jarring loading state
+      // Optimistically update homeData immediately (regardless of active tab)
+      // This ensures home screen updates instantly when user switches to it
+      if (homeData && event?.id) {
+        setHomeData(prev => {
+          if (!prev) return prev;
+          const updatedLearning = (prev.learning || []).map(e => 
+            e.id === event.id ? { ...e, status: newStatus } : e
+          );
+          return {
+            ...prev,
+            learning: updatedLearning
+          };
+        });
+      }
+      
+      // Dispatch refresh event to sync both screens (home will refresh in background)
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { 
+          detail: { skipHomeRefresh: false } // Allow home to refresh too
+        }));
+      }
       
       // Only prompt for material review when marking as done (not when undoing)
       if (!isCurrentlyDone && event.material_id && event.child_id && familyId) {
@@ -8417,6 +8776,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   const handleEventSelect = (event) => {
     setShowNewEventForm(false);
     setShowTaskModal(false);
+    setEventModalSchedulingMode(false); // Reset scheduling mode for normal event clicks
     setEventModalVisible(true);
     
     // Extract original ID if it's an expanded project event (remove -day-X suffix)
@@ -8725,6 +9085,62 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       if (!isGlobalHoliday) {
         menuItems.push({ text: 'Edit Event', action: () => handleContextEditEvent(event) });
       }
+
+      // Backlog-only: open Scheduling Assistant
+      console.log('[WebContent] Right-click event _activeSection:', event?._activeSection);
+      if (event?._activeSection === 'backlog') {
+        menuItems.push({
+          text: 'Scheduling Assistant',
+          action: () => {
+            try {
+              const resolvedChildId = resolveChildIdFromEvent(event);
+              if (!resolvedChildId) {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.alert('This backlog item is missing a child assignment. Please assign a child first.');
+                }
+                return;
+              }
+              setSchedulingAssistantSeedEvent(event);
+              setSchedulingAssistantChildId(resolvedChildId);
+              const base = selectedDate && !Number.isNaN(new Date(selectedDate).getTime())
+                ? new Date(selectedDate)
+                : new Date();
+              base.setHours(0, 0, 0, 0);
+              base.setDate(base.getDate() - base.getDay()); // Sunday start
+              setSchedulingAssistantWeekStart(base);
+              setShowSchedulingAssistant(true);
+            } catch (e) {
+              // ignore
+            }
+          },
+        });
+        
+        // Backlog-only: Add to Calendar (opens event edit modal in scheduling mode)
+        menuItems.push({
+          text: 'Add to Calendar',
+          action: () => {
+            console.log('[WebContent] Add to Calendar clicked - opening in scheduling mode');
+            // Get the event ID, handling expanded project events
+            let eventId = event._originalId || event.originalId || event.id;
+            if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
+              eventId = eventId.split('-day-')[0];
+            }
+            
+            console.log('[WebContent] Add to Calendar - eventId:', eventId, 'event:', event.title);
+            
+            // Mark the event with _openInEditMode flag so EventDetails knows to start in edit mode
+            const eventWithEditFlag = { ...event, _openInEditMode: true };
+            
+            // Open event modal in scheduling mode
+            setEventModalEventId(eventId);
+            setEventModalInitialEvent(eventWithEditFlag);
+            setEventModalSchedulingMode(true);
+            setEventModalVisible(true);
+            
+            console.log('[WebContent] Add to Calendar - modal should open with _openInEditMode flag');
+          },
+        });
+      }
       
       // Check if event is deleted (in trash view)
       // First check if the event has _activeSection metadata indicating we're in trash
@@ -9002,9 +9418,28 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   const handleContextEditEvent = (event) => {
     if (event) {
       // All holidays in the calendar are family-managed and can be edited
+      // Open directly in edit mode (not view mode)
       
-      handleEventSelect(event);
-      setIsEditingEvent(true);
+      // Get the event ID, handling expanded project events
+      let eventId = event._originalId || event.originalId || event.id;
+      if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
+        eventId = eventId.split('-day-')[0];
+      }
+      
+      console.log('[WebContent] handleContextEditEvent - setting schedulingMode to TRUE, eventId:', eventId);
+      
+      // Open event modal in edit mode
+      // Mark the event with _openInEditMode flag so EventDetails knows to start in edit mode
+      const eventWithEditFlag = { ...event, _openInEditMode: true };
+      
+      setShowNewEventForm(false);
+      setShowTaskModal(false);
+      setEventModalEventId(eventId);
+      setEventModalInitialEvent(eventWithEditFlag);
+      setEventModalSchedulingMode(true);
+      setEventModalVisible(true);
+      
+      console.log('[WebContent] handleContextEditEvent - modal opening with _openInEditMode flag');
     }
   };
 
@@ -14301,11 +14736,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           onClose={() => {
             setShowTaskModal(false);
             setTaskModalChildId(null);
+            setTaskModalDefaultSubjectId(null);
             setTaskModalDefaultPlacement('calendar'); // Reset to default
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
           defaultPlacement={taskModalDefaultPlacement}
+          defaultSubjectId={taskModalDefaultSubjectId}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,
@@ -15689,20 +16126,21 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         )
   }
 
-  const renderScheduleRulesContent = () => {
-    if (!familyId) {
-      return (
-        <View style={styles.content}>
-          <Text style={styles.title}>Schedule Rules</Text>
-          <Text style={styles.subtitle}>Loading family information...</Text>
-        </View>
-      )
-    }
+  // NOTE: schedule_overrides removed - Schedule Rules feature disabled
+  // const renderScheduleRulesContent = () => {
+  //   if (!familyId) {
+  //     return (
+  //       <View style={styles.content}>
+  //         <Text style={styles.title}>Schedule Rules</Text>
+  //         <Text style={styles.subtitle}>Loading family information...</Text>
+  //       </View>
+  //     )
+  //   }
 
-    return (
-      <ScheduleRulesView familyId={familyId} children={children} />
-    )
-  }
+  //   return (
+  //     <ScheduleRulesView familyId={familyId} children={children} />
+  //   )
+  // }
 
   const renderAIPlannerContent = () => {
     if (!familyId) {
@@ -15828,6 +16266,83 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         familyId={familyId}
       />
+      <AddMaterialModal
+        visible={showAddMaterialModal}
+        onClose={() => {
+          setShowAddMaterialModal(false);
+          setAddMaterialModalDefaultRole(null);
+          setAddMaterialModalDefaultSubjectId(null);
+        }}
+        onSaved={() => {
+          setShowAddMaterialModal(false);
+          setAddMaterialModalDefaultRole(null);
+          setAddMaterialModalDefaultSubjectId(null);
+          // Refresh subjects if needed
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }}
+        familyId={familyId}
+        children={children || []}
+        defaultRole={addMaterialModalDefaultRole}
+        defaultSubjectId={addMaterialModalDefaultSubjectId}
+      />
+
+      {/* Scheduling Assistant Modal (Planner > Tasks > Backlog right-click) */}
+      <Modal
+        visible={showSchedulingAssistant}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => {
+          setShowSchedulingAssistant(false);
+          setSchedulingAssistantSeedEvent(null);
+          setSchedulingAssistantChildId(null);
+        }}
+      >
+        <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: 'rgba(15,23,42,0.08)',
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>
+              Scheduling Assistant
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                setShowSchedulingAssistant(false);
+                setSchedulingAssistantSeedEvent(null);
+                setSchedulingAssistantChildId(null);
+              }}
+              style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+            >
+              <Text style={{ fontSize: 14, color: '#6B7280', fontWeight: '600' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          <SchedulingAssistant
+            familyId={familyId}
+            childId={schedulingAssistantChildId}
+            weekStart={schedulingAssistantWeekStart}
+            events={flattenedCalendarEvents}
+            children={children}
+            onEventPress={handleEventSelect}
+            onEventRightClick={handleRightClick}
+            onEventComplete={handleEventComplete}
+            onRefresh={async () => {
+              if (refreshCalendarDataRef.current) {
+                await refreshCalendarDataRef.current();
+              }
+            }}
+          />
+        </View>
+      </Modal>
       <EventOutcomeModal
         visible={showOutcomeModal}
         event={outcomeEvent}
@@ -17040,6 +17555,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     maxWidth: 500,
+  },
+  comingSoonGridContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+    minHeight: '60vh',
+  },
+  comingSoonGrid: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    borderRadius: 16,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    maxWidth: 400,
+    width: '100%',
   },
   filterSection: {
     marginBottom: 32,

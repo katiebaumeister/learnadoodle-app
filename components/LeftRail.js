@@ -120,12 +120,13 @@ export default function LeftRail({
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'intelligence', label: 'Intelligence', icon: Brain },
+        { key: 'subjects', label: 'Subjects', icon: Brain },
         { key: 'materials', label: 'Library', icon: BookOpen },
-        { key: 'new', label: 'Settings', icon: null },
+        { key: 'new', label: 'Family', icon: null },
         // { key: 'profile', label: 'Family', icon: UserCircle }, // Hidden for now
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
+        // { key: 'subjects', label: 'Subjects', icon: null }, // Hidden from sidebar
       ];
 
       // Filter based on role
@@ -211,6 +212,7 @@ export default function LeftRail({
             const isPlanner = item.key === 'planner';
             const isNew = item.key === 'new';
             const isLibrary = item.key === 'materials';
+            const isSubjects = item.key === 'subjects';
             const isFamily = item.key === 'profile';
             const isIntelligence = item.key === 'intelligence';
             const isMore = item.key === 'more';
@@ -288,6 +290,14 @@ export default function LeftRail({
                         resizeMode="contain"
                       />
                     </View>
+                  ) : isSubjects ? (
+                    <View style={styles.subjectsIconContainer}>
+                      <Image 
+                        source={require('../assets/subject.png')} 
+                        style={styles.subjectsIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
                   ) : isFamily ? (
                     <View style={styles.familyIconContainer}>
                       <Image 
@@ -297,10 +307,10 @@ export default function LeftRail({
                       />
                     </View>
                   ) : isIntelligence ? (
-                    <View style={styles.intelligenceIconContainer}>
+                    <View style={styles.subjectsIconContainer}>
                       <Image 
-                        source={require('../assets/intelligence.png')} 
-                        style={styles.intelligenceIcon}
+                        source={require('../assets/subject.png')} 
+                        style={styles.subjectsIcon}
                         resizeMode="contain"
                       />
                     </View>
@@ -628,6 +638,19 @@ const styles = StyleSheet.create({
   libraryIcon: {
     width: 52, // Slightly smaller than container to prevent cropping
     height: 52,
+  },
+  subjectsIconContainer: {
+    width: 54,
+    height: 54,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subjectsIcon: {
+    width: 80, // Larger to allow more cropping/zooming
+    height: 80, // Larger to allow more cropping/zooming
+    marginTop: -12, // Crop top more to zoom in
+    marginBottom: -12, // Crop bottom more to zoom in
   },
   familyIconContainer: {
     width: 48,
