@@ -1126,11 +1126,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#38B6FF',
+    backgroundColor: '#8B7CF6',
     borderRadius: 8,
   },
   saveButtonDisabled: {
-    backgroundColor: '#a0a0a0',
+    opacity: 0.5,
   },
   saveButtonText: {
     fontSize: 14,

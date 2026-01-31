@@ -20,6 +20,7 @@ const WEEK_PASTEL_COLORS = [
   'rgba(250, 250, 250, 0.02)', // Week 2: very faint neutral (alternating pattern)
   'rgba(240, 253, 244, 0.04)', // Week 3: faint mint (slightly more visible)
   'rgba(250, 250, 250, 0.02)', // Week 4: very faint neutral (alternating pattern)
+  'rgba(245, 243, 255, 0.04)', // Week 5: faint lavender (slightly more visible)
 ];
 
 // Helper to filter out text nodes from children
@@ -1002,8 +1003,8 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               const validEvents = dayEvents.filter(ev => ev.title && ev.title !== 'undefined' && ev.title !== 'null');
               const eventCount = validEvents.length;
               
-              // Show up to 3 events, then "+X more" if needed
-              const maxEventsToShow = 3;
+              // Show up to 2 events, then "+X more" if needed
+              const maxEventsToShow = 2;
               const eventsToShow = validEvents.slice(0, maxEventsToShow);
               const remainingCount = eventCount > maxEventsToShow ? eventCount - maxEventsToShow : 0;
               

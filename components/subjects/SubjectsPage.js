@@ -13,9 +13,10 @@ import {
   Search,
   Plus,
   BookOpen,
+  X,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
-import { getSubjectsWithOverview } from '../../lib/services/subjectsClient';
+import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
@@ -24,7 +25,9 @@ export default function SubjectsPage({
   familyId,
   children = [],
   preloadedSubjects = null,
+  preloadedSubjectDetailCache = {},
   onSubjectsUpdate = null,
+  onSubjectDetailUpdate = null,
   onAddSubject,
   onAddSyllabus,
   onAddEvent,
@@ -38,7 +41,16 @@ export default function SubjectsPage({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChildFilter, setSelectedChildFilter] = useState('all');
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
+  const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const loadingRef = useRef(false);
+  const preloadingRef = useRef(false);
+
+  // Update local cache when prop changes
+  useEffect(() => {
+    if (preloadedSubjectDetailCache) {
+      setSubjectDetailCache(preloadedSubjectDetailCache);
+    }
+  }, [preloadedSubjectDetailCache]);
 
   // Load subjects
   const loadSubjects = useCallback(async () => {
@@ -55,6 +67,37 @@ export default function SubjectsPage({
       
       if (onSubjectsUpdate) {
         onSubjectsUpdate(data);
+      }
+
+      // Preload subject detail data for all subjects (only if not already cached)
+      if (data && data.length > 0 && !preloadingRef.current) {
+        preloadingRef.current = true;
+        // Preload in background without blocking
+        Promise.all(
+          data.map(async (subject) => {
+            // Skip if already cached
+            if (subjectDetailCache[subject.id]) return;
+            
+            try {
+              const detailData = await getSubjectDetail(subject.id, familyId);
+              const updatedCache = {
+                ...subjectDetailCache,
+                [subject.id]: detailData,
+              };
+              setSubjectDetailCache(updatedCache);
+              
+              // Update parent cache if callback provided
+              if (onSubjectDetailUpdate) {
+                onSubjectDetailUpdate(subject.id, detailData);
+              }
+            } catch (err) {
+              // Silently fail - we'll load on demand if needed
+              console.warn(`[SubjectsPage] Failed to preload detail for subject ${subject.id}:`, err);
+            }
+          })
+        ).finally(() => {
+          preloadingRef.current = false;
+        });
       }
     } catch (err) {
       console.error('[SubjectsPage] Error loading subjects:', err);
@@ -163,6 +206,19 @@ export default function SubjectsPage({
         subjectId={selectedSubjectId}
         familyId={familyId}
         children={children}
+        preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
+        onSubjectDataUpdate={(data) => {
+          const updatedCache = {
+            ...subjectDetailCache,
+            [selectedSubjectId]: data,
+          };
+          setSubjectDetailCache(updatedCache);
+          
+          // Update parent cache if callback provided
+          if (onSubjectDetailUpdate) {
+            onSubjectDetailUpdate(selectedSubjectId, data);
+          }
+        }}
         onBack={handleBack}
         onEditSubject={onEditSubject}
         onNavigateToPlanner={handleNavigateToPlanner}
@@ -178,14 +234,26 @@ export default function SubjectsPage({
         <Text style={styles.headerTitle}>Your Family's Subjects</Text>
         <View style={styles.headerActions}>
           <View style={styles.searchContainer}>
-            <Search size={18} color={colors.muted} style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search subjects..."
-              placeholderTextColor={colors.muted}
+              placeholderTextColor="#9ca3af"
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
+            {searchQuery.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                style={styles.clearButton}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <X size={18} color={colors.muted} />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.searchIconContainer}>
+                <Search size={18} color={colors.muted} />
+              </View>
+            )}
           </View>
           <TouchableOpacity
             style={styles.newButton}
@@ -196,12 +264,16 @@ export default function SubjectsPage({
                 window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
               }
             }}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && {
+              cursor: 'pointer',
+            })}
           >
-            <Plus size={18} color="#FFFFFF" />
-            <Text style={styles.newButtonText}>New</Text>
+            <Text style={styles.newButtonText}>+ NEW</Text>
           </TouchableOpacity>
         </View>
       </View>
+      <View style={styles.divider} />
 
       {/* Children Filter Chips */}
       <View style={styles.filterRow}>
@@ -241,7 +313,7 @@ export default function SubjectsPage({
                 <View 
                   style={[
                     styles.childDotSmall, 
-                    { backgroundColor: childColor }
+                    { backgroundColor: childColor, marginRight: 6 }
                   ]} 
                 />
                 <Text style={[
@@ -328,18 +400,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.24)',
   },
   headerTitle: {
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#1F2937',
+    color: colors.text,
     textTransform: 'uppercase',
-    letterSpacing: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -352,59 +421,80 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
+    maxWidth: 250,
+    gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    minWidth: 200,
-  },
-  searchIcon: {
-    marginRight: 8,
+    borderColor: colors.border,
+    backgroundColor: '#ffffff',
+    height: 40,
+    ...Platform.select({
+      web: {
+        cursor: 'text',
+      },
+    }),
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
-    color: '#374151',
+    fontSize: 16,
+    color: colors.text,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      outlineStyle: 'none',
     }),
   },
-  newButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.accent || '#4F46E5',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+  clearButton: {
+    padding: 4,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
+  searchIconContainer: {
+    padding: 4,
+  },
+  newButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#111827',
+    backgroundColor: '#111827',
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
+  },
   newButtonText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    fontWeight: '700',
+    color: '#ffffff',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginTop: 0,
+    marginBottom: 0,
+    marginHorizontal: 24,
   },
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
     paddingVertical: 16,
+    marginTop: 24,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.24)',
   },
   filterLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
     marginRight: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -420,36 +510,41 @@ const styles = StyleSheet.create({
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+    backgroundColor: 'transparent',
+    marginRight: 8,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
   filterChipActive: {
-    backgroundColor: '#E0F2FE',
-    borderColor: '#38BDF8',
+    borderColor: '#4285f4',
+    backgroundColor: '#e8f0fe',
   },
   filterChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#6B7280',
+    fontSize: 12,
+    color: colors.text,
+    fontWeight: '400',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   filterChipTextActive: {
-    color: '#0284C7',
+    color: '#4285f4',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childDotSmall: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    flexShrink: 0,
   },
   loadingContainer: {
     flex: 1,

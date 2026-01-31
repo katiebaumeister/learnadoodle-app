@@ -67,37 +67,39 @@ const DayExceptionsStrip = ({
   const handleCreateOverride = async (overrideKind, startTime = null, endTime = null) => {
     if (!selectedDate) return;
     
+    // NOTE: schedule_overrides removed - override creation disabled
+    // Previously created schedule_overrides, but this is no longer used
     try {
       setSaving(true);
-      const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
+      // const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
       
-      // Delete existing override for this date if any
-      await supabase
-        .from('schedule_overrides')
-        .update({ is_active: false })
-        .eq('scope_type', selectedScope)
-        .eq('scope_id', scopeId)
-        .eq('date', selectedDate);
+      // // Delete existing override for this date if any
+      // await supabase
+      //   .from('schedule_overrides')
+      //   .update({ is_active: false })
+      //   .eq('scope_type', selectedScope)
+      //   .eq('scope_id', scopeId)
+      //   .eq('date', selectedDate);
 
-      // Create new override
-      const { error } = await supabase
-        .from('schedule_overrides')
-        .insert({
-          scope_type: selectedScope,
-          scope_id: scopeId,
-          date: selectedDate,
-          override_kind: overrideKind,
-          start_time: startTime,
-          end_time: endTime,
-          source: 'manual',
-          is_active: true,
-        });
+      // // Create new override
+      // const { error } = await supabase
+      //   .from('schedule_overrides')
+      //   .insert({
+      //     scope_type: selectedScope,
+      //     scope_id: scopeId,
+      //     date: selectedDate,
+      //     override_kind: overrideKind,
+      //     start_time: startTime,
+      //     end_time: endTime,
+      //     source: 'manual',
+      //     is_active: true,
+      //   });
 
-      if (error) throw error;
+      // if (error) throw error;
 
       setShowModal(false);
       setSelectedDate(null);
-      onOverrideSaved();
+      if (onOverrideSaved) onOverrideSaved();
     } catch (error) {
       alert('Failed to create override');
     } finally {
@@ -108,22 +110,23 @@ const DayExceptionsStrip = ({
   const handleDeleteOverride = async () => {
     if (!selectedDate) return;
     
+    // NOTE: schedule_overrides removed - override deletion disabled
     try {
       setSaving(true);
-      const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
+      // const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
       
-      const { error } = await supabase
-        .from('schedule_overrides')
-        .update({ is_active: false })
-        .eq('scope_type', selectedScope)
-        .eq('scope_id', scopeId)
-        .eq('date', selectedDate);
+      // const { error } = await supabase
+      //   .from('schedule_overrides')
+      //   .update({ is_active: false })
+      //   .eq('scope_type', selectedScope)
+      //   .eq('scope_id', scopeId)
+      //   .eq('date', selectedDate);
 
-      if (error) throw error;
+      // if (error) throw error;
 
       setShowModal(false);
       setSelectedDate(null);
-      onOverrideSaved();
+      if (onOverrideSaved) onOverrideSaved();
     } catch (error) {
       alert('Failed to delete override');
     } finally {

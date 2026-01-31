@@ -125,13 +125,41 @@ export default function TodaysLearningTimeGrouped({
     return now >= start && now <= end;
   };
 
+  // Get background color based on event type (matching EventChip colors)
+  const getEventTypeBackgroundColor = (event) => {
+    const eventType = (event.event_type || event.type || '').toLowerCase();
+    switch (eventType) {
+      case 'lesson':
+        return '#E3F0FF'; // Soft Blue
+      case 'activity':
+        return '#EDE6FF'; // Lavender
+      case 'assignment':
+        return '#DFF7E3'; // Soft Green
+      case 'schedule_block':
+        return '#FFE8D1'; // Soft Orange / Peach
+      case 'appointment':
+        return '#F2F4F7'; // Warm Gray
+      default:
+        return null; // Use default card background
+    }
+  };
+
   const handleToggleDone = async (event) => {
     if (!event.id || completingEventId) return;
     
     const isCurrentlyDone = event.status === 'done';
     const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
     
+    // Optimistically update the event status immediately for instant UI feedback
+    const updatedEvent = { ...event, status: newStatus };
+    
     setCompletingEventId(event.id);
+    
+    // Call parent callback immediately with updated event for optimistic UI update
+    if (onEventComplete) {
+      onEventComplete(updatedEvent);
+    }
+    
     try {
       if (isCurrentlyDone) {
         // Mark as not done (scheduled) using API endpoint
@@ -147,15 +175,15 @@ export default function TodaysLearningTimeGrouped({
         }
       }
       
-      // Call parent callback if provided
-      if (onEventComplete) {
-        onEventComplete(event);
-      }
       // Dispatch refresh event for other components (skip home refresh since we handle it in parent)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
       }
     } catch (error) {
+      // Revert optimistic update on error
+      if (onEventComplete) {
+        onEventComplete(event); // Revert to original event
+      }
       if (Platform.OS === 'web') {
         alert(`Failed to ${isCurrentlyDone ? 'unmark' : 'mark'} event as done: ${error.message || error}`);
       }
@@ -287,6 +315,7 @@ export default function TodaysLearningTimeGrouped({
           const subjectIcon = getSubjectIcon(event.topic || event.title || event.subject);
           const isFirst = index === 0;
           const isLast = index === sortedEvents.length - 1;
+          const eventTypeBgColor = getEventTypeBackgroundColor(event);
 
           return (
             <TouchableOpacity
@@ -299,6 +328,7 @@ export default function TodaysLearningTimeGrouped({
                 isHovered && styles.sessionCardHovered,
                 isFirst && styles.sessionCardFirst,
                 isLast && styles.sessionCardLast,
+                eventTypeBgColor && { backgroundColor: eventTypeBgColor },
               ]}
               onPress={() => {
                 if (onEventClick) {

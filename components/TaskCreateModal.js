@@ -125,6 +125,7 @@ export default function TaskCreateModal({
   familyId,
   onCreated,
   defaultPlacement = 'calendar', // New prop: 'calendar' or 'backlog'
+  defaultSubjectId = null, // Default subject ID to set when opening modal
 }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
@@ -811,7 +812,11 @@ export default function TaskCreateModal({
       setAttachedMaterialIds([]);
       setAttachedStandards([]);
       setShowStandardsModal(false);
-      setSubjectId(null);
+      setSubjectId(defaultSubjectId || null);
+      // Expand academic details if defaultSubjectId is provided
+      if (defaultSubjectId) {
+        setShowAcademicDetails(true);
+      }
       setUnit('');
       setGrade('');
       setPercentOfTotalGrade('');
@@ -839,7 +844,7 @@ export default function TaskCreateModal({
       setSuggestedChange(null);
       setChangeAccepted(false);
     }
-  }, [visible, defaultDate]);
+  }, [visible, defaultDate, defaultChildId, defaultPlacement, defaultSubjectId]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -1902,11 +1907,19 @@ export default function TaskCreateModal({
             // Prevent clicks inside modal from closing it
           }}
         >
-          {/* Header / Title input */}
+          {/* Header */}
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalHeaderTitle}>Add Event</Text>
+            <TouchableOpacity onPress={onClose} style={styles.modalHeaderCloseButton}>
+              <X size={20} color={MUTED} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Title input */}
           <View style={styles.header}>
             <View style={{ marginBottom: 8 }}>
               <Text style={styles.fieldLabel}>
-                Task name <Text style={{ color: '#ef4444' }}>*</Text>
+                Name <Text style={{ color: '#ef4444' }}>*</Text>
               </Text>
             </View>
             <TextInput
@@ -4321,6 +4334,27 @@ export default function TaskCreateModal({
 }
 
 const styles = StyleSheet.create({
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+  },
+  modalHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: FG,
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modalHeaderCloseButton: {
+    padding: 4,
+  },
   overlay: {
     position: 'absolute',
     top: 0,
@@ -4338,7 +4372,7 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
     backgroundColor: BG,
-    borderRadius: 16,
+    borderRadius: 24,
     flexDirection: 'column',
     ...Platform.select({
       web: {
@@ -4656,17 +4690,18 @@ const styles = StyleSheet.create({
     }),
   },
   createButton: {
-    backgroundColor: '#4285F4',
+    backgroundColor: '#8B7CF6',
     paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 20,
+    paddingHorizontal: 24,
+    borderRadius: 12,
   },
   createButtonDisabled: {
-    backgroundColor: '#d1d5db',
+    opacity: 0.5,
   },
   createButtonText: {
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontWeight: '700',
+    fontSize: 14,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

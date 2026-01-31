@@ -266,7 +266,7 @@ export default function ChildInvitePage({ token, onComplete }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#E6F4FC',
   },
   content: {
     maxWidth: 500,

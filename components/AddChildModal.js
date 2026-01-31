@@ -5,6 +5,7 @@ import AddChildForm from './AddChildForm';
 import { addChild } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
+import { colors } from '../theme/colors';
 
 /**
  * Add Child Modal - Matches Learnadoodle onboarding spec
@@ -105,13 +106,19 @@ export default function AddChildModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.modal}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={styles.modal}
+        >
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <Text style={styles.title}>Add Child</Text>
-              <Text style={styles.subtitle}>Complete your child's learning profile</Text>
-            </View>
+            <Text style={styles.title}>Add Child</Text>
             <TouchableOpacity
               style={styles.closeButton}
               onPress={onClose}
@@ -165,7 +172,7 @@ export default function AddChildModal({
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       </View>
     </RNModal>
   );
@@ -181,9 +188,9 @@ const styles = StyleSheet.create({
   },
   modal: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    maxWidth: 800,
-    width: '100%',
+    borderRadius: 24,
+    width: 720,
+    maxWidth: '100%',
     maxHeight: '90vh',
     ...Platform.select({
       web: {
@@ -202,43 +209,23 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingHorizontal: 32,
-    paddingTop: 32,
-    paddingBottom: 24,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fafbfc',
-  },
-  headerContent: {
-    flex: 1,
+    borderBottomColor: colors.border,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-    fontFamily: Platform.select({
-      web: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      default: 'System',
-    }),
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '400',
-    fontFamily: Platform.select({
-      web: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      default: 'System',
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: 4,
     marginLeft: 16,
   },
   scrollContainer: {
@@ -276,22 +263,21 @@ const styles = StyleSheet.create({
   cancelButton: {
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: 'transparent',
   },
   cancelButtonText: {
-    color: '#374151',
+    color: '#666666',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   saveButton: {
     paddingVertical: 10,
     paddingHorizontal: 24,
-    borderRadius: 8,
-    backgroundColor: '#B8D7F9',
+    borderRadius: 12,
+    backgroundColor: '#8B7CF6',
   },
   saveButtonText: {
-    color: '#1e40af',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },

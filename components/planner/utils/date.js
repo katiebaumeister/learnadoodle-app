@@ -129,7 +129,7 @@ export const eachDayMatrix = (date) => {
   const weeks = [];
   let cur = new Date(start);
   
-  for (let w = 0; w < 4; w++) {
+  for (let w = 0; w < 5; w++) {
     const row = [];
     for (let d = 0; d < 7; d++) {
       const dayDate = new Date(cur);

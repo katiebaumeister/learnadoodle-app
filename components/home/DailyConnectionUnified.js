@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
 import { apiRequest } from '../../lib/apiClient';
-import { getNotes } from '../../lib/services/recordsClient';
 
 export default function DailyConnectionUnified({ 
   familyId, 
@@ -14,7 +13,6 @@ export default function DailyConnectionUnified({
 }) {
   const [connections, setConnections] = useState([]);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
-  const [notes, setNotes] = useState([]);
 
   const generateFallbackConnections = useCallback(() => {
     const fallback = children.map((child, index) => {
@@ -131,45 +129,6 @@ export default function DailyConnectionUnified({
       setConnectionsLoading(false);
     }
   }, [transformConnections, generateFallbackConnections]);
-
-  // Load notes for reflection prompts
-  useEffect(() => {
-    if (!familyId || !selectedChildIds || selectedChildIds.length === 0) {
-      setNotes([]);
-      return;
-    }
-    
-    const loadNotesForReflection = async () => {
-      try {
-        const weekStart = new Date(selectedDate);
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); // Monday
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 6);
-        
-        // Try to get notes, but don't show errors if endpoint doesn't exist
-        const notesData = await getNotes(familyId, selectedChildIds, {
-          start: weekStart,
-          end: weekEnd,
-        }).catch((err) => {
-          // Silently fail if notes endpoint doesn't exist (404 is expected)
-          if (err?.status === 404 || err?.message?.includes('404')) {
-            return [];
-          }
-
-          return [];
-        });
-        
-        setNotes(Array.isArray(notesData) ? notesData : []);
-      } catch (error) {
-        // Don't log errors for missing endpoints
-        if (error?.status !== 404 && !error?.message?.includes('404')) {
-        }
-        setNotes([]);
-      }
-    };
-    
-    loadNotesForReflection();
-  }, [familyId, selectedDate, selectedChildIds]);
   
   useEffect(() => {
     // If preloaded starters are provided, use them immediately
@@ -206,22 +165,6 @@ export default function DailyConnectionUnified({
                     <Text style={styles.detail}>{connection.detail}</Text>
                   </View>
                 ))}
-              </View>
-            )}
-            
-            {/* Show recent notes as reflection prompts */}
-            {notes.length > 0 && (
-              <View style={styles.notesSection}>
-                <Text style={styles.notesTitle}>Recent reflections</Text>
-                {notes.slice(0, 2).map((note) => {
-                  const child = children.find(c => c.id === note.child_id);
-                  return (
-                    <View key={note.id} style={styles.noteCard}>
-                      <Text style={styles.noteChild}>{child?.first_name || child?.name || 'Child'}</Text>
-                      <Text style={styles.noteText}>{note.text || note.description || ''}</Text>
-                    </View>
-                  );
-                })}
               </View>
             )}
           </View>
@@ -303,35 +246,6 @@ const styles = StyleSheet.create({
   detail: {
     fontSize: 12,
     color: '#94a3b8', // slate-400
-  },
-  notesSection: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  notesTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    marginBottom: 8,
-  },
-  noteCard: {
-    padding: 10,
-    backgroundColor: colors.panel,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  noteChild: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 4,
-  },
-  noteText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 16,
   },
 });
 

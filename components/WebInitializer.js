@@ -8,12 +8,16 @@ import { baseCssLayer, cssVariableMap } from '../theme/designTokens';
 if (typeof window !== 'undefined') {
   try {
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // Pattern to match UUIDs with optional suffixes like -day-0, -day-1, etc.
+    const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
     
     // Helper to check if a string is JUST a UUID (not a URL containing a UUID)
     const isJustUuid = (str) => {
       if (!str || typeof str !== 'string') return false;
       const trimmed = str.trim();
-      return uuidPattern.test(trimmed) && !trimmed.includes('http') && !trimmed.includes('data:') && !trimmed.includes('/');
+      // Check if it's a pure UUID or UUID with suffix (like -day-0)
+      const isUuidOrWithSuffix = uuidPattern.test(trimmed) || uuidWithSuffixPattern.test(trimmed);
+      return isUuidOrWithSuffix && !trimmed.includes('http') && !trimmed.includes('data:') && !trimmed.includes('/');
     };
     
     // Helper to check if error should be suppressed
@@ -188,11 +192,15 @@ export default function WebInitializer({ children }) {
         if (typeof document === 'undefined') return;
         
         const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        // Pattern to match UUIDs with optional suffixes like -day-0, -day-1, etc.
+        const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;
         
         const isJustUuid = (str) => {
           if (!str || typeof str !== 'string') return false;
           const trimmed = str.trim();
-          return uuidPattern.test(trimmed) && !trimmed.includes('http') && !trimmed.includes('data:') && !trimmed.includes('/');
+          // Check if it's a pure UUID or UUID with suffix (like -day-0)
+          const isUuidOrWithSuffix = uuidPattern.test(trimmed) || uuidWithSuffixPattern.test(trimmed);
+          return isUuidOrWithSuffix && !trimmed.includes('http') && !trimmed.includes('data:') && !trimmed.includes('/');
         };
         
         // Clean up images

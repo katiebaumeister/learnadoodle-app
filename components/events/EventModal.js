@@ -1,20 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
 import { X } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
 
-export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched, familyId, children = [] }) {
+export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched, familyId, children = [], schedulingMode = false }) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
   const [loading, setLoading] = useState(!initialEvent);
-  const [isEditing, setIsEditing] = useState(false); // Start in view mode
+  const [isEditingState, setIsEditingState] = useState(false);
+  
+  // Use schedulingMode directly when opening - this ensures immediate edit mode
+  // without waiting for effects to run
+  const isEditing = schedulingMode || isEditingState;
 
   const handleEditingChange = (editing) => {
     console.log('[EventModal] Editing state changed:', editing);
-    setIsEditing(editing);
+    setIsEditingState(editing);
   };
+
+  // Sync editing state when schedulingMode changes (for when user manually exits edit mode)
+  useLayoutEffect(() => {
+    if (visible && schedulingMode) {
+      setIsEditingState(true);
+    }
+  }, [visible, schedulingMode]);
 
   useEffect(() => {
     if (visible && eventId) {
@@ -29,7 +40,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
       setEvent(initialEvent ?? null);
       setSyllabus(null);
       setLoading(!initialEvent);
-      setIsEditing(false); // Start in view mode for existing events
+      setIsEditingState(false); // Start in view mode for existing events
     }
   }, [visible, eventId, initialEvent]);
 
@@ -244,11 +255,16 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
     }
   };
 
+  // Debug log when component updates (even if not visible)
+  if (typeof window !== 'undefined') {
+    console.log('[EventModal] Props received - visible:', visible, 'schedulingMode:', schedulingMode, 'eventId:', eventId);
+  }
+
   if (!visible) return null;
 
-  // Debug log
+  // Debug log when actually rendering
   if (typeof window !== 'undefined') {
-    console.log('[EventModal] Rendering, isEditing:', isEditing);
+    console.log('[EventModal] RENDERING - schedulingMode:', schedulingMode, 'isEditingState:', isEditingState, 'computed isEditing:', isEditing);
   }
 
   return (
@@ -284,6 +300,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
             <View style={[styles.content, isEditing && styles.contentEditMode]}>
               {event ? (
                 <EventDetails
+                  key={schedulingMode ? `scheduling-${event.id}` : `view-${event.id}`}
                   event={event}
                   onEventUpdated={handleEventUpdated}
                   onEventDeleted={(deletedEventId) => {
@@ -294,6 +311,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
                   familyId={familyId}
                   onEditingChange={handleEditingChange}
                   onClose={onClose}
+                  initialSchedulingMode={schedulingMode}
                 />
               ) : (
                 <View style={styles.loadingContainer}>

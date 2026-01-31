@@ -83,15 +83,17 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
       const toDate = new Date();
       toDate.setDate(toDate.getDate() + 30); // Next 30 days
 
-      const { data, error } = await supabase
-        .from('schedule_overrides')
-        .select('*')
-        .eq('scope_type', selectedScope)
-        .eq('scope_id', scopeId)
-        .eq('is_active', true)
-        .gte('date', fromDate.toISOString().split('T')[0])
-        .lte('date', toDate.toISOString().split('T')[0])
-        .order('date', { ascending: true });
+      // NOTE: schedule_overrides removed - returning empty array
+      // const { data, error } = await supabase
+      //   .from('schedule_overrides')
+      //   .select('*')
+      //   .eq('scope_type', selectedScope)
+      //   .eq('scope_id', scopeId)
+      //   .eq('is_active', true)
+      //   .gte('date', fromDate.toISOString().split('T')[0])
+      //   .lte('date', toDate.toISOString().split('T')[0])
+      //   .order('date', { ascending: true });
+      const { data, error } = { data: [], error: null };
 
       if (error) {
         setOverrides([]);

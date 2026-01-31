@@ -157,18 +157,19 @@ const BreaksAndBlackoutsPanel = ({
                 const start = new Date(blackout.starts_on);
                 const end = new Date(blackout.ends_on);
                 const scopeId = blackout.child_id || familyId;
-                const scopeType = blackout.child_id ? 'child' : 'family';
+                // NOTE: schedule_overrides removed - override deletion disabled
+                // const scopeType = blackout.child_id ? 'child' : 'family';
 
-                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                  const dateStr = d.toISOString().split('T')[0];
-                  await supabase
-                    .from('schedule_overrides')
-                    .update({ is_active: false })
-                    .eq('scope_type', scopeType)
-                    .eq('scope_id', scopeId)
-                    .eq('date', dateStr)
-                    .eq('override_kind', 'day_off');
-                }
+                // for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                //   const dateStr = d.toISOString().split('T')[0];
+                //   await supabase
+                //     .from('schedule_overrides')
+                //     .update({ is_active: false })
+                //     .eq('scope_type', scopeType)
+                //     .eq('scope_id', scopeId)
+                //     .eq('date', dateStr)
+                //     .eq('override_kind', 'day_off');
+                // }
 
                 // Refresh cache
                 await supabase.rpc('refresh_calendar_days_cache', {

@@ -73,6 +73,8 @@ export default function AddMaterialModal({
   children = [],
   material = null, // If provided, edit mode
   allSubjects: propAllSubjects = [], // Pre-loaded subjects from parent
+  defaultRole = null, // Default role to set when opening modal (e.g., 'syllabus')
+  defaultSubjectId = null, // Default subject ID to set when opening modal
 }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -362,8 +364,8 @@ export default function AddMaterialModal({
     if (visible && !material) {
       // Add mode: reset form
       setTitle('');
-      setRole('');
-      setSelectedSubjectId(null);
+      setRole(defaultRole || '');
+      setSelectedSubjectId(defaultSubjectId || null);
       setSelectedChildIds([]);
       setProviderName('');
       setProviderUrl('');
@@ -385,7 +387,7 @@ export default function AddMaterialModal({
       setReviewDifficulty(null);
       setReviewNotes('');
     }
-  }, [visible, material]);
+  }, [visible, material, defaultRole, defaultSubjectId]);
 
   const handleFileSelect = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -860,7 +862,16 @@ export default function AddMaterialModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.modal}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={styles.modal}
+        >
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>{material ? 'Edit Material' : 'Add Material'}</Text>
@@ -1394,13 +1405,13 @@ export default function AddMaterialModal({
               disabled={loading || !isFormValid}
             >
               {loading ? (
-                <ActivityIndicator color="#ffffff" />
+                <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={styles.saveButtonText}>{material ? 'Save Changes' : 'Add Material'}</Text>
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* Mini Calendar Picker Modal */}
@@ -1648,9 +1659,10 @@ const styles = StyleSheet.create({
   },
   modal: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    width: '100%',
-    maxWidth: 600,
+    borderRadius: 24,
+    overflow: 'hidden',
+    width: 720,
+    maxWidth: '100%',
     maxHeight: '90%',
     flexDirection: 'column',
     ...Platform.select({
@@ -1663,7 +1675,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
@@ -1867,18 +1880,18 @@ const styles = StyleSheet.create({
     color: '#666666',
   },
   saveButton: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
     paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: '#4285F4',
+    borderRadius: 12,
+    backgroundColor: '#8B7CF6',
   },
   saveButtonDisabled: {
     opacity: 0.5,
   },
   saveButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#ffffff',
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   uploadButton: {
     flexDirection: 'row',

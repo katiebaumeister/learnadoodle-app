@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Platform, TouchableOpacity } from '
 import { startOfWeek, addDays, isSameDay, format, isSameMonth, isToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 
-export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEventPress, onEventRightClick, onEventComplete, children = [], onSwitchToBoardView }) {
+export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEventPress, onEventRightClick, onEventComplete, children = [], onSwitchToBoardView, busyIntervals = [], suggestedSlots = [], onSlotSelect }) {
   const scrollViewRef = useRef(null);
   const weekStart = startOfWeek(anchorDate); // Sunday start
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -572,6 +572,92 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                     />
                   ))}
                   
+                  {/* Busy Interval Overlays */}
+                  {busyIntervals.map((interval, idx) => {
+                    const startDate = new Date(interval.start_at);
+                    const endDate = new Date(interval.end_at);
+                    const dayKey = d.toDateString();
+                    const intervalDay = startDate.toDateString();
+                    
+                    // Only render if this interval is on this day
+                    if (intervalDay !== dayKey) {
+                      if (idx === 0 && busyIntervals.length > 0) {
+                        console.log('[WeekGrid] Busy interval date mismatch:', {
+                          intervalDay,
+                          dayKey,
+                          start_at: interval.start_at,
+                          dayDate: d.toISOString(),
+                        });
+                      }
+                      return null;
+                    }
+                    
+                    const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+                    const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
+                    const top = ((startMinutes - DAY_START_MINUTES) / 60) * hourHeight;
+                    const height = ((endMinutes - startMinutes) / 60) * hourHeight;
+                    
+                    // Log first interval for debugging
+                    if (idx === 0) {
+                      console.log('[WeekGrid] Rendering busy interval:', {
+                        start_at: interval.start_at,
+                        end_at: interval.end_at,
+                        startDate: startDate.toISOString(),
+                        startMinutes,
+                        endMinutes,
+                        top,
+                        height,
+                        dayKey,
+                      });
+                    }
+                    
+                    return (
+                      <View
+                        key={`busy-${idx}`}
+                        style={[
+                          styles.busyOverlay,
+                          {
+                            top,
+                            height,
+                            opacity: interval.is_tentative ? 0.3 : 0.5,
+                          }
+                        ]}
+                      />
+                    );
+                  })}
+                  
+                  {/* Suggested Slots */}
+                  {suggestedSlots.map((slot, idx) => {
+                    const startDate = new Date(slot.start_at);
+                    const endDate = new Date(slot.end_at);
+                    const dayKey = d.toDateString();
+                    const slotDay = startDate.toDateString();
+                    
+                    // Only render if this slot is on this day
+                    if (slotDay !== dayKey) return null;
+                    
+                    const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+                    const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
+                    const top = ((startMinutes - DAY_START_MINUTES) / 60) * hourHeight;
+                    const height = ((endMinutes - startMinutes) / 60) * hourHeight;
+                    
+                    return (
+                      <TouchableOpacity
+                        key={`suggested-${idx}`}
+                        style={[
+                          styles.suggestedSlot,
+                          { top, height }
+                        ]}
+                        onPress={() => onSlotSelect && onSlotSelect(slot)}
+                      >
+                        <View style={styles.suggestedSlotContent}>
+                          <Sparkles size={12} color="#10b981" />
+                          <Text style={styles.suggestedSlotText}>Drop here</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  
                   {/* Events positioned absolutely at their actual times */}
                   {positionedEvents.map(ev => {
                     // Check if event is within visible hours
@@ -973,5 +1059,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
     fontWeight: '500',
+  },
+  busyOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: '#fca5a5',
+    borderLeftWidth: 2,
+    borderLeftColor: '#ef4444',
+    ...(Platform.OS === 'web' && {
+      pointerEvents: 'none',
+    }),
+  },
+  suggestedSlot: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 2,
+    borderColor: '#10b981',
+    borderStyle: 'dashed',
+    borderRadius: 4,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  suggestedSlotContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 4,
+  },
+  suggestedSlotText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#10b981',
   },
 });

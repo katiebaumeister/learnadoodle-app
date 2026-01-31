@@ -281,15 +281,15 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>New Password</Text>
           <View style={styles.passwordInputContainer}>
-            <TextInput
+          <TextInput
               style={styles.passwordInput}
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="Enter your new password"
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            value={newPassword}
+            onChangeText={setNewPassword}
+            placeholder="Enter your new password"
+            secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
             <TouchableOpacity
               style={styles.eyeButton}
               onPress={() => setShowPassword(!showPassword)}
@@ -306,15 +306,15 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
         <View style={styles.inputGroup}>
           <Text style={styles.inputLabel}>Confirm New Password</Text>
           <View style={styles.passwordInputContainer}>
-            <TextInput
+          <TextInput
               style={styles.passwordInput}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm your new password"
-              secureTextEntry={!showConfirmPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            placeholder="Confirm your new password"
+            secureTextEntry={!showConfirmPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
             <TouchableOpacity
               style={styles.eyeButton}
               onPress={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -377,7 +377,7 @@ export default function PasswordResetPage({ onPasswordResetComplete }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#E6F4FC',
   },
   contentContainer: {
     flexGrow: 1,
@@ -387,16 +387,11 @@ const styles = StyleSheet.create({
     minHeight: '100vh',
   },
   resetCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#E6F4FC',
     borderRadius: 16,
     padding: 32,
     width: '100%',
     maxWidth: 450,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
   },
   title: {
     fontSize: 28,
@@ -454,10 +449,12 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   passwordRequirements: {
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#ffffff',
     borderRadius: 8,
     padding: 16,
     marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
   },
   requirementsTitle: {
     fontSize: 14,

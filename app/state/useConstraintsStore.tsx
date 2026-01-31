@@ -77,15 +77,17 @@ export function ConstraintsProvider({ children }: { children: ReactNode }) {
           .gte('ends_on', startStr)
           .execute(),
         
+        // NOTE: schedule_overrides removed - returning empty array
         // Overrides (scope_type='family' uses scope_id=family_id, scope_type='child' uses scope_id=child_id)
-        supabase
-          .from('schedule_overrides')
-          .select('*')
-          .or(`scope_type.eq.family,scope_type.eq.child`)
-          .eq('is_active', true)
-          .gte('date', startStr)
-          .lte('date', endStr)
-          .execute(),
+        // supabase
+        //   .from('schedule_overrides')
+        //   .select('*')
+        //   .or(`scope_type.eq.family,scope_type.eq.child`)
+        //   .eq('is_active', true)
+        //   .gte('date', startStr)
+        //   .lte('date', endStr)
+        //   .execute(),
+        Promise.resolve({ data: [], error: null }),
         
         // Rules (baseline availability)
         supabase
@@ -106,22 +108,26 @@ export function ConstraintsProvider({ children }: { children: ReactNode }) {
       ]);
 
       const blackouts = blackoutsResult.data || [];
+      // NOTE: schedule_overrides removed - setting to empty array
       let overrides = overridesResult.data || [];
+      // let overrides = []; // schedule_overrides removed
       const rules = rulesResult.data || [];
       const cache = cacheResult.data || [];
 
+      // NOTE: schedule_overrides removed - filter logic disabled
       // Filter overrides by family_id first (since schedule_overrides doesn't have family_id column)
       // For family scope: scope_id = family_id
       // For child scope: we need to check if child belongs to family (filter later)
-      overrides = overrides.filter(o => {
-        if (o.scope_type === 'family') {
-          return o.scope_id === familyId;
-        } else if (o.scope_type === 'child') {
-          // Include all child overrides for now, we'll filter by childIds next
-          return true;
-        }
-        return false;
-      });
+      // overrides = overrides.filter(o => {
+      //   if (o.scope_type === 'family') {
+      //     return o.scope_id === familyId;
+      //   } else if (o.scope_type === 'child') {
+      //     // Include all child overrides for now, we'll filter by childIds next
+      //     return true;
+      //   }
+      //   return false;
+      // });
+      overrides = [];
 
       // Filter by childIds if provided
       // For blackouts: filter by child_id
@@ -132,21 +138,23 @@ export function ConstraintsProvider({ children }: { children: ReactNode }) {
           })
         : blackouts.filter(b => !b.child_id); // Family-level only
 
+      // NOTE: schedule_overrides removed - returning empty array for overrides
       // For overrides: filter by scope_type and scope_id
       // scope_type='family' means scope_id=family_id
       // scope_type='child' means scope_id=child_id
-      const filteredOverrides = childIds && childIds.length > 0
-        ? overrides.filter(o => {
-            if (o.scope_type === 'family') {
-              // Family-level override - include
-              return true;
-            } else if (o.scope_type === 'child') {
-              // Child-specific override - include if scope_id matches one of childIds
-              return childIds.includes(o.scope_id);
-            }
-            return false;
-          })
-        : overrides.filter(o => o.scope_type === 'family'); // Family-level only
+      // const filteredOverrides = childIds && childIds.length > 0
+      //   ? overrides.filter(o => {
+      //       if (o.scope_type === 'family') {
+      //         // Family-level override - include
+      //         return true;
+      //       } else if (o.scope_type === 'child') {
+      //         // Child-specific override - include if scope_id matches one of childIds
+      //         return childIds.includes(o.scope_id);
+      //       }
+      //       return false;
+      //     })
+      //   : overrides.filter(o => o.scope_type === 'family'); // Family-level only
+      const filteredOverrides: any[] = []; // schedule_overrides removed
 
       const filteredRules = childIds && childIds.length > 0
         ? rules.filter(r => !r.child_id || childIds.includes(r.child_id))

@@ -74,26 +74,27 @@ const OverridesDrawer = ({
   const saveOverride = async () => {
     if (!validateOverride()) return;
     
+    // NOTE: schedule_overrides removed - override saving disabled
     try {
       setSaving(true);
       
-      const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
+      // const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
       
-      const { error } = await supabase
-        .from('schedule_overrides')
-        .insert({
-          scope_type: selectedScope,
-          scope_id: scopeId,
-          date: newOverride.date,
-          override_kind: newOverride.override_kind,
-          start_time: newOverride.start_time,
-          end_time: newOverride.end_time,
-          notes: newOverride.notes,
-          source: 'manual',
-          is_active: true
-        });
+      // const { error } = await supabase
+      //   .from('schedule_overrides')
+      //   .insert({
+      //     scope_type: selectedScope,
+      //     scope_id: scopeId,
+      //     date: newOverride.date,
+      //     override_kind: newOverride.override_kind,
+      //     start_time: newOverride.start_time,
+      //     end_time: newOverride.end_time,
+      //     notes: newOverride.notes,
+      //     source: 'manual',
+      //     is_active: true
+      //   });
 
-      if (error) throw error;
+      // if (error) throw error;
       
       // Reset form
       setNewOverride({
@@ -105,7 +106,7 @@ const OverridesDrawer = ({
       });
       setShowAddForm(false);
       
-      onOverrideSaved();
+      if (onOverrideSaved) onOverrideSaved();
     } catch (error) {
       showAlert('Error', 'Failed to save override');
     } finally {
@@ -114,14 +115,15 @@ const OverridesDrawer = ({
   };
 
   const deleteOverride = async (overrideId) => {
+    // NOTE: schedule_overrides removed - override deletion disabled
     try {
-      const { error } = await supabase
-        .from('schedule_overrides')
-        .update({ is_active: false })
-        .eq('id', overrideId);
+      // const { error } = await supabase
+      //   .from('schedule_overrides')
+      //   .update({ is_active: false })
+      //   .eq('id', overrideId);
 
-      if (error) throw error;
-      onOverrideSaved();
+      // if (error) throw error;
+      if (onOverrideSaved) onOverrideSaved();
     } catch (error) {
       showAlert('Error', 'Failed to delete override');
     }
@@ -559,11 +561,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 6,
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#8B7CF6',
     alignItems: 'center',
   },
   saveButtonDisabled: {
-    backgroundColor: '#9ca3af',
+    opacity: 0.5,
   },
   saveButtonText: {
     fontSize: 16,

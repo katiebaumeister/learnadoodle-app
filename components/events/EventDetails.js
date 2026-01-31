@@ -495,12 +495,12 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false }) {
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
-  const [editing, setEditing] = useState(false); // Start in view mode
+  const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
   const [saving, setSaving] = useState(false);
-  const [schedulingBacklog, setSchedulingBacklog] = useState(false); // State for "Add to schedule" mode
+  const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
 
   const [draftTitle, setDraftTitle] = useState('');
   const [draftDate, setDraftDate] = useState('');
@@ -692,6 +692,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
     return true;
   };
+
+  // Handle scheduling mode changes - when initialSchedulingMode becomes true, 
+  // set editing and schedulingBacklog states and placement to 'calendar'
+  // Also check for _openInEditMode flag on the event itself
+  useEffect(() => {
+    const shouldOpenInEditMode = initialSchedulingMode || event?._openInEditMode;
+    if (shouldOpenInEditMode) {
+      console.log('[EventDetails] Opening in edit mode - initialSchedulingMode:', initialSchedulingMode, '_openInEditMode:', event?._openInEditMode);
+      setEditing(true);
+      if (initialSchedulingMode || event?._openInEditMode) {
+        setSchedulingBacklog(true);
+        setPlacement('calendar');
+      }
+      // Also notify parent that we're in editing mode
+      onEditingChange?.(true);
+    }
+  }, [initialSchedulingMode, event?._openInEditMode, onEditingChange]);
 
   // Load standards when event loads
   useEffect(() => {
@@ -969,8 +986,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     
     // Placement (calendar vs backlog)
+    // If initialSchedulingMode is true, set to 'calendar' to show date/time pickers
     const isBacklog = event.is_backlog === true || event.data?.is_backlog === true;
-    setPlacement(isBacklog ? 'backlog' : 'calendar');
+    setPlacement(initialSchedulingMode ? 'calendar' : (isBacklog ? 'backlog' : 'calendar'));
 
     // All day inference
     const inferredAllDay =
@@ -1104,8 +1122,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setRecurrenceEndDate(null);
     }
     
-    setSchedulingBacklog(false);
-  }, [event]);
+    // Only reset schedulingBacklog if not in initial scheduling mode
+    if (!initialSchedulingMode) {
+      setSchedulingBacklog(false);
+    }
+  }, [event, initialSchedulingMode]);
 
   // Load materials, subjects when editing starts or when event loads (for view mode)
   useEffect(() => {
@@ -1905,7 +1926,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         title: draftTitle.trim(),
         description: notes.trim() ? notes.trim() : null,
         child_id: assigneeIds.length > 0 ? assigneeIds[0] : null,
-        child_ids: assigneeIds.length > 0 ? assigneeIds : null, // Also set child_ids array
+        child_ids: assigneeIds.length > 0 ? assigneeIds : [], // Use empty array instead of null to match DB default
         status: normalizeStatus(draftStatus),
         tags: draftTags.length ? draftTags : null,
         material_id: selectedMaterialId || null,
@@ -1924,6 +1945,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
       };
+      
+      // Log assigneeIds state before save
+      console.log('[EventDetails] AssigneeIds state before save:', {
+        assigneeIds,
+        assigneeIdsLength: assigneeIds.length,
+        child_id: updates.child_id,
+        child_ids: updates.child_ids,
+        currentEventChildIds: event.child_ids,
+        currentEventChildId: event.child_id
+      });
 
       // If moving from backlog to schedule, set is_backlog to false and set date/time
       // Only move to schedule if user explicitly changed placement to 'calendar' or is in scheduling mode
@@ -1958,17 +1989,56 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
 
       // Remove undefined values from updates (Supabase doesn't accept undefined)
+      // BUT keep null values - they are important for clearing fields
       const cleanUpdates = Object.fromEntries(
         Object.entries(updates).filter(([_, value]) => value !== undefined)
       );
       
+      // Ensure child_ids is ALWAYS explicitly included in the update
+      // This is critical because Supabase might not update a field if it's not explicitly included
+      // Use empty array [] instead of null to match database default and ensure Supabase processes the update
+      const currentChildIds = event.child_ids || (event.child_id ? [event.child_id] : []);
+      // Use empty array [] instead of null when there are no assignees
+      // This matches the database default and ensures Supabase actually updates the field
+      const newChildIds = assigneeIds.length > 0 ? assigneeIds : [];
+      
+      // Compare arrays properly
+      const currentIdsArray = [...currentChildIds].sort();
+      const newIdsArray = [...newChildIds].sort();
+      const childIdsChanged = JSON.stringify(currentIdsArray) !== JSON.stringify(newIdsArray);
+      
+      // ALWAYS explicitly include child_ids and child_id in cleanUpdates
+      // Using empty array [] instead of null ensures Supabase processes the update
+      cleanUpdates.child_ids = newChildIds;
+      cleanUpdates.child_id = assigneeIds.length > 0 ? assigneeIds[0] : null;
+      
+      console.log('[EventDetails] child_ids update preparation:', {
+        currentChildIds,
+        newChildIds,
+        childIdsChanged,
+        cleanUpdatesChildIds: cleanUpdates.child_ids,
+        cleanUpdatesChildId: cleanUpdates.child_id,
+        assigneeIdsLength: assigneeIds.length
+      });
+      
       console.log('[EventDetails] About to save to database:', {
         eventId: event.id,
         updates: cleanUpdates,
-        originalUpdates: updates
+        originalUpdates: updates,
+        cleanUpdatesChildIds: cleanUpdates.child_ids,
+        cleanUpdatesChildId: cleanUpdates.child_id,
+        childIdsChanged
       });
       
       let { error, data } = await supabase.from('events').update(cleanUpdates).eq('id', event.id).select();
+      
+      // Log the response from the database
+      console.log('[EventDetails] Database update response:', {
+        error: error?.message,
+        returnedData: data?.[0],
+        returnedChildIds: data?.[0]?.child_ids,
+        returnedChildId: data?.[0]?.child_id
+      });
       
       // If we get an overlap error, do a multi-step update:
       // 1. First set is_flexible = true (this removes it from the constraint)
@@ -2020,13 +2090,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         if (childIdToUpdate !== undefined && childIdToUpdate !== event.child_id) {
           // Use RPC function if available, otherwise use multi-step approach
           // First, try using the update_event_with_overlap_handling RPC function
+          // IMPORTANT: Use the full assigneeIds array, not just childIdToUpdate
+          // Use empty array [] instead of null to match database default
+          const childIdsToUpdate = cleanUpdates.child_ids || (childIdToUpdate ? [childIdToUpdate] : []);
+          console.log('[EventDetails] Updating child_id/child_ids via RPC:', {
+            childIdToUpdate,
+            childIdsToUpdate,
+            cleanUpdatesChildIds: cleanUpdates.child_ids
+          });
           try {
             const rpcResult = await supabase.rpc('update_event_with_overlap_handling', {
               _event_id: event.id,
               _updates: {
                 ...cleanUpdates,
                 child_id: childIdToUpdate,
-                child_ids: childIdToUpdate ? [childIdToUpdate] : null,
+                child_ids: childIdsToUpdate, // Use full array, not just [childIdToUpdate]
                 is_flexible: true
               },
               _allow_overlaps: true
@@ -2055,9 +2133,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             // The exclusion constraint prevents overlapping events for the same child_id, but not for child_ids array
             // For flexible events with overlaps, we'll use child_ids array to track the assignment
             // while keeping child_id as NULL to bypass the constraint
+            // IMPORTANT: Use the full assigneeIds array from cleanUpdates, not just childIdToUpdate
+            // Use empty array [] instead of null to match database default
+            const childIdsForFallback = cleanUpdates.child_ids || (childIdToUpdate ? [childIdToUpdate] : []);
+            console.log('[EventDetails] Fallback update - using child_ids:', {
+              childIdsForFallback,
+              childIdToUpdate,
+              cleanUpdatesChildIds: cleanUpdates.child_ids
+            });
             const fallbackUpdate = {
               child_id: null, // Set to NULL to bypass constraint
-              child_ids: childIdToUpdate ? [childIdToUpdate] : null,
+              child_ids: childIdsForFallback, // Use full array from cleanUpdates
               is_flexible: true
             };
             
@@ -2123,11 +2209,78 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         throw error;
       }
       
+      // If .select() didn't return data, fetch the event explicitly to get the latest state
+      // This is important because RLS or other issues might prevent .select() from returning data
+      // Retry the fetch up to 3 times with a small delay to handle potential race conditions
+      if (!data || !data[0]) {
+        console.log('[EventDetails] .select() did not return data, fetching event explicitly');
+        // Small initial delay to ensure database transaction has committed
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
+        let fetchResult = null;
+        let retries = 3;
+        let fetchSucceeded = false;
+        
+        while (retries > 0 && !fetchSucceeded) {
+          if (retries < 3) {
+            // Additional delay before retry to allow database to commit
+            await new Promise(resolve => setTimeout(resolve, 150));
+          }
+          
+          console.log(`[EventDetails] Fetching event (attempt ${4 - retries}/3)...`);
+          fetchResult = await supabase.from('events').select().eq('id', event.id).single();
+          
+          if (fetchResult.error) {
+            console.warn(`[EventDetails] Error fetching updated event (attempt ${4 - retries}/3):`, {
+              error: fetchResult.error,
+              message: fetchResult.error?.message,
+              code: fetchResult.error?.code
+            });
+            retries--;
+          } else if (fetchResult.data) {
+            data = [fetchResult.data];
+            fetchSucceeded = true;
+            const childIdsMatch = JSON.stringify([...data[0].child_ids].sort()) === JSON.stringify([...newChildIds].sort());
+            console.log('[EventDetails] Successfully fetched event after update:', {
+              child_id: data[0].child_id,
+              child_ids: data[0].child_ids,
+              expected_child_ids: newChildIds,
+              is_flexible: data[0].is_flexible,
+              childIdsMatch: childIdsMatch,
+              childIdsMatchDetails: {
+                saved: [...data[0].child_ids].sort(),
+                expected: [...newChildIds].sort()
+              }
+            });
+            
+            if (!childIdsMatch) {
+              console.error('[EventDetails] WARNING: child_ids mismatch after update!', {
+                saved: data[0].child_ids,
+                expected: newChildIds
+              });
+            }
+          } else {
+            console.warn(`[EventDetails] Fetch returned no data (attempt ${4 - retries}/3)`);
+            retries--;
+          }
+        }
+        
+        if (!data || !data[0]) {
+          console.error('[EventDetails] Failed to fetch updated event after all retries, using cleanUpdates for patch');
+        }
+      }
+      
       console.log('[EventDetails] Database update successful:', {
         eventId: event.id,
         savedData: data?.[0],
         saved_start_ts: data?.[0]?.start_ts,
-        saved_end_ts: data?.[0]?.end_ts
+        saved_end_ts: data?.[0]?.end_ts,
+        saved_child_id: data?.[0]?.child_id,
+        saved_child_ids: data?.[0]?.child_ids,
+        expected_child_ids: newChildIds,
+        childIdsMatch: data?.[0]?.child_ids ? 
+          JSON.stringify([...data[0].child_ids].sort()) === JSON.stringify([...newChildIds].sort()) : 
+          JSON.stringify(newChildIds) === '[]'
       });
 
       // Attach standards if any were selected
@@ -2177,6 +2330,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         // Also include other fields that might have been updated
         if (data[0].is_flexible !== undefined) {
           patch.is_flexible = data[0].is_flexible;
+        }
+      } else {
+        // If we still don't have data, at least include the child_ids from cleanUpdates
+        // This ensures the UI reflects the changes even if we can't fetch from DB
+        console.warn('[EventDetails] No data returned from update, using cleanUpdates for patch');
+        if (cleanUpdates.child_ids !== undefined) {
+          patch.child_ids = cleanUpdates.child_ids;
+        }
+        if (cleanUpdates.child_id !== undefined) {
+          patch.child_id = cleanUpdates.child_id;
         }
       }
 
@@ -5651,13 +5814,13 @@ const styles = StyleSheet.create({
     }),
   },
   createButton: {
-    backgroundColor: '#000000',
+    backgroundColor: '#8B7CF6',
     paddingVertical: 12,
     paddingHorizontal: 18,
     borderRadius: 12,
   },
   createButtonDisabled: {
-    backgroundColor: '#d1d5db',
+    opacity: 0.5,
   },
   createButtonText: {
     color: '#ffffff',

@@ -411,22 +411,24 @@ export default function CalendarPlanning({ familyId, academicYear, showOnboardin
   };
 
   const saveHolidays = async (academicYearId) => {
-    // Write selected holidays as overrides only (no holidays table)
+    // NOTE: schedule_overrides removed - holidays feature disabled
+    // Previously wrote selected holidays as overrides, but this is no longer used
     const entries = Object.entries(holidayDates);
     for (const [date, name] of entries) {
-      const { error } = await supabase
-        .from('schedule_overrides')
-        .upsert({
-          scope_type: 'family',
-          scope_id: familyId,
-          date,
-          override_kind: 'off',
-          start_time: '00:00',
-          end_time: '23:59',
-          notes: name || 'Holiday',
-          is_active: true,
-        }, { onConflict: 'scope_type,scope_id,date' });
-      if (error) throw error;
+      // const { error } = await supabase
+      //   .from('schedule_overrides')
+      //   .upsert({
+      //     scope_type: 'family',
+      //     scope_id: familyId,
+      //     date,
+      //     override_kind: 'off',
+      //     start_time: '00:00',
+      //     end_time: '23:59',
+      //     notes: name || 'Holiday',
+      //     is_active: true,
+      //   }, { onConflict: 'scope_type,scope_id,date' });
+      // if (error) throw error;
+      // For now, skip saving holidays (or save to a different table if needed)
     }
   };
 
@@ -826,14 +828,14 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   saveButton: {
-    backgroundColor: '#38B6FF',
+    backgroundColor: '#8B7CF6',
     padding: 16,
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 24,
   },
   disabledButton: {
-    backgroundColor: '#ccc',
+    opacity: 0.5,
   },
   saveButtonText: {
     color: '#fff',

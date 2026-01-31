@@ -122,10 +122,11 @@ export default function SubjectSelectForm({ child, onClose, onSaved }) {
         .single();
       if (!profile?.family_id) throw new Error('Family not found');
 
+      // Use semicolon-separated format for child_id
       const baseRows = selected.map(label => ({
         family_id: profile.family_id,
-        child_id: child.id,
-        subject_name: normalizeSubjectName(label),
+        child_id: child.id, // Single child ID (will be stored as semicolon-separated format)
+        name: normalizeSubjectName(label), // Use 'name' instead of 'subject_name'
         grade: child.grade,
         notes: null,
       }));

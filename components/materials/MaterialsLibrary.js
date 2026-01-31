@@ -16,7 +16,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen, Edit2 } from 'lucide-react';
+import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen, Edit2, Sparkles } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import MaterialCard from './MaterialCard';
@@ -30,6 +30,7 @@ import { shouldSuppressError } from '../../lib/apiClient';
 import { DOCUMENT_ROLE_CHIPS, normalizeMaterial, normalizeUpload, matchesRole, roleLabel, mediaTypeLabel } from '../../lib/docs/roles';
 import { useToast } from '../Toast';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { parseChildIds } from '../../lib/services/subjectsClient';
 import BuildCurriculumModal from '../planner/modals/BuildCurriculumModal';
 
 // Helper function to check if a URL is from Supabase storage
@@ -118,12 +119,13 @@ const PDFIframe = ({ src, title }) => {
   );
 };
 
-export default function MaterialsLibrary({ familyId, children = [], preloadedMaterials = null, onMaterialsUpdate = null }) {
+export default function MaterialsLibrary({ familyId, children = [], preloadedSubjects = null, preloadedMaterials = null, onMaterialsUpdate = null }) {
   const toast = useToast();
   
   // Get child colors for dots
   const getChildDotColor = (childId) => {
-    const child = children.find(c => c.id === childId);
+    const effectiveChildren = localChildren.length > 0 ? localChildren : children;
+    const child = effectiveChildren.find(c => c.id === childId);
     if (!child || !child.avatar) {
       return '#9CA3AF'; // Default gray
     }
@@ -151,11 +153,13 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all'); // all | syllabus | lesson_plan | assignment | resource | assessment
+  const [roleFilter, setRoleFilter] = useState('all'); // all | syllabus | lesson_plan | assignment | resource | assessment | book
   const [selectedChildId, setSelectedChildId] = useState(''); // '' = all
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
-  const [subjects, setSubjects] = useState([]); // Deduplicated for filter display
+  const [subjects, setSubjects] = useState(preloadedSubjects || []); // Deduplicated for filter display
   const [allSubjectsForModal, setAllSubjectsForModal] = useState([]); // Full list with child_id for AddMaterialModal
+  const [loadingSubjects, setLoadingSubjects] = useState(!(preloadedSubjects && preloadedSubjects.length > 0));
+  const [showSubjectsLoading, setShowSubjectsLoading] = useState(false);
   const [sortBy, setSortBy] = useState('date'); // 'date' | 'alphabetical'
   const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
   const [hoveredItemId, setHoveredItemId] = useState(null);
@@ -194,11 +198,67 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects]);
 
+  // Load children if not provided
+  const [localChildren, setLocalChildren] = useState(children);
+  useEffect(() => {
+    if (children && children.length > 0) {
+      setLocalChildren(children);
+      return;
+    }
+    if (!familyId) {
+      console.log('[MaterialsLibrary] No familyId, cannot load children');
+      return;
+    }
+    
+    const loadChildren = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('children')
+          .select('*')
+          .eq('family_id', familyId)
+          .eq('archived', false)
+          .order('first_name');
+        
+        if (error) {
+          // Try without archived filter as fallback
+          const { data: fallbackData, error: fallbackError } = await supabase
+            .from('children')
+            .select('*')
+            .eq('family_id', familyId)
+            .order('first_name');
+          
+          if (!fallbackError && fallbackData) {
+            setLocalChildren(fallbackData);
+          }
+        } else if (data) {
+          setLocalChildren(data);
+        }
+      } catch (err) {
+        console.warn('[MaterialsLibrary] Error loading children:', err);
+      }
+    };
+    
+    loadChildren();
+  }, [familyId, children]);
+
+  // Use localChildren instead of children prop
+  const effectiveChildren = localChildren.length > 0 ? localChildren : children;
+
   // Load subjects
   useEffect(() => {
     if (!familyId) return;
     loadSubjects();
   }, [familyId]);
+
+  // Avoid "Loading..." flash for subjects chips: only show after a short delay
+  useEffect(() => {
+    if (!loadingSubjects) {
+      setShowSubjectsLoading(false);
+      return;
+    }
+    const t = setTimeout(() => setShowSubjectsLoading(true), 250);
+    return () => clearTimeout(t);
+  }, [loadingSubjects]);
 
   // Load all materials (without filters) for determining if user has any materials at all
   useEffect(() => {
@@ -224,6 +284,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
   }, [materials, loadingMaterials, searchQuery, selectedChildId, selectedSubjectId]);
 
   const loadSubjects = async () => {
+    setLoadingSubjects(true);
     try {
       const { data, error } = await supabase
         .from('subject')
@@ -252,6 +313,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
     } catch (error) {
       console.warn('[MaterialsLibrary] Error loading subjects:', error);
       setSubjects([]);
+    } finally {
+      setLoadingSubjects(false);
     }
   };
 
@@ -573,8 +636,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
     
     if (materialChildren.length > 0) {
       childId = materialChildren[0].child_id;
-    } else if (children.length > 0) {
-      childId = children[0].id;
+    } else if (effectiveChildren.length > 0) {
+      childId = effectiveChildren[0].id;
     }
     
     if (childId) {
@@ -628,6 +691,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
     }
   };
 
+  const handleMagicExtract = async (item) => {
+    toast.push('Magic Extract: Analyzing document...', 'info');
+    // TODO: Implement AI-powered extraction from material
+    // This could extract key information, create summaries, generate lesson plans, etc.
+  };
+
   const showContextMenu = (item, clientX, clientY) => {
     if (typeof window === 'undefined') return;
     
@@ -640,6 +709,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
      const menuItems = [
        { text: 'Attachment details', action: () => handleEditDetails(item), icon: FileText },
        { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
+       { text: 'Magic Extract', action: () => handleMagicExtract(item), icon: Sparkles },
        { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
        { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
      ];
@@ -735,6 +805,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
           path.setAttribute('d', 'M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8');
         } else if (menuItem.icon === Edit2) {
           path.setAttribute('d', 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z');
+        } else if (menuItem.icon === Sparkles) {
+          path.setAttribute('d', 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z M20 3v4 M22 5h-4');
         } else if (menuItem.icon === ExternalLink) {
           path.setAttribute('d', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6 M15 3h6v6 M10 14L21 3');
         } else if (menuItem.icon === Trash2) {
@@ -984,7 +1056,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                 placeholder="Search library..."
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                placeholderTextColor={colors.muted}
+                placeholderTextColor="#9ca3af"
               />
               {searchQuery.length > 0 ? (
                 <TouchableOpacity
@@ -1008,8 +1080,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                 cursor: 'pointer',
               })}
             >
-              <Plus size={18} color="#ffffff" strokeWidth={3} />
-              <Text style={styles.newButtonText}>NEW</Text>
+              <Text style={styles.newButtonText}>+ NEW</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1151,7 +1222,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                 ]}
               >
                 {/* Children Filter Section */}
-                {children.length > 0 && (
+                {effectiveChildren.length > 0 && (
                   <View style={styles.dropdownSection}>
                     <Text style={styles.dropdownSectionTitle}>CHILDREN</Text>
                     <TouchableOpacity
@@ -1163,7 +1234,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                       </View>
                       <Text style={styles.dropdownOptionText}>All Children</Text>
                     </TouchableOpacity>
-                    {children.map((child) => {
+                    {effectiveChildren.map((child) => {
                       const isSelected = selectedChildId === child.id;
                       return (
                         <TouchableOpacity
@@ -1184,7 +1255,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                 )}
 
                 {/* Types Filter Section */}
-                {children.length > 0 && <View style={styles.dropdownDivider} />}
+                {effectiveChildren.length > 0 && <View style={styles.dropdownDivider} />}
                 <View style={styles.dropdownSection}>
                   <Text style={styles.dropdownSectionTitle}>TYPES</Text>
                   {ROLE_CHIPS.map((opt) => {
@@ -1247,18 +1318,16 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
 
           <>
             {/* Children Filter Chips Row */}
-            <View style={styles.childrenLabelContainer}>
-              <Text style={styles.childrenLabelText}>CHILDREN</Text>
-            </View>
             <View style={styles.childrenFilterRow}>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.childrenFilterScroll}
-                contentContainerStyle={styles.childrenFilterScrollContent}
-              >
-                {children.length > 0 && (
-                  <>
+              <Text style={styles.childrenLabelText}>Children</Text>
+              {effectiveChildren.length > 0 ? (
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.childrenFilterScroll}
+                    contentContainerStyle={styles.childrenFilterScrollContent}
+                  >
                     <TouchableOpacity
                       style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
                       onPress={() => {
@@ -1271,9 +1340,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                         All Children
                       </Text>
                     </TouchableOpacity>
-                    {children.map((child) => {
+                    {effectiveChildren.map((child) => {
                       const isActive = selectedChildId === child.id;
                       const label = child.first_name || child.name || 'Child';
+                      const childColor = getChildDotColor(child.id);
                       return (
                         <TouchableOpacity
                           key={child.id}
@@ -1284,73 +1354,84 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                             setRoleFilter('all');
                           }}
                         >
+                          <View
+                            style={[
+                              styles.childDot,
+                              { backgroundColor: childColor, marginRight: 6 }
+                            ]}
+                          />
                           <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
                             {label}
                           </Text>
                         </TouchableOpacity>
                       );
                     })}
-                  </>
+                  </ScrollView>
+                </View>
+              ) : (
+                <Text style={{ fontSize: 12, color: colors.muted, marginLeft: 12 }}>
+                  Loading children...
+                </Text>
+              )}
+            </View>
+
+            {/* Subjects Filter Chips Row */}
+            <View style={styles.subjectsFilterRow}>
+              <Text style={styles.subjectsLabelText}>Subjects</Text>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.subjectsFilterScroll}
+                contentContainerStyle={styles.subjectsFilterScrollContent}
+              >
+                <TouchableOpacity
+                  style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
+                  onPress={() => {
+                    setSelectedSubjectId(null);
+                    setRoleFilter('all');
+                  }}
+                >
+                  <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
+                    All Subjects
+                  </Text>
+                </TouchableOpacity>
+                {subjects
+                  .filter(s => {
+                    // `subject.child_id` is a semicolon-separated list (text) or empty for family-wide
+                    // All Children: show all subjects
+                    if (!selectedChildId) return true;
+                    // Specific child: show family-wide or subjects assigned to that child
+                    const subjectChildIds = parseChildIds(s.child_id || '');
+                    return subjectChildIds.length === 0 || subjectChildIds.includes(selectedChildId);
+                  })
+                  .map((subject) => {
+                    const isActive = selectedSubjectId === subject.id;
+                    return (
+                      <TouchableOpacity
+                        key={subject.id}
+                        style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                        onPress={() => {
+                          setSelectedSubjectId(isActive ? null : subject.id);
+                          setRoleFilter('all');
+                        }}
+                      >
+                        <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
+                          {subject.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                {subjects.length === 0 && showSubjectsLoading && (
+                  <Text style={{ fontSize: 12, color: colors.muted, paddingVertical: 5 }}>
+                    Loading…
+                  </Text>
                 )}
               </ScrollView>
             </View>
 
-            {/* Subjects Filter Chips Row */}
-            {subjects.length > 0 && (
-              <>
-                <View style={styles.subjectsLabelContainer}>
-                  <Text style={styles.subjectsLabelText}>SUBJECTS</Text>
-                </View>
-                <View style={styles.subjectsFilterRow}>
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.subjectsFilterScroll}
-                    contentContainerStyle={styles.subjectsFilterScrollContent}
-                  >
-                    <TouchableOpacity
-                      style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
-                      onPress={() => {
-                        setSelectedSubjectId(null);
-                        setRoleFilter('all');
-                      }}
-                    >
-                      <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
-                        All Subjects
-                      </Text>
-                    </TouchableOpacity>
-                    {subjects
-                      .filter(s => {
-                        // Show family-wide subjects (child_id is null) or subjects for the selected child (if any)
-                        return !s.child_id || (selectedChildId && s.child_id === selectedChildId);
-                      })
-                      .map((subject) => {
-                        const isActive = selectedSubjectId === subject.id;
-                        return (
-                          <TouchableOpacity
-                            key={subject.id}
-                            style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                            onPress={() => {
-                              setSelectedSubjectId(isActive ? null : subject.id);
-                              setRoleFilter('all');
-                            }}
-                          >
-                            <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
-                              {subject.name}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                  </ScrollView>
-                </View>
-              </>
-            )}
-
             {/* Types Filter Chips Row */}
-            <View style={styles.typesLabelContainer}>
-              <Text style={styles.typesLabelText}>TYPES</Text>
-            </View>
             <View style={styles.typesFilterRow}>
+              <Text style={styles.typesLabelText}>Types</Text>
               <ScrollView 
                 horizontal 
                 showsHorizontalScrollIndicator={false}
@@ -1375,10 +1456,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
             </View>
 
             {/* Recently Deleted Row */}
-            <View style={styles.recentlyDeletedLabelContainer}>
-              <Text style={styles.recentlyDeletedLabelText}>RECENTLY DELETED</Text>
-            </View>
             <View style={styles.recentlyDeletedFilterRow}>
+              <Text style={styles.recentlyDeletedLabelText}>Recently Deleted</Text>
               <ScrollView 
                 horizontal 
                 showsHorizontalScrollIndicator={false}
@@ -1453,6 +1532,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                   )}
                 </TouchableOpacity>
               </View>
+              <View style={styles.listHeaderDivider} />
 
               {nothingVisible ? (
                 <View style={styles.emptyFilteredState}>
@@ -1489,139 +1569,142 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
                 return sortDirection === 'desc' ? comparison : -comparison;
               }
             })
-              .map((item, index) => {
+              .map((item, index, arr) => {
               const { kind, data, normalized } = item;
               
               const isHovered = hoveredItemId === data.id;
+              const isLast = index === arr.length - 1;
               
               return (
-                <View
-                  key={`${kind}-${data.id}`}
-                  style={[
-                    styles.listItem,
-                    Platform.OS === 'web' && { cursor: 'pointer' }
-                  ]}
-                  {...(Platform.OS === 'web' && typeof window !== 'undefined' && {
-                    onMouseEnter: () => setHoveredItemId(data.id),
-                    onMouseLeave: () => setHoveredItemId(null),
-                    onMouseDown: (e) => {
-                      if (e.button === 2) {
+                <View key={`${kind}-${data.id}`}>
+                  <View
+                    style={[
+                      styles.listItem,
+                      Platform.OS === 'web' && { cursor: 'pointer' }
+                    ]}
+                    {...(Platform.OS === 'web' && typeof window !== 'undefined' && {
+                      onMouseEnter: () => setHoveredItemId(data.id),
+                      onMouseLeave: () => setHoveredItemId(null),
+                      onMouseDown: (e) => {
+                        if (e.button === 2) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const nativeEvent = e.nativeEvent || e;
+                          handleItemRightClick(item, nativeEvent);
+                        }
+                      },
+                      onContextMenu: (e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         const nativeEvent = e.nativeEvent || e;
                         handleItemRightClick(item, nativeEvent);
                       }
-                    },
-                    onContextMenu: (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const nativeEvent = e.nativeEvent || e;
-                      handleItemRightClick(item, nativeEvent);
-                    }
-                  })}
-                >
-                  <TouchableOpacity
-                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
-                    onPress={() => handleItemClick(item)}
-                    activeOpacity={0.7}
+                    })}
                   >
-                    <View style={styles.listItemContent}>
-                      <View style={styles.listItemTitleRow}>
-                        <Text style={styles.listItemTitle} numberOfLines={1}>
-                          {normalized.title}
-                        </Text>
-                        {(() => {
-                          // Build type string like "Algebra Syllabus (PDF)" from subject, role and mediaType
-                          const subjectName = data.subject_key;
-                          const roleText = normalized.role ? roleLabel(normalized.role) : null;
-                          const mediaTypeText = normalized.mediaType ? mediaTypeLabel(normalized.mediaType) : null;
-                          
-                          if (!roleText) return null;
-                          
-                          // Build subject prefix if subject exists
-                          let subjectPrefix = '';
-                          if (subjectName) {
-                            // Check if subject_key contains multiple subjects (comma-separated or "and")
-                            const subjects = subjectName.split(/[,\s]+and\s+|[,\s]+/i).filter(s => s.trim());
-                            if (subjects.length === 2) {
-                              subjectPrefix = `${subjects[0]} and ${subjects[1]} `;
-                            } else if (subjects.length > 0) {
-                              subjectPrefix = `${subjects[0]} `;
-                            }
-                          }
-                          
-                          const typeString = mediaTypeText 
-                            ? `${subjectPrefix}${roleText} (${mediaTypeText})`
-                            : `${subjectPrefix}${roleText}`;
-                          
-                          return (
-                            <Text style={styles.listItemType} numberOfLines={1}>
-                              {typeString}
-                            </Text>
-                          );
-                        })()}
-                      </View>
-                      <View style={styles.listItemMeta}>
-                        {(() => {
-                          const materialChildren = data.material_children || [];
-                          const childIds = materialChildren.map(mc => mc.child_id);
-                          const childNames = materialChildren
-                            .map(mc => {
-                              const child = children.find(c => c.id === mc.child_id);
-                              return child ? (child.first_name || child.name || 'Child') : null;
-                            })
-                            .filter(Boolean);
-                          const hasChildren = childNames.length > 0;
-                          
-                          if (!hasChildren) return null;
-                          
-                          // Add child dots if there are children
-                          if (hasChildren) {
-                            return (
-                              <View style={styles.listItemSubtitleRow}>
-                                {childIds.slice(0, 3).map((childId) => (
-                                  <View
-                                    key={childId}
-                                    style={[
-                                      styles.childDot,
-                                      { backgroundColor: getChildDotColor(childId) }
-                                    ]}
-                                  />
-                                ))}
-                                {childIds.length > 3 && (
-                                  <View style={[styles.childDot, { backgroundColor: 'rgba(156, 163, 175, 0.4)' }]} />
-                                )}
-                                <Text style={styles.listItemSubtitle} numberOfLines={1}>
-                                  {childNames.join(', ')}
-                                </Text>
-                              </View>
-                            );
-                          }
-                          
-                          return null;
-                        })()}
-                      </View>
-                    </View>
-                    {data.created_at && (
-                      <Text style={styles.listItemDate}>
-                        {new Date(data.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                  {Platform.OS === 'web' && (
                     <TouchableOpacity
-                      style={[
-                        styles.menuButton,
-                        !isHovered && styles.menuButtonHidden
-                      ]}
-                      onPress={(e) => handleMenuButtonClick(item, e)}
-                      data-menu-button-id={data.id}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => handleItemClick(item)}
+                      activeOpacity={0.7}
                     >
-                      <MoreVertical size={18} color={colors.muted} />
+                      <View style={styles.listItemContent}>
+                        <View style={styles.listItemTitleRow}>
+                          <Text style={styles.listItemTitle} numberOfLines={1}>
+                            {normalized.title}
+                          </Text>
+                          {(() => {
+                            // Build type string like "Algebra Syllabus (PDF)" from subject, role and mediaType
+                            const subjectName = data.subject_key;
+                            const roleText = normalized.role ? roleLabel(normalized.role) : null;
+                            const mediaTypeText = normalized.mediaType ? mediaTypeLabel(normalized.mediaType) : null;
+                            
+                            if (!roleText) return null;
+                            
+                            // Build subject prefix if subject exists
+                            let subjectPrefix = '';
+                            if (subjectName) {
+                              // Check if subject_key contains multiple subjects (comma-separated or "and")
+                              const subjects = subjectName.split(/[,\s]+and\s+|[,\s]+/i).filter(s => s.trim());
+                              if (subjects.length === 2) {
+                                subjectPrefix = `${subjects[0]} and ${subjects[1]} `;
+                              } else if (subjects.length > 0) {
+                                subjectPrefix = `${subjects[0]} `;
+                              }
+                            }
+                            
+                            const typeString = mediaTypeText 
+                              ? `${subjectPrefix}${roleText} (${mediaTypeText})`
+                              : `${subjectPrefix}${roleText}`;
+                            
+                            return (
+                              <Text style={styles.listItemType} numberOfLines={1}>
+                                {typeString}
+                              </Text>
+                            );
+                          })()}
+                        </View>
+                        <View style={styles.listItemMeta}>
+                          {(() => {
+                            const materialChildren = data.material_children || [];
+                            const childIds = materialChildren.map(mc => mc.child_id);
+                            const childNames = materialChildren
+                              .map(mc => {
+                                const child = effectiveChildren.find(c => c.id === mc.child_id);
+                                return child ? (child.first_name || child.name || 'Child') : null;
+                              })
+                              .filter(Boolean);
+                            const hasChildren = childNames.length > 0;
+                            
+                            if (!hasChildren) return null;
+                            
+                            // Add child dots if there are children
+                            if (hasChildren) {
+                              return (
+                                <View style={styles.listItemSubtitleRow}>
+                                  {childIds.slice(0, 3).map((childId) => (
+                                    <View
+                                      key={childId}
+                                      style={[
+                                        styles.childDot,
+                                        { backgroundColor: getChildDotColor(childId) }
+                                      ]}
+                                    />
+                                  ))}
+                                  {childIds.length > 3 && (
+                                    <View style={[styles.childDot, { backgroundColor: 'rgba(156, 163, 175, 0.4)' }]} />
+                                  )}
+                                  <Text style={styles.listItemSubtitle} numberOfLines={1}>
+                                    {childNames.join(', ')}
+                                  </Text>
+                                </View>
+                              );
+                            }
+                            
+                            return null;
+                          })()}
+                        </View>
+                      </View>
+                      {data.created_at && (
+                        <Text style={styles.listItemDate}>
+                          {new Date(data.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </Text>
+                      )}
                     </TouchableOpacity>
-                  )}
+                    {Platform.OS === 'web' && (
+                      <TouchableOpacity
+                        style={[
+                          styles.menuButton,
+                          !isHovered && styles.menuButtonHidden
+                        ]}
+                        onPress={(e) => handleMenuButtonClick(item, e)}
+                        data-menu-button-id={data.id}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <MoreVertical size={18} color={colors.muted} />
+                      </TouchableOpacity>
+                    )}
                   </View>
+                  {!isLast && <View style={styles.listItemDivider} />}
+                </View>
                 );
               })}
             </ScrollView>
@@ -1763,7 +1846,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedMat
           childId={reviewChildId}
           familyId={familyId}
           materialTitle={reviewMaterial.title}
-          childName={children.find(c => c.id === reviewChildId)?.first_name || children.find(c => c.id === reviewChildId)?.name || ''}
+          childName={effectiveChildren.find(c => c.id === reviewChildId)?.first_name || effectiveChildren.find(c => c.id === reviewChildId)?.name || ''}
         />
       )}
 
@@ -1842,7 +1925,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
-    padding: 16,
+    // Avoid double horizontal padding (rows below already handle their own inset)
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 16,
     minHeight: '100%',
   },
   mainContent: {
@@ -2174,12 +2260,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
     marginBottom: 0,
+    // Match Subjects/Intelligence Hub header row height
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: colors.background,
   },
   totalFilesText: {
     fontSize: 18,
     fontWeight: '700',
     color: colors.text,
-    paddingLeft: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -2187,8 +2276,9 @@ const styles = StyleSheet.create({
   searchAndButtonContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    flex: 1,
+    // Match Planner spacing + non-stretch behavior
+    gap: 12,
+    flexShrink: 0,
     justifyContent: 'flex-end',
   },
   addButton: {
@@ -2219,16 +2309,19 @@ const styles = StyleSheet.create({
     }),
   },
   filters: {
-    marginBottom: 16,
+    // Match Planner: avoid extra vertical slack under the header row
+    marginBottom: 0,
   },
   divider: {
     height: 1,
     backgroundColor: colors.border || '#e5e7eb',
-    marginTop: 16,
-    marginBottom: 16,
+    // Match Planner: divider sits directly under the header row
+    marginTop: 0,
+    marginBottom: 0,
+    // Match Intelligence: inset divider line
+    marginHorizontal: 24,
   },
   searchContainer: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     maxWidth: 250,
@@ -2443,12 +2536,12 @@ const styles = StyleSheet.create({
   newButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
-    backgroundColor: '#000000',
+    borderWidth: 1,
+    borderColor: '#111827',
+    backgroundColor: '#111827',
     ...Platform.select({
       web: {
         cursor: 'pointer',
@@ -2662,8 +2755,15 @@ const styles = StyleSheet.create({
     }),
   },
   childrenLabelContainer: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
     paddingHorizontal: 12,
     paddingBottom: 8,
+    paddingTop: 4,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   childrenLabelText: {
     fontSize: 15,
@@ -2674,11 +2774,23 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterRow: {
-    marginBottom: 12,
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    // Add breathing room below the divider above the chips (match requested spacing)
+    marginTop: 24,
+    marginBottom: 16,
+    // Align with Intelligence Hub chips (filtersContainer paddingHorizontal: 24)
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   childrenFilterScroll: {
-    flexGrow: 0,
+    flex: 1,
   },
   childrenFilterScrollContent: {
     flexDirection: 'row',
@@ -2686,9 +2798,15 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   subjectsLabelContainer: {
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    paddingHorizontal: 24,
     paddingBottom: 8,
     paddingTop: 4,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   subjectsLabelText: {
     fontSize: 15,
@@ -2699,8 +2817,17 @@ const styles = StyleSheet.create({
     }),
   },
   subjectsFilterRow: {
-    marginBottom: 20,
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   subjectsFilterScroll: {
     flexGrow: 0,
@@ -2711,9 +2838,15 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   typesLabelContainer: {
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    paddingHorizontal: 24,
     paddingBottom: 8,
     paddingTop: 4,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   typesLabelText: {
     fontSize: 15,
@@ -2724,8 +2857,17 @@ const styles = StyleSheet.create({
     }),
   },
   typesFilterRow: {
-    marginBottom: 12,
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   typesFilterScroll: {
     flexGrow: 0,
@@ -2736,9 +2878,15 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   recentlyDeletedLabelContainer: {
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    paddingHorizontal: 24,
     paddingBottom: 8,
     paddingTop: 10,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   recentlyDeletedLabelText: {
     fontSize: 15,
@@ -2749,8 +2897,17 @@ const styles = StyleSheet.create({
     }),
   },
   recentlyDeletedFilterRow: {
-    marginBottom: 20,
-    paddingHorizontal: 12,
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   recentlyDeletedFilterScroll: {
     flexGrow: 0,
@@ -2761,23 +2918,26 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   childrenFilterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.08)',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
+    marginRight: 8,
     ...Platform.select({
       web: { cursor: 'pointer' },
     }),
   },
   childrenFilterChipActive: {
     borderColor: '#4285f4',
-    backgroundColor: '#f0f5ff',
+    backgroundColor: '#e8f0fe',
   },
   childrenFilterChipText: {
-    fontSize: 14,
-    color: '#3c4043',
+    fontSize: 12,
+    color: colors.text,
     fontWeight: '400',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2791,7 +2951,7 @@ const styles = StyleSheet.create({
     }),
   },
   allFilesContainer: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 24,
     paddingVertical: 12,
   },
   allFilesText: {
@@ -2806,14 +2966,13 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.border || '#e5e7eb',
     marginBottom: 0,
+    marginHorizontal: 24,
   },
   listHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    paddingHorizontal: 24,
   },
   listHeaderTitle: {
     flex: 1,
@@ -2866,9 +3025,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    paddingHorizontal: 24,
     backgroundColor: '#ffffff',
     width: '100%',
     ...Platform.select({
@@ -2879,6 +3036,11 @@ const styles = StyleSheet.create({
         },
       },
     }),
+  },
+  listItemDivider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginHorizontal: 24,
   },
   listItemIcon: {
     width: 40,
@@ -2921,6 +3083,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   childDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    flexShrink: 0,
+  },
+  childrenFilterChipDot: {
     width: 6,
     height: 6,
     borderRadius: 3,

@@ -6,6 +6,7 @@ import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { getMaterials } from '../lib/services/materialsClient';
 import AddMaterialModal from './materials/AddMaterialModal';
+import { parseChildIds } from '../lib/services/subjectsClient';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -15,9 +16,11 @@ export default function AddSubjectModal({
   onSubjectAdded,
   familyId,
   defaultChildId = null,
-  defaultSubjectName = null
+  defaultSubjectName = null,
+  subject = null // If provided, edit mode
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
+  const [summary, setSummary] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
   const [credits, setCredits] = useState('');
@@ -38,20 +41,35 @@ export default function AddSubjectModal({
   const materialDropdownRef = useRef(null);
   const materialButtonRef = useRef(null);
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
+  const hasSetChildIdsRef = useRef(false);
+  const lastSubjectIdRef = useRef(null);
 
   useEffect(() => {
     if (visible) {
       fetchChildren();
       loadMaterials();
-      if (defaultSubjectName) {
-        setSubjectName(defaultSubjectName);
-      }
-      if (defaultChildId) {
-        setSelectedChildIds([defaultChildId]);
+      
+      // If editing a subject, populate fields (but wait for children to load for child IDs)
+      if (subject) {
+        setSubjectName(subject.name || '');
+        setSummary(subject.summary || '');
+        setGrade(subject.grade || GRADE_OPTIONS[0] || '');
+        setCredits(subject.credits ? String(subject.credits) : '');
+        setNotes(subject.notes || '');
+        // Child IDs will be set in the next useEffect after children load
+      } else {
+        // Add mode - use defaults
+        if (defaultSubjectName) {
+          setSubjectName(defaultSubjectName);
+        }
+        if (defaultChildId) {
+          setSelectedChildIds([defaultChildId]);
+        }
       }
     } else if (!visible) {
       // Reset form when modal closes
       setSubjectName('');
+      setSummary('');
       setSelectedChildIds([]);
       setGrade(GRADE_OPTIONS[0] || '');
       setCredits('');
@@ -61,14 +79,42 @@ export default function AddSubjectModal({
       setAttachedMaterialIds([]);
       setShowMaterialDropdown(false);
     }
-  }, [visible, defaultChildId, defaultSubjectName]);
+  }, [visible, defaultChildId, defaultSubjectName, subject]);
+
+  // Set child IDs when editing and children are loaded
+  useEffect(() => {
+    if (visible && subject && children.length > 0) {
+      // Reset flag if subject changed
+      if (lastSubjectIdRef.current !== subject.id) {
+        hasSetChildIdsRef.current = false;
+        lastSubjectIdRef.current = subject.id;
+      }
+      
+      // Only set once per subject
+      if (!hasSetChildIdsRef.current) {
+        // Parse semicolon-separated child_id string
+        if (subject.child_id) {
+          const childIds = parseChildIds(subject.child_id);
+          setSelectedChildIds(childIds);
+        } else {
+          setSelectedChildIds([]);
+        }
+        hasSetChildIdsRef.current = true;
+      }
+    } else if (!visible) {
+      // Reset flags when modal closes
+      hasSetChildIdsRef.current = false;
+      lastSubjectIdRef.current = null;
+    }
+  }, [visible, subject?.id, children.length]);
 
   // Set default to first child when children are loaded (if no defaultChildId and no children selected)
+  // BUT only in add mode (not edit mode)
   useEffect(() => {
-    if (visible && children.length > 0 && selectedChildIds.length === 0 && !defaultChildId) {
+    if (visible && children.length > 0 && selectedChildIds.length === 0 && !defaultChildId && !subject) {
       setSelectedChildIds([children[0].id]);
     }
-  }, [children, visible, defaultChildId, selectedChildIds.length]);
+  }, [children, visible, defaultChildId, selectedChildIds.length, subject]);
 
   const loadMaterials = async () => {
     if (!familyId) return;
@@ -205,20 +251,44 @@ export default function AddSubjectModal({
         throw new Error('User not authenticated');
       }
 
-      // Create subject records - one for each selected child (required)
-      const subjectsToCreate = selectedChildIds.map(childId => ({
-        family_id: familyId,
+      // Create subject record with semicolon-separated child IDs
+      // Format: "child1;child2;child3" or empty string for all children
+      const childIdString = selectedChildIds.length > 0 
+        ? selectedChildIds.join(';')
+        : ''; // Empty string means applies to all children
+
+      const subjectData = {
         name: subjectName.trim(),
-        child_id: childId,
+        summary: summary.trim() || null,
+        child_id: childIdString, // Now stores semicolon-separated IDs
         grade: grade || null,
         credits: credits ? parseFloat(credits) : null,
         notes: notes.trim() || null,
-      }));
+      };
 
-      const { data: newSubjects, error: insertError } = await supabase
-        .from('subject')
-        .insert(subjectsToCreate)
-        .select();
+      let newSubjects;
+      let insertError;
+
+      if (subject && subject.id) {
+        // Edit mode - UPDATE
+        const { data, error } = await supabase
+          .from('subject')
+          .update(subjectData)
+          .eq('id', subject.id)
+          .eq('family_id', familyId)
+          .select();
+        newSubjects = data;
+        insertError = error;
+      } else {
+        // Add mode - INSERT
+        subjectData.family_id = familyId;
+        const { data, error } = await supabase
+          .from('subject')
+          .insert([subjectData])
+          .select();
+        newSubjects = data;
+        insertError = error;
+      }
 
       if (insertError) {
         // Check if it's a duplicate subject error
@@ -251,16 +321,31 @@ export default function AddSubjectModal({
       }
 
       // Success
-      const subjectCount = newSubjects?.length || 1;
+      const isEdit = subject && subject.id;
+      const successMessage = isEdit 
+        ? `Subject "${subjectName}" updated successfully!`
+        : `Subject "${subjectName}" added successfully!`;
+      
       if (toast && toast.push) {
-        toast.push(`Subject "${subjectName}" added successfully!`, 'success');
+        toast.push(successMessage, 'success');
       } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        alert(`Subject "${subjectName}" added successfully!`);
+        alert(successMessage);
       }
       
       if (onSubjectAdded && newSubjects && newSubjects.length > 0) {
         // Call callback with first subject (or all if needed)
         onSubjectAdded(newSubjects[0]);
+      }
+      
+      // Dispatch event to refresh subjects in other components (e.g., IntelligenceHub, SubjectDetailPage)
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        // Also dispatch a specific event for subject detail page if we're editing
+        if (subject && subject.id) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
+            detail: { subjectId: subject.id }
+          }));
+        }
       }
       
       // Close modal after a brief delay
@@ -284,13 +369,19 @@ export default function AddSubjectModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.modal}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={styles.modal}
+        >
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <Text style={styles.title}>Add Subject</Text>
-              <Text style={styles.subtitle}>Create a new subject for your learning plan</Text>
-            </View>
+            <Text style={styles.title}>{subject ? 'Edit Subject' : 'Add Subject'}</Text>
             <TouchableOpacity
               style={styles.closeButton}
               onPress={onClose}
@@ -325,6 +416,18 @@ export default function AddSubjectModal({
                 placeholder="e.g., Algebra I, World History, Spanish"
                 placeholderTextColor="#9ca3af"
                 autoFocus={!defaultSubjectName}
+              />
+            </View>
+
+            {/* Summary (Optional) */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Summary (Optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={summary}
+                onChangeText={setSummary}
+                placeholder="E.g., Building foundational knowledge on fractions."
+                placeholderTextColor="#9ca3af"
               />
             </View>
 
@@ -598,11 +701,11 @@ export default function AddSubjectModal({
               disabled={!canSubmit || isSubmitting}
             >
               <Text style={styles.saveButtonText}>
-                {isSubmitting ? 'Saving...' : 'Save Subject'}
+                {isSubmitting ? 'Saving...' : (subject ? 'Update Subject' : 'Save Subject')}
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* Add Material Modal */}
@@ -633,9 +736,9 @@ const styles = StyleSheet.create({
   },
   modal: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    maxWidth: 600,
-    width: '100%',
+    borderRadius: 24,
+    width: 720,
+    maxWidth: '100%',
     maxHeight: '85vh',
     ...Platform.select({
       web: {
@@ -663,44 +766,23 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingHorizontal: 32,
-    paddingTop: 32,
-    paddingBottom: 24,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fafbfc',
-  },
-  headerContent: {
-    flex: 1,
+    borderBottomColor: colors.border,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-    ...Platform.select({
-      web: {
-        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      },
-    }),
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '400',
-    ...Platform.select({
-      web: {
-        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-      },
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
+    padding: 4,
     justifyContent: 'center',
     marginLeft: 16,
   },
@@ -808,22 +890,21 @@ const styles = StyleSheet.create({
   cancelButton: {
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: 'transparent',
   },
   cancelButtonText: {
-    color: '#374151',
+    color: '#666666',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   saveButton: {
     paddingVertical: 10,
     paddingHorizontal: 24,
-    borderRadius: 8,
-    backgroundColor: '#B8D7F9',
+    borderRadius: 12,
+    backgroundColor: '#8B7CF6',
   },
   saveButtonText: {
-    color: '#1e40af',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },

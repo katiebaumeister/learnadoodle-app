@@ -14,7 +14,7 @@ import {
   Platform,
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
-import { getSubjectsWithOverview } from '../lib/services/subjectsClient'
+import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
@@ -593,7 +593,7 @@ import LessonPlans from './lesson-plans/LessonPlans'
 // import WebRecordsScreen from './records/WebRecordsScreen' // Archived - records screen removed
 import PortfolioTimeline from './portfolio/PortfolioTimeline'
 import MaterialsLibrary from './materials/MaterialsLibrary'
-import IntelligenceHub from './intelligence/IntelligenceHub'
+// Archived: import IntelligenceHub from './intelligence/IntelligenceHub'
 import SubjectDetailPage from './subjects/SubjectDetailPage'
 import SubjectsPage from './subjects/SubjectsPage'
 import { getMaterials } from '../lib/services/materialsClient'
@@ -2954,6 +2954,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [subjectsOverviewCache, setSubjectsOverviewCache] = useState(null)
   // Cache for subject detail data (for SubjectDetailPage) - keyed by subjectId
   const [subjectDetailCache, setSubjectDetailCache] = useState({})
+  const preloadingDetailsRef = useRef(new Set())
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
@@ -2988,6 +2989,48 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     return () => {
       isCancelled = true;
     };
+  }, [familyId, subjectsOverviewCache]);
+
+  // Preload subject detail data for all subjects when overview is loaded
+  useEffect(() => {
+    if (!familyId || !subjectsOverviewCache || subjectsOverviewCache.length === 0) return;
+
+    // Preload all subject details in background
+    subjectsOverviewCache.forEach((subject) => {
+      // Skip if already cached or currently loading
+      setSubjectDetailCache(prev => {
+        if (prev[subject.id] || preloadingDetailsRef.current.has(subject.id)) {
+          return prev; // Already cached or loading
+        }
+        
+        // Mark as loading
+        preloadingDetailsRef.current.add(subject.id);
+        
+        // Load in background
+        getSubjectDetail(subject.id, familyId)
+          .then(detailData => {
+            setSubjectDetailCache(prevCache => {
+              // Double-check it's still not cached (race condition protection)
+              if (prevCache[subject.id]) {
+                preloadingDetailsRef.current.delete(subject.id);
+                return prevCache;
+              }
+              preloadingDetailsRef.current.delete(subject.id);
+              return {
+                ...prevCache,
+                [subject.id]: detailData,
+              };
+            });
+          })
+          .catch(err => {
+            preloadingDetailsRef.current.delete(subject.id);
+            // Silently fail - we'll load on demand if needed
+            console.warn(`[WebContent] Failed to preload detail for subject ${subject.id}:`, err);
+          });
+        
+        return prev; // Return unchanged for now
+      });
+    });
   }, [familyId, subjectsOverviewCache]);
 
   // Handle subjects overview cache updates
@@ -6326,7 +6369,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               familyId={familyId}
               children={children || []}
               preloadedSubjects={subjectsOverviewCache}
+              preloadedSubjectDetailCache={subjectDetailCache}
               onSubjectsUpdate={handleSubjectsOverviewUpdate}
+              onSubjectDetailUpdate={handleSubjectDetailUpdate}
               onAddSubject={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
@@ -6375,32 +6420,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           )
         }
       case 'intelligence':
-        if (!familyId) {
-          return (
-            <View style={styles.content}>
-              <Text style={styles.title}>Loading...</Text>
-            </View>
-          )
+        // Archived: IntelligenceHub has been replaced with SubjectsPage
+        // Redirecting to subjects tab instead
+        if (onTabChange) {
+          onTabChange('subjects');
         }
-        try {
-          return (
-            <IntelligenceHub
-              familyId={familyId}
-              children={children || []}
-              // Reuse the same cached subjects overview used by the standalone Subjects screen
-              preloadedSubjects={subjectsOverviewCache}
-              onSubjectsUpdate={handleSubjectsOverviewUpdate}
-            />
-          );
-        } catch (err) {
-          console.error('[WebContent] Error rendering IntelligenceHub:', err);
-          return (
-            <View style={styles.content}>
-              <Text style={styles.title}>Error Loading Intelligence Hub</Text>
-              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
-            </View>
-          )
-        }
+        return (
+          <View style={styles.content}>
+            <Text style={styles.title}>Redirecting to Subjects...</Text>
+          </View>
+        );
       case 'coach':
         if (!familyId) {
           return (

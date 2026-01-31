@@ -11,4 +11,5 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 reportlab>=4.0.0  # Optional: For PDF attendance report generation
 email-validator>=2.0.0
+python-dateutil>=2.9.0
 

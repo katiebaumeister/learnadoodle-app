@@ -1,30 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, Platform } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
-import { LogOut, Users, Settings, User, Info, X } from 'lucide-react';
-import ProfilePanel from './ProfilePanel';
+import { LogOut, X } from 'lucide-react';
 import FamilyPanel from './FamilyPanel';
-import TutorsAccessPanel from './TutorsAccessPanel';
-import AboutPanel from './AboutPanel';
 
-const sections = [
-  { id: 'profile', label: 'Profile', icon: User },
-  { id: 'family', label: 'Family & Members', icon: Users },
-  { id: 'tutors', label: 'Invite Members', icon: Users },
-  { id: 'about', label: 'About', icon: Info },
-];
-
-export default function SettingsModal({ visible, onClose, user, initialSection = 'profile' }) {
+export default function SettingsModal({ visible, onClose, user }) {
   const { signOut } = useAuth();
-  const [activeSection, setActiveSection] = useState(initialSection);
   const [loggingOut, setLoggingOut] = useState(false);
-
-  // Update activeSection when modal becomes visible and initialSection changes
-  useEffect(() => {
-    if (visible) {
-      setActiveSection(initialSection);
-    }
-  }, [visible, initialSection]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -62,49 +44,7 @@ export default function SettingsModal({ visible, onClose, user, initialSection =
 
           {/* Main Content */}
           <View style={styles.mainContent}>
-            {/* Left Sidebar */}
-            <View style={styles.sidebar}>
-              {sections.map((section) => {
-                const Icon = section.icon;
-                const isActive = activeSection === section.id;
-                return (
-                  <TouchableOpacity
-                    key={section.id}
-                    style={[
-                      styles.sidebarItem,
-                      isActive && styles.sidebarItemActive,
-                    ]}
-                    onPress={() => setActiveSection(section.id)}
-                  >
-                    <Icon size={16} color={isActive ? '#111827' : '#6b7280'} />
-                    <Text
-                      style={[
-                        styles.sidebarItemText,
-                        isActive && styles.sidebarItemTextActive,
-                      ]}
-                    >
-                      {section.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Right Content Panel */}
-            <ScrollView style={styles.contentPanel} contentContainerStyle={styles.contentPanelContent}>
-              <View style={[styles.panelContainer, activeSection !== 'profile' && styles.panelHidden]}>
-                <ProfilePanel user={user} />
-              </View>
-              <View style={[styles.panelContainer, activeSection !== 'family' && styles.panelHidden]}>
-                <FamilyPanel user={user} />
-              </View>
-              <View style={[styles.panelContainer, activeSection !== 'tutors' && styles.panelHidden]}>
-                <TutorsAccessPanel user={user} />
-              </View>
-              <View style={[styles.panelContainer, activeSection !== 'about' && styles.panelHidden]}>
-                <AboutPanel />
-              </View>
-            </ScrollView>
+            <FamilyPanel user={user} />
           </View>
 
           {/* Footer */}
@@ -193,62 +133,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   mainContent: {
-    flexDirection: 'row',
-    minHeight: 400,
     flex: 1,
-  },
-  sidebar: {
-    width: 160,
-    borderRightWidth: 1,
-    borderRightColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
-    padding: 8,
-    gap: 4,
-  },
-  sidebarItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  sidebarItemActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-  },
-  sidebarItemText: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  sidebarItemTextActive: {
-    color: '#111827',
-    fontWeight: '500',
-  },
-  contentPanel: {
-    flex: 1,
-  },
-  contentPanelContent: {
-    padding: 16,
-  },
-  panelContainer: {
-    width: '100%',
-  },
-  panelHidden: {
-    ...Platform.select({
-      web: {
-        display: 'none',
-      },
-      default: {
-        position: 'absolute',
-        left: -9999,
-        opacity: 0,
-        pointerEvents: 'none',
-      },
-    }),
   },
   footer: {
     padding: 16,

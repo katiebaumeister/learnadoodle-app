@@ -113,29 +113,31 @@ const ScheduleRulesManager = ({ visible, onClose, familyId, children }) => {
   };
 
   const loadOverrides = async () => {
+    // NOTE: schedule_overrides removed - returning empty array
     try {
-      const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
-      const fromDate = new Date();
-      const toDate = new Date();
-      toDate.setDate(toDate.getDate() + 30); // Next 30 days
+      // const scopeId = selectedScope === 'family' ? familyId : selectedChildId;
+      // const fromDate = new Date();
+      // const toDate = new Date();
+      // toDate.setDate(toDate.getDate() + 30); // Next 30 days
 
-      const { data, error } = await supabase
-        .from('schedule_overrides')
-        .select('*')
-        .eq('scope_type', selectedScope)
-        .eq('scope_id', scopeId)
-        .eq('is_active', true)
-        .gte('date', fromDate.toISOString().split('T')[0])
-        .lte('date', toDate.toISOString().split('T')[0])
-        .order('date', { ascending: true });
+      // const { data, error } = await supabase
+      //   .from('schedule_overrides')
+      //   .select('*')
+      //   .eq('scope_type', selectedScope)
+      //   .eq('scope_id', scopeId)
+      //   .eq('is_active', true)
+      //   .gte('date', fromDate.toISOString().split('T')[0])
+      //   .lte('date', toDate.toISOString().split('T')[0])
+      //   .order('date', { ascending: true });
 
-      if (error) {
-        // For now, set empty array to prevent UI errors
-        setOverrides([]);
-        return;
-      }
-      setOverrides(data || []);
+      // if (error) {
+      //   setOverrides([]);
+      //   return;
+      // }
+      // setOverrides(data || []);
+      setOverrides([]);
     } catch (error) {
+      setOverrides([]);
     }
   };
 

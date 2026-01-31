@@ -6,6 +6,7 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -102,7 +103,7 @@ export default function WebAuthScreen() {
         if (isEmailNotVerified && !isSignUp) {
           setErrorMessage('Please check your email for verification!');
         } else {
-          setErrorMessage(error.message);
+        setErrorMessage(error.message);
         }
       } else if (isSignUp) {
         // Check if user needs email confirmation
@@ -180,7 +181,6 @@ export default function WebAuthScreen() {
           ) : null}
           
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Email Address</Text>
             <TextInput
               style={styles.textInput}
               value={email}
@@ -214,13 +214,14 @@ export default function WebAuthScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.contentContainer}>
       <View style={styles.authCard}>
-        <Text style={styles.title}>{isSignUp ? 'Create Account' : 'Welcome Back'}</Text>
+        <Text style={styles.title}>{isSignUp ? 'Create Account' : 'Hello again!'}</Text>
         <Text style={styles.subtitle}>
           {isSignUp 
             ? 'Sign up to start your learning journey' 
-            : 'Sign in to continue learning'
+            : 'SIGN IN TO CONTINUE LEARNING'
           }
         </Text>
         
@@ -237,12 +238,11 @@ export default function WebAuthScreen() {
         ) : null}
         
         <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Email Address</Text>
           <TextInput
             style={styles.textInput}
             value={email}
             onChangeText={setEmail}
-            placeholder="Enter your email"
+            placeholder="Email"
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
@@ -250,17 +250,16 @@ export default function WebAuthScreen() {
         </View>
         
         <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Password</Text>
           <View style={styles.passwordInputContainer}>
-            <TextInput
+          <TextInput
               style={styles.passwordInput}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Enter your password"
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            value={password}
+            onChangeText={setPassword}
+              placeholder="Password"
+            secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
             <TouchableOpacity
               style={styles.eyeButton}
               onPress={() => setShowPassword(!showPassword)}
@@ -275,19 +274,18 @@ export default function WebAuthScreen() {
         </View>
         
         {isSignUp && (
-          <>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Confirm Password</Text>
-              <View style={styles.passwordInputContainer}>
-                <TextInput
+            <>
+          <View style={styles.inputGroup}>
+                <View style={styles.passwordInputContainer}>
+            <TextInput
                   style={styles.passwordInput}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  placeholder="Confirm your password"
-                  secureTextEntry={!showConfirmPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+                  placeholder="Confirm Password"
+              secureTextEntry={!showConfirmPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
                 <TouchableOpacity
                   style={styles.eyeButton}
                   onPress={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -320,7 +318,7 @@ export default function WebAuthScreen() {
                     • Passwords match
                   </Text>
                 )}
-              </View>
+          </View>
             )}
           </>
         )}
@@ -357,44 +355,44 @@ export default function WebAuthScreen() {
                 style={styles.linkButton}
                 onPress={() => setIsResetPassword(true)}
               >
-                <Text style={styles.linkText}>Forgot Password?</Text>
+                <Text style={styles.linkText}>Forgot Password</Text>
               </TouchableOpacity>
-              <View style={styles.divider} />
-              <Text style={styles.studentHint}>
-                Students: Use the invite link your parent shared with you
-              </Text>
             </>
           )}
         </View>
 
       </View>
     </ScrollView>
+      
+      {!isSignUp && (
+        <Text style={styles.termsNote}>
+          By signing in to Learnadoodle, you agree to our Terms and Privacy Policy.
+        </Text>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#E6F4FC',
+    position: 'relative',
   },
   contentContainer: {
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    paddingBottom: 60,
     minHeight: '100vh',
   },
   authCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#E6F4FC',
     borderRadius: 16,
     padding: 32,
     width: '100%',
     maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
   },
   title: {
     fontSize: 28,
@@ -402,13 +400,20 @@ const styles = StyleSheet.create({
     color: '#1f2937',
     textAlign: 'center',
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subtitle: {
     fontSize: 16,
+    fontWeight: 'bold',
     color: '#6b7280',
     textAlign: 'center',
     marginBottom: 32,
     lineHeight: 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   inputGroup: {
     marginBottom: 20,
@@ -418,6 +423,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#374151',
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   textInput: {
     borderWidth: 1,
@@ -428,9 +436,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#374151',
     backgroundColor: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   authButton: {
-    backgroundColor: '#38B6FF',
+    backgroundColor: '#A78BFA',
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -442,7 +453,11 @@ const styles = StyleSheet.create({
   authButtonText: {
     color: '#ffffff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   linkContainer: {
     alignItems: 'center',
@@ -452,7 +467,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   linkText: {
-    color: '#38B6FF',
+    color: '#6b7280',
     fontSize: 14,
     fontWeight: '500',
   },
@@ -495,6 +510,21 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 8,
   },
+  termsNote: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+    }),
+  },
   passwordInputContainer: {
     position: 'relative',
     flexDirection: 'row',
@@ -511,6 +541,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#374151',
     backgroundColor: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eyeButton: {
     position: 'absolute',
@@ -518,9 +551,6 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   passwordRequirements: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    padding: 16,
     marginBottom: 20,
   },
   requirementsTitle: {

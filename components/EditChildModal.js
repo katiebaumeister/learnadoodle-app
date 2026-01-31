@@ -508,14 +508,14 @@ const styles = StyleSheet.create({
   },
   modal: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    width: '100%',
-    maxWidth: 600,
-    maxHeight: '90%',
+    borderRadius: 24,
+    width: 720,
+    maxWidth: '100%',
+    maxHeight: '85vh',
     overflow: 'hidden',
     ...Platform.select({
       web: {
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
       },
     }),
   },
@@ -684,10 +684,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#8B7CF6',
   },
   saveButtonDisabled: {
-    backgroundColor: '#9ca3af',
     opacity: 0.5,
   },
   saveButtonText: {

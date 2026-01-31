@@ -67,6 +67,7 @@ from routers.content_routes import router as content_router
 from routers.gradebook_routes import router as gradebook_router
 from routers.export_routes import router as export_router
 from routers.social_routes import router as social_router
+from routers.scheduling_assistant_routes import router as scheduling_assistant_router
 
 # Initialize planner instrumentation
 from planner_logging.planner_instrumentation import init_instrumentation
@@ -251,6 +252,7 @@ app.include_router(ai_review_recommendations_router)
 app.include_router(family_calendar_router)
 app.include_router(export_router)
 app.include_router(social_router)
+app.include_router(scheduling_assistant_router)
 
 @app.get("/health")
 async def health():
