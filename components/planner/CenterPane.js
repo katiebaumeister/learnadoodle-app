@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { View, Platform, useWindowDimensions } from 'react-native';
 import MonthGrid from './MonthGrid';
 import WeekGrid from './WeekGrid';
+import PlannerWeek from './PlannerWeek';
 import DayAgenda from './DayAgenda';
 import BoardView from './BoardView';
 import TasksView from './TasksView';
@@ -25,6 +26,7 @@ export default function CenterPane({
   onChildFilterChange,
   blackoutDates = [],
   viewMode: externalViewMode,
+  familyId = null,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -178,15 +180,23 @@ export default function CenterPane({
             />
           )}
           {mode === 'Week' && (
-            <WeekGrid
-              anchorDate={viewDate}
-              events={filtered}
-              onSelectDate={onSelectDate}
-              onEventPress={onEventSelect}
-              onEventRightClick={onEventRightClick}
-              onEventComplete={onEventComplete}
-              children={children}
-              onSwitchToBoardView={() => setMode('Board')}
+            <PlannerWeek
+              familyId={familyId}
+              weekStart={startOfWeek(viewDate)}
+              onWeekStartChange={(newWeekStart) => {
+                setViewDate(newWeekStart);
+                if (onSelectDate) {
+                  onSelectDate(newWeekStart);
+                }
+              }}
+              selectedChildIds={filters?.childIds || []}
+              onChildFilterChange={onChildFilterChange}
+              onEventSelect={onEventSelect}
+              onViewChange={(newView) => {
+                if (newView === 'Board') {
+                  setMode('Board');
+                }
+              }}
             />
           )}
           {mode === 'Day' && (

@@ -1785,22 +1785,7 @@ export default function WebLayout({ navigation, routeParams }) {
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif',
                         marginBottom: 2,
                       }}>
-                        {(() => {
-                          if (currentView === 'month') {
-                            return currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-                          } else if (currentView === 'week') {
-                            // Show the week range
-                            const startOfWeek = new Date(currentMonth);
-                            const day = startOfWeek.getDay();
-                            startOfWeek.setDate(startOfWeek.getDate() - day);
-                            const endOfWeek = new Date(startOfWeek);
-                            endOfWeek.setDate(endOfWeek.getDate() + 6);
-                            return `${startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-                          } else if (currentView === 'board') {
-                            return currentMonth.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-                          }
-                          return currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-                        })()}
+                        {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                       </Text>
                       <Text style={{
                         fontSize: 15,
@@ -1932,6 +1917,7 @@ export default function WebLayout({ navigation, routeParams }) {
                       >
                         {[
                           { key: 'month', label: 'Calendar' },
+                          { key: 'week', label: 'Week' },
                           { key: 'board', label: 'Board' },
                           { key: 'tasks', label: 'Lists' },
                         ].map((view) => {
@@ -3210,6 +3196,7 @@ export default function WebLayout({ navigation, routeParams }) {
         }}
         familyId={familyId}
         subject={editingSubject}
+        children={children}
         onSubjectAdded={() => {
           // Refresh subjects
           setEditingSubject(null);

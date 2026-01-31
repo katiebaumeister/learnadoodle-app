@@ -17,7 +17,8 @@ export default function AddSubjectModal({
   familyId,
   defaultChildId = null,
   defaultSubjectName = null,
-  subject = null // If provided, edit mode
+  subject = null, // If provided, edit mode
+  children: propChildren = [] // Pre-loaded children from parent
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
   const [summary, setSummary] = useState('');
@@ -25,7 +26,7 @@ export default function AddSubjectModal({
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
   const [credits, setCredits] = useState('');
   const [notes, setNotes] = useState('');
-  const [children, setChildren] = useState([]);
+  const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -44,9 +45,23 @@ export default function AddSubjectModal({
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
 
+  // Update children when prop changes
+  useEffect(() => {
+    if (propChildren && propChildren.length > 0) {
+      setChildren(propChildren);
+      setLoadingChildren(false);
+    }
+  }, [propChildren]);
+
   useEffect(() => {
     if (visible) {
-      fetchChildren();
+      // Only fetch children if not provided as prop
+      if (!propChildren || propChildren.length === 0) {
+        fetchChildren();
+      } else {
+        setChildren(propChildren);
+        setLoadingChildren(false);
+      }
       loadMaterials();
       
       // If editing a subject, populate fields (but wait for children to load for child IDs)

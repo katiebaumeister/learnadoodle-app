@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
-import { Calendar, Sparkles, List, Lock, Unlock, Printer } from 'lucide-react';
+import { Calendar, Sparkles, List, Lock, Unlock, Printer, AlertCircle } from 'lucide-react';
 // Using native HTML5 drag-and-drop instead of @hello-pangea/dnd for React Native Web compatibility
 import { supabase } from '../../lib/supabase';
 import { colors, shadows } from '../../theme/colors';
@@ -10,6 +10,7 @@ import EventModal from '../events/EventModal';
 import RescheduleReportModal from './RescheduleReportModal';
 import BlackoutDialog from './BlackoutDialog';
 import RescheduleModal from './RescheduleModal';
+import BulkRescheduleModal from './BulkRescheduleModal';
 import WeeklyReshuffleModal from './WeeklyReshuffleModal';
 import { proposeReschedule, getWeekStart, freezeWeek, getWeeklyPacket } from '../../lib/apiClient';
 import { rescheduleEvent, createEvent as createEventWithOffline, deleteEvent as deleteEventWithOffline } from '../../lib/services/plannerClientWithOffline';
@@ -17,7 +18,8 @@ import * as offlineStorage from '../../lib/services/offlineStorage';
 import PlanYearWizard from '../year/PlanYearWizard';
 import SaveTemplateModal from '../templates/SaveTemplateModal';
 import { Save } from 'lucide-react';
-import ConstraintsTimeline from '../../app/components/schedule/ConstraintsTimeline';
+// ConstraintsTimeline requires ConstraintsProvider - making it optional
+// import ConstraintsTimeline from '../../app/components/schedule/ConstraintsTimeline';
 import { logDragDrop, logDeleteEvent } from '../../app/services/plannerInstrumentation';
 import NoteEditorModal from '../records/NoteEditorModal';
 
@@ -67,6 +69,72 @@ function minutesSinceMidnight(hhmm) {
   return h * 60 + m;
 }
 
+// Time grid constants and pixel→minutes converter
+const GRID_MINUTES = 24 * 60; // 1440 minutes in a day
+const SNAP_MINUTES = 15; // Snap to 15-minute increments
+
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function snapMinutes(min, step = SNAP_MINUTES) {
+  return Math.round(min / step) * step;
+}
+
+function minutesFromY(yPx, gridHeightPx) {
+  if (!gridHeightPx || gridHeightPx <= 0) return 0;
+  const ratio = clamp(yPx / gridHeightPx, 0, 1);
+  return ratio * GRID_MINUTES;
+}
+
+// Format conflict message from validation conflicts array
+function formatConflictMessage(conflicts, children = []) {
+  if (!conflicts || !Array.isArray(conflicts) || conflicts.length === 0) {
+    return 'This time slot conflicts with other events';
+  }
+  
+  const firstConflict = conflicts[0];
+  const conflictTitle = firstConflict.title || 'Event';
+  
+  // Get child name(s) from child_ids
+  let childNames = [];
+  if (firstConflict.child_ids && Array.isArray(firstConflict.child_ids)) {
+    childNames = firstConflict.child_ids
+      .map(childId => {
+        const child = children.find(c => c.id === childId);
+        return child ? (child.first_name || child.name) : null;
+      })
+      .filter(Boolean);
+  }
+  const childNameStr = childNames.length > 0 ? ` (${childNames.join(', ')})` : '';
+  
+  // Format time range
+  let timeStr = '';
+  if (firstConflict.start_ts && firstConflict.end_ts) {
+    try {
+      const start = new Date(firstConflict.start_ts);
+      const end = new Date(firstConflict.end_ts);
+      const startHour = start.getHours();
+      const startMin = start.getMinutes();
+      const endHour = end.getHours();
+      const endMin = end.getMinutes();
+      
+      const formatTime = (h, m) => {
+        const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        const period = h >= 12 ? 'PM' : 'AM';
+        const mm = m.toString().padStart(2, '0');
+        return `${hour12}:${mm} ${period}`;
+      };
+      
+      timeStr = ` ${formatTime(startHour, startMin)}–${formatTime(endHour, endMin)}`;
+    } catch (e) {
+      // Fallback if date parsing fails
+    }
+  }
+  
+  return `Conflicts with ${conflictTitle}${childNameStr}${timeStr}`;
+}
+
 // Import offline-enabled week data hook
 import { useWeekDataWithOffline } from './useWeekDataWithOffline';
 
@@ -74,117 +142,9 @@ import { useWeekDataWithOffline } from './useWeekDataWithOffline';
 function useWeekData(weekStart, childIds, familyId) {
   return useWeekDataWithOffline(weekStart, childIds, familyId);
 }
-  const [data, setData] = useState({ children: [], avail: [], events: [] });
-  const [loading, setLoading] = useState(false);
-  const prevWeekStartRef = useRef(weekStart.toISOString());
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-
-  // Listen for refresh events
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    const handleRefresh = () => {
-      setRefreshTrigger(prev => prev + 1);
-    };
-    
-    window.addEventListener('refreshPlannerWeek', handleRefresh);
-    return () => {
-      window.removeEventListener('refreshPlannerWeek', handleRefresh);
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!familyId) return;
-      
-      // Only show loading when week changes, not when filter changes
-      const weekChanged = prevWeekStartRef.current !== weekStart.toISOString();
-      const hasNoData = !data.children || data.children.length === 0;
-      const shouldShowLoading = weekChanged || hasNoData;
-      
-      if (shouldShowLoading) {
-        setLoading(true);
-      }
-      
-      // Update the ref for next comparison
-      prevWeekStartRef.current = weekStart.toISOString();
-      
-      // Use local date strings for RPC call (backend will handle timezone conversion)
-      const from = getLocalDateString(weekStart);
-      const to = getLocalDateString(addDays(weekStart, 7));
-      
-      const { data: res, error } = await supabase.rpc('get_week_view', {
-        _family_id: familyId,
-        _from: from,
-        _to: to,
-        _child_ids: childIds && childIds.length > 0 ? childIds : null
-      });
-
-      if (error) {
-        if (shouldShowLoading) {
-          setLoading(false);
-        }
-        return;
-      }
-      if (!active) return;
-      
-      // Debug: Log the raw RPC response to check avatar field
-      if (typeof window !== 'undefined' && window.console && process.env.NODE_ENV === 'development') {
-      }
-      
-      // Helper to validate avatar URLs
-      const validateAvatarUrl = (url) => {
-        if (!url || typeof url !== 'string') return null;
-        const trimmed = url.trim();
-        if (!trimmed) return null;
-        
-        // Check if it's just a UUID (invalid URL format)
-        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidPattern.test(trimmed)) {
-          return null; // It's just a UUID, not a valid URL
-        }
-        
-        // Valid URLs must start with http://, https://, or data:
-        if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
-          return trimmed;
-        }
-        
-        // If it's a known avatar key (like "prof1"), it's valid
-        const knownAvatarKeys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
-        if (knownAvatarKeys.includes(trimmed.toLowerCase())) {
-          return trimmed;
-        }
-        
-        // Otherwise, it's not a valid URL
-        return null;
-      };
-
-      // Validate and clean children avatar URLs from RPC response
-      const cleanedChildren = (res?.children || []).map(child => ({
-        ...child,
-        avatar: validateAvatarUrl(child.avatar) || child.avatar, // Keep original if validation fails
-        avatar_url: validateAvatarUrl(child.avatar_url || child.avatar) || null
-      }));
-
-      // Always write a new object when updating state (spread to guarantee new refs)
-      setData({
-        children: cleanedChildren,
-        avail: res?.avail ? [...res.avail] : [],
-        events: res?.events ? [...res.events] : []
-      });
-      if (shouldShowLoading) {
-        setLoading(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [weekStart.toISOString(), JSON.stringify(childIds || []), familyId, refreshTrigger]);
-  
-  return { data, loading };
-}
 
 // Day Column Component
-function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChanged, onEventClick, dayStatus, children = [], focusedChildId = null, draggedEventId = null, onMouseDragStart = null, familyId = null }) {
+function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChanged, onEventClick, dayStatus, children = [], focusedChildId = null, draggedEventId = null, onMouseDragStart = null, familyId = null, schedulingAssistantEnabled = false, busyBlocks = [], dragPreview = null, commitAnimation = null }) {
   const total = hours.endMin - hours.startMin;
   const step = hours.step;
   const isBlackout = dayStatus === 'off' || (windows.length === 0 && dayStatus === 'off');
@@ -200,7 +160,8 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
   }, [events]);
 
   // Use div for web
-  const ColumnWrapper = typeof window !== 'undefined' ? 'div' : View;
+  // Use View instead of div to avoid React Native Web property setting issues
+  const ColumnWrapper = View;
   
   return (
     <ColumnWrapper 
@@ -210,27 +171,23 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
         isBlackout && styles.dayColumnBlackout,
         isPartialBlackout && styles.dayColumnPartialBlackout
       ]}
-    >
-            {/* Hour lines */}
-            {Array.from({ length: Math.floor(total / step) + 1 }).map((_, i) => {
+    >{/* Hour lines */}{Array.from({ length: Math.floor(total / step) + 1 }).map((_, i) => {
               const y = (i * step / total) * 100;
-              const LineWrapper = typeof window !== 'undefined' ? 'div' : View;
+              const LineWrapper = View;
               return (
                 <LineWrapper
                   key={i}
                   style={[styles.hourLine, { top: `${y}%` }]}
                 />
               );
-            })}
-
-            {/* Availability windows - only show if not full blackout */}
+            })}{/* Availability windows - only show if not full blackout */}
             {!isBlackout && windows
               .filter(w => w && w.start && w.end) // Filter out invalid windows
               .map((w, idx) => {
                 const s = ((minutesSinceMidnight(w.start) - hours.startMin) / total) * 100;
                 const e = ((minutesSinceMidnight(w.end) - hours.startMin) / total) * 100;
                 const h = Math.max(2, e - s);
-                const WindowWrapper = typeof window !== 'undefined' ? 'div' : View;
+                const WindowWrapper = View;
                 return (
                   <WindowWrapper
                     key={idx}
@@ -240,31 +197,99 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                     ]}
                   />
                 );
-              })}
-            
-            {/* Blackout indicator overlay - full blackout */}
-            {isBlackout && (() => {
-              const OverlayWrapper = typeof window !== 'undefined' ? 'div' : View;
-              const TextWrapper = typeof window !== 'undefined' ? 'span' : Text;
-              return (
-                <OverlayWrapper style={styles.blackoutOverlay}>
-                  <TextWrapper style={styles.blackoutText}>No Availability</TextWrapper>
-                </OverlayWrapper>
-              );
-            })()}
-            
-            {/* Partial blackout indicator - some children off */}
-            {isPartialBlackout && (() => {
-              const OverlayWrapper = typeof window !== 'undefined' ? 'div' : View;
-              const TextWrapper = typeof window !== 'undefined' ? 'span' : Text;
-              return (
-                <OverlayWrapper style={styles.partialBlackoutOverlay}>
-                  <TextWrapper style={styles.partialBlackoutText}>Partial Availability</TextWrapper>
-                </OverlayWrapper>
-              );
-            })()}
+              })}{/* Blackout indicator overlay - full blackout */}
+            {isBlackout && (
+              <View style={styles.blackoutOverlay}>
+                <Text style={styles.blackoutText}>No Availability</Text>
+              </View>
+            )}{/* Partial blackout indicator - some children off */}
+            {isPartialBlackout && (
+              <View style={styles.partialBlackoutOverlay}>
+                <Text style={styles.partialBlackoutText}>Partial Availability</Text>
+              </View>
+            )}{/* Scheduling Assistant: Busy blocks overlay */}
+            {schedulingAssistantEnabled && busyBlocks && busyBlocks.length > 0 && busyBlocks
+              .filter(block => {
+                // Filter blocks for this day
+                const blockStart = new Date(block.start_ts);
+                const blockEnd = new Date(block.end_ts);
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(dayStart);
+                dayEnd.setDate(dayEnd.getDate() + 1);
+                return blockStart < dayEnd && blockEnd > dayStart;
+              })
+              .map((block, idx) => {
+                const blockStart = new Date(block.start_ts);
+                const blockEnd = new Date(block.end_ts);
+                const dayStart = new Date(date);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(dayStart);
+                dayEnd.setDate(dayEnd.getDate() + 1);
 
-          {/* Events - Now Draggable with native HTML5 */}
+                // Clamp block to day boundaries (fixes cross-day spans)
+                const startClamped = new Date(Math.max(blockStart.getTime(), dayStart.getTime()));
+                const endClamped = new Date(Math.min(blockEnd.getTime(), dayEnd.getTime()));
+
+                let startMin = (startClamped.getTime() - dayStart.getTime()) / 60000;
+                let endMin = (endClamped.getTime() - dayStart.getTime()) / 60000;
+                
+                // Clamp to [0, 1440] minute range
+                startMin = clamp(startMin, 0, GRID_MINUTES);
+                endMin = clamp(endMin, 0, GRID_MINUTES);
+                
+                const s = ((startMin - hours.startMin) / total) * 100;
+                const e = ((endMin - hours.startMin) / total) * 100;
+                const h = Math.max(1, e - s);
+                
+                const BlockWrapper = View;
+                return (
+                  <BlockWrapper
+                    key={`busy-${block.event_id}-${idx}`}
+                    style={[
+                      styles.busyBlock,
+                      { top: `${Math.max(0, s)}%`, height: `${h}%` }
+                    ]}
+                    title={block.title}
+                  />
+                );
+              })}
+
+            {/* Drag ghost block - shows preview during drag or commit animation */}
+            {((dragPreview?.eventId && dragPreview.dayIso === (dateIso || getLocalDateString(date))) ||
+              (commitAnimation?.eventId && commitAnimation.dayIso === (dateIso || getLocalDateString(date)))) && (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.dragGhost,
+                  commitAnimation ? styles.dragGhostCommitting : null,
+                  {
+                    top: `${(((commitAnimation || dragPreview).startMin - hours.startMin) / total) * 100}%`,
+                    height: `${(((commitAnimation || dragPreview).endMin - (commitAnimation || dragPreview).startMin) / total) * 100}%`,
+                    borderColor: commitAnimation 
+                      ? 'rgba(34,197,94,0.8)' // Green for successful commit
+                      : (dragPreview?.ok ? 'rgba(59,130,246,0.6)' : 'rgba(239,68,68,0.8)'),
+                    backgroundColor: commitAnimation
+                      ? 'rgba(34,197,94,0.15)' // Green for successful commit
+                      : (dragPreview?.ok ? 'rgba(59,130,246,0.12)' : 'rgba(239,68,68,0.12)'),
+                  },
+                ]}
+              >
+                {/* Collision icon for invalid preview */}
+                {dragPreview && !dragPreview.ok && !commitAnimation && typeof window !== 'undefined' && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 1000,
+                    pointerEvents: 'none',
+                  }}>
+                    <AlertCircle size={16} color="rgba(239,68,68,0.9)" />
+                  </div>
+                )}
+              </View>
+            )}{/* Events - Now Draggable with native HTML5 */}
           {sortedEvents
             .filter(ev => {
               // Filter events to only show those within or overlapping the visible time range
@@ -420,8 +445,6 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
             />
           )}
         </ColumnWrapper>
-      )}
-    </Droppable>
   );
 }
 
@@ -449,8 +472,11 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [showBlackoutDialog, setShowBlackoutDialog] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [showBulkRescheduleModal, setShowBulkRescheduleModal] = useState(false);
   const [reschedulePlan, setReschedulePlan] = useState(null);
   const [showWeeklyReshuffle, setShowWeeklyReshuffle] = useState(false);
+  const [schedulingAssistantEnabled, setSchedulingAssistantEnabled] = useState(false);
+  const [busyBlocks, setBusyBlocks] = useState([]);
   const [hasBlackout, setHasBlackout] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [loadingReschedule, setLoadingReschedule] = useState(false);
@@ -460,7 +486,15 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const initialScrollOffset = { x: 0, y: 420 }; // Start at 7 AM (7 hours * 60px)
   const [draggedEventId, setDraggedEventId] = useState(null); // Track which event is being dragged
   const [dragState, setDragState] = useState(null); // { eventId, startX, startY, currentX, currentY }
+  const [dragPreview, setDragPreview] = useState(null); // { eventId, dayIso, startMin, endMin, conflicts?: [], ok?: boolean }
+  const dragPreviewRef = useRef(null); // Ref to store latest preview for closure access
   const dragRef = useRef(null); // Ref to track drag element
+  const gridBodyRef = useRef(null); // Ref to grid body container for measuring
+  const [gridRect, setGridRect] = useState(null); // { top, height } - grid container bounding rect
+  const gridRectRef = useRef(null); // Ref to store latest gridRect for closure access
+  const validateTimerRef = useRef(null); // Timer for debounced validation
+  const filtEventsRef = useRef([]); // Ref to store latest filtEvents for closure access
+  const [commitAnimation, setCommitAnimation] = useState(null); // { eventId, dayIso, startMin, endMin, finalTop, finalHeight } for commit animation
   const [isWeekFrozen, setIsWeekFrozen] = useState(false); // Track if current week is frozen
   const [freezeLoading, setFreezeLoading] = useState(false); // Loading state for freeze toggle
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
@@ -472,6 +506,96 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   });
   
   const { data, loading } = useWeekData(weekStart, selectedChildIds, familyId);
+
+  // Filter events and availability by selected children (must be defined early for use in callbacks)
+  // Create new arrays and objects to avoid mutating frozen objects from the hook
+  const availData = Array.isArray(data?.avail) 
+    ? data.avail.map(a => a ? { ...a } : a).filter(Boolean)
+    : [];
+  const eventsData = Array.isArray(data?.events)
+    ? data.events.map(e => e ? { ...e } : e).filter(Boolean)
+    : [];
+  const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
+  const filtAvail = ids && Array.isArray(availData)
+    ? availData.filter(a => a && a.child_id && ids.has(a.child_id))
+    : (Array.isArray(availData) ? availData : []);
+  const filtEvents = ids && Array.isArray(eventsData)
+    ? eventsData.filter(e => e && e.child_id && ids.has(e.child_id))
+    : (Array.isArray(eventsData) ? eventsData : []);
+  
+  // Update refs whenever values change (defensive checks to avoid uninitialized variable errors)
+  useEffect(() => {
+    try {
+      if (filtEventsRef) {
+        filtEventsRef.current = Array.isArray(filtEvents) ? filtEvents : [];
+      }
+    } catch (e) {
+      // Ignore errors during ref update
+    }
+  }, [filtEvents]);
+  
+  useEffect(() => {
+    try {
+      if (gridRectRef) {
+        gridRectRef.current = gridRect;
+      }
+    } catch (e) {
+      // Ignore errors during ref update
+    }
+  }, [gridRect]);
+
+  // Cursor feedback on invalid preview
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    if (dragPreview && !dragPreview.ok) {
+      document.body.style.cursor = 'not-allowed';
+      // Also set cursor on the grid body
+      const gridEl = document.getElementById('planner-week-grid-body');
+      if (gridEl) {
+        gridEl.style.cursor = 'not-allowed';
+      }
+    } else {
+      document.body.style.cursor = '';
+      const gridEl = document.getElementById('planner-week-grid-body');
+      if (gridEl) {
+        gridEl.style.cursor = '';
+      }
+    }
+    
+    return () => {
+      document.body.style.cursor = '';
+      const gridEl = document.getElementById('planner-week-grid-body');
+      if (gridEl) {
+        gridEl.style.cursor = '';
+      }
+    };
+  }, [dragPreview]);
+
+  // Load busy blocks when Scheduling Assistant is enabled
+  useEffect(() => {
+    if (!schedulingAssistantEnabled || !familyId) {
+      setBusyBlocks([]);
+      return;
+    }
+
+    (async () => {
+      const weekEnd = addDays(weekStart, 7);
+      const { data: fbData, error } = await supabase.rpc('get_freebusy_week', {
+        _family_id: familyId,
+        _from: weekStart.toISOString(),
+        _to: weekEnd.toISOString(),
+        _child_ids: selectedChildIds && selectedChildIds.length > 0 ? selectedChildIds : null,
+      });
+
+      if (error) {
+        console.error('Failed to load busy blocks:', error);
+        setBusyBlocks([]);
+      } else {
+        setBusyBlocks(fbData?.busy || []);
+      }
+    })();
+  }, [schedulingAssistantEnabled, familyId, weekStart, selectedChildIds]);
 
   // Memoize formatted month/year to prevent unnecessary recalculations
   const monthYearText = useMemo(() => {
@@ -1399,6 +1523,65 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       scrollTo7AM();
     }
   }, [loading, hasScrolledTo7AM, scrollTo7AM]);
+
+  // Measure grid container for mouse Y calculation
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    let mounted = true;
+    let timeoutId = null;
+    let updateHandler = null;
+
+    const update = () => {
+      if (!mounted) return;
+      try {
+        const el = document.getElementById('planner-week-grid-body');
+        if (!el || !mounted) return;
+        const r = el.getBoundingClientRect();
+        if (mounted && r.height > 0) {
+          setGridRect({ top: r.top, height: r.height });
+        }
+      } catch (e) {
+        // Ignore errors during measurement
+      }
+    };
+
+    if (loading) {
+      setGridRect(null);
+      return;
+    }
+
+    // Wait for DOM to be ready
+    let retryCount = 0;
+    const maxRetries = 10;
+    const attemptUpdate = () => {
+      if (!mounted || retryCount >= maxRetries) return;
+      const el = document.getElementById('planner-week-grid-body');
+      if (el) {
+        update();
+        updateHandler = update;
+        window.addEventListener('resize', updateHandler);
+        window.addEventListener('scroll', updateHandler, true);
+      } else {
+        retryCount++;
+        requestAnimationFrame(attemptUpdate);
+      }
+    };
+
+    // Delay initial attempt to ensure DOM is ready
+    timeoutId = setTimeout(attemptUpdate, 100);
+    
+    return () => {
+      mounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (updateHandler) {
+        window.removeEventListener('resize', updateHandler);
+        window.removeEventListener('scroll', updateHandler, true);
+      }
+    };
+  }, [weekStart, loading]);
   
   // Reset scroll flag when week changes
   useEffect(() => {
@@ -1471,20 +1654,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     }
   }, [familyId, weekStart, isWeekFrozen, freezeLoading, handleWeekStartChange]);
 
-  // Ensure data.avail and data.events are arrays
-  const availData = Array.isArray(data.avail) ? data.avail : [];
-  const eventsData = Array.isArray(data.events) ? data.events : [];
-  
-  // Filter: treat null as "ALL"
-  const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
-  const filtAvail = ids 
-    ? availData.filter(a => ids.has(a.child_id))
-    : availData;
-  const filtEvents = ids
-    ? eventsData.filter(e => ids.has(e.child_id))
-    : eventsData;
-  
   // Index avail/events by date - ALWAYS create new objects (no mutation)
+  // Note: filtAvail and filtEvents are now defined earlier in the component
   // Use useMemo to recompute when data changes
   const { availByDate, eventsByDate, patternDaysByDate } = useMemo(() => {
     const availByDateNew = {};
@@ -1513,7 +1684,9 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       }
       
       // Handle windows as JSONB - ensure it's an array before spreading
-      const windows = a.windows;
+      // Create a copy of the availability object to avoid mutating frozen objects
+      const availItem = { ...a };
+      const windows = availItem.windows;
       if (!availByDateNew[dateKey]) {
         availByDateNew[dateKey] = [];
       }
@@ -1521,13 +1694,19 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       if (Array.isArray(windows)) {
         // Empty array [] means blackout - don't add anything
         if (windows.length > 0) {
-          availByDateNew[dateKey].push(...windows);
+          // Create a new array with spread to avoid mutating frozen arrays
+          // Also create copies of window objects if they're frozen
+          const windowsCopy = windows.map(w => typeof w === 'object' && w !== null ? { ...w } : w);
+          availByDateNew[dateKey] = [...availByDateNew[dateKey], ...windowsCopy];
         }
       } else if (windows && typeof windows === 'object') {
         // If it's a JSONB object, convert to array
-        const windowsArray = Array.isArray(windows) ? windows : [windows];
+        const windowsArray = Array.isArray(windows) 
+          ? windows.map(w => typeof w === 'object' && w !== null ? { ...w } : w)
+          : [{ ...windows }];
         if (windowsArray.length > 0) {
-          availByDateNew[dateKey].push(...windowsArray);
+          // Create a new array with spread to avoid mutating frozen arrays
+          availByDateNew[dateKey] = [...availByDateNew[dateKey], ...windowsArray];
         }
       } else if (windows === null || windows === undefined) {
         // No windows = blackout (skip adding)
@@ -1537,8 +1716,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     
     // Process events
     for (const e of filtEvents) {
-      // Use local optimistic update if available
-      let event = localEvents[e.id] || e;
+      // Use local optimistic update if available, or create a new object from the frozen event
+      let event = localEvents[e.id] || { ...e };
       
       // WORKAROUND: If start_local is missing but start_ts exists, compute it
       // This handles cases where cached events don't have start_local
@@ -1592,7 +1771,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       if (!eventsByDateNew[d]) {
         eventsByDateNew[d] = [];
       }
-      eventsByDateNew[d].push(event);
+      // Create a new array with spread to avoid mutating frozen arrays
+      eventsByDateNew[d] = [...eventsByDateNew[d], event];
     }
 
     return { 
@@ -1615,24 +1795,20 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     return `${from}-${to}-${eventsVersion}-${childKey}`;
   }, [weekStart, eventsVersion, selectedChildIds]);
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={styles.loadingText}>Loading week...</Text>
-      </View>
-    );
-  }
-
   // Use div wrapper for web (drag-drop requires DOM)
-  const Wrapper = typeof window !== 'undefined' ? 'div' : View;
-  const wrapperStyle = typeof window !== 'undefined' 
-    ? { ...styles.wrapper, display: 'flex', flexDirection: 'column', flex: 1 }
-    : styles.wrapper;
+  // Use View for React Native Web compatibility - it will render as div automatically
+  const Wrapper = View;
+  const wrapperStyle = styles.wrapper;
   
   // Handle mouse-based drag start
   const handleMouseDragStart = useCallback((e, eventId) => {
     if (typeof window === 'undefined') return;
+    
+    // Get filtEvents from ref (always up-to-date, no closure issues)
+    const currentFiltEvents = filtEventsRef.current;
+    
+    // Ensure filtEvents is available
+    if (!currentFiltEvents || !Array.isArray(currentFiltEvents)) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -1652,6 +1828,14 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     // Store event element for visual feedback
     dragRef.current = e.currentTarget;
     
+    // Capture current values for closure (use refs to avoid closure issues)
+    // currentFiltEvents already captured above
+    const currentGridRect = gridRectRef.current;
+    const currentFamilyId = familyId;
+    const currentWeekStart = weekStart;
+    const currentSelectedChildIds = selectedChildIds;
+    const currentSchedulingAssistantEnabled = schedulingAssistantEnabled;
+    
     // Add global mouse move and up handlers
     const handleMouseMove = (moveEvent) => {
       setDragState(prev => prev ? {
@@ -1659,109 +1843,211 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         currentX: moveEvent.clientX,
         currentY: moveEvent.clientY,
       } : null);
+
+      // Live preview only on web
+      if (!currentGridRect || typeof currentGridRect.top !== 'number' || typeof currentGridRect.height !== 'number') return;
+
+      const elBelow = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+      const dayColumn = elBelow?.closest?.('[data-day-date]');
+      const dayIso = dayColumn?.getAttribute?.('data-day-date');
+      if (!dayIso) {
+        dragPreviewRef.current = null;
+        setDragPreview(null);
+        return;
+      }
+
+      const event = currentFiltEvents.find(ev => ev.id === eventId);
+      if (!event) {
+        dragPreviewRef.current = null;
+        setDragPreview(null);
+        return;
+      }
+
+      const originalStart = new Date(event.start_ts);
+      const originalEnd = new Date(event.end_ts);
+      const durationMin = Math.max(5, Math.round((originalEnd.getTime() - originalStart.getTime()) / 60000));
+
+      const yInside = moveEvent.clientY - currentGridRect.top;
+      let startMin = minutesFromY(yInside, currentGridRect.height);
+      startMin = snapMinutes(startMin, SNAP_MINUTES);
+      startMin = clamp(startMin, 0, GRID_MINUTES - durationMin);
+
+      const endMin = startMin + durationMin;
+
+      const newPreview = {
+        eventId,
+        dayIso,
+        startMin,
+        endMin,
+        ok: true,
+        conflicts: [],
+      };
+      dragPreviewRef.current = newPreview;
+      setDragPreview(newPreview);
+
+      // Debounced server validation (so you can show red overlay while dragging)
+      if (validateTimerRef.current) clearTimeout(validateTimerRef.current);
+      validateTimerRef.current = setTimeout(async () => {
+        try {
+          const destDate = new Date(dayIso + 'T00:00:00');
+          const proposedStart = new Date(destDate);
+          proposedStart.setHours(0, 0, 0, 0);
+          proposedStart.setMinutes(startMin);
+
+          const proposedEnd = new Date(proposedStart.getTime() + durationMin * 60000);
+
+          const { data: validation, error } = await supabase.rpc('validate_event_drop', {
+            _family_id: currentFamilyId,
+            _event_id: eventId,
+            _proposed_start: proposedStart.toISOString(),
+            _proposed_end: proposedEnd.toISOString(),
+          });
+
+          const ok = !!validation?.ok && !error;
+
+          const updatedPreview = {
+            ...(dragPreviewRef.current || {}),
+            ok,
+            conflicts: validation?.conflicts || [],
+          };
+          dragPreviewRef.current = updatedPreview;
+          setDragPreview(updatedPreview);
+        } catch (e) {
+          const errorPreview = {
+            ...(dragPreviewRef.current || {}),
+            ok: false,
+            conflicts: [],
+          };
+          dragPreviewRef.current = errorPreview;
+          setDragPreview(errorPreview);
+        }
+      }, 120);
     };
     
     const handleMouseUp = async (upEvent) => {
-      // Find which day column we're over
-      const elementBelow = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
-      if (!elementBelow) {
+      // Clean up validation timer
+      if (validateTimerRef.current) {
+        clearTimeout(validateTimerRef.current);
+        validateTimerRef.current = null;
+      }
+
+      // Read latest preview from ref (always up-to-date)
+      const preview = dragPreviewRef.current;
+      if (!preview || preview.eventId !== eventId) {
+        // Cleanup
         setDragState(null);
         setDraggedEventId(null);
+        dragPreviewRef.current = null;
+        setDragPreview(null);
         dragRef.current = null;
         document.removeEventListener('mousemove', handleMouseMove);
         document.removeEventListener('mouseup', handleMouseUp);
         return;
       }
-      
-      // Find the day column (look for data-date attribute or parent)
-      let dayColumn = elementBelow.closest('[data-day-date]');
-      if (!dayColumn) {
-        // Try to find parent day column by checking for day column styles
-        let parent = elementBelow.parentElement;
-        while (parent && parent !== document.body) {
-          if (parent.getAttribute && parent.getAttribute('data-day-date')) {
-            dayColumn = parent;
-            break;
-          }
-          parent = parent.parentElement;
-        }
+
+      if (!preview.ok) {
+        // Format conflict message with details
+        const conflictMsg = formatConflictMessage(preview.conflicts, children);
+        Alert.alert('Cannot Move Event', conflictMsg);
+        setDragState(null);
+        setDraggedEventId(null);
+        dragPreviewRef.current = null;
+        setDragPreview(null);
+        dragRef.current = null;
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        return;
       }
-      
-      if (dayColumn) {
-        const targetDateIso = dayColumn.getAttribute('data-day-date');
 
-        // Find the event being dragged
-        const allEvents = filtEvents;
-        const event = allEvents.find(ev => ev.id === eventId);
+      // Find the event being dragged
+      const event = currentFiltEvents.find(ev => ev.id === eventId);
+      if (!event) {
+        setDragState(null);
+        setDraggedEventId(null);
+        dragPreviewRef.current = null;
+        setDragPreview(null);
+        dragRef.current = null;
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        return;
+      }
+
+      const destDate = new Date(preview.dayIso + 'T00:00:00');
+      const proposedStart = new Date(destDate);
+      proposedStart.setHours(0, 0, 0, 0);
+      proposedStart.setMinutes(preview.startMin);
+
+      const durationMin = Math.max(5, Math.round((new Date(event.end_ts).getTime() - new Date(event.start_ts).getTime()) / 60000));
+      const proposedEnd = new Date(proposedStart.getTime() + durationMin * 60000);
+
+      // Optimistic update
+      const optimisticEvent = Object.assign({}, event, {
+        start_ts: proposedStart.toISOString(),
+        end_ts: proposedEnd.toISOString(),
+        date_local: getLocalDateString(proposedStart),
+      });
+      setLocalEvents(prev => ({ ...prev, [eventId]: optimisticEvent }));
+
+      // Call API to reschedule
+      try {
+        const { data: updateResult, error: updateError } = await supabase.rpc('apply_event_time_update', {
+          _family_id: currentFamilyId,
+          _event_id: eventId,
+          _start_ts: proposedStart.toISOString(),
+          _end_ts: proposedEnd.toISOString(),
+          _reason: 'drag_drop',
+        });
+
+        if (updateError || !updateResult?.ok) {
+          throw new Error(updateError?.message || updateResult?.validation?.reason || 'Failed to update event');
+        }
+
+        const updatedEvent = updateResult.after;
         
-        if (event && targetDateIso) {
-          // Get original event times
-          const originalStart = new Date(event.start_ts);
-          const originalEnd = new Date(event.end_ts);
-          const durationMs = originalEnd.getTime() - originalStart.getTime();
-          
-          // Parse destination date
-          const destDate = new Date(targetDateIso + 'T00:00:00');
-          if (!isNaN(destDate.getTime())) {
-            // Compute new start time: copy time portion from original, replace date
-            const newStart = new Date(destDate);
-            newStart.setHours(originalStart.getHours());
-            newStart.setMinutes(originalStart.getMinutes());
-            newStart.setSeconds(originalStart.getSeconds());
-            newStart.setMilliseconds(originalStart.getMilliseconds());
-            
-            // Compute new end time: add original duration
-            const newEnd = new Date(newStart.getTime() + durationMs);
-            
-            // Optimistic update
-            const optimisticEvent = {
-              ...event,
-              start_ts: newStart.toISOString(),
-              end_ts: newEnd.toISOString(),
-              date_local: getLocalDateString(newStart),
-            };
-            setLocalEvents(prev => ({ ...prev, [eventId]: optimisticEvent }));
-            
-            // Call API to reschedule with offline support
-            try {
-              const { data: updatedEvent, error } = await rescheduleEvent(
-                eventId,
-                newStart.toISOString(),
-                newEnd.toISOString(),
-                'drag_drop',
-                'manual move',
-                familyId
-              );
-              
-              if (error) {
-                // Revert optimistic update on error
-
-                setLocalEvents(prev => {
-                  const next = { ...prev };
-                  delete next[eventId];
-                  return next;
-                });
-                Alert.alert('Error', `Failed to reschedule event: ${error.message || 'Unknown error'}`);
-                handleWeekStartChange(new Date(weekStart));
-              } else {
-                // Success - update local state with server response
-                if (updatedEvent) {
-                  setLocalEvents(prev => ({ ...prev, [eventId]: updatedEvent }));
-                }
-              }
-            } catch (err) {
-              // Revert optimistic update on exception
-
-              setLocalEvents(prev => {
-                const next = { ...prev };
-                delete next[eventId];
-                return next;
-              });
-              Alert.alert('Error', `Failed to reschedule event: ${err.message || 'Unknown error'}`);
-              handleWeekStartChange(new Date(weekStart));
-            }
+        if (updatedEvent) {
+          setLocalEvents(prev => ({ ...prev, [eventId]: updatedEvent }));
+        }
+        
+        // Refresh busy blocks if Scheduling Assistant is enabled
+        if (currentSchedulingAssistantEnabled) {
+          const weekEnd = addDays(currentWeekStart, 7);
+          const { data: fbData } = await supabase.rpc('get_freebusy_week', {
+            _family_id: currentFamilyId,
+            _from: currentWeekStart.toISOString(),
+            _to: weekEnd.toISOString(),
+            _child_ids: currentSelectedChildIds && currentSelectedChildIds.length > 0 ? currentSelectedChildIds : null,
+          });
+          if (fbData) {
+            setBusyBlocks(fbData.busy || []);
           }
         }
+        
+        // Commit animation: animate ghost to final position
+        // The final position is the same as the preview position (since we're moving to that spot)
+        setCommitAnimation({
+          eventId,
+          dayIso: preview.dayIso,
+          startMin: preview.startMin,
+          endMin: preview.endMin,
+        });
+        
+        // Clear dragPreview immediately (ghost will use commitAnimation instead)
+        setDragPreview(null);
+        dragPreviewRef.current = null;
+        
+        // Clear commitAnimation after animation completes (180ms)
+        setTimeout(() => {
+          setCommitAnimation(null);
+        }, 180);
+      } catch (err) {
+        // Revert optimistic update on exception
+        setLocalEvents(prev => {
+          const next = { ...prev };
+          delete next[eventId];
+          return next;
+        });
+        Alert.alert('Error', `Failed to reschedule event: ${err.message || 'Unknown error'}`);
+        handleWeekStartChange(new Date(currentWeekStart));
       }
       
       setDragState(null);
@@ -1773,18 +2059,35 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [filtEvents, weekStart, handleWeekStartChange]);
+    
+    // Cleanup on unmount or drag end
+    return () => {
+      if (validateTimerRef.current) {
+        clearTimeout(validateTimerRef.current);
+        validateTimerRef.current = null;
+      }
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [weekStart, handleWeekStartChange, familyId, schedulingAssistantEnabled, selectedChildIds]);
+  
+  // Early return for loading state - must be after all hooks
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.loadingText}>Loading week...</Text>
+      </View>
+    );
+  }
   
   return (
     <Wrapper style={wrapperStyle}>
         {/* Header with freeze toggle */}
         <View style={styles.weekHeader}>
           <View style={styles.weekHeaderLeft}>
-            <Text style={styles.weekHeaderTitle}>
-              {weekStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
-            </Text>
             <Text style={styles.weekHeaderSubtitle}>
-              {getLocalDateString(getWeekStart(weekStart))} - {getLocalDateString(addDays(getWeekStart(weekStart), 6))}
+              {`${getLocalDateString(weekStart)} - ${getLocalDateString(addDays(weekStart, 6))}`}
             </Text>
           </View>
           <View style={styles.weekHeaderRight}>
@@ -1811,6 +2114,26 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 </Text>
               </TouchableOpacity>
             )}
+            <TouchableOpacity
+              style={[styles.saveTemplateButton, schedulingAssistantEnabled && styles.saveTemplateButtonActive]}
+              onPress={() => setSchedulingAssistantEnabled(!schedulingAssistantEnabled)}
+              activeOpacity={0.7}
+            >
+              <Calendar size={14} color={schedulingAssistantEnabled ? colors.white : colors.accent} />
+              <Text style={[styles.saveTemplateButtonText, schedulingAssistantEnabled && styles.saveTemplateButtonTextActive]}>
+                Scheduling Assistant
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.saveTemplateButton}
+              onPress={() => setShowBulkRescheduleModal(true)}
+              activeOpacity={0.7}
+            >
+              <Sparkles size={14} color={colors.accent} />
+              <Text style={styles.saveTemplateButtonText}>
+                Reschedule
+              </Text>
+            </TouchableOpacity>
             {selectedChildIds.length > 0 && (
               <TouchableOpacity
                 style={styles.saveTemplateButton}
@@ -1872,14 +2195,15 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         />
 
         {/* Constraints Timeline - Shows weekly constraint status */}
-        <ConstraintsTimeline
+        {/* TODO: Add ConstraintsProvider wrapper if ConstraintsTimeline is needed */}
+        {/* <ConstraintsTimeline
           weekStart={weekStart}
           childIds={selectedChildIds}
           familyId={familyId}
           onDayClick={(date, constraint) => {
             // Optional: Handle day click (e.g., open adjustment modal)
-}}
-        />
+          }}
+        /> */}
 
         {/* Week Grid - Fills available space like month grid */}
         <View style={[styles.weekGridContainer, isWeekFrozen && styles.weekGridContainerFrozen]}>
@@ -1893,19 +2217,16 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 return (
                   <View key={i} style={styles.dayHeader}>
                     <Text style={styles.dayHeaderText}>
-                      <Text style={styles.dayHeaderDow}>{fmtDow(d)} </Text>
+                      <Text style={styles.dayHeaderDow}>{fmtDow(d)}</Text>
                       <Text style={[
                         styles.dayHeaderDate,
                         d.getMonth() !== weekStart.getMonth() && styles.dayHeaderDateOtherMonth
-                      ]}>
-                        {d.getDate()}
-                      </Text>
-                    </Text>
-                    {patternDay && (
+                      ]}> {d.getDate()}</Text>
+                    </Text>{patternDay ? (
                       <View style={styles.patternDayBadge}>
                         <Text style={styles.patternDayText}>{patternDay}</Text>
                       </View>
-                    )}
+                    ) : null}
                   </View>
                 );
               })}
@@ -1918,7 +2239,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 styles.gridBodyScroll,
                 draggedEventId && typeof window !== 'undefined' && { pointerEvents: 'auto' } // Allow drag events during drag
               ]}
-              contentContainerStyle={styles.gridBody}
+              contentContainerStyle={{}} // Minimal - actual layout in inner View
               showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
               contentOffset={initialScrollOffset}
@@ -1942,6 +2263,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 }
               }}
             >
+              {/* Grid body wrapper with ref for measuring */}
+              <View
+                ref={gridBodyRef}
+                style={styles.gridBody}
+                {...(typeof window !== 'undefined' && { id: 'planner-week-grid-body' })}
+              >
               {/* Time Ruler - Full 24 hours (12 AM to 12 AM) */}
               <View style={styles.timeRuler}>
                 {Array.from({ length: Math.floor((hours.endMin - hours.startMin) / hours.step) + 1 }).map((_, i) => {
@@ -1961,7 +2288,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                         'data-time-label': '7:00 AM'
                       })}
                     >
-                      {hour12}:{mm} {period}
+                      {`${hour12}:${mm} ${period}`}
                     </Text>
                   );
                 })}
@@ -2010,6 +2337,10 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                     focusedChildId={focusedChildId}
                     draggedEventId={draggedEventId}
                     familyId={familyId}
+                    schedulingAssistantEnabled={schedulingAssistantEnabled}
+                    busyBlocks={busyBlocks}
+                    dragPreview={dragPreview}
+                    commitAnimation={commitAnimation}
                     onAdd={(startMin) => {
                       onAddActivity?.({ date: iso, startMin });
                     }}
@@ -2019,6 +2350,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                   />
                 );
               })}
+              </View> {/* End gridBody wrapper */}
             </ScrollView>
           </View>
         </View>
@@ -2246,6 +2578,38 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         }}
       />
 
+      {/* Bulk Reschedule Modal */}
+      <BulkRescheduleModal
+        visible={showBulkRescheduleModal}
+        onClose={() => setShowBulkRescheduleModal(false)}
+        familyId={familyId}
+        weekStart={weekStart}
+        weekEnd={addDays(weekStart, 7)}
+        childIds={selectedChildIds}
+        onApplied={() => {
+          // Force refresh
+          handleWeekStartChange((() => {
+            const newDate = new Date(weekStart);
+            newDate.setMilliseconds(newDate.getMilliseconds() + 1);
+            return newDate;
+          })());
+          // Refresh busy blocks if enabled
+          if (schedulingAssistantEnabled) {
+            const weekEnd = addDays(weekStart, 7);
+            supabase.rpc('get_freebusy_week', {
+              _family_id: familyId,
+              _from: weekStart.toISOString(),
+              _to: weekEnd.toISOString(),
+              _child_ids: selectedChildIds && selectedChildIds.length > 0 ? selectedChildIds : null,
+            }).then(({ data: fbData }) => {
+              if (fbData) {
+                setBusyBlocks(fbData.busy || []);
+              }
+            });
+          }
+        }}
+      />
+
       {/* Loading overlay for AI reschedule generation */}
       {loadingReschedule && (
         <View style={styles.loadingOverlay}>
@@ -2292,6 +2656,13 @@ const styles = StyleSheet.create({
   },
   saveTemplateButtonTextDisabled: {
     color: colors.muted,
+  },
+  saveTemplateButtonActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  saveTemplateButtonTextActive: {
+    color: colors.white,
   },
   weekHeader: {
     flexDirection: 'row',
@@ -2671,6 +3042,40 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
     borderColor: colors.greenSoft,
+  },
+  dragGhost: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    borderWidth: 2,
+    borderRadius: 8,
+    zIndex: 999,
+  },
+  dragGhostCommitting: {
+    transition: 'all 180ms ease-out',
+    WebkitTransition: 'all 180ms ease-out',
+  },
+  dragGhostIcon: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -8,
+    marginLeft: -8,
+    zIndex: 1000,
+    ...(typeof window !== 'undefined' && {
+      transform: 'translate(-50%, -50%)',
+    }),
+  },
+  busyBlock: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    pointerEvents: 'none',
+    zIndex: 1,
   },
   eventBlock: {
     position: 'absolute',

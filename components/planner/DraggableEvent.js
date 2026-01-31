@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState, useEffect } from 'react';
+import React, { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
 import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator, StickyNote } from 'lucide-react';
@@ -359,51 +359,53 @@ export default function DraggableEvent({
   const [notePreview, setNotePreview] = useState([]);
   const hoverTimeoutRef = useRef(null);
 
+  // Stable mousemove handler so we can remove it properly
+  const handleMouseMove = useCallback((e) => {
+    setTooltipPosition({ x: e.clientX + 10, y: e.clientY + 10 });
+  }, []);
+
   // Load note preview on hover
   useEffect(() => {
-    if (isHovered && ev.id && familyId && typeof window !== 'undefined') {
-      // Delay tooltip to avoid flickering
-      hoverTimeoutRef.current = setTimeout(async () => {
-        try {
-          const { data, error } = await supabase
-            .from('notes')
-            .select('id, text, type, created_at')
-            .eq('family_id', familyId)
-            .eq('linked_event_id', ev.id)
-            .order('created_at', { ascending: false })
-            .limit(3);
+    const el = ref.current;
+    const canShow = isHovered && ev?.id && familyId && typeof window !== 'undefined';
 
-          if (!error && data && data.length > 0) {
-            setNotePreview(data);
-            // Get mouse position for tooltip
-            const updateTooltipPosition = (e) => {
-              setTooltipPosition({ x: e.clientX + 10, y: e.clientY + 10 });
-            };
-            if (ref.current) {
-              ref.current.addEventListener('mousemove', updateTooltipPosition);
-              setShowNoteTooltip(true);
-            }
-          }
-        } catch (err) {
-        }
-      }, 500); // 500ms delay before showing tooltip
-    } else {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
+    if (!canShow) {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
       setShowNoteTooltip(false);
       setNotePreview([]);
+      if (el) el.removeEventListener('mousemove', handleMouseMove);
+      return;
     }
 
+    hoverTimeoutRef.current = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('notes')
+          .select('id, text, type, created_at')
+          .eq('family_id', familyId)
+          .eq('linked_event_id', ev.id)
+          .order('created_at', { ascending: false })
+          .limit(3);
+
+        if (!error && data?.length) {
+          setNotePreview(data);
+          if (el) el.addEventListener('mousemove', handleMouseMove);
+          setShowNoteTooltip(true);
+        } else {
+          setShowNoteTooltip(false);
+          setNotePreview([]);
+        }
+      } catch {
+        setShowNoteTooltip(false);
+        setNotePreview([]);
+      }
+    }, 500);
+
     return () => {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
-      if (ref.current) {
-        ref.current.removeEventListener('mousemove', () => {});
-      }
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      if (el) el.removeEventListener('mousemove', handleMouseMove);
     };
-  }, [isHovered, ev.id, familyId]);
+  }, [isHovered, ev?.id, familyId, handleMouseMove]);
 
   const durMin = useMemo(() => {
     const s = new Date(ev.start_ts);
@@ -524,11 +526,12 @@ export default function DraggableEvent({
           height: isWrapped ? '100%' : `${heightPercent}%`,
           width: '100%',
           pointerEvents: isWrapped ? 'auto' : 'auto', // Allow pointer events so drag can work
-          backgroundColor: 'rgba(255, 255, 255, 0.9)',
+          // Apply event colors
+          backgroundColor: eventColors.backgroundColor,
           borderRadius: 12,
-          borderWidth: 1,
-          borderColor: 'rgba(0, 0, 0, 0.05)',
           borderStyle: isBlackoutDay ? 'dashed' : 'solid',
+          borderWidth: 1,
+          borderColor: hexToRgba(eventColors.border, 0.25),
           paddingLeft: 4,
           paddingRight: 4,
           paddingTop: 0,
@@ -551,77 +554,82 @@ export default function DraggableEvent({
         }}
         title={`${subjectName}${childName ? ` • ${childName}` : ''}${topic ? ` • ${topic}` : ''}`}
       >
-          {/* Content */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'flex-start',
-              gap: 4,
-              paddingTop: 2,
-              width: '100%',
-              position: 'relative',
-              zIndex: 2,
-              pointerEvents: 'none', // Allow clicks to pass through to parent
-            }}
-          >
-          
-          {/* Text content */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 0.5,
-            }}
-          >
-            {/* Line 1: Subject name with icon */}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 3,
-              }}
-            >
+        {/* Top color bar */}
+        <div
+          style={{
+            height: 3,
+            width: '100%',
+            backgroundColor: eventColors.topBar,
+            borderTopLeftRadius: 12,
+            borderTopRightRadius: 12,
+            opacity: isFocused ? 0.95 : 0.4, // Dim top bar on unfocused events
+          }}
+        />
+
+        {/* Content */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            gap: 4,
+            paddingTop: 2,
+            width: '100%',
+            position: 'relative',
+            zIndex: 2,
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               {getSubjectIcon(subjectName, eventColors.topBar)}
               <Text
-                style={[
-                  styles.subjectName,
-                  isBlackoutDay && styles.eventTextBlackout,
-                ]}
+                style={[styles.subjectName, isBlackoutDay && styles.eventTextBlackout]}
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
                 {subjectName}
               </Text>
-              {ev.family_id && ev.id && (
-                <EventNoteBadge eventId={ev.id} familyId={ev.family_id} />
-              )}
+
+              {/* Note badge */}
+              {familyId && ev.id && <EventNoteBadge eventId={ev.id} familyId={familyId} />}
             </div>
-            
-            {/* Line 2: Child name + category */}
+
             {childName && (
-              <Text
-                style={styles.metaText}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {childName} • {categoryLabel}
-              </Text>
+              <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={styles.metaText} numberOfLines={1} ellipsizeMode="tail">
+                  {childName}
+                </Text>
+                {/* Color badge */}
+                <span
+                  style={{
+                    fontSize: 7,
+                    fontWeight: '500',
+                    color: eventColors.topBar,
+                    backgroundColor: hexToRgba(eventColors.topBar, 0.12),
+                    paddingLeft: 4,
+                    paddingRight: 4,
+                    paddingTop: 1,
+                    paddingBottom: 1,
+                    borderRadius: 4,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  {categoryLabel}
+                </span>
+              </div>
             )}
-            
-            {/* Line 3: Topic/description */}
-            {topic && (
-              <Text
-                style={styles.topicText}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
+
+            {topic ? (
+              <Text style={styles.topicText} numberOfLines={1} ellipsizeMode="tail">
                 {topic}
               </Text>
-            )}
+            ) : isHovered ? (
+              <Text style={[styles.topicText, { color: '#9CA3AF', fontStyle: 'italic' }]} numberOfLines={1} ellipsizeMode="tail">
+                Tap to add details
+              </Text>
+            ) : null}
           </div>
         </div>
         

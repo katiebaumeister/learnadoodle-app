@@ -14696,6 +14696,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           events={eventsArray}
           selectedDate={selectedDate}
           viewMode={calendarView}
+          familyId={familyId}
           onSelectDate={(newDate) => {
             setSelectedDate(newDate);
             // Also update currentMonth if the month/year changed
@@ -16294,6 +16295,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }
         }}
         familyId={familyId}
+        children={propChildren}
       />
       <AddMaterialModal
         visible={showAddMaterialModal}

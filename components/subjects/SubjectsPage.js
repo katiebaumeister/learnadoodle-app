@@ -487,7 +487,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 16,
+    // Match Materials Library spacing from divider to chip row
     marginTop: 24,
     backgroundColor: '#FFFFFF',
   },

@@ -4317,6 +4317,7 @@ export default function TaskCreateModal({
         }}
         familyId={familyId}
         defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
+        children={familyMembers}
       />
 
       <AddMaterialModal
