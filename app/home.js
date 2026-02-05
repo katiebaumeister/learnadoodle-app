@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, ScrollView, StyleSheet, Platform, Image } from 'react-native';
 import { BottomToolbarLegacy as BottomToolbar } from '../components/navigation/BottomToolbarLegacy';
 import { Card, PastelCard } from '../components/design-system/Card';
 import { Icon } from '../components/design-system/Icon';
@@ -7,6 +7,7 @@ import { Heading, Body, Label, Mono } from '../components/design-system/Typograp
 import { getModeTokens } from '../theme/pastelDesignTokens';
 import { useSensoryMode } from '../contexts/SensoryModeContext';
 import { spacing } from '../theme/pastelDesignTokens';
+import AnimatedIcon from '../components/AnimatedIcon';
 
 // Fallback if context not available
 function useSensoryModeSafe() {
@@ -37,10 +38,21 @@ export default function HomeScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Heading level={1}>Hello, Oliver</Heading>
-          <Body size="md" muted style={styles.subtitle}>
-            Ready to explore today?
-          </Body>
+          <View style={styles.headerContent}>
+            <AnimatedIcon
+              source={require('../assets/icon.png')}
+              size={48}
+              animationType="pulse"
+              duration={2000}
+              style={styles.headerIcon}
+            />
+            <View style={styles.headerText}>
+              <Heading level={1}>Hello, Oliver</Heading>
+              <Body size="md" muted style={styles.subtitle}>
+                Ready to explore today?
+              </Body>
+            </View>
+          </View>
         </View>
         
         {/* Sunny Outlook Card */}
@@ -133,6 +145,17 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: spacing.md,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  headerIcon: {
+    marginRight: spacing.xs,
+  },
+  headerText: {
+    flex: 1,
   },
   subtitle: {
     marginTop: spacing.xs,

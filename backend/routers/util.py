@@ -387,13 +387,19 @@ async def load_planning_context(
         except Exception as e:
             _log("planning.required_minutes.error", child=child_id, error=str(e))
     
-    # Get learning velocities
-    _log("planning.velocity.query")
-    velocities_res = supa.table("learning_velocity").select("*").eq(
-        "family_id", family_id
-    ).in_("child_id", child_ids).execute()
-    velocities = velocities_res.data or []
-    _log("planning.velocity.success", count=len(velocities))
+    # Get learning velocities (gracefully handle if table doesn't exist yet)
+    velocities = []
+    try:
+        _log("planning.velocity.query")
+        velocities_res = supa.table("learning_velocity").select("*").eq(
+            "family_id", family_id
+        ).in_("child_id", child_ids).execute()
+        velocities = velocities_res.data or []
+        _log("planning.velocity.success", count=len(velocities))
+    except Exception as e:
+        # Table might not exist yet - log warning but continue without velocities
+        _log("planning.velocity.error", error=str(e), note="Table may not exist - migration may be needed")
+        velocities = []
     
     # Get recent struggles and performance data from outcomes (last 30 days) to inform scheduling
     _log("planning.struggles.query")

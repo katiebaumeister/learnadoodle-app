@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
 import { X } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
@@ -16,7 +16,6 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
   const isEditing = schedulingMode || isEditingState;
 
   const handleEditingChange = (editing) => {
-    console.log('[EventModal] Editing state changed:', editing);
     setIsEditingState(editing);
   };
 
@@ -43,40 +42,27 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
       setIsEditingState(false); // Start in view mode for existing events
     }
   }, [visible, eventId, initialEvent]);
-
-  const loadEvent = async () => {
+  
+  const loadEvent = useCallback(async () => {
     if (!eventId) return;
-    
-    console.log('[EventModal] loadEvent called for eventId:', eventId);
     
     if (!event && !initialEvent) {
       setLoading(true);
     }
     try {
-      console.log('[EventModal] Calling getEvent for eventId:', eventId);
       const { data, error } = await getEvent(eventId);
       
-      console.log('[EventModal] getEvent returned:', {
-        hasData: !!data,
-        hasError: !!error,
-        data_child_id: data?.child_id,
-        data_child_ids: data?.child_ids,
-        error: error?.message
-      });
-      
       if (error) {
-        console.warn('[EventModal] getEvent error:', error);
         setEvent(prev => prev || initialEvent || null);
         return;
       }
       
       if (!data) {
-        console.warn('[EventModal] getEvent returned no data');
         setEvent(prev => prev || initialEvent || null);
         return;
       }
       
-      setEvent(prev => {
+        setEvent(prev => {
         // Check if initialEvent has optimistic updates (different times than database)
         // If so, preserve the optimistic times from initialEvent
         const hasOptimisticUpdate = initialEvent && (
@@ -85,14 +71,6 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
           (initialEvent.start_local && initialEvent.start_local !== data.start_local) ||
           (initialEvent.end_local && initialEvent.end_local !== data.end_local)
         );
-        
-        console.log('[EventModal] loadEvent - merging data:', {
-          prev_child_id: prev?.child_id,
-          prev_child_ids: prev?.child_ids,
-          data_child_id: data?.child_id,
-          data_child_ids: data?.child_ids,
-          data_child: data?.child
-        });
         
         // Merge data - prioritize database data (data) over previous/initialEvent data (prev)
         // But preserve child_ids from prev if data doesn't have it (important for flexible events)
@@ -151,18 +129,12 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
           }
         }
         
-        // If loaded event has subject_id, remove any string subject from initialEvent
-        // to prevent showing wrong subject name
-        if (data.subject_id && prev?.subject && typeof prev.subject === 'string') {
-          // Remove the string subject from initialEvent - the loaded event will resolve it correctly
-          delete merged.subject;
-        }
-        
-        console.log('[EventModal] loadEvent - merged event:', {
-          child_id: merged.child_id,
-          child_ids: merged.child_ids,
-          child: merged.child
-        });
+          // If loaded event has subject_id, remove any string subject from initialEvent
+          // to prevent showing wrong subject name
+          if (data.subject_id && prev?.subject && typeof prev.subject === 'string') {
+            // Remove the string subject from initialEvent - the loaded event will resolve it correctly
+            delete merged.subject;
+          }
         
         return merged;
       });
@@ -178,7 +150,29 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
     } finally {
       setLoading(false);
     }
-  };
+  }, [eventId, event, initialEvent]);
+  
+  // Listen for event reschedule events to refresh the event data
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const handleEventRescheduled = (e) => {
+      const { eventId: rescheduledEventId } = e.detail || {};
+      // If this modal is showing the rescheduled event, reload it
+      if (rescheduledEventId === eventId && visible) {
+        console.log('[EventModal] Event was rescheduled, reloading event data');
+        // Use a small delay to ensure database has committed the change
+        setTimeout(() => {
+          loadEvent();
+        }, 200);
+      }
+    };
+    
+    window.addEventListener('eventRescheduled', handleEventRescheduled);
+    return () => {
+      window.removeEventListener('eventRescheduled', handleEventRescheduled);
+    };
+  }, [eventId, visible, loadEvent]);
 
   const handleEventUpdated = () => {
     loadEvent(); // Reload event data
@@ -255,17 +249,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
     }
   };
 
-  // Debug log when component updates (even if not visible)
-  if (typeof window !== 'undefined') {
-    console.log('[EventModal] Props received - visible:', visible, 'schedulingMode:', schedulingMode, 'eventId:', eventId);
-  }
-
   if (!visible) return null;
-
-  // Debug log when actually rendering
-  if (typeof window !== 'undefined') {
-    console.log('[EventModal] RENDERING - schedulingMode:', schedulingMode, 'isEditingState:', isEditingState, 'computed isEditing:', isEditing);
-  }
 
   return (
     <Modal

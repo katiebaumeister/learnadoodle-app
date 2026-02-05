@@ -121,11 +121,13 @@ export default function TaskCreateModal({
   onClose,
   defaultDate,
   defaultChildId,
+  defaultChildIds = null,
   familyMembers = [],
   familyId,
   onCreated,
   defaultPlacement = 'calendar', // New prop: 'calendar' or 'backlog'
   defaultSubjectId = null, // Default subject ID to set when opening modal
+  defaultEventType = null, // Default event type to set when opening modal (e.g., 'Lesson')
 }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
@@ -141,7 +143,12 @@ export default function TaskCreateModal({
       return new Date();
     }
   });
-  const [assigneeIds, setAssigneeIds] = useState(defaultChildId ? [defaultChildId] : []);
+  const initialAssigneeIds =
+    Array.isArray(defaultChildIds) && defaultChildIds?.length
+      ? defaultChildIds
+      : (defaultChildId ? [defaultChildId] : []);
+
+  const [assigneeIds, setAssigneeIds] = useState(initialAssigneeIds);
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState([]); // Array of tag strings
   const [tagInput, setTagInput] = useState(''); // For custom tag input
@@ -797,7 +804,11 @@ export default function TaskCreateModal({
       setTitle('');
       setDueDate(defaultDate ?? new Date());
       setEventEndDate(null);
-      setAssigneeIds(defaultChildId ? [defaultChildId] : []);
+      const resetAssigneeIds =
+        Array.isArray(defaultChildIds) && defaultChildIds?.length
+          ? defaultChildIds
+          : (defaultChildId ? [defaultChildId] : []);
+      setAssigneeIds(resetAssigneeIds);
       setNotes('');
       // Labels removed - no longer used
       setPlacement(defaultPlacement || 'calendar'); // Use the prop instead of hardcoded 'calendar'
@@ -805,7 +816,7 @@ export default function TaskCreateModal({
       setStartTime(DEFAULT_START_TIME);
       setEndTime('');
       // Reset new fields
-      setEventType('Lesson'); // Reset to default "Lesson"
+      setEventType(defaultEventType || 'Lesson'); // Use defaultEventType if provided, otherwise default to "Lesson"
       setTags([]); // Reset tags
       setTagInput(''); // Reset tag input
       setSelectedMaterialId(null);
@@ -844,7 +855,7 @@ export default function TaskCreateModal({
       setSuggestedChange(null);
       setChangeAccepted(false);
     }
-  }, [visible, defaultDate, defaultChildId, defaultPlacement, defaultSubjectId]);
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -880,7 +891,9 @@ export default function TaskCreateModal({
       (allSubjects || []).forEach(subject => {
         const isFamilyWide = subject.child_id === null;
         const isForSelectedChild = subject.child_id !== null && assigneeIds.includes(subject.child_id);
-        const shouldInclude = isFamilyWide || isForSelectedChild;
+        // Always include the subject matching defaultSubjectId, even if filters would exclude it
+        const isDefaultSubject = !!defaultSubjectId && subject.id === defaultSubjectId;
+        const shouldInclude = isFamilyWide || isForSelectedChild || isDefaultSubject;
         
         if (shouldInclude) {
           const existing = subjectMap.get(subject.name);
@@ -897,8 +910,15 @@ export default function TaskCreateModal({
           }
           // If existing is child-specific and this is also child-specific, keep existing (already preferred)
           else if (existing.child_id !== null && subject.child_id !== null) {
-            // If both are child-specific, prefer the one matching the first selected assignee
-            if (subject.child_id === assigneeIds[0] && existing.child_id !== assigneeIds[0]) {
+            // If both are child-specific, prefer:
+            // 1) The one matching defaultSubjectId if present
+            // 2) Otherwise the one matching the first selected assignee
+            const existingIsDefault = !!defaultSubjectId && existing.id === defaultSubjectId;
+            const currentIsDefault = !!defaultSubjectId && subject.id === defaultSubjectId;
+            
+            if (currentIsDefault && !existingIsDefault) {
+              subjectMap.set(subject.name, subject);
+            } else if (!existingIsDefault && subject.child_id === assigneeIds[0] && existing.child_id !== assigneeIds[0]) {
               subjectMap.set(subject.name, subject);
             } else {
               console.log(`Skipping duplicate child-specific "${subject.name}" for child ${subject.child_id}`);

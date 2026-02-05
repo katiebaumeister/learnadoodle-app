@@ -568,6 +568,7 @@ import TodayCard from './home/TodayCard'
 import WeeklyProgress from './home/WeeklyProgress'
 import DailyInsights from './home/DailyInsights'
 import HeroInsights from './home/HeroInsights'
+import AnimatedIcon from './AnimatedIcon'
 import StickyNotesContainer from './notes/StickyNotesContainer'
 import { getDailyTips } from '../lib/dailyTips'
 import LoadingScreen from './LoadingScreen'
@@ -986,11 +987,16 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       
       // Only handle for non-family screens (planner, home, etc.)
       const date = detail.date || new Date();
-      const childId = detail.childId || null;
+      const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
+        ? detail.childIds
+        : (detail.childId ? [detail.childId] : []);
+      const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
+      const subjectId = detail.subjectId || null;
       
       console.log('[WebContent] openTaskModal event received (non-family screen):', { 
         date, 
-        childId, 
+        childIds: incomingChildIds, 
+        primaryChildId,
         eventType: detail.eventType, 
         subjectId: detail.subjectId,
         activeTab 
@@ -998,7 +1004,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       
       // Set all state values - React will batch these updates
       setTaskModalDate(date);
-      setTaskModalChildId(childId);
+      setTaskModalChildIds(incomingChildIds);
+      setTaskModalChildId(primaryChildId);
+      setTaskModalDefaultSubjectId(subjectId);
+      setTaskModalDefaultEventType(detail.eventType || null);
       setTaskModalDefaultPlacement('calendar'); // Ensure placement is set
       setShowTaskModal(true);
       
@@ -1056,6 +1065,33 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     
     return () => {
       window.removeEventListener('openEventModal', handleOpenEventModal);
+    };
+  }, [activeTab]);
+
+  // Listen for openAddMaterialModal event
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    
+    const handleOpenAddMaterialModal = (event) => {
+      const detail = event.detail || {};
+      const subjectId = detail.subjectId || null;
+      const subjectName = detail.subjectName || null;
+      const childIds = detail.childIds && Array.isArray(detail.childIds)
+        ? detail.childIds
+        : (detail.childId ? [detail.childId] : []);
+      
+      console.log('[WebContent] openAddMaterialModal event received:', { subjectId, subjectName, childIds, activeTab });
+      
+      setAddMaterialModalDefaultSubjectId(subjectId);
+      setAddMaterialModalDefaultSubjectName(subjectName);
+      setAddMaterialModalDefaultChildIds(childIds);
+      setShowAddMaterialModal(true);
+    };
+    
+    window.addEventListener('openAddMaterialModal', handleOpenAddMaterialModal);
+    
+    return () => {
+      window.removeEventListener('openAddMaterialModal', handleOpenAddMaterialModal);
     };
   }, [activeTab]);
   
@@ -3201,13 +3237,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskModalDate, setTaskModalDate] = useState(null);
   const [taskModalChildId, setTaskModalChildId] = useState(null);
+  const [taskModalChildIds, setTaskModalChildIds] = useState([]);
   const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
   const [taskModalDefaultSubjectId, setTaskModalDefaultSubjectId] = useState(null);
+  const [taskModalDefaultEventType, setTaskModalDefaultEventType] = useState(null);
   
   // Add Material Modal state
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [addMaterialModalDefaultRole, setAddMaterialModalDefaultRole] = useState(null);
   const [addMaterialModalDefaultSubjectId, setAddMaterialModalDefaultSubjectId] = useState(null);
+  const [addMaterialModalDefaultSubjectName, setAddMaterialModalDefaultSubjectName] = useState(null);
+  const [addMaterialModalDefaultChildIds, setAddMaterialModalDefaultChildIds] = useState([]);
   
   // Debug: Log when showTaskModal changes
   useEffect(() => {
@@ -6386,8 +6426,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               }}
               onAddEvent={(subject) => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openTaskCreateModal', {
-                    detail: { subjectId: subject.id }
+                  // Get first assigned child ID for defaulting in modals
+                  const assignedChildren = subject.assignedChildren || [];
+                  const firstAssignedChildId = assignedChildren.length > 0 ? assignedChildren[0] : null;
+                  
+                  // Dispatch openTaskModal event (handled by both WebContent and WebLayout)
+                  window.dispatchEvent(new CustomEvent('openTaskModal', {
+                    detail: { 
+                      subjectId: subject.id, 
+                      eventType: 'Lesson', 
+                      date: new Date(),
+                      childId: firstAssignedChildId
+                    }
                   }));
                 }
               }}
@@ -7339,6 +7389,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           contentContainerStyle={styles.homeContentContainer}
           showsVerticalScrollIndicator={true}
         >
+        {/* Animated Icon Header */}
+        <View style={{ alignItems: 'center', marginTop: 24, marginBottom: 16 }}>
+          <AnimatedIcon
+            source={require('../assets/icon.png')}
+            size={64}
+            animationType="pulse"
+            duration={2000}
+          />
+        </View>
+        
         {/* Hero Insights - Co-Star style daily guidance */}
         <HeroInsights
           primary={dailyInsightsData?.primary}
@@ -7554,6 +7614,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 }
               }}
               />
+
+              {/* Home screen footer animation */}
+              <View style={styles.homeAnimationContainer}>
+                <AnimatedIcon
+                  lottieSource={require('../assets/animation.json')}
+                  size={200}
+                  animationType="none"
+                  loop
+                  autoPlay
+                />
+              </View>
           </View>
           </View>
         </ScrollView>
@@ -7583,11 +7654,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             setShowTaskModal(false);
             setTaskModalDate(null);
             setTaskModalChildId(null);
+            setTaskModalChildIds([]);
+            setTaskModalDefaultSubjectId(null);
+            setTaskModalDefaultEventType(null);
             setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
           }}
           defaultDate={taskModalDate || validSelectedDate}
           defaultChildId={taskModalChildId}
+          defaultChildIds={taskModalChildIds}
           defaultPlacement={taskModalDefaultPlacement}
+          defaultSubjectId={taskModalDefaultSubjectId}
+          defaultEventType={taskModalDefaultEventType}
           familyId={familyId}
           familyMembers={(homeData?.children || []).map(child => ({
             id: child.id,
@@ -14766,13 +14843,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           onClose={() => {
             setShowTaskModal(false);
             setTaskModalChildId(null);
+            setTaskModalChildIds([]);
             setTaskModalDefaultSubjectId(null);
+            setTaskModalDefaultEventType(null);
             setTaskModalDefaultPlacement('calendar'); // Reset to default
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
+          defaultChildIds={taskModalChildIds}
           defaultPlacement={taskModalDefaultPlacement}
           defaultSubjectId={taskModalDefaultSubjectId}
+          defaultEventType={taskModalDefaultEventType}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,
@@ -16107,11 +16188,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             onClose={() => {
               setShowTaskModal(false);
               setTaskModalChildId(null);
+              setTaskModalChildIds([]);
+              setTaskModalDefaultSubjectId(null);
+              setTaskModalDefaultEventType(null);
               setTaskModalDefaultPlacement('calendar'); // Reset to default
             }}
             defaultDate={taskModalDate}
             defaultChildId={taskModalChildId}
+            defaultChildIds={taskModalChildIds}
             defaultPlacement={taskModalDefaultPlacement}
+            defaultSubjectId={taskModalDefaultSubjectId}
+            defaultEventType={taskModalDefaultEventType}
             familyId={familyId}
             familyMembers={children.map(child => ({
               id: child.id,
@@ -16303,11 +16390,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           setShowAddMaterialModal(false);
           setAddMaterialModalDefaultRole(null);
           setAddMaterialModalDefaultSubjectId(null);
+          setAddMaterialModalDefaultSubjectName(null);
+          setAddMaterialModalDefaultChildIds([]);
         }}
         onSaved={() => {
           setShowAddMaterialModal(false);
           setAddMaterialModalDefaultRole(null);
           setAddMaterialModalDefaultSubjectId(null);
+          setAddMaterialModalDefaultSubjectName(null);
+          setAddMaterialModalDefaultChildIds([]);
           // Refresh subjects if needed
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -16317,6 +16408,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         children={children || []}
         defaultRole={addMaterialModalDefaultRole}
         defaultSubjectId={addMaterialModalDefaultSubjectId}
+        defaultSubjectName={addMaterialModalDefaultSubjectName}
+        defaultChildIds={addMaterialModalDefaultChildIds}
       />
 
       {/* Scheduling Assistant Modal (Planner > Tasks > Backlog right-click) */}
@@ -16426,6 +16519,53 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }
         }}
       />
+      
+      {/* Global Task Create Modal - available for all tabs (subjects, planner, etc.) */}
+      {activeTab === 'subjects' && (
+        <TaskCreateModal
+          key={`task-modal-subjects-${taskModalDefaultPlacement}`}
+          visible={showTaskModal}
+          onClose={() => {
+            setShowTaskModal(false);
+            setTaskModalChildId(null);
+            setTaskModalChildIds([]);
+            setTaskModalDefaultSubjectId(null);
+            setTaskModalDefaultEventType(null);
+            setTaskModalDefaultPlacement('calendar');
+          }}
+          defaultDate={taskModalDate}
+          defaultChildId={taskModalChildId}
+          defaultChildIds={taskModalChildIds}
+          defaultPlacement={taskModalDefaultPlacement}
+          defaultSubjectId={taskModalDefaultSubjectId}
+          defaultEventType={taskModalDefaultEventType}
+          familyId={familyId}
+          familyMembers={children.map(child => ({
+            id: child.id,
+            name: child.first_name || child.name || 'Unknown',
+            role: 'child'
+          }))}
+          lists={[
+            { id: 'inbox', name: 'Inbox' },
+            ...children.map(child => ({
+              id: `child:${child.id}`,
+              name: child.first_name || child.name || 'Unknown'
+            }))
+          ]}
+          onCreated={async (task) => {
+            // Dispatch eventCreated event for other components
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && task?.id) {
+              window.dispatchEvent(new CustomEvent('eventCreated', { 
+                detail: { eventId: task.id } 
+              }));
+            }
+            // Refresh subjects data
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            }
+          }}
+        />
+      )}
       
       {/* <NoteEditorModal - Archived - records screen removed
         visible={showNoteEditor}
@@ -16561,6 +16701,12 @@ const styles = StyleSheet.create({
         flexDirection: 'column',
       },
     }),
+  },
+  homeAnimationContainer: {
+    marginTop: 24,
+    marginBottom: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   homeLeftColumn: {
     flex: 1,

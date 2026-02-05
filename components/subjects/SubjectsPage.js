@@ -178,11 +178,21 @@ export default function SubjectsPage({
   };
 
   const handleAddEvent = (subject) => {
+    // Get first assigned child ID for defaulting in modals
+    const assignedChildren = subject.assignedChildren || [];
+    const firstAssignedChildId = assignedChildren.length > 0 ? assignedChildren[0] : null;
+    
     if (onAddEvent) {
       onAddEvent(subject);
     } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openTaskCreateModal', {
-        detail: { subjectId: subject.id }
+      // Dispatch openTaskModal event (handled by both WebContent and WebLayout)
+      window.dispatchEvent(new CustomEvent('openTaskModal', {
+        detail: { 
+          subjectId: subject.id, 
+          eventType: 'Lesson', 
+          date: new Date(),
+          childId: firstAssignedChildId
+        }
       }));
     }
   };
@@ -331,7 +341,7 @@ export default function SubjectsPage({
       {/* Content */}
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.accent} />
+          <ActivityIndicator size="large" color="#60a5fa" />
           <Text style={styles.loadingText}>Loading subjects...</Text>
         </View>
       ) : error ? (
@@ -363,7 +373,7 @@ export default function SubjectsPage({
                 }
               }}
             >
-              <Plus size={18} color={colors.accent} />
+              <Plus size={18} color="#60a5fa" />
               <Text style={styles.emptyButtonText}>Create your first subject</Text>
             </TouchableOpacity>
           )}
@@ -379,6 +389,7 @@ export default function SubjectsPage({
               key={subject.id}
               subject={subject}
               children={children}
+              selectedChildFilter={selectedChildFilter}
               onCardClick={handleSubjectClick}
               onNavigateToPlanner={handleNavigateToPlanner}
               onAddSyllabus={handleAddSyllabus}
@@ -460,8 +471,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#111827',
-    backgroundColor: '#111827',
+    borderColor: '#000000',
+    backgroundColor: '#000000',
     ...Platform.select({
       web: {
         cursor: 'pointer',
@@ -522,8 +533,8 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipActive: {
-    borderColor: '#4285f4',
-    backgroundColor: '#e8f0fe',
+    borderColor: '#60a5fa',
+    backgroundColor: '#eff6ff',
   },
   filterChipText: {
     fontSize: 12,
@@ -534,7 +545,7 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipTextActive: {
-    color: '#4285f4',
+    color: '#60a5fa',
     fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -577,7 +588,7 @@ const styles = StyleSheet.create({
   retryButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: colors.accent || '#4F46E5',
+    backgroundColor: '#60a5fa',
     borderRadius: 8,
   },
   retryButtonText: {
@@ -633,7 +644,7 @@ const styles = StyleSheet.create({
   emptyButtonText: {
     fontSize: 14,
     fontWeight: '500',
-    color: colors.accent || '#4F46E5',
+    color: '#60a5fa',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

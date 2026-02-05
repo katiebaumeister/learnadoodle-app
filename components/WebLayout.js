@@ -10,8 +10,8 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
     console.warn('ReactDOM not available for portal rendering');
   }
 }
-import { addMonths, addDays, addWeeks } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search } from 'lucide-react';
+import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
@@ -48,6 +48,7 @@ import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import RebalanceModal from './planner/modals/RebalanceModal';
+import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 
 export default function WebLayout({ navigation, routeParams }) {
@@ -72,6 +73,9 @@ export default function WebLayout({ navigation, routeParams }) {
   const [editingChild, setEditingChild] = useState(null);
   const [taskModalDate, setTaskModalDate] = useState(new Date());
   const [taskModalChildId, setTaskModalChildId] = useState(null);
+  const [taskModalChildIds, setTaskModalChildIds] = useState([]);
+  const [taskModalDefaultSubjectId, setTaskModalDefaultSubjectId] = useState(null);
+  const [taskModalDefaultEventType, setTaskModalDefaultEventType] = useState(null);
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -97,6 +101,8 @@ export default function WebLayout({ navigation, routeParams }) {
   const [showBuildCurriculumModal, setShowBuildCurriculumModal] = useState(false);
   const [showProgressForecastModal, setShowProgressForecastModal] = useState(false);
   const [showSchedulingAssistantModal, setShowSchedulingAssistantModal] = useState(false);
+  const [schedulingAssistantChildId, setSchedulingAssistantChildId] = useState(null);
+  const [schedulingAssistantWeekStart, setSchedulingAssistantWeekStart] = useState(() => startOfWeek(new Date()));
   const [plannerSearchQuery, setPlannerSearchQuery] = useState('');
   const plannerSearchInputRef = useRef(null);
   const [plannerSearchResults, setPlannerSearchResults] = useState([]);
@@ -144,6 +150,9 @@ export default function WebLayout({ navigation, routeParams }) {
   const quickRescheduleButtonRef = useRef(null);
   const progressForecastButtonRef = useRef(null);
   const buildCurriculumButtonRef = useRef(null);
+  const [showFreezeWeekTooltip, setShowFreezeWeekTooltip] = useState(false);
+  const [freezeWeekTooltipPosition, setFreezeWeekTooltipPosition] = useState({ x: 0, y: 0 });
+  const freezeWeekButtonRef = useRef(null);
   const planWeekButtonRef = useRef(null);
   
   // Walkthrough refs
@@ -1281,7 +1290,10 @@ export default function WebLayout({ navigation, routeParams }) {
     const handleOpenTaskModal = (event) => {
       const detail = event.detail || {};
       const date = detail.date || new Date();
-      const childId = detail.childId || null;
+      const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
+        ? detail.childIds
+        : (detail.childId ? [detail.childId] : []);
+      const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
       
       // Check if we're on the family screen (profile or child-* tabs)
       // Don't open if we're on planner, home, calendar, etc.
@@ -1299,18 +1311,19 @@ export default function WebLayout({ navigation, routeParams }) {
       
       console.log('[WebLayout] openTaskModal event received on family screen:', { 
         date, 
-        childId, 
+        childIds: incomingChildIds,
+        primaryChildId,
         eventType: detail.eventType, 
         subjectId: detail.subjectId,
         activeTab 
       });
       
       setTaskModalDate(date);
-      setTaskModalChildId(childId);
+      setTaskModalChildIds(incomingChildIds);
+      setTaskModalChildId(primaryChildId);
+      setTaskModalDefaultSubjectId(detail.subjectId || null);
+      setTaskModalDefaultEventType(detail.eventType || null);
       setShowTaskModal(true);
-      
-      // Note: eventType and subjectId are passed but TaskCreateModal doesn't support pre-filling these yet
-      // TODO: Add defaultEventType and defaultSubjectId props to TaskCreateModal
     };
     
     window.addEventListener('openTaskModal', handleOpenTaskModal);
@@ -1867,6 +1880,24 @@ export default function WebLayout({ navigation, routeParams }) {
                         }
                         setShowViewModeDropdown(!showViewModeDropdown);
                       }}
+                      {...(Platform.OS === 'web' && {
+                        onMouseEnter: () => {
+                          if (viewModeButtonRef.current) {
+                            const node = viewModeButtonRef.current._nativeNode || viewModeButtonRef.current;
+                            if (node && typeof node.getBoundingClientRect === 'function') {
+                              const rect = node.getBoundingClientRect();
+                              setViewModeDropdownPosition({
+                                top: rect.bottom + 4,
+                                left: rect.left,
+                              });
+                              setShowViewModeDropdown(true);
+                            }
+                          }
+                        },
+                        onMouseLeave: () => {
+                          setShowViewModeDropdown(false);
+                        },
+                      })}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -1901,6 +1932,14 @@ export default function WebLayout({ navigation, routeParams }) {
                     {showViewModeDropdown && Platform.OS === 'web' && (
                       <View
                         ref={viewModeDropdownRef}
+                        {...(Platform.OS === 'web' && {
+                          onMouseEnter: () => {
+                            setShowViewModeDropdown(true);
+                          },
+                          onMouseLeave: () => {
+                            setShowViewModeDropdown(false);
+                          },
+                        })}
                         style={{
                           position: 'fixed',
                           top: viewModeDropdownPosition.top,
@@ -1979,6 +2018,24 @@ export default function WebLayout({ navigation, routeParams }) {
                         }
                         setShowFiltersDropdown(!showFiltersDropdown);
                       }}
+                      {...(Platform.OS === 'web' && {
+                        onMouseEnter: () => {
+                          if (filtersButtonRef.current) {
+                            const node = filtersButtonRef.current._nativeNode || filtersButtonRef.current;
+                            if (node && typeof node.getBoundingClientRect === 'function') {
+                              const rect = node.getBoundingClientRect();
+                              setFiltersDropdownPosition({
+                                top: rect.bottom + 4,
+                                left: rect.left,
+                              });
+                              setShowFiltersDropdown(true);
+                            }
+                          }
+                        },
+                        onMouseLeave: () => {
+                          setShowFiltersDropdown(false);
+                        },
+                      })}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -2013,6 +2070,14 @@ export default function WebLayout({ navigation, routeParams }) {
                     {showFiltersDropdown && Platform.OS === 'web' && (
                       <View
                         ref={filtersDropdownRef}
+                        {...(Platform.OS === 'web' && {
+                          onMouseEnter: () => {
+                            setShowFiltersDropdown(true);
+                          },
+                          onMouseLeave: () => {
+                            setShowFiltersDropdown(false);
+                          },
+                        })}
                         style={{
                           position: 'fixed',
                           top: filtersDropdownPosition.top,
@@ -2275,6 +2340,24 @@ export default function WebLayout({ navigation, routeParams }) {
                         }
                         setShowPlanOptimizeDropdown(!showPlanOptimizeDropdown);
                       }}
+                      {...(Platform.OS === 'web' && {
+                        onMouseEnter: () => {
+                          if (planOptimizeButtonRef.current) {
+                            const node = planOptimizeButtonRef.current._nativeNode || planOptimizeButtonRef.current;
+                            if (node && typeof node.getBoundingClientRect === 'function') {
+                              const rect = node.getBoundingClientRect();
+                              setPlanOptimizeDropdownPosition({
+                                top: rect.bottom + 4,
+                                left: rect.left,
+                              });
+                              setShowPlanOptimizeDropdown(true);
+                            }
+                          }
+                        },
+                        onMouseLeave: () => {
+                          setShowPlanOptimizeDropdown(false);
+                        },
+                      })}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -2301,6 +2384,14 @@ export default function WebLayout({ navigation, routeParams }) {
                     {showPlanOptimizeDropdown && Platform.OS === 'web' && (
                       <View
                         ref={planOptimizeDropdownRef}
+                        {...(Platform.OS === 'web' && {
+                          onMouseEnter: () => {
+                            setShowPlanOptimizeDropdown(true);
+                          },
+                          onMouseLeave: () => {
+                            setShowPlanOptimizeDropdown(false);
+                          },
+                        })}
                         style={{
                           position: 'fixed',
                           top: planOptimizeDropdownPosition.top,
@@ -2345,11 +2436,17 @@ export default function WebLayout({ navigation, routeParams }) {
                                     setShowRebalanceModal(true);
                                     break;
                                   case 'schedulingAssistant':
-                                    // Open Scheduling Assistant - this will be integrated into planner view
-                                    // For now, show a message that it's available in week view
-                                    if (Platform.OS === 'web') {
-                                      alert('Scheduling Assistant is now available! Switch to Week view to use it.');
-                                    }
+                                    // Open Scheduling Assistant modal with current week and selected children
+                                    // Use current month to calculate current week start
+                                    const today = new Date();
+                                    const currentWeekStart = startOfWeek(today);
+                                    setSchedulingAssistantWeekStart(currentWeekStart);
+                                    // Use first selected child, or first child if none selected
+                                    const selectedChild = selectedCalendarChildren && selectedCalendarChildren.length > 0
+                                      ? selectedCalendarChildren[0]
+                                      : (children.length > 0 ? children[0].id : null);
+                                    setSchedulingAssistantChildId(selectedChild);
+                                    setShowSchedulingAssistantModal(true);
                                     break;
                                 }
                               }}
@@ -2364,6 +2461,89 @@ export default function WebLayout({ navigation, routeParams }) {
                       </View>
                     )}
                   </View>
+                  
+                  {/* Freeze Week toggle - icon only, shown only in Week view */}
+                  {currentView === 'week' && (
+                    <>
+                      <TouchableOpacity
+                        ref={freezeWeekButtonRef}
+                        onPress={() => {
+                          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('plannerToggleFreezeWeek'));
+                          }
+                        }}
+                        activeOpacity={0.7}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(209, 213, 219, 0.8)',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        {...(Platform.OS === 'web' && {
+                          onMouseEnter: (e) => {
+                            const node = freezeWeekButtonRef.current?._nativeNode || freezeWeekButtonRef.current;
+                            if (node && typeof node.getBoundingClientRect === 'function') {
+                              const rect = node.getBoundingClientRect();
+                              setFreezeWeekTooltipPosition({
+                                x: rect.left + rect.width / 2,
+                                y: rect.bottom,
+                              });
+                              setShowFreezeWeekTooltip(true);
+                            }
+                          },
+                          onMouseLeave: () => {
+                            setShowFreezeWeekTooltip(false);
+                          },
+                        })}
+                      >
+                        <Lock size={14} color="rgba(15, 23, 42, 0.75)" />
+                      </TouchableOpacity>
+                      
+                      {/* Freeze Week Tooltip */}
+                      {Platform.OS === 'web' && showFreezeWeekTooltip && (() => {
+                        let ReactDOM;
+                        try {
+                          ReactDOM = require('react-dom');
+                        } catch (e) {
+                          return null;
+                        }
+                        
+                        const tooltipContent = (
+                          <View
+                            style={{
+                              position: 'fixed',
+                              left: freezeWeekTooltipPosition.x,
+                              top: freezeWeekTooltipPosition.y,
+                              transform: 'translate(-50%, 0)',
+                              backgroundColor: '#1F2937',
+                              borderRadius: 6,
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                              marginTop: 4,
+                              zIndex: 10001,
+                              maxWidth: 280,
+                              ...(Platform.OS === 'web' && {
+                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                              }),
+                            }}
+                          >
+                            <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '500', lineHeight: 16 }}>
+                              Freeze Week - this will exempt week from changes both manual and scheduling assistant changes
+                            </Text>
+                          </View>
+                        );
+                        
+                        if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                          return ReactDOM.createPortal(tooltipContent, document.body);
+                        }
+                        return tooltipContent;
+                      })()}
+                    </>
+                  )}
                 </View>
 
                 {/* Search Bar and New Event Button */}
@@ -2740,9 +2920,15 @@ export default function WebLayout({ navigation, routeParams }) {
           onClose={() => {
             setShowTaskModal(false);
             setTaskModalChildId(null);
+            setTaskModalChildIds([]);
+            setTaskModalDefaultSubjectId(null);
+            setTaskModalDefaultEventType(null);
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
+          defaultChildIds={taskModalChildIds}
+          defaultSubjectId={taskModalDefaultSubjectId}
+          defaultEventType={taskModalDefaultEventType}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,
@@ -2925,96 +3111,66 @@ export default function WebLayout({ navigation, routeParams }) {
         }}
       />
 
-      {/* Scheduling Assistant Coming Soon Modal */}
+      {/* Scheduling Assistant Modal */}
       <Modal
         visible={showSchedulingAssistantModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowSchedulingAssistantModal(false)}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => {
+          setShowSchedulingAssistantModal(false);
+          setSchedulingAssistantChildId(null);
+        }}
       >
-        <TouchableOpacity
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            alignItems: 'center',
-            justifyContent: 'center',
-            ...(Platform.OS === 'web' && {
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 10000,
-            }),
-          }}
-          activeOpacity={1}
-          onPress={() => setShowSchedulingAssistantModal(false)}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
+        <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+          <View
             style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 12,
-              padding: 24,
-              maxWidth: 400,
-              width: '90%',
-              ...(Platform.OS === 'web' && {
-                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
-              }),
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: 'rgba(15,23,42,0.08)',
             }}
           >
-            <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <Clock size={48} color="#A78BFA" />
-            </View>
-            <Text style={{
-              fontSize: 24,
-              fontWeight: 'bold',
-              color: '#111827',
-              textAlign: 'center',
-              marginBottom: 12,
-              ...(Platform.OS === 'web' && {
-                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }),
-            }}>
-              Coming Soon!
-            </Text>
-            <Text style={{
-              fontSize: 16,
-              color: '#6B7280',
-              textAlign: 'center',
-              marginBottom: 24,
-              lineHeight: 24,
-              ...(Platform.OS === 'web' && {
-                fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }),
-            }}>
-              The Scheduling Assistant is currently in development. This feature will help you automatically optimize your schedule, suggest optimal times for activities, and balance workloads across your family.
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>
+              Scheduling Assistant
             </Text>
             <TouchableOpacity
-              onPress={() => setShowSchedulingAssistantModal(false)}
-              style={{
-                backgroundColor: '#A78BFA',
-                borderRadius: 8,
-                paddingVertical: 12,
-                paddingHorizontal: 24,
-                alignItems: 'center',
+              onPress={() => {
+                setShowSchedulingAssistantModal(false);
+                setSchedulingAssistantChildId(null);
               }}
+              style={{ paddingHorizontal: 10, paddingVertical: 6 }}
             >
-              <Text style={{
-                fontSize: 16,
-                fontWeight: '600',
-                color: '#FFFFFF',
-                ...(Platform.OS === 'web' && {
-                  fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  textTransform: 'uppercase',
-                }),
-              }}>
-                Got It
-              </Text>
+              <Text style={{ fontSize: 14, color: '#6B7280', fontWeight: '600' }}>Close</Text>
             </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
+          </View>
+
+          <SchedulingAssistant
+            key={`${schedulingAssistantChildId}-${schedulingAssistantWeekStart?.getTime()}`}
+            familyId={familyId}
+            childId={schedulingAssistantChildId || (children.length > 0 ? children[0].id : null)}
+            weekStart={schedulingAssistantWeekStart}
+            events={[]} // Events will be fetched by SchedulingAssistant component
+            children={children}
+            onEventPress={(event) => {
+              // Handle event press if needed
+            }}
+            onEventRightClick={(event) => {
+              // Handle right click if needed
+            }}
+            onEventComplete={(event) => {
+              // Handle event complete if needed
+            }}
+            onRefresh={async () => {
+              // Refresh calendar data if available
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+              }
+            }}
+          />
+        </View>
       </Modal>
 
       {/* What-If Analysis Modal */}

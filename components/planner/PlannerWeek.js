@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
-import { Calendar, Sparkles, List, Lock, Unlock, Printer, AlertCircle } from 'lucide-react';
+import { Calendar, Sparkles, List, Lock, Unlock, Printer } from 'lucide-react';
 // Using native HTML5 drag-and-drop instead of @hello-pangea/dnd for React Native Web compatibility
 import { supabase } from '../../lib/supabase';
 import { colors, shadows } from '../../theme/colors';
@@ -10,15 +10,12 @@ import EventModal from '../events/EventModal';
 import RescheduleReportModal from './RescheduleReportModal';
 import BlackoutDialog from './BlackoutDialog';
 import RescheduleModal from './RescheduleModal';
-import BulkRescheduleModal from './BulkRescheduleModal';
 import WeeklyReshuffleModal from './WeeklyReshuffleModal';
 import { proposeReschedule, getWeekStart, freezeWeek, getWeeklyPacket } from '../../lib/apiClient';
 import { rescheduleEvent, createEvent as createEventWithOffline, deleteEvent as deleteEventWithOffline } from '../../lib/services/plannerClientWithOffline';
 import * as offlineStorage from '../../lib/services/offlineStorage';
 import PlanYearWizard from '../year/PlanYearWizard';
 import SaveTemplateModal from '../templates/SaveTemplateModal';
-import { Save } from 'lucide-react';
-// ConstraintsTimeline requires ConstraintsProvider - making it optional
 // import ConstraintsTimeline from '../../app/components/schedule/ConstraintsTimeline';
 import { logDragDrop, logDeleteEvent } from '../../app/services/plannerInstrumentation';
 import NoteEditorModal from '../records/NoteEditorModal';
@@ -69,72 +66,6 @@ function minutesSinceMidnight(hhmm) {
   return h * 60 + m;
 }
 
-// Time grid constants and pixel→minutes converter
-const GRID_MINUTES = 24 * 60; // 1440 minutes in a day
-const SNAP_MINUTES = 15; // Snap to 15-minute increments
-
-function clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-
-function snapMinutes(min, step = SNAP_MINUTES) {
-  return Math.round(min / step) * step;
-}
-
-function minutesFromY(yPx, gridHeightPx) {
-  if (!gridHeightPx || gridHeightPx <= 0) return 0;
-  const ratio = clamp(yPx / gridHeightPx, 0, 1);
-  return ratio * GRID_MINUTES;
-}
-
-// Format conflict message from validation conflicts array
-function formatConflictMessage(conflicts, children = []) {
-  if (!conflicts || !Array.isArray(conflicts) || conflicts.length === 0) {
-    return 'This time slot conflicts with other events';
-  }
-  
-  const firstConflict = conflicts[0];
-  const conflictTitle = firstConflict.title || 'Event';
-  
-  // Get child name(s) from child_ids
-  let childNames = [];
-  if (firstConflict.child_ids && Array.isArray(firstConflict.child_ids)) {
-    childNames = firstConflict.child_ids
-      .map(childId => {
-        const child = children.find(c => c.id === childId);
-        return child ? (child.first_name || child.name) : null;
-      })
-      .filter(Boolean);
-  }
-  const childNameStr = childNames.length > 0 ? ` (${childNames.join(', ')})` : '';
-  
-  // Format time range
-  let timeStr = '';
-  if (firstConflict.start_ts && firstConflict.end_ts) {
-    try {
-      const start = new Date(firstConflict.start_ts);
-      const end = new Date(firstConflict.end_ts);
-      const startHour = start.getHours();
-      const startMin = start.getMinutes();
-      const endHour = end.getHours();
-      const endMin = end.getMinutes();
-      
-      const formatTime = (h, m) => {
-        const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-        const period = h >= 12 ? 'PM' : 'AM';
-        const mm = m.toString().padStart(2, '0');
-        return `${hour12}:${mm} ${period}`;
-      };
-      
-      timeStr = ` ${formatTime(startHour, startMin)}–${formatTime(endHour, endMin)}`;
-    } catch (e) {
-      // Fallback if date parsing fails
-    }
-  }
-  
-  return `Conflicts with ${conflictTitle}${childNameStr}${timeStr}`;
-}
-
 // Import offline-enabled week data hook
 import { useWeekDataWithOffline } from './useWeekDataWithOffline';
 
@@ -144,7 +75,7 @@ function useWeekData(weekStart, childIds, familyId) {
 }
 
 // Day Column Component
-function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChanged, onEventClick, dayStatus, children = [], focusedChildId = null, draggedEventId = null, onMouseDragStart = null, familyId = null, schedulingAssistantEnabled = false, busyBlocks = [], dragPreview = null, commitAnimation = null }) {
+function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChanged, onEventClick, dayStatus, children = [], focusedChildId = null, draggedEventId = null, onMouseDragStart = null, familyId = null }) {
   const total = hours.endMin - hours.startMin;
   const step = hours.step;
   const isBlackout = dayStatus === 'off' || (windows.length === 0 && dayStatus === 'off');
@@ -159,37 +90,38 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
     });
   }, [events]);
 
-  // Use div for web
-  // Use View instead of div to avoid React Native Web property setting issues
-  const ColumnWrapper = View;
-  
+  // Use View for both platforms (React Native Web handles data attributes)
   return (
-    <ColumnWrapper 
-      data-day-date={dateIso || getLocalDateString(date)}
+    <View 
+      {...(typeof window !== 'undefined' && {
+        'data-day-date': dateIso || getLocalDateString(date)
+      })}
       style={[
         styles.dayColumn,
         isBlackout && styles.dayColumnBlackout,
         isPartialBlackout && styles.dayColumnPartialBlackout
       ]}
-    >{/* Hour lines */}{Array.from({ length: Math.floor(total / step) + 1 }).map((_, i) => {
+    >
+            {/* Hour lines */}
+            {Array.from({ length: Math.floor(total / step) + 1 }).map((_, i) => {
               const y = (i * step / total) * 100;
-              const LineWrapper = View;
               return (
-                <LineWrapper
+                <View
                   key={i}
                   style={[styles.hourLine, { top: `${y}%` }]}
                 />
               );
-            })}{/* Availability windows - only show if not full blackout */}
+            })}
+
+            {/* Availability windows - only show if not full blackout */}
             {!isBlackout && windows
               .filter(w => w && w.start && w.end) // Filter out invalid windows
               .map((w, idx) => {
                 const s = ((minutesSinceMidnight(w.start) - hours.startMin) / total) * 100;
                 const e = ((minutesSinceMidnight(w.end) - hours.startMin) / total) * 100;
                 const h = Math.max(2, e - s);
-                const WindowWrapper = View;
                 return (
-                  <WindowWrapper
+                  <View
                     key={idx}
                     style={[
                       styles.availWindow,
@@ -197,99 +129,23 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                     ]}
                   />
                 );
-              })}{/* Blackout indicator overlay - full blackout */}
+              })}
+            
+            {/* Blackout indicator overlay - full blackout */}
             {isBlackout && (
               <View style={styles.blackoutOverlay}>
                 <Text style={styles.blackoutText}>No Availability</Text>
               </View>
-            )}{/* Partial blackout indicator - some children off */}
+            )}
+            
+            {/* Partial blackout indicator - some children off */}
             {isPartialBlackout && (
               <View style={styles.partialBlackoutOverlay}>
                 <Text style={styles.partialBlackoutText}>Partial Availability</Text>
               </View>
-            )}{/* Scheduling Assistant: Busy blocks overlay */}
-            {schedulingAssistantEnabled && busyBlocks && busyBlocks.length > 0 && busyBlocks
-              .filter(block => {
-                // Filter blocks for this day
-                const blockStart = new Date(block.start_ts);
-                const blockEnd = new Date(block.end_ts);
-                const dayStart = new Date(date);
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date(dayStart);
-                dayEnd.setDate(dayEnd.getDate() + 1);
-                return blockStart < dayEnd && blockEnd > dayStart;
-              })
-              .map((block, idx) => {
-                const blockStart = new Date(block.start_ts);
-                const blockEnd = new Date(block.end_ts);
-                const dayStart = new Date(date);
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date(dayStart);
-                dayEnd.setDate(dayEnd.getDate() + 1);
+            )}
 
-                // Clamp block to day boundaries (fixes cross-day spans)
-                const startClamped = new Date(Math.max(blockStart.getTime(), dayStart.getTime()));
-                const endClamped = new Date(Math.min(blockEnd.getTime(), dayEnd.getTime()));
-
-                let startMin = (startClamped.getTime() - dayStart.getTime()) / 60000;
-                let endMin = (endClamped.getTime() - dayStart.getTime()) / 60000;
-                
-                // Clamp to [0, 1440] minute range
-                startMin = clamp(startMin, 0, GRID_MINUTES);
-                endMin = clamp(endMin, 0, GRID_MINUTES);
-                
-                const s = ((startMin - hours.startMin) / total) * 100;
-                const e = ((endMin - hours.startMin) / total) * 100;
-                const h = Math.max(1, e - s);
-                
-                const BlockWrapper = View;
-                return (
-                  <BlockWrapper
-                    key={`busy-${block.event_id}-${idx}`}
-                    style={[
-                      styles.busyBlock,
-                      { top: `${Math.max(0, s)}%`, height: `${h}%` }
-                    ]}
-                    title={block.title}
-                  />
-                );
-              })}
-
-            {/* Drag ghost block - shows preview during drag or commit animation */}
-            {((dragPreview?.eventId && dragPreview.dayIso === (dateIso || getLocalDateString(date))) ||
-              (commitAnimation?.eventId && commitAnimation.dayIso === (dateIso || getLocalDateString(date)))) && (
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.dragGhost,
-                  commitAnimation ? styles.dragGhostCommitting : null,
-                  {
-                    top: `${(((commitAnimation || dragPreview).startMin - hours.startMin) / total) * 100}%`,
-                    height: `${(((commitAnimation || dragPreview).endMin - (commitAnimation || dragPreview).startMin) / total) * 100}%`,
-                    borderColor: commitAnimation 
-                      ? 'rgba(34,197,94,0.8)' // Green for successful commit
-                      : (dragPreview?.ok ? 'rgba(59,130,246,0.6)' : 'rgba(239,68,68,0.8)'),
-                    backgroundColor: commitAnimation
-                      ? 'rgba(34,197,94,0.15)' // Green for successful commit
-                      : (dragPreview?.ok ? 'rgba(59,130,246,0.12)' : 'rgba(239,68,68,0.12)'),
-                  },
-                ]}
-              >
-                {/* Collision icon for invalid preview */}
-                {dragPreview && !dragPreview.ok && !commitAnimation && typeof window !== 'undefined' && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    zIndex: 1000,
-                    pointerEvents: 'none',
-                  }}>
-                    <AlertCircle size={16} color="rgba(239,68,68,0.9)" />
-                  </div>
-                )}
-              </View>
-            )}{/* Events - Now Draggable with native HTML5 */}
+          {/* Events - Now Draggable with native HTML5 */}
           {sortedEvents
             .filter(ev => {
               // Filter events to only show those within or overlapping the visible time range
@@ -320,71 +176,46 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
               const isDragging = draggedEventId === ev.id;
               const canDrag = !isBlackout && ev.status !== 'done';
               
-              // Use mouse-based drag-and-drop (works better with React Native Web)
-              if (typeof window !== 'undefined') {
-                // Web - use div with mouse drag handlers
-                return (
-                  <div
-                    key={ev.id}
-                    onMouseDown={(e) => {
+              // Use View for both platforms with mouse drag handlers on web
+              return (
+                <View
+                  key={ev.id}
+                  {...(typeof window !== 'undefined' && {
+                    onMouseDown: (e) => {
+                      console.log('[PlannerWeek] onMouseDown triggered', { canDrag, hasHandler: !!onMouseDragStart, eventId: ev.id });
                       if (canDrag && onMouseDragStart) {
+                        e.stopPropagation();
                         onMouseDragStart(e, ev.id);
                       }
-                    }}
-                    onClick={(e) => {
+                    },
+                    onClick: (e) => {
                       // Only handle click if not dragging
-                      if (!isDragging) {
+                      if (!isDragging && !isDraggingRef.current) {
                         e.stopPropagation();
                         if (onEventClick) {
                           onEventClick(ev);
                         }
                       }
-                    }}
-                    style={{
+                    },
+                  })}
+                  style={[
+                    {
                       position: 'absolute',
-                      left: 4,
-                      right: 4,
+                      left: 0,
+                      right: 0,
                       top: `${Math.max(0, top)}%`,
                       height: `${heightPercent}%`,
                       zIndex: isDragging ? 1000 : 10,
+                    },
+                    typeof window !== 'undefined' && {
                       cursor: canDrag ? 'grab' : 'default',
-                      opacity: isDragging ? 0.5 : 1,
+                      // Don't change opacity/transform here - drag ghost handles visual feedback
+                      // This avoids React re-renders during drag for better performance
                       touchAction: 'none',
                       WebkitUserSelect: 'none',
                       userSelect: 'none',
-                      transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                      transition: isDragging ? 'none' : 'opacity 0.2s, transform 0.2s',
-                    }}
-                  >
-                    <DraggableEvent
-                      ev={ev}
-                      dayStartMin={hours.startMin}
-                      dayEndMin={hours.endMin}
-                      totalMin={total}
-                      isBlackoutDay={isBlackout}
-                      onChanged={(patched) => onEventChanged(ev.id, patched)}
-                      onClick={onEventClick}
-                      children={children}
-                      focusedChildId={focusedChildId}
-                      isWrapped={true}
-                      familyId={familyId}
-                    />
-                  </div>
-                );
-              }
-              
-              // React Native - use View (no drag on native)
-              return (
-                <View
-                  key={ev.id}
-                  style={{
-                    position: 'absolute',
-                    left: 4,
-                    right: 4,
-                    top: `${Math.max(0, top)}%`,
-                    height: `${heightPercent}%`,
-                    zIndex: 10,
-                  }}
+                    }
+                  ]}
                 >
                   <DraggableEvent
                     ev={ev}
@@ -393,7 +224,12 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                     totalMin={total}
                     isBlackoutDay={isBlackout}
                     onChanged={(patched) => onEventChanged(ev.id, patched)}
-                    onClick={onEventClick}
+                    onClick={(clickedEv) => {
+                      // Only handle click if not dragging
+                      if (!isDragging && !isDraggingRef.current && onEventClick) {
+                        onEventClick(clickedEv);
+                      }
+                    }}
                     children={children}
                     focusedChildId={focusedChildId}
                     isWrapped={true}
@@ -427,24 +263,26 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
               activeOpacity={1}
             />
           ) : (
-            <div
+            <View
               style={styles.addOverlay}
-              onClick={(e) => {
-                // Check if the click target is an event (not empty space)
-                const target = e.target;
-                if (target && (target.closest('[data-event-id]') || target.closest('[data-rbd-draggable-id]'))) {
-                  return; // Don't add, let the event handle the click
+              {...(typeof window !== 'undefined' && {
+                onClick: (e) => {
+                  // Check if the click target is an event (not empty space)
+                  const target = e.target;
+                  if (target && (target.closest('[data-event-id]') || target.closest('[data-rbd-draggable-id]'))) {
+                    return; // Don't add, let the event handle the click
+                  }
+                  
+                  // Only add if clicking on empty space (not on an event)
+                  if (events.length > 0) {
+                    const startMin = Math.round(hours.startMin + 9 * 60); // Default to 9 AM
+                    onAdd(startMin);
+                  }
                 }
-                
-                // Only add if clicking on empty space (not on an event)
-                if (events.length > 0) {
-                  const startMin = Math.round(hours.startMin + 9 * 60); // Default to 9 AM
-                  onAdd(startMin);
-                }
-              }}
+              })}
             />
           )}
-        </ColumnWrapper>
+    </View>
   );
 }
 
@@ -472,11 +310,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [showBlackoutDialog, setShowBlackoutDialog] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
-  const [showBulkRescheduleModal, setShowBulkRescheduleModal] = useState(false);
   const [reschedulePlan, setReschedulePlan] = useState(null);
   const [showWeeklyReshuffle, setShowWeeklyReshuffle] = useState(false);
-  const [schedulingAssistantEnabled, setSchedulingAssistantEnabled] = useState(false);
-  const [busyBlocks, setBusyBlocks] = useState([]);
   const [hasBlackout, setHasBlackout] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [loadingReschedule, setLoadingReschedule] = useState(false);
@@ -486,15 +321,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const initialScrollOffset = { x: 0, y: 420 }; // Start at 7 AM (7 hours * 60px)
   const [draggedEventId, setDraggedEventId] = useState(null); // Track which event is being dragged
   const [dragState, setDragState] = useState(null); // { eventId, startX, startY, currentX, currentY }
-  const [dragPreview, setDragPreview] = useState(null); // { eventId, dayIso, startMin, endMin, conflicts?: [], ok?: boolean }
-  const dragPreviewRef = useRef(null); // Ref to store latest preview for closure access
   const dragRef = useRef(null); // Ref to track drag element
-  const gridBodyRef = useRef(null); // Ref to grid body container for measuring
-  const [gridRect, setGridRect] = useState(null); // { top, height } - grid container bounding rect
-  const gridRectRef = useRef(null); // Ref to store latest gridRect for closure access
-  const validateTimerRef = useRef(null); // Timer for debounced validation
-  const filtEventsRef = useRef([]); // Ref to store latest filtEvents for closure access
-  const [commitAnimation, setCommitAnimation] = useState(null); // { eventId, dayIso, startMin, endMin, finalTop, finalHeight } for commit animation
+  const isDraggingRef = useRef(false); // Track if we're actually dragging (not just clicking)
   const [isWeekFrozen, setIsWeekFrozen] = useState(false); // Track if current week is frozen
   const [freezeLoading, setFreezeLoading] = useState(false); // Loading state for freeze toggle
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
@@ -506,96 +334,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   });
   
   const { data, loading } = useWeekData(weekStart, selectedChildIds, familyId);
-
-  // Filter events and availability by selected children (must be defined early for use in callbacks)
-  // Create new arrays and objects to avoid mutating frozen objects from the hook
-  const availData = Array.isArray(data?.avail) 
-    ? data.avail.map(a => a ? { ...a } : a).filter(Boolean)
-    : [];
-  const eventsData = Array.isArray(data?.events)
-    ? data.events.map(e => e ? { ...e } : e).filter(Boolean)
-    : [];
-  const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
-  const filtAvail = ids && Array.isArray(availData)
-    ? availData.filter(a => a && a.child_id && ids.has(a.child_id))
-    : (Array.isArray(availData) ? availData : []);
-  const filtEvents = ids && Array.isArray(eventsData)
-    ? eventsData.filter(e => e && e.child_id && ids.has(e.child_id))
-    : (Array.isArray(eventsData) ? eventsData : []);
-  
-  // Update refs whenever values change (defensive checks to avoid uninitialized variable errors)
-  useEffect(() => {
-    try {
-      if (filtEventsRef) {
-        filtEventsRef.current = Array.isArray(filtEvents) ? filtEvents : [];
-      }
-    } catch (e) {
-      // Ignore errors during ref update
-    }
-  }, [filtEvents]);
-  
-  useEffect(() => {
-    try {
-      if (gridRectRef) {
-        gridRectRef.current = gridRect;
-      }
-    } catch (e) {
-      // Ignore errors during ref update
-    }
-  }, [gridRect]);
-
-  // Cursor feedback on invalid preview
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    if (dragPreview && !dragPreview.ok) {
-      document.body.style.cursor = 'not-allowed';
-      // Also set cursor on the grid body
-      const gridEl = document.getElementById('planner-week-grid-body');
-      if (gridEl) {
-        gridEl.style.cursor = 'not-allowed';
-      }
-    } else {
-      document.body.style.cursor = '';
-      const gridEl = document.getElementById('planner-week-grid-body');
-      if (gridEl) {
-        gridEl.style.cursor = '';
-      }
-    }
-    
-    return () => {
-      document.body.style.cursor = '';
-      const gridEl = document.getElementById('planner-week-grid-body');
-      if (gridEl) {
-        gridEl.style.cursor = '';
-      }
-    };
-  }, [dragPreview]);
-
-  // Load busy blocks when Scheduling Assistant is enabled
-  useEffect(() => {
-    if (!schedulingAssistantEnabled || !familyId) {
-      setBusyBlocks([]);
-      return;
-    }
-
-    (async () => {
-      const weekEnd = addDays(weekStart, 7);
-      const { data: fbData, error } = await supabase.rpc('get_freebusy_week', {
-        _family_id: familyId,
-        _from: weekStart.toISOString(),
-        _to: weekEnd.toISOString(),
-        _child_ids: selectedChildIds && selectedChildIds.length > 0 ? selectedChildIds : null,
-      });
-
-      if (error) {
-        console.error('Failed to load busy blocks:', error);
-        setBusyBlocks([]);
-      } else {
-        setBusyBlocks(fbData?.busy || []);
-      }
-    })();
-  }, [schedulingAssistantEnabled, familyId, weekStart, selectedChildIds]);
 
   // Memoize formatted month/year to prevent unnecessary recalculations
   const monthYearText = useMemo(() => {
@@ -669,7 +407,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     
     // Find the event being dragged
     const eventId = draggableId;
-    const allEvents = filtEvents;
+    // Filter events based on selected children
+    const eventsData = Array.isArray(data.events) ? data.events : [];
+    const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
+    const allEvents = ids
+      ? eventsData.filter(e => ids.has(e.child_id))
+      : eventsData;
     const event = allEvents.find(e => e.id === eventId);
     
     if (!event) {
@@ -733,10 +476,9 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         // Trigger refetch
         handleWeekStartChange(new Date(weekStart));
       } else {
-        // Success - update local state with server response
-        if (updatedEvent) {
-          setLocalEvents(prev => ({ ...prev, [eventId]: updatedEvent }));
-        }
+        // Success - don't overwrite optimistic update with server response
+        // The optimistic update already has the correct date_local
+        // We'll keep it until fresh data arrives from the refresh
         
         // Log drag-drop action
         const fromDateStr = getLocalDateString(originalStart);
@@ -764,7 +506,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       Alert.alert('Error', `Failed to reschedule event: ${err.message || 'Unknown error'}`);
       handleWeekStartChange(new Date(weekStart));
     }
-  }, [filtEvents, weekStart, handleWeekStartChange]);
+  }, [data.events, selectedChildIds, weekStart, handleWeekStartChange]);
 
   const handlePeriodChange = (period, dates) => {
     setCurrentPeriod(period);
@@ -1416,7 +1158,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const handleEventDeleted = async (deletedEventId) => {
     // Find the deleted event to get its details for logging
     if (deletedEventId) {
-      const deletedEvent = filtEvents.find(e => e.id === deletedEventId || e._originalId === deletedEventId);
+      // Filter events based on selected children
+      const eventsData = Array.isArray(data.events) ? data.events : [];
+      const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
+      const allEvents = ids
+        ? eventsData.filter(e => ids.has(e.child_id))
+        : eventsData;
+      const deletedEvent = allEvents.find(e => e.id === deletedEventId || e._originalId === deletedEventId);
       if (deletedEvent) {
         const eventDate = new Date(deletedEvent.start_ts);
         const dateStr = getLocalDateString(eventDate);
@@ -1490,10 +1238,15 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         } else {
           // Fallback: use scrollTo with calculated position
           const scrollElement = scrollViewRef.current;
-          if (scrollElement?.scrollTo) {
-            scrollElement.scrollTo({ y: 420, animated: false });
-            setHasScrolledTo7AM(true);
-            return true;
+          if (scrollElement && typeof scrollElement.scrollTo === 'function') {
+            try {
+              scrollElement.scrollTo({ y: 420, animated: false });
+              setHasScrolledTo7AM(true);
+              return true;
+            } catch (err) {
+              // Ignore scroll errors
+              console.warn('[PlannerWeek] Scroll error:', err);
+            }
           }
         }
         return false;
@@ -1510,9 +1263,14 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     } else {
       // Non-web: use React Native method
       const scrollElement = scrollViewRef.current;
-      if (scrollElement?.scrollTo) {
-        scrollElement.scrollTo({ y: 420, animated: false });
-        setHasScrolledTo7AM(true);
+      if (scrollElement && typeof scrollElement.scrollTo === 'function') {
+        try {
+          scrollElement.scrollTo({ y: 420, animated: false });
+          setHasScrolledTo7AM(true);
+        } catch (err) {
+          // Ignore scroll errors
+          console.warn('[PlannerWeek] Scroll error:', err);
+        }
       }
     }
   }, [hasScrolledTo7AM]);
@@ -1523,65 +1281,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       scrollTo7AM();
     }
   }, [loading, hasScrolledTo7AM, scrollTo7AM]);
-
-  // Measure grid container for mouse Y calculation
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    let mounted = true;
-    let timeoutId = null;
-    let updateHandler = null;
-
-    const update = () => {
-      if (!mounted) return;
-      try {
-        const el = document.getElementById('planner-week-grid-body');
-        if (!el || !mounted) return;
-        const r = el.getBoundingClientRect();
-        if (mounted && r.height > 0) {
-          setGridRect({ top: r.top, height: r.height });
-        }
-      } catch (e) {
-        // Ignore errors during measurement
-      }
-    };
-
-    if (loading) {
-      setGridRect(null);
-      return;
-    }
-
-    // Wait for DOM to be ready
-    let retryCount = 0;
-    const maxRetries = 10;
-    const attemptUpdate = () => {
-      if (!mounted || retryCount >= maxRetries) return;
-      const el = document.getElementById('planner-week-grid-body');
-      if (el) {
-        update();
-        updateHandler = update;
-        window.addEventListener('resize', updateHandler);
-        window.addEventListener('scroll', updateHandler, true);
-      } else {
-        retryCount++;
-        requestAnimationFrame(attemptUpdate);
-      }
-    };
-
-    // Delay initial attempt to ensure DOM is ready
-    timeoutId = setTimeout(attemptUpdate, 100);
-    
-    return () => {
-      mounted = false;
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      if (updateHandler) {
-        window.removeEventListener('resize', updateHandler);
-        window.removeEventListener('scroll', updateHandler, true);
-      }
-    };
-  }, [weekStart, loading]);
   
   // Reset scroll flag when week changes
   useEffect(() => {
@@ -1654,8 +1353,135 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     }
   }, [familyId, weekStart, isWeekFrozen, freezeLoading, handleWeekStartChange]);
 
+  // Allow global header controls to toggle freeze state (web only)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleGlobalToggle = () => {
+      handleToggleFreeze();
+    };
+
+    window.addEventListener('plannerToggleFreezeWeek', handleGlobalToggle);
+    return () => {
+      window.removeEventListener('plannerToggleFreezeWeek', handleGlobalToggle);
+    };
+  }, [handleToggleFreeze]);
+
+  // Ensure data.avail and data.events are arrays
+  const availData = Array.isArray(data.avail) ? data.avail : [];
+  const eventsData = Array.isArray(data.events) ? data.events : [];
+  
+  // Filter: treat null as "ALL"
+  const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
+  const filtAvail = ids 
+    ? availData.filter(a => ids.has(a.child_id))
+    : availData;
+  const filtEvents = ids
+    ? eventsData.filter(e => ids.has(e.child_id))
+    : eventsData;
+  
+  // Log when filtEvents changes to debug refresh issues
+  useEffect(() => {
+    console.log('[PlannerWeek] filtEvents updated', {
+      count: filtEvents.length,
+      eventIds: filtEvents.map(e => ({ id: e.id, date_local: e.date_local, start_ts: e.start_ts }))
+    });
+  }, [filtEvents]);
+  
+  // Clear optimistic updates when fresh data arrives with updated events
+  useEffect(() => {
+    if (filtEvents.length === 0) return;
+    
+    // Check if any localEvents have been updated in the fresh data
+    setLocalEvents(prev => {
+      const next = { ...prev };
+      let changed = false;
+      
+      for (const eventId in next) {
+        const optimisticEvent = next[eventId];
+        const freshEvent = filtEvents.find(e => e.id === eventId);
+        
+        // If fresh data has the event, clear the optimistic update
+        // The fresh data from the server is now the source of truth
+        if (freshEvent) {
+          // Delay clearing optimistic update to prevent visual jump
+          // The optimistic update keeps the event visible in the new position
+          // until React has fully rendered with the fresh data
+          const optimisticDate = optimisticEvent.date_local || optimisticEvent.start_ts?.slice(0, 10);
+          const freshDate = freshEvent.date_local || freshEvent.start_ts?.slice(0, 10);
+          
+          // Compare timestamps to see if the change was confirmed
+          const optimisticTime = optimisticEvent.start_ts;
+          const freshTime = freshEvent.start_ts;
+          
+          // Check if times are very close (within 1 minute) - if so, server confirmed the change
+          const timeMatch = optimisticTime && freshTime && 
+            Math.abs(new Date(optimisticTime).getTime() - new Date(freshTime).getTime()) < 60000;
+          
+          // If the server confirmed the change (times/dates match), DON'T clear the optimistic update
+          // The optimistic update already shows the event in the correct position
+          // Clearing it would cause a re-render and potential jump
+          // Only clear if there's a significant difference (server adjusted the time/date)
+          const datesMatch = optimisticDate === freshDate;
+          const timesClose = timeMatch; // Times within 1 minute
+          
+          // PRIORITY: If times are close, server confirmed the change
+          // Keep optimistic update exactly as-is - don't update it at all
+          // Since times are close, the event is already in approximately the right position
+          // Updating date_local would cause a state change and visual jump
+          // The optimistic update will naturally be replaced on next week change or page refresh
+          if (timesClose) {
+            // Server confirmed the change (times are close) - keep optimistic update exactly as-is
+            // Don't modify it - any update would cause a state change and visual jump
+            // Since times are close, the event is already in the right position
+            console.log('[PlannerWeek] Keeping optimistic update as-is (times close, server confirmed)', {
+              eventId,
+              optimisticDate,
+              freshDate,
+              datesMatch,
+              timesClose
+            });
+            // Don't change anything - leave optimistic update exactly as it is
+          } else if (datesMatch) {
+            // Dates match but times don't - server adjusted time significantly
+            // Update optimistic update to match fresh data synchronously
+            if (next[eventId]) {
+              next[eventId] = {
+                ...next[eventId],
+                start_ts: freshEvent.start_ts,
+                end_ts: freshEvent.end_ts,
+                start_local: freshEvent.start_local,
+                end_local: freshEvent.end_local
+              };
+              changed = true;
+              console.log('[PlannerWeek] Updated optimistic update time to match fresh data', {
+                eventId,
+                optimisticDate,
+                freshDate,
+                datesMatch
+              });
+            }
+          } else {
+            // Dates don't match AND times are very different - clear optimistic update immediately
+            // Using fresh data directly prevents jump
+            delete next[eventId];
+            changed = true;
+            console.log('[PlannerWeek] Cleared optimistic update (dates/times differ significantly)', {
+              eventId,
+              optimisticDate,
+              freshDate,
+              datesMatch,
+              timesClose
+            });
+          }
+        }
+      }
+      
+      return changed ? next : prev;
+    });
+  }, [filtEvents]);
+  
   // Index avail/events by date - ALWAYS create new objects (no mutation)
-  // Note: filtAvail and filtEvents are now defined earlier in the component
   // Use useMemo to recompute when data changes
   const { availByDate, eventsByDate, patternDaysByDate } = useMemo(() => {
     const availByDateNew = {};
@@ -1684,9 +1510,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       }
       
       // Handle windows as JSONB - ensure it's an array before spreading
-      // Create a copy of the availability object to avoid mutating frozen objects
-      const availItem = { ...a };
-      const windows = availItem.windows;
+      const windows = a.windows;
       if (!availByDateNew[dateKey]) {
         availByDateNew[dateKey] = [];
       }
@@ -1694,19 +1518,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       if (Array.isArray(windows)) {
         // Empty array [] means blackout - don't add anything
         if (windows.length > 0) {
-          // Create a new array with spread to avoid mutating frozen arrays
-          // Also create copies of window objects if they're frozen
-          const windowsCopy = windows.map(w => typeof w === 'object' && w !== null ? { ...w } : w);
-          availByDateNew[dateKey] = [...availByDateNew[dateKey], ...windowsCopy];
+          availByDateNew[dateKey].push(...windows);
         }
       } else if (windows && typeof windows === 'object') {
         // If it's a JSONB object, convert to array
-        const windowsArray = Array.isArray(windows) 
-          ? windows.map(w => typeof w === 'object' && w !== null ? { ...w } : w)
-          : [{ ...windows }];
+        const windowsArray = Array.isArray(windows) ? windows : [windows];
         if (windowsArray.length > 0) {
-          // Create a new array with spread to avoid mutating frozen arrays
-          availByDateNew[dateKey] = [...availByDateNew[dateKey], ...windowsArray];
+          availByDateNew[dateKey].push(...windowsArray);
         }
       } else if (windows === null || windows === undefined) {
         // No windows = blackout (skip adding)
@@ -1716,8 +1534,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     
     // Process events
     for (const e of filtEvents) {
-      // Use local optimistic update if available, or create a new object from the frozen event
-      let event = localEvents[e.id] || { ...e };
+      // Use local optimistic update if available
+      let event = localEvents[e.id] || e;
       
       // WORKAROUND: If start_local is missing but start_ts exists, compute it
       // This handles cases where cached events don't have start_local
@@ -1771,8 +1589,20 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       if (!eventsByDateNew[d]) {
         eventsByDateNew[d] = [];
       }
-      // Create a new array with spread to avoid mutating frozen arrays
-      eventsByDateNew[d] = [...eventsByDateNew[d], event];
+      eventsByDateNew[d].push(event);
+    }
+    
+    // Log eventsByDate for debugging
+    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+      const eventDates = Object.keys(eventsByDateNew);
+      const eventCounts = Object.fromEntries(
+        eventDates.map(date => [date, eventsByDateNew[date].length])
+      );
+      console.log('[PlannerWeek] eventsByDate recalculated', {
+        dates: eventDates,
+        counts: eventCounts,
+        totalEvents: filtEvents.length
+      });
     }
 
     return { 
@@ -1782,9 +1612,9 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     };
   }, [filtAvail, filtEvents, localEvents]);
   
-  // Compute version for force re-render
+  // Compute version for force re-render - include date_local to catch day changes
   const eventsVersion = useMemo(() => {
-    return filtEvents.map(e => `${e.id}:${e.start_ts}:${e.end_ts}`).join('|');
+    return filtEvents.map(e => `${e.id}:${e.start_ts}:${e.end_ts}:${e.date_local || ''}`).join('|');
   }, [filtEvents]);
   
   // Week key that changes when data changes
@@ -1792,30 +1622,23 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     const from = weekStart.toISOString().slice(0, 10);
     const to = addDays(weekStart, 7).toISOString().slice(0, 10);
     const childKey = selectedChildIds?.join(',') || 'all';
-    return `${from}-${to}-${eventsVersion}-${childKey}`;
-  }, [weekStart, eventsVersion, selectedChildIds]);
+    const dataVersion = eventsData.length; // Include data length to force update when data changes
+    return `${from}-${to}-${eventsVersion}-${childKey}-${dataVersion}`;
+  }, [weekStart, eventsVersion, selectedChildIds, eventsData.length]);
 
-  // Use div wrapper for web (drag-drop requires DOM)
-  // Use View for React Native Web compatibility - it will render as div automatically
-  const Wrapper = View;
-  const wrapperStyle = styles.wrapper;
-  
-  // Handle mouse-based drag start
+  // Handle mouse-based drag start - MUST be before early return
   const handleMouseDragStart = useCallback((e, eventId) => {
     if (typeof window === 'undefined') return;
-    
-    // Get filtEvents from ref (always up-to-date, no closure issues)
-    const currentFiltEvents = filtEventsRef.current;
-    
-    // Ensure filtEvents is available
-    if (!currentFiltEvents || !Array.isArray(currentFiltEvents)) return;
 
-    e.preventDefault();
-    e.stopPropagation();
-    
+    // Don't prevent default immediately - let the drag start naturally
     const startX = e.clientX;
     const startY = e.clientY;
+    const originalTarget = e.currentTarget;
     
+    // Reset drag flag
+    isDraggingRef.current = false;
+    
+    // Store initial drag state (but don't update on every mouse move to avoid re-renders)
     setDragState({
       eventId,
       startX,
@@ -1823,255 +1646,511 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       currentX: startX,
       currentY: startY,
     });
-    setDraggedEventId(eventId);
-    
-    // Store event element for visual feedback
-    dragRef.current = e.currentTarget;
-    
-    // Capture current values for closure (use refs to avoid closure issues)
-    // currentFiltEvents already captured above
-    const currentGridRect = gridRectRef.current;
-    const currentFamilyId = familyId;
-    const currentWeekStart = weekStart;
-    const currentSelectedChildIds = selectedChildIds;
-    const currentSchedulingAssistantEnabled = schedulingAssistantEnabled;
     
     // Add global mouse move and up handlers
     const handleMouseMove = (moveEvent) => {
-      setDragState(prev => prev ? {
-        ...prev,
-        currentX: moveEvent.clientX,
-        currentY: moveEvent.clientY,
-      } : null);
-
-      // Live preview only on web
-      if (!currentGridRect || typeof currentGridRect.top !== 'number' || typeof currentGridRect.height !== 'number') return;
-
-      const elBelow = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
-      const dayColumn = elBelow?.closest?.('[data-day-date]');
-      const dayIso = dayColumn?.getAttribute?.('data-day-date');
-      if (!dayIso) {
-        dragPreviewRef.current = null;
-        setDragPreview(null);
-        return;
-      }
-
-      const event = currentFiltEvents.find(ev => ev.id === eventId);
-      if (!event) {
-        dragPreviewRef.current = null;
-        setDragPreview(null);
-        return;
-      }
-
-      const originalStart = new Date(event.start_ts);
-      const originalEnd = new Date(event.end_ts);
-      const durationMin = Math.max(5, Math.round((originalEnd.getTime() - originalStart.getTime()) / 60000));
-
-      const yInside = moveEvent.clientY - currentGridRect.top;
-      let startMin = minutesFromY(yInside, currentGridRect.height);
-      startMin = snapMinutes(startMin, SNAP_MINUTES);
-      startMin = clamp(startMin, 0, GRID_MINUTES - durationMin);
-
-      const endMin = startMin + durationMin;
-
-      const newPreview = {
-        eventId,
-        dayIso,
-        startMin,
-        endMin,
-        ok: true,
-        conflicts: [],
-      };
-      dragPreviewRef.current = newPreview;
-      setDragPreview(newPreview);
-
-      // Debounced server validation (so you can show red overlay while dragging)
-      if (validateTimerRef.current) clearTimeout(validateTimerRef.current);
-      validateTimerRef.current = setTimeout(async () => {
-        try {
-          const destDate = new Date(dayIso + 'T00:00:00');
-          const proposedStart = new Date(destDate);
-          proposedStart.setHours(0, 0, 0, 0);
-          proposedStart.setMinutes(startMin);
-
-          const proposedEnd = new Date(proposedStart.getTime() + durationMin * 60000);
-
-          const { data: validation, error } = await supabase.rpc('validate_event_drop', {
-            _family_id: currentFamilyId,
-            _event_id: eventId,
-            _proposed_start: proposedStart.toISOString(),
-            _proposed_end: proposedEnd.toISOString(),
-          });
-
-          const ok = !!validation?.ok && !error;
-
-          const updatedPreview = {
-            ...(dragPreviewRef.current || {}),
-            ok,
-            conflicts: validation?.conflicts || [],
-          };
-          dragPreviewRef.current = updatedPreview;
-          setDragPreview(updatedPreview);
-        } catch (e) {
-          const errorPreview = {
-            ...(dragPreviewRef.current || {}),
-            ok: false,
-            conflicts: [],
-          };
-          dragPreviewRef.current = errorPreview;
-          setDragPreview(errorPreview);
+      const deltaX = Math.abs(moveEvent.clientX - startX);
+      const deltaY = Math.abs(moveEvent.clientY - startY);
+      
+      // Lower threshold to 3px for more responsive drag detection
+      if (deltaX > 3 || deltaY > 3) {
+        if (!isDraggingRef.current) {
+          console.log('[PlannerWeek] Drag detected! deltaX:', deltaX, 'deltaY:', deltaY);
+          isDraggingRef.current = true;
+          setDraggedEventId(eventId);
+          dragRef.current = originalTarget;
+          
+          // Create drag ghost using direct DOM manipulation (like MonthGrid) for smooth performance
+          let domNode = originalTarget;
+          if (domNode._nativeNode) {
+            domNode = domNode._nativeNode;
+          }
+          if (domNode && domNode.firstChild) {
+            const actualElement = domNode.firstChild || domNode;
+            if (actualElement.style) {
+              domNode = actualElement;
+            }
+          }
+          
+          if (domNode && domNode.style) {
+            // Store original position and styles
+            const originalRect = domNode.getBoundingClientRect();
+            originalTarget._originalTop = domNode.style.top;
+            originalTarget._originalOpacity = domNode.style.opacity;
+            originalTarget._originalTransform = domNode.style.transform;
+            
+            // Make original element semi-transparent during drag
+            domNode.style.opacity = '0.4';
+            domNode.style.transition = 'none';
+            
+            // Clone the element and append to body to avoid clipping
+            const clonedNode = domNode.cloneNode(true);
+            clonedNode.id = `drag-ghost-${eventId}`;
+            clonedNode.style.position = 'fixed';
+            clonedNode.style.pointerEvents = 'none';
+            clonedNode.style.opacity = '0.9';
+            clonedNode.style.transform = 'scale(1.05)';
+            clonedNode.style.zIndex = '99999';
+            clonedNode.style.cursor = 'grabbing';
+            clonedNode.style.boxShadow = '0 8px 16px rgba(0, 0, 0, 0.2)';
+            clonedNode.style.width = domNode.offsetWidth + 'px';
+            clonedNode.style.height = domNode.offsetHeight + 'px';
+            
+            // Position it at the mouse cursor (center it on cursor)
+            clonedNode.style.left = (moveEvent.clientX - originalRect.width / 2) + 'px';
+            clonedNode.style.top = (moveEvent.clientY - originalRect.height / 2) + 'px';
+            
+            // Append to body
+            document.body.appendChild(clonedNode);
+            
+            // Store references
+            originalTarget._dragDomNode = domNode;
+            originalTarget._dragGhost = clonedNode;
+          }
         }
-      }, 120);
+      }
+      
+      // Update drag ghost position directly (no React re-render)
+      if (isDraggingRef.current && originalTarget && originalTarget._dragGhost) {
+        const ghost = originalTarget._dragGhost;
+        const rect = ghost.getBoundingClientRect();
+        ghost.style.left = (moveEvent.clientX - rect.width / 2) + 'px';
+        ghost.style.top = (moveEvent.clientY - rect.height / 2) + 'px';
+      }
     };
     
     const handleMouseUp = async (upEvent) => {
-      // Clean up validation timer
-      if (validateTimerRef.current) {
-        clearTimeout(validateTimerRef.current);
-        validateTimerRef.current = null;
-      }
-
-      // Read latest preview from ref (always up-to-date)
-      const preview = dragPreviewRef.current;
-      if (!preview || preview.eventId !== eventId) {
-        // Cleanup
-        setDragState(null);
-        setDraggedEventId(null);
-        dragPreviewRef.current = null;
-        setDragPreview(null);
-        dragRef.current = null;
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-        return;
-      }
-
-      if (!preview.ok) {
-        // Format conflict message with details
-        const conflictMsg = formatConflictMessage(preview.conflicts, children);
-        Alert.alert('Cannot Move Event', conflictMsg);
-        setDragState(null);
-        setDraggedEventId(null);
-        dragPreviewRef.current = null;
-        setDragPreview(null);
-        dragRef.current = null;
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-        return;
-      }
-
-      // Find the event being dragged
-      const event = currentFiltEvents.find(ev => ev.id === eventId);
-      if (!event) {
-        setDragState(null);
-        setDraggedEventId(null);
-        dragPreviewRef.current = null;
-        setDragPreview(null);
-        dragRef.current = null;
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-        return;
-      }
-
-      const destDate = new Date(preview.dayIso + 'T00:00:00');
-      const proposedStart = new Date(destDate);
-      proposedStart.setHours(0, 0, 0, 0);
-      proposedStart.setMinutes(preview.startMin);
-
-      const durationMin = Math.max(5, Math.round((new Date(event.end_ts).getTime() - new Date(event.start_ts).getTime()) / 60000));
-      const proposedEnd = new Date(proposedStart.getTime() + durationMin * 60000);
-
-      // Optimistic update
-      const optimisticEvent = Object.assign({}, event, {
-        start_ts: proposedStart.toISOString(),
-        end_ts: proposedEnd.toISOString(),
-        date_local: getLocalDateString(proposedStart),
+      console.log('[PlannerWeek] handleMouseUp called', { wasDragging: isDraggingRef.current, eventId });
+      
+      // Find which day column we're over
+      const elementBelow = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+      console.log('[PlannerWeek] elementBelow', { 
+        found: !!elementBelow, 
+        tagName: elementBelow?.tagName,
+        className: elementBelow?.className 
       });
-      setLocalEvents(prev => ({ ...prev, [eventId]: optimisticEvent }));
-
-      // Call API to reschedule
-      try {
-        const { data: updateResult, error: updateError } = await supabase.rpc('apply_event_time_update', {
-          _family_id: currentFamilyId,
-          _event_id: eventId,
-          _start_ts: proposedStart.toISOString(),
-          _end_ts: proposedEnd.toISOString(),
-          _reason: 'drag_drop',
+      
+      if (!elementBelow) {
+        console.log('[PlannerWeek] No element below, cleaning up');
+        setDragState(null);
+        setDraggedEventId(null);
+        dragRef.current = null;
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        return;
+      }
+      
+      // Find the day column - calculate based on position since data attributes might not work
+      let dayColumn = null;
+      let targetDateIso = null;
+      
+      // Method 1: Try to find by data attribute (if it exists)
+      dayColumn = elementBelow.closest('[data-day-date]');
+      if (dayColumn) {
+        targetDateIso = dayColumn.getAttribute('data-day-date');
+      }
+      
+      // Method 2: If not found, search up the tree for data attribute
+      if (!dayColumn) {
+        let parent = elementBelow.parentElement;
+        let depth = 0;
+        while (parent && parent !== document.body && depth < 15) {
+          if (parent.getAttribute && parent.getAttribute('data-day-date')) {
+            dayColumn = parent;
+            targetDateIso = parent.getAttribute('data-day-date');
+            break;
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+      }
+      
+      // Method 3: Calculate which day column based on mouse position
+      if (!dayColumn || !targetDateIso) {
+        console.log('[PlannerWeek] Trying position-based detection', { 
+          clientX: upEvent.clientX, 
+          clientY: upEvent.clientY 
         });
+        
+        // Find the week grid container - look for the grid body container
+        // The grid body should be a flex row container with day columns
+        let weekContainer = null;
+        
+        // Try multiple ways to find the grid container
+        let searchElement = elementBelow;
+        let searchDepth = 0;
+        while (searchElement && searchDepth < 20) {
+          // Check if this element has flexDirection: row and contains multiple children
+          const style = window.getComputedStyle(searchElement);
+          if (style.display === 'flex' && style.flexDirection === 'row') {
+            const children = Array.from(searchElement.children);
+            // Day column container should have 7 children (one for each day)
+            if (children.length >= 7) {
+              weekContainer = searchElement;
+              console.log('[PlannerWeek] Found week container', { 
+                childrenCount: children.length,
+                tagName: searchElement.tagName 
+              });
+              break;
+            }
+          }
+          searchElement = searchElement.parentElement;
+          searchDepth++;
+        }
+        
+        if (weekContainer) {
+          // Get all direct children (day columns) - skip the first one if it's the time column
+          const children = Array.from(weekContainer.children);
+          console.log('[PlannerWeek] Week container children', { count: children.length });
+          
+          // Find which child contains the mouse position
+          for (let i = 0; i < children.length; i++) {
+            const child = children[i];
+            const rect = child.getBoundingClientRect();
+            if (upEvent.clientX >= rect.left && upEvent.clientX <= rect.right &&
+                upEvent.clientY >= rect.top && upEvent.clientY <= rect.bottom) {
+              dayColumn = child;
+              
+              // Calculate which day index this is
+              // If first child is time column, day columns start at index 1
+              // Otherwise they start at index 0
+              const dayIndex = i >= 1 ? i - 1 : i; // Assume first is time column
+              if (dayIndex >= 0 && dayIndex < 7) {
+                // Calculate date from weekStart + dayIndex
+                const targetDate = new Date(weekStart);
+                targetDate.setDate(targetDate.getDate() + dayIndex);
+                targetDateIso = getLocalDateString(targetDate);
+                console.log('[PlannerWeek] Found day column by position', { 
+                  childIndex: i,
+                  dayIndex, 
+                  targetDateIso, 
+                  weekStart: weekStart.toISOString(),
+                  rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+                });
+              }
+              break;
+            }
+          }
+        } else {
+          console.log('[PlannerWeek] Could not find week container', { searchDepth });
+        }
+      }
+      
+      console.log('[PlannerWeek] dayColumn search result', { 
+        found: !!dayColumn,
+        targetDateIso,
+        tagName: dayColumn?.tagName
+      });
+      
+      if (dayColumn && targetDateIso) {
+        console.log('[PlannerWeek] Found day column', { targetDateIso, eventId });
 
-        if (updateError || !updateResult?.ok) {
-          throw new Error(updateError?.message || updateResult?.validation?.reason || 'Failed to update event');
+        // Mark that we're rescheduling so cleanup doesn't restore the element too early
+        if (originalTarget) {
+          originalTarget._willReschedule = true;
         }
 
-        const updatedEvent = updateResult.after;
+        // Find the event being dragged
+        // Filter events based on selected children
+        const eventsData = Array.isArray(data.events) ? data.events : [];
+        const ids = selectedChildIds?.length ? new Set(selectedChildIds) : null;
+        const allEvents = ids
+          ? eventsData.filter(e => ids.has(e.child_id))
+          : eventsData;
+        const event = allEvents.find(ev => ev.id === eventId);
         
-        if (updatedEvent) {
-          setLocalEvents(prev => ({ ...prev, [eventId]: updatedEvent }));
-        }
+        console.log('[PlannerWeek] Event lookup', { 
+          foundEvent: !!event, 
+          totalEvents: allEvents.length,
+          eventTitle: event?.title 
+        });
         
-        // Refresh busy blocks if Scheduling Assistant is enabled
-        if (currentSchedulingAssistantEnabled) {
-          const weekEnd = addDays(currentWeekStart, 7);
-          const { data: fbData } = await supabase.rpc('get_freebusy_week', {
-            _family_id: currentFamilyId,
-            _from: currentWeekStart.toISOString(),
-            _to: weekEnd.toISOString(),
-            _child_ids: currentSelectedChildIds && currentSelectedChildIds.length > 0 ? currentSelectedChildIds : null,
+        if (event && targetDateIso) {
+          // Get original event times
+          const originalStart = new Date(event.start_ts);
+          const originalEnd = new Date(event.end_ts);
+          const durationMs = originalEnd.getTime() - originalStart.getTime();
+          
+          // Calculate time change from vertical drag (Y position) FIRST
+          // We need this before creating the date
+          const dayColumnRect = dayColumn.getBoundingClientRect();
+          const relativeY = upEvent.clientY - dayColumnRect.top;
+          const dayColumnHeight = dayColumnRect.height;
+          
+          // Calculate time based on Y position (assuming 7 AM to 6 PM = 11 hours = 660 minutes)
+          const hoursStart = 7; // 7 AM
+          const hoursEnd = 18; // 6 PM
+          const totalMinutes = (hoursEnd - hoursStart) * 60; // 660 minutes
+          
+          // Calculate minutes from top of day column
+          const minutesFromTop = (relativeY / dayColumnHeight) * totalMinutes;
+          const newMinutes = Math.max(0, Math.min(totalMinutes, minutesFromTop));
+          
+          // Snap to 15-minute increments
+          const snappedMinutes = Math.round(newMinutes / 15) * 15;
+          const newHours = hoursStart + Math.floor(snappedMinutes / 60);
+          const newMins = snappedMinutes % 60;
+          
+          // Check if we're moving to a different day or just changing time
+          const originalDateIso = getLocalDateString(originalStart);
+          const isSameDay = targetDateIso === originalDateIso;
+          
+          // Get drag start position from closure (captured at start in handleMouseDragStart)
+          // Use the startX and startY from the closure, not from dragState (which might be stale)
+          const dragStartX = startX;
+          const dragStartY = startY;
+          const deltaX = Math.abs(upEvent.clientX - dragStartX);
+          const deltaY = Math.abs(upEvent.clientY - dragStartY);
+          
+          console.log('[PlannerWeek] Time calculation', {
+            relativeY,
+            dayColumnHeight,
+            minutesFromTop,
+            snappedMinutes,
+            newHours,
+            newMins,
+            calculatedTime: `${newHours}:${String(newMins).padStart(2, '0')}`,
+            isSameDay,
+            deltaY,
+            deltaX
           });
-          if (fbData) {
-            setBusyBlocks(fbData.busy || []);
+          
+          // Determine what time to use
+          let finalHours, finalMinutes;
+          if (isSameDay) {
+            // Same day - always use calculated time based on Y position
+            // If they're dragging within the same day, they clearly want to change the time
+            // Only require 1px of movement to make it very responsive
+            if (deltaY > 1) {
+              finalHours = newHours;
+              finalMinutes = newMins;
+              console.log('[PlannerWeek] Same-day drag: Using calculated time', {
+                deltaY,
+                originalTime: `${originalStart.getHours()}:${String(originalStart.getMinutes()).padStart(2, '0')}`,
+                calculatedTime: `${newHours}:${String(newMins).padStart(2, '0')}`,
+                finalTime: `${finalHours}:${String(finalMinutes).padStart(2, '0')}`
+              });
+            } else {
+              // No vertical movement - keep original time (shouldn't happen if drag was detected)
+              finalHours = originalStart.getHours();
+              finalMinutes = originalStart.getMinutes();
+              console.log('[PlannerWeek] Same-day drag: No vertical movement, keeping original time', {
+                deltaY,
+                originalTime: `${originalStart.getHours()}:${String(originalStart.getMinutes()).padStart(2, '0')}`
+              });
+            }
+          } else {
+            // Different day - preserve original time unless it's a significant vertical drag
+            if (deltaY > deltaX && deltaY > 15) {
+              // Significant vertical movement - use calculated time
+              finalHours = newHours;
+              finalMinutes = newMins;
+            } else {
+              // Horizontal drag (day change) - preserve original time
+              finalHours = originalStart.getHours();
+              finalMinutes = originalStart.getMinutes();
+            }
+          }
+          
+          // Create new date using explicit local time components (like MonthGrid does)
+          // This ensures the date is created in the local timezone correctly
+          const [year, month, day] = targetDateIso.split('-').map(Number);
+          const newStart = new Date(year, month - 1, day, finalHours, finalMinutes, 0, 0);
+          
+          console.log('[PlannerWeek] Date creation', {
+            targetDateIso,
+            finalHours,
+            finalMinutes,
+            newStartISO: newStart.toISOString(),
+            newStartLocal: `${newStart.getHours()}:${String(newStart.getMinutes()).padStart(2, '0')}`,
+            originalStartISO: originalStart.toISOString(),
+            originalStartLocal: `${originalStart.getHours()}:${String(originalStart.getMinutes()).padStart(2, '0')}`
+          });
+          
+          if (isNaN(newStart.getTime())) {
+            console.error('[PlannerWeek] Invalid destination date:', targetDateIso);
+            return;
+          }
+          
+          // Compute new end time: add original duration
+          const newEnd = new Date(newStart.getTime() + durationMs);
+          
+          // Optimistic update - apply IMMEDIATELY before cleanup to prevent visual jump
+          // Use targetDateIso directly for date_local to ensure it matches what the user dragged to
+          // This prevents date mismatches that cause visual jumps
+          const optimisticEvent = {
+            ...event,
+            start_ts: newStart.toISOString(),
+            end_ts: newEnd.toISOString(),
+            date_local: targetDateIso, // Use targetDateIso directly - this is what user dragged to
+          };
+          console.log('[PlannerWeek] Creating optimistic update', {
+            eventId,
+            targetDateIso,
+            optimisticDateLocal: optimisticEvent.date_local,
+            originalDateLocal: event.date_local,
+            newStart: newStart.toISOString(),
+            isSameDay,
+            deltaY,
+            deltaX,
+            originalTime: `${originalStart.getHours()}:${originalStart.getMinutes()}`,
+            newTime: `${newStart.getHours()}:${newStart.getMinutes()}`,
+            calculatedTime: `${newHours}:${newMins}`,
+            relativeY,
+            dayColumnHeight
+          });
+          
+          // Remove drag ghost immediately for instant snap-in feel
+          // This makes the event appear in the new position right away
+          if (originalTarget && originalTarget._dragGhost) {
+            const ghost = originalTarget._dragGhost;
+            if (ghost.parentNode) {
+              ghost.parentNode.removeChild(ghost);
+            }
+            delete originalTarget._dragGhost;
+          }
+          
+          // Restore original element's opacity before optimistic update
+          if (originalTarget && originalTarget._dragDomNode && originalTarget._originalOpacity !== undefined) {
+            originalTarget._dragDomNode.style.opacity = originalTarget._originalOpacity || '';
+            originalTarget._dragDomNode.style.transition = '';
+            delete originalTarget._originalOpacity;
+            delete originalTarget._originalTop;
+            delete originalTarget._originalTransform;
+          }
+          
+          // Apply optimistic update immediately
+          setLocalEvents(prev => ({ ...prev, [eventId]: optimisticEvent }));
+          
+          // Don't hide the original element - let React handle the re-render naturally
+          // The optimistic update will cause React to render the event in the new position
+          // We'll keep the optimistic update until fresh data confirms the change
+          // This prevents any visual jump
+          
+          // Call API to reschedule with offline support
+          console.log('[PlannerWeek] Calling rescheduleEvent', {
+            eventId,
+            newStart: newStart.toISOString(),
+            newEnd: newEnd.toISOString(),
+            isSameDay,
+            originalStart: originalStart.toISOString(),
+            originalEnd: originalEnd.toISOString()
+          });
+          
+          try {
+            const { data: updatedEvent, error } = await rescheduleEvent(
+              eventId,
+              newStart.toISOString(),
+              newEnd.toISOString(),
+              'drag_drop',
+              isSameDay ? 'time change' : 'day move',
+              familyId
+            );
+            
+            console.log('[PlannerWeek] rescheduleEvent response', { 
+              success: !error, 
+              error: error?.message,
+              updatedEvent: !!updatedEvent 
+            });
+            
+            if (error) {
+              // Revert optimistic update on error
+              console.error('[PlannerWeek] Reschedule error', error);
+              setLocalEvents(prev => {
+                const next = { ...prev };
+                delete next[eventId];
+                return next;
+              });
+              Alert.alert('Error', `Failed to reschedule event: ${error.message || 'Unknown error'}`);
+              // Trigger refresh event to reload data
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+              }
+            } else {
+              // Success - keep optimistic update until refresh completes
+              console.log('[PlannerWeek] Reschedule successful');
+              // Don't overwrite optimistic update with server response - it might have old date_local
+              // The optimistic update already has the correct date_local (targetDateIso)
+              // We'll keep it until fresh data arrives from the refresh
+              // This ensures the event stays in the correct day column
+              // Trigger refresh event to reload data from server
+              // The refresh will replace the optimistic update with fresh data
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+                // Also refresh calendar data for month view and other views
+                if (window.__refreshCalendarData) {
+                  // Refresh the month containing the event's new date
+                  const eventDate = new Date(newStart);
+                  window.__refreshCalendarData(eventDate).catch(err => {
+                    console.error('[PlannerWeek] Calendar refresh failed:', err);
+                  });
+                }
+                // Dispatch event for other components to refresh
+                window.dispatchEvent(new CustomEvent('eventRescheduled', {
+                  detail: { eventId, newStart, newEnd }
+                }));
+              }
+            }
+          } catch (err) {
+            // Revert optimistic update on exception
+            console.error('[PlannerWeek] Reschedule exception', err);
+            setLocalEvents(prev => {
+              const next = { ...prev };
+              delete next[eventId];
+              return next;
+            });
+            Alert.alert('Error', `Failed to reschedule event: ${err.message || 'Unknown error'}`);
+            // Trigger refresh event to reload data
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+            }
           }
         }
+      }
+      
+      // Clean up
+      const wasDragging = isDraggingRef.current;
+      
+      // Clean up drag ghost (direct DOM manipulation)
+      // Note: Ghost may have already been removed when optimistic update was applied
+      // This is a safety cleanup in case the drag was cancelled or failed
+      if (originalTarget) {
+        if (originalTarget._dragGhost && originalTarget._dragGhost.parentNode) {
+          originalTarget._dragGhost.parentNode.removeChild(originalTarget._dragGhost);
+          delete originalTarget._dragGhost;
+        }
         
-        // Commit animation: animate ghost to final position
-        // The final position is the same as the preview position (since we're moving to that spot)
-        setCommitAnimation({
-          eventId,
-          dayIso: preview.dayIso,
-          startMin: preview.startMin,
-          endMin: preview.endMin,
-        });
-        
-        // Clear dragPreview immediately (ghost will use commitAnimation instead)
-        setDragPreview(null);
-        dragPreviewRef.current = null;
-        
-        // Clear commitAnimation after animation completes (180ms)
-        setTimeout(() => {
-          setCommitAnimation(null);
-        }, 180);
-      } catch (err) {
-        // Revert optimistic update on exception
-        setLocalEvents(prev => {
-          const next = { ...prev };
-          delete next[eventId];
-          return next;
-        });
-        Alert.alert('Error', `Failed to reschedule event: ${err.message || 'Unknown error'}`);
-        handleWeekStartChange(new Date(currentWeekStart));
+        // Restore original element's opacity if we changed it
+        if (originalTarget._dragDomNode && originalTarget._originalOpacity !== undefined) {
+          originalTarget._dragDomNode.style.opacity = originalTarget._originalOpacity || '';
+          originalTarget._dragDomNode.style.transition = '';
+          delete originalTarget._originalOpacity;
+          delete originalTarget._originalTop;
+          delete originalTarget._originalTransform;
+        }
       }
       
       setDragState(null);
       setDraggedEventId(null);
       dragRef.current = null;
+      isDraggingRef.current = false;
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      
+      // If we didn't actually drag, allow click to proceed
+      if (!wasDragging) {
+        // Small delay to allow click handler to check isDraggingRef
+        setTimeout(() => {
+          isDraggingRef.current = false;
+        }, 10);
+      }
     };
     
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-    
-    // Cleanup on unmount or drag end
-    return () => {
-      if (validateTimerRef.current) {
-        clearTimeout(validateTimerRef.current);
-        validateTimerRef.current = null;
-      }
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [weekStart, handleWeekStartChange, familyId, schedulingAssistantEnabled, selectedChildIds]);
-  
-  // Early return for loading state - must be after all hooks
+  }, [data.events, selectedChildIds, weekStart, handleWeekStartChange, familyId]);
+
+  // Early return for loading - MUST be after all hooks
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -2081,107 +2160,16 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     );
   }
   
+  // Use View for both web and native, with web-specific styles
   return (
-    <Wrapper style={wrapperStyle}>
-        {/* Header with freeze toggle */}
-        <View style={styles.weekHeader}>
-          <View style={styles.weekHeaderLeft}>
-            <Text style={styles.weekHeaderSubtitle}>
-              {`${getLocalDateString(weekStart)} - ${getLocalDateString(addDays(weekStart, 6))}`}
-            </Text>
-          </View>
-          <View style={styles.weekHeaderRight}>
-            {selectedChildIds.length === 1 && (
-              <TouchableOpacity
-                style={styles.saveTemplateButton}
-                onPress={async () => {
-                  try {
-                    const weekStartStr = getLocalDateString(getWeekStart(weekStart));
-                    // Use HTML format for direct printing
-                    const { error } = await getWeeklyPacket(selectedChildIds[0], weekStartStr, 'html');
-                    if (error) {
-                      Alert.alert('Error', `Failed to generate weekly packet: ${error.message || 'Unknown error'}`);
-                    }
-                  } catch (err) {
-                    Alert.alert('Error', `Failed to generate weekly packet: ${err.message || 'Unknown error'}`);
-                  }
-                }}
-                activeOpacity={0.7}
-              >
-                <Printer size={14} color={colors.accent} />
-                <Text style={styles.saveTemplateButtonText}>
-                  Print Weekly Packet
-                </Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={[styles.saveTemplateButton, schedulingAssistantEnabled && styles.saveTemplateButtonActive]}
-              onPress={() => setSchedulingAssistantEnabled(!schedulingAssistantEnabled)}
-              activeOpacity={0.7}
-            >
-              <Calendar size={14} color={schedulingAssistantEnabled ? colors.white : colors.accent} />
-              <Text style={[styles.saveTemplateButtonText, schedulingAssistantEnabled && styles.saveTemplateButtonTextActive]}>
-                Scheduling Assistant
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.saveTemplateButton}
-              onPress={() => setShowBulkRescheduleModal(true)}
-              activeOpacity={0.7}
-            >
-              <Sparkles size={14} color={colors.accent} />
-              <Text style={styles.saveTemplateButtonText}>
-                Reschedule
-              </Text>
-            </TouchableOpacity>
-            {selectedChildIds.length > 0 && (
-              <TouchableOpacity
-                style={styles.saveTemplateButton}
-                onPress={() => setShowWeeklyReshuffle(true)}
-                activeOpacity={0.7}
-              >
-                <Sparkles size={14} color={colors.accent} />
-                <Text style={styles.saveTemplateButtonText}>
-                  Weekly Reshuffle
-                </Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={styles.saveTemplateButton}
-              onPress={() => setShowSaveTemplateModal(true)}
-              disabled={selectedChildIds.length === 0}
-              activeOpacity={0.7}
-            >
-              <Save size={14} color={selectedChildIds.length > 0 ? colors.accent : colors.muted} />
-              <Text style={[styles.saveTemplateButtonText, selectedChildIds.length === 0 && styles.saveTemplateButtonTextDisabled]}>
-                Save as Template
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.freezeButton, isWeekFrozen && styles.freezeButtonActive]}
-              onPress={handleToggleFreeze}
-              disabled={freezeLoading}
-              activeOpacity={0.7}
-            >
-              {isWeekFrozen ? (
-                <>
-                  <Lock size={14} color={isWeekFrozen ? colors.accentContrast : colors.text} />
-                  <Text style={[styles.freezeButtonText, isWeekFrozen && styles.freezeButtonTextActive]}>
-                    Frozen
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Unlock size={14} color={colors.text} />
-                  <Text style={styles.freezeButtonText}>
-                    Freeze Week
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
+    <View style={[
+      styles.wrapper,
+      typeof window !== 'undefined' && {
+        display: 'flex',
+        flexDirection: 'column',
+        flex: 1,
+      }
+    ]}>
         {/* Save Template Modal */}
         <SaveTemplateModal
           isOpen={showSaveTemplateModal}
@@ -2217,16 +2205,19 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 return (
                   <View key={i} style={styles.dayHeader}>
                     <Text style={styles.dayHeaderText}>
-                      <Text style={styles.dayHeaderDow}>{fmtDow(d)}</Text>
+                      <Text style={styles.dayHeaderDow}>{fmtDow(d)} </Text>
                       <Text style={[
                         styles.dayHeaderDate,
                         d.getMonth() !== weekStart.getMonth() && styles.dayHeaderDateOtherMonth
-                      ]}> {d.getDate()}</Text>
-                    </Text>{patternDay ? (
+                      ]}>
+                        {d.getDate()}
+                      </Text>
+                    </Text>
+                    {patternDay && (
                       <View style={styles.patternDayBadge}>
                         <Text style={styles.patternDayText}>{patternDay}</Text>
                       </View>
-                    ) : null}
+                    )}
                   </View>
                 );
               })}
@@ -2239,19 +2230,19 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 styles.gridBodyScroll,
                 draggedEventId && typeof window !== 'undefined' && { pointerEvents: 'auto' } // Allow drag events during drag
               ]}
-              contentContainerStyle={{}} // Minimal - actual layout in inner View
+              contentContainerStyle={styles.gridBody}
               showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
-              contentOffset={initialScrollOffset}
               scrollEnabled={!draggedEventId} // Disable scroll while dragging
-              {...(typeof window !== 'undefined' && {
-                'data-scrollview-id': `scrollview-${weekStart.getTime()}`,
+              {...(typeof window === 'undefined' ? {
+                contentOffset: initialScrollOffset,
+              } : typeof window !== 'undefined' ? {
                 onWheel: draggedEventId ? (e) => e.preventDefault() : undefined, // Prevent scroll during drag
                 onDragOver: (e) => {
                   // Allow drag events to pass through ScrollView
                   e.preventDefault();
                 },
-              })}
+              } : {})}
               onLayout={() => {
                 if (!hasScrolledTo7AM && !loading) {
                   requestAnimationFrame(() => scrollTo7AM());
@@ -2263,12 +2254,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 }
               }}
             >
-              {/* Grid body wrapper with ref for measuring */}
-              <View
-                ref={gridBodyRef}
-                style={styles.gridBody}
-                {...(typeof window !== 'undefined' && { id: 'planner-week-grid-body' })}
-              >
               {/* Time Ruler - Full 24 hours (12 AM to 12 AM) */}
               <View style={styles.timeRuler}>
                 {Array.from({ length: Math.floor((hours.endMin - hours.startMin) / hours.step) + 1 }).map((_, i) => {
@@ -2280,16 +2265,14 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                   const period = displayHour >= 12 ? 'PM' : 'AM';
                   const mm = displayMin.toString().padStart(2, '0');
                   return (
-                    <Text 
+                    <View 
                       key={i} 
-                      style={styles.timeLabel}
-                      {...(typeof window !== 'undefined' && labelMin === 420 && {
-                        'data-hour': '7',
-                        'data-time-label': '7:00 AM'
-                      })}
+                      style={styles.timeLabelContainer}
                     >
-                      {`${hour12}:${mm} ${period}`}
-                    </Text>
+                      <Text style={styles.timeLabel}>
+                        {hour12}:{mm} {period}
+                      </Text>
+                    </View>
                   );
                 })}
               </View>
@@ -2337,10 +2320,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                     focusedChildId={focusedChildId}
                     draggedEventId={draggedEventId}
                     familyId={familyId}
-                    schedulingAssistantEnabled={schedulingAssistantEnabled}
-                    busyBlocks={busyBlocks}
-                    dragPreview={dragPreview}
-                    commitAnimation={commitAnimation}
                     onAdd={(startMin) => {
                       onAddActivity?.({ date: iso, startMin });
                     }}
@@ -2350,7 +2329,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                   />
                 );
               })}
-              </View> {/* End gridBody wrapper */}
             </ScrollView>
           </View>
         </View>
@@ -2578,38 +2556,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         }}
       />
 
-      {/* Bulk Reschedule Modal */}
-      <BulkRescheduleModal
-        visible={showBulkRescheduleModal}
-        onClose={() => setShowBulkRescheduleModal(false)}
-        familyId={familyId}
-        weekStart={weekStart}
-        weekEnd={addDays(weekStart, 7)}
-        childIds={selectedChildIds}
-        onApplied={() => {
-          // Force refresh
-          handleWeekStartChange((() => {
-            const newDate = new Date(weekStart);
-            newDate.setMilliseconds(newDate.getMilliseconds() + 1);
-            return newDate;
-          })());
-          // Refresh busy blocks if enabled
-          if (schedulingAssistantEnabled) {
-            const weekEnd = addDays(weekStart, 7);
-            supabase.rpc('get_freebusy_week', {
-              _family_id: familyId,
-              _from: weekStart.toISOString(),
-              _to: weekEnd.toISOString(),
-              _child_ids: selectedChildIds && selectedChildIds.length > 0 ? selectedChildIds : null,
-            }).then(({ data: fbData }) => {
-              if (fbData) {
-                setBusyBlocks(fbData.busy || []);
-              }
-            });
-          }
-        }}
-      />
-
       {/* Loading overlay for AI reschedule generation */}
       {loadingReschedule && (
         <View style={styles.loadingOverlay}>
@@ -2620,7 +2566,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           </View>
         </View>
       )}
-      </Wrapper>
+    </View>
   );
 }
 
@@ -2656,13 +2602,6 @@ const styles = StyleSheet.create({
   },
   saveTemplateButtonTextDisabled: {
     color: colors.muted,
-  },
-  saveTemplateButtonActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  saveTemplateButtonTextActive: {
-    color: colors.white,
   },
   weekHeader: {
     flexDirection: 'row',
@@ -2832,17 +2771,14 @@ const styles = StyleSheet.create({
   },
   viewToggleButtonActive: {
     backgroundColor: colors.card,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
-      },
-      default: {
-        shadowColor: 'rgba(0, 0, 0, 0.1)',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 1,
-        shadowRadius: 2,
-        elevation: 1,
-      },
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+    } : {
+      shadowColor: 'rgba(0, 0, 0, 0.1)',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 1,
+      shadowRadius: 2,
+      elevation: 1,
     }),
   },
   viewToggleText: {
@@ -2966,11 +2902,13 @@ const styles = StyleSheet.create({
     width: 64,
     paddingTop: 8,
   },
+  timeLabelContainer: {
+    marginBottom: 52,
+    paddingLeft: 4,
+  },
   timeLabel: {
     fontSize: 10,
     color: colors.muted,
-    marginBottom: 52,
-    paddingLeft: 4,
   },
   dayColumnDragOver: {
     backgroundColor: '#f0f9ff',
@@ -2982,6 +2920,12 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: colors.border,
     position: 'relative',
+    paddingHorizontal: 4, // Equal padding on both sides
+    paddingVertical: 0,
+    ...(Platform.OS === 'web' && {
+      overflow: 'visible', // Allow rounded corners to show
+      boxSizing: 'border-box',
+    }),
   },
   dayColumnBlackout: {
     backgroundColor: colors.panel,
@@ -3042,40 +2986,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
     borderColor: colors.greenSoft,
-  },
-  dragGhost: {
-    position: 'absolute',
-    left: 4,
-    right: 4,
-    borderWidth: 2,
-    borderRadius: 8,
-    zIndex: 999,
-  },
-  dragGhostCommitting: {
-    transition: 'all 180ms ease-out',
-    WebkitTransition: 'all 180ms ease-out',
-  },
-  dragGhostIcon: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    marginTop: -8,
-    marginLeft: -8,
-    zIndex: 1000,
-    ...(typeof window !== 'undefined' && {
-      transform: 'translate(-50%, -50%)',
-    }),
-  },
-  busyBlock: {
-    position: 'absolute',
-    left: 4,
-    right: 4,
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-    pointerEvents: 'none',
-    zIndex: 1,
   },
   eventBlock: {
     position: 'absolute',

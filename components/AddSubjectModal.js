@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { X, ChevronDown, Plus } from 'lucide-react';
+import { X, ChevronDown, Plus, Trash2, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -44,6 +44,12 @@ export default function AddSubjectModal({
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
+  
+  // Event management state
+  const [subjectEvents, setSubjectEvents] = useState([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [deletingEvents, setDeletingEvents] = useState(false);
+  const [markingAttended, setMarkingAttended] = useState(false);
 
   // Update children when prop changes
   useEffect(() => {
@@ -72,6 +78,8 @@ export default function AddSubjectModal({
         setCredits(subject.credits ? String(subject.credits) : '');
         setNotes(subject.notes || '');
         // Child IDs will be set in the next useEffect after children load
+        // Load events for this subject
+        loadSubjectEvents(subject.id);
       } else {
         // Add mode - use defaults
         if (defaultSubjectName) {
@@ -93,8 +101,165 @@ export default function AddSubjectModal({
       setSelectedMaterialId(null);
       setAttachedMaterialIds([]);
       setShowMaterialDropdown(false);
+      setSubjectEvents([]);
+      setLoadingEvents(false);
+      setDeletingEvents(false);
+      setMarkingAttended(false);
     }
   }, [visible, defaultChildId, defaultSubjectName, subject]);
+  
+  // Load events for the subject
+  const loadSubjectEvents = async (subjectId) => {
+    if (!subjectId || !familyId) return;
+    
+    setLoadingEvents(true);
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .select('id, title, start_ts, status, event_type')
+        .eq('subject_id', subjectId)
+        .eq('family_id', familyId)
+        .is('deleted_at', null)
+        .order('start_ts', { ascending: false });
+      
+      if (error) throw error;
+      
+      setSubjectEvents(data || []);
+    } catch (error) {
+      console.error('Error loading subject events:', error);
+      setSubjectEvents([]);
+    } finally {
+      setLoadingEvents(false);
+    }
+  };
+  
+  // Delete all events for this subject
+  const handleDeleteAllEvents = async () => {
+    if (!subject || !subject.id || subjectEvents.length === 0) return;
+    
+    // Web-compatible confirmation
+    let confirmed = false;
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
+      confirmed = window.confirm(
+        `Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`
+      );
+    } else {
+      // Native Alert.alert
+      confirmed = await new Promise((resolve) => {
+        Alert.alert(
+          'Delete All Events',
+          `Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            {
+              text: 'Delete All',
+              style: 'destructive',
+              onPress: () => resolve(true),
+            }
+          ]
+        );
+      });
+    }
+    
+    if (!confirmed) return;
+    
+    setDeletingEvents(true);
+    try {
+      const eventIds = subjectEvents.map(e => e.id);
+      
+      // Soft delete events
+      const { error } = await supabase
+        .from('events')
+        .update({ deleted_at: new Date().toISOString() })
+        .in('id', eventIds)
+        .eq('family_id', familyId);
+      
+      if (error) throw error;
+      
+      toast.show('All events deleted successfully', 'success');
+      setSubjectEvents([]);
+      
+      // Refresh events in the app
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshEvents'));
+        window.dispatchEvent(new CustomEvent('subjectUpdated'));
+      }
+    } catch (error) {
+      console.error('Error deleting events:', error);
+      toast.show('Failed to delete events', 'error');
+    } finally {
+      setDeletingEvents(false);
+    }
+  };
+  
+  // Mark all events as attended
+  const handleMarkAllAttended = async () => {
+    if (!subject || !subject.id || subjectEvents.length === 0) return;
+    
+    const unattendedEvents = subjectEvents.filter(e => e.status !== 'done');
+    if (unattendedEvents.length === 0) {
+      toast.show('All events are already marked as attended', 'info');
+      return;
+    }
+    
+    // Web-compatible confirmation
+    let confirmed = false;
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
+      confirmed = window.confirm(
+        `Mark ${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} as attended?`
+      );
+    } else {
+      // Native Alert.alert
+      confirmed = await new Promise((resolve) => {
+        Alert.alert(
+          'Mark All Events as Attended',
+          `Mark ${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} as attended?`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            {
+              text: 'Mark All Attended',
+              onPress: () => resolve(true),
+            }
+          ]
+        );
+      });
+    }
+    
+    if (!confirmed) return;
+    
+    setMarkingAttended(true);
+    try {
+      const eventIds = unattendedEvents.map(e => e.id);
+      
+      // Update events to done status
+      const { error } = await supabase
+        .from('events')
+        .update({ 
+          status: 'done',
+          updated_at: new Date().toISOString()
+        })
+        .in('id', eventIds)
+        .eq('family_id', familyId);
+      
+      if (error) throw error;
+      
+      toast.show(`${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} marked as attended`, 'success');
+      
+      // Reload events
+      await loadSubjectEvents(subject.id);
+      
+      // Refresh events in the app
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshEvents'));
+        window.dispatchEvent(new CustomEvent('subjectUpdated'));
+      }
+    } catch (error) {
+      console.error('Error marking events as attended:', error);
+      toast.show('Failed to mark events as attended', 'error');
+    } finally {
+      setMarkingAttended(false);
+    }
+  };
 
   // Set child IDs when editing and children are loaded
   useEffect(() => {
@@ -699,6 +864,56 @@ export default function AddSubjectModal({
                 textAlignVertical="top"
               />
             </View>
+            
+            {/* Event Management Section (only in edit mode) */}
+            {subject && subject.id && (
+              <View style={styles.eventManagementSection}>
+                <View style={styles.eventManagementHeader}>
+                  <Text style={styles.eventManagementTitle}>Event Management</Text>
+                  {loadingEvents ? (
+                    <Text style={styles.eventCountText}>Loading...</Text>
+                  ) : (
+                    <Text style={styles.eventCountText}>
+                      {subjectEvents.length} event{subjectEvents.length === 1 ? '' : 's'} found
+                    </Text>
+                  )}
+                </View>
+                
+                {subjectEvents.length > 0 && (
+                  <View style={styles.eventActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.eventActionButton, 
+                        styles.markAttendedButton,
+                        (markingAttended || deletingEvents) && styles.eventActionButtonDisabled
+                      ]}
+                      onPress={handleMarkAllAttended}
+                      disabled={markingAttended || deletingEvents}
+                    >
+                      <CheckCircle size={16} color="#10B981" />
+                      <Text style={[styles.eventActionButtonText, styles.markAttendedButtonText]}>
+                        {markingAttended ? 'Marking...' : 'Mark All as Attended'}
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[
+                        styles.eventActionButton, 
+                        styles.deleteEventsButton,
+                        (deletingEvents || markingAttended) && styles.eventActionButtonDisabled
+                      ]}
+                      onPress={handleDeleteAllEvents}
+                      disabled={deletingEvents || markingAttended}
+                    >
+                      <Trash2 size={16} color="#EF4444" />
+                      <Text style={[styles.eventActionButtonText, styles.deleteEventsButtonText]}>
+                        {deletingEvents ? 'Deleting...' : 'Delete All Events'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
           </ScrollView>
 
           {/* Fixed Footer with Save Button */}
@@ -982,6 +1197,78 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1e40af',
     fontWeight: '600',
+  },
+  eventManagementSection: {
+    marginTop: 24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.12)',
+  },
+  eventManagementHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  eventManagementTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  eventCountText: {
+    fontSize: 13,
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  eventActions: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  eventActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  markAttendedButton: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#10B981',
+  },
+  deleteEventsButton: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#EF4444',
+  },
+  eventActionButtonDisabled: {
+    opacity: 0.5,
+    ...(Platform.OS === 'web' && {
+      cursor: 'not-allowed',
+    }),
+  },
+  eventActionButtonText: {
+    fontSize: 13,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  markAttendedButtonText: {
+    color: '#10B981',
+  },
+  deleteEventsButtonText: {
+    color: '#EF4444',
   },
 });
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
@@ -64,8 +64,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [motivationalMessagesEnabled, setMotivationalMessagesEnabled] = useState(true);
   const [darkMode, setDarkMode] = useState('off'); // 'on', 'off', 'system'
   
+  // Connected accounts (integrations) state - UI only for now; wire to real APIs later
+  const [connectedProviders, setConnectedProviders] = useState({
+    google_drive: false,
+    google_docs: false,
+    google_classroom: false,
+    dropbox: false,
+    youtube: false,
+    khan_academy: false,
+  });
+  const [connectingProvider, setConnectingProvider] = useState(null);
+  const [hoveredConnectionKey, setHoveredConnectionKey] = useState(null);
+  
   // Active section for sidebar navigation
-  const [activeSection, setActiveSection] = useState('preferences');
+  const [activeSection, setActiveSection] = useState('profile');
   
   // Modal state
   const [showAddChildModal, setShowAddChildModal] = useState(false);
@@ -114,6 +126,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [updatingTutorId, setUpdatingTutorId] = useState(null);
 
   const styles = createStyles(tokens);
+
+  // Provider logo assets (PNG)
+  const googleLogo = require('../../assets/google.png');
+  const dropboxLogo = require('../../assets/dropbox.png');
+  const youtubeLogo = require('../../assets/youtube.png');
+  const khanLogo = require('../../assets/khan.png');
 
   // Update local state when prop changes
   useEffect(() => {
@@ -683,9 +701,223 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   );
   const children = family?.children || [];
 
+  const CONNECTION_PROVIDERS = [
+    {
+      key: 'google_drive',
+      label: 'Google Drive',
+      description: 'Attach files and folders from your Google Drive across lessons and materials.',
+      image: googleLogo,
+    },
+    {
+      key: 'google_docs',
+      label: 'Google Docs',
+      description: 'Link rich documents, plans, and worksheets stored in Google Docs.',
+      image: googleLogo,
+    },
+    {
+      key: 'google_classroom',
+      label: 'Google Classroom',
+      description: 'Keep Learnadoodle in sync with assignments and classes from Google Classroom.',
+      image: googleLogo,
+    },
+    {
+      key: 'dropbox',
+      label: 'Dropbox',
+      description: 'Connect shared folders and teaching resources from Dropbox.',
+      image: dropboxLogo,
+    },
+    {
+      key: 'youtube',
+      label: 'YouTube',
+      description: 'Save favorite learning videos and channels into your library.',
+      image: youtubeLogo,
+    },
+    {
+      key: 'khan_academy',
+      label: 'Khan Academy',
+      description: 'Bring in practice sets and courses from Khan Academy for each learner.',
+      image: khanLogo,
+    },
+  ];
+
+  const setProviderConnection = (providerKey, isConnected) => {
+    setConnectedProviders((prev) => ({
+      ...prev,
+      [providerKey]: isConnected,
+    }));
+  };
+
+  const handleConnectProvider = (providerKey) => {
+    if (connectingProvider) return;
+    setConnectingProvider(providerKey);
+    try {
+      setProviderConnection(providerKey, true);
+      toast.push('Connected account (preview only - no data shared yet)', 'success');
+    } catch (err) {
+      toast.push(err.message || 'Failed to connect account', 'error');
+    } finally {
+      setConnectingProvider(null);
+    }
+  };
+
+  const handleDisconnectProvider = (providerKey) => {
+    setProviderConnection(providerKey, false);
+    toast.push('Disconnected account', 'success');
+  };
+
   // Render content based on active section
   const renderMainContent = () => {
     switch (activeSection) {
+      case 'connections':
+        return (
+          <View style={styles.mainContentInner}>
+            <Text style={styles.mainContentTitle}>Connected accounts</Text>
+
+            <Text style={styles.connectionsIntro}>
+              Connect the tools you already use so it is faster to pull in documents, videos, and courses while you plan.
+              These connections are optional and you stay in full control of what gets shared.
+            </Text>
+
+            <Text style={styles.subsectionTitle}>Cloud storage & docs</Text>
+            <View style={styles.subsectionDivider} />
+
+            <View style={styles.connectionsList}>
+              {CONNECTION_PROVIDERS.filter(p =>
+                ['google_drive', 'google_docs', 'google_classroom', 'dropbox'].includes(p.key)
+              ).map(({ key, label, description, image }) => {
+                const isConnected = !!connectedProviders[key];
+                const isBusy = connectingProvider === key;
+
+                return (
+                  <View key={key} style={styles.connectionRow}>
+                    <View style={styles.connectionRowLeft}>
+                      <View style={styles.connectionRowIcon}>
+                        <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                      </View>
+                      <View style={styles.connectionRowText}>
+                        <Text style={styles.connectionRowLabel}>{label}</Text>
+                        <Text style={styles.connectionRowDescription}>{description}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.connectionRowActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.connectionPillButton,
+                          isConnected && styles.connectionPillButtonConnected,
+                          hoveredConnectionKey === key && styles.connectionPillButtonHovered,
+                          isBusy && styles.connectionPillButtonDisabled,
+                        ]}
+                        onPress={() => {
+                          if (isConnected) {
+                            toast.push('Connection settings coming soon for this provider', 'info');
+                          } else {
+                            handleConnectProvider(key);
+                          }
+                        }}
+                        disabled={isBusy}
+                        {...(Platform.OS === 'web' && {
+                          cursor: isBusy ? 'not-allowed' : 'pointer',
+                          onMouseEnter: () => setHoveredConnectionKey(key),
+                          onMouseLeave: () => setHoveredConnectionKey(null),
+                        })}
+                      >
+                        <Text style={[
+                          styles.connectionPillButtonText,
+                          hoveredConnectionKey === key && styles.connectionPillButtonTextHovered,
+                        ]}>
+                          {isBusy
+                            ? 'Connecting...'
+                            : isConnected
+                            ? 'Connected'
+                            : 'Connect'}
+                        </Text>
+                      </TouchableOpacity>
+                      {isConnected && (
+                        <TouchableOpacity
+                          style={styles.connectionSecondaryButton}
+                          onPress={() => handleDisconnectProvider(key)}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.connectionSecondaryButtonText}>Disconnect</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.subsectionTitle, { marginTop: 32 }]}>Learning platforms</Text>
+            <View style={styles.subsectionDivider} />
+
+            <View style={styles.connectionsList}>
+              {CONNECTION_PROVIDERS.filter(p =>
+                ['youtube', 'khan_academy'].includes(p.key)
+              ).map(({ key, label, description, image }) => {
+                const isConnected = !!connectedProviders[key];
+                const isBusy = connectingProvider === key;
+
+                return (
+                  <View key={key} style={styles.connectionRow}>
+                    <View style={styles.connectionRowLeft}>
+                      <View style={styles.connectionRowIcon}>
+                        <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                      </View>
+                      <View style={styles.connectionRowText}>
+                        <Text style={styles.connectionRowLabel}>{label}</Text>
+                        <Text style={styles.connectionRowDescription}>{description}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.connectionRowActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.connectionPillButton,
+                          isConnected && styles.connectionPillButtonConnected,
+                          hoveredConnectionKey === key && styles.connectionPillButtonHovered,
+                          isBusy && styles.connectionPillButtonDisabled,
+                        ]}
+                        onPress={() => {
+                          if (isConnected) {
+                            toast.push('Connection settings coming soon for this provider', 'info');
+                          } else {
+                            handleConnectProvider(key);
+                          }
+                        }}
+                        disabled={isBusy}
+                        {...(Platform.OS === 'web' && {
+                          cursor: isBusy ? 'not-allowed' : 'pointer',
+                          onMouseEnter: () => setHoveredConnectionKey(key),
+                          onMouseLeave: () => setHoveredConnectionKey(null),
+                        })}
+                      >
+                        <Text style={[
+                          styles.connectionPillButtonText,
+                          hoveredConnectionKey === key && styles.connectionPillButtonTextHovered,
+                        ]}>
+                          {isBusy
+                            ? 'Connecting...'
+                            : isConnected
+                            ? 'Connected'
+                            : 'Connect'}
+                        </Text>
+                      </TouchableOpacity>
+                      {isConnected && (
+                        <TouchableOpacity
+                          style={styles.connectionSecondaryButton}
+                          onPress={() => handleDisconnectProvider(key)}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.connectionSecondaryButtonText}>Disconnect</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        );
+      
       case 'preferences':
         const CustomToggle = ({ value, onValueChange }) => (
           <TouchableOpacity
@@ -807,9 +1039,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   {showCurrentPassword ? (
-                    <EyeOff size={20} color="#887DEE" />
+                    <EyeOff size={20} color="#60a5fa" />
                   ) : (
-                    <Eye size={20} color="#887DEE" />
+                    <Eye size={20} color="#60a5fa" />
                   )}
                 </TouchableOpacity>
               </View>
@@ -833,9 +1065,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   {showNewPassword ? (
-                    <EyeOff size={20} color="#887DEE" />
+                    <EyeOff size={20} color="#60a5fa" />
                   ) : (
-                    <Eye size={20} color="#887DEE" />
+                    <Eye size={20} color="#60a5fa" />
                   )}
                 </TouchableOpacity>
               </View>
@@ -862,9 +1094,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   {showConfirmPassword ? (
-                    <EyeOff size={20} color="#887DEE" />
+                    <EyeOff size={20} color="#60a5fa" />
                   ) : (
-                    <Eye size={20} color="#887DEE" />
+                    <Eye size={20} color="#60a5fa" />
                   )}
                 </TouchableOpacity>
               </View>
@@ -1331,8 +1563,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.subsectionDivider} />
             
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#ede9fe' }]}>
-                <Infinity size={20} color="#8b5cf6" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <Infinity size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Unlimited Smart Tokens</Text>
@@ -1341,8 +1573,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#dbeafe' }]}>
-                <Calendar size={20} color="#60a5fa" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <Calendar size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Year & Multi-Year Planning</Text>
@@ -1351,8 +1583,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#fce7f3' }]}>
-                <Users size={20} color="#f472b6" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <Users size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Tutor & Co-Teacher Sharing</Text>
@@ -1361,8 +1593,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#e0e7ff' }]}>
-                <BarChart2 size={20} color="#818cf8" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <BarChart2 size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Learning & Motivation Reports</Text>
@@ -1371,8 +1603,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#fae8ff' }]}>
-                <Heart size={20} color="#e879f9" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <Heart size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Connection Report</Text>
@@ -1381,8 +1613,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#cffafe' }]}>
-                <FileText size={20} color="#22d3d1" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <FileText size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Automatic Records & Exports</Text>
@@ -1391,8 +1623,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <View style={styles.doodleMaxFeatureItem}>
-              <View style={[styles.doodleMaxFeatureIcon, { backgroundColor: '#f5f3ff' }]}>
-                <SlidersHorizontal size={20} color="#a78bfa" />
+              <View style={styles.doodleMaxFeatureIcon}>
+                <SlidersHorizontal size={16} color="#6b7280" />
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Advanced Views & Filters</Text>
@@ -1781,7 +2013,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <Text style={styles.dataVaultDescription}>
                   Click this button to delete your Learnadoodle account and erase all of your personal data stored by Learnadoodle. You will lose your family data, children profiles, learning progress, and achievements.{' '}
                   <Text style={styles.dataVaultWarningBold}>Once completed this action cannot be undone.</Text>
-                  {' '}This deletion can take up to 30 days.
                 </Text>
                 
                 <Text style={styles.dataVaultNote}>
@@ -1831,20 +2062,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           {/* Account Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Account</Text>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'preferences' && styles.sidebarButtonActive]} onPress={() => setActiveSection('preferences')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'preferences' && styles.sidebarButtonTextActive]}>Preferences</Text>
-            </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]} onPress={() => setActiveSection('notifications')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>Notifications</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]} onPress={() => setActiveSection('connections')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>Connected accounts</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'preferences' && styles.sidebarButtonActive]} onPress={() => setActiveSection('preferences')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={[styles.sidebarButtonText, activeSection === 'preferences' && styles.sidebarButtonTextActive]}>Preferences</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]} onPress={() => setActiveSection('notifications')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>Notifications</Text>
             </TouchableOpacity>
           </View>
 
@@ -2142,13 +2376,13 @@ function createStyles(tokens) {
       backgroundColor: '#ffffff',
     },
     logoutButtonSidebarHovered: {
-      backgroundColor: '#f5f3ff',
-      borderColor: '#e9d5ff',
+      backgroundColor: '#eff6ff',
+      borderColor: '#60a5fa',
     },
     logoutButtonText: {
       fontSize: 16,
       fontWeight: '700',
-      color: '#8b5cf6',
+      color: '#60a5fa',
       letterSpacing: 0.5,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2179,6 +2413,116 @@ function createStyles(tokens) {
       fontSize: 12,
       color: '#6b7280',
       marginBottom: 0,
+    },
+    connectionsIntro: {
+      fontSize: 14,
+      color: '#4b5563',
+      lineHeight: 20,
+      marginBottom: 24,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionsList: {
+      borderTopWidth: 0,
+    },
+    connectionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: '#e5e7eb',
+    },
+    connectionRowLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      paddingRight: 12,
+    },
+    connectionRowIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: '#eff6ff',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    connectionRowImage: {
+      width: 22,
+      height: 22,
+    },
+    connectionRowText: {
+      flex: 1,
+    },
+    connectionRowLabel: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: '#111827',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionRowDescription: {
+      fontSize: 13,
+      color: '#6b7280',
+      marginTop: 2,
+    },
+    connectionRowActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    connectionPillButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 999,
+      backgroundColor: '#F9FAFB',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+        transition: 'background-color 0.2s ease',
+      }),
+    },
+    connectionPillButtonHovered: {
+      backgroundColor: '#EFF6FF',
+    },
+    connectionPillButtonConnected: {
+      backgroundColor: '#E0F2FE',
+    },
+    connectionPillButtonDisabled: {
+      opacity: 0.7,
+    },
+    connectionPillButtonText: {
+      fontSize: 13,
+      fontWeight: '500',
+      color: '#374151',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        transition: 'font-weight 0.2s ease',
+      }),
+    },
+    connectionPillButtonTextHovered: {
+      fontWeight: '600',
+    },
+    connectionSecondaryButton: {
+      paddingVertical: 9,
+      paddingHorizontal: 14,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: '#d1d5db',
+      backgroundColor: '#ffffff',
+    },
+    connectionSecondaryButtonText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#4b5563',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
     },
     contentWrapper: {
       paddingHorizontal: 24,
@@ -2307,7 +2651,7 @@ function createStyles(tokens) {
       textDecorationLine: 'underline',
     },
     profileSaveButton: {
-      backgroundColor: '#887DEE',
+      backgroundColor: '#60a5fa',
       paddingVertical: 14,
       paddingHorizontal: 24,
       borderRadius: 10,
@@ -3919,18 +4263,18 @@ function createStyles(tokens) {
     },
     // DoodleMax Premium inline content styles
     doodleMaxHeaderCard: {
-      backgroundColor: '#f5f3ff',
+      backgroundColor: '#eff6ff',
       borderRadius: 20,
       padding: 28,
       marginBottom: 28,
       alignItems: 'center',
       borderWidth: 2,
-      borderColor: '#e9d5ff',
+      borderColor: '#bfdbfe',
     },
     doodleMaxHeaderTitle: {
       fontSize: 24,
       fontWeight: '700',
-      color: '#7c3aed',
+      color: '#1e40af',
       textAlign: 'center',
       marginBottom: 8,
       ...(Platform.OS === 'web' && {
@@ -3940,7 +4284,7 @@ function createStyles(tokens) {
     doodleMaxHeaderSubtitle: {
       fontSize: 15,
       fontWeight: '400',
-      color: '#8b5cf6',
+      color: '#3b82f6',
       textAlign: 'center',
       marginBottom: 24,
       ...(Platform.OS === 'web' && {
@@ -3985,7 +4329,7 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      backgroundColor: '#a78bfa',
+      backgroundColor: '#60a5fa',
       paddingHorizontal: 14,
       paddingVertical: 8,
       borderRadius: 20,
@@ -4021,14 +4365,14 @@ function createStyles(tokens) {
       }),
     },
     doodleMaxStartButton: {
-      backgroundColor: '#887DEE',
+      backgroundColor: '#60a5fa',
       paddingVertical: 16,
       paddingHorizontal: 32,
       borderRadius: 14,
       alignItems: 'center',
       width: '100%',
       ...(Platform.OS === 'web' && {
-        boxShadow: '0 4px 14px rgba(136, 125, 238, 0.4)',
+        boxShadow: '0 4px 14px rgba(96, 165, 250, 0.4)',
       }),
     },
     doodleMaxStartButtonText: {
@@ -4047,7 +4391,7 @@ function createStyles(tokens) {
     doodleMaxFeaturesTitle: {
       fontSize: 17,
       fontWeight: '600',
-      color: '#7c3aed',
+      color: '#1e40af',
       marginBottom: 16,
       marginTop: 4,
       ...(Platform.OS === 'web' && {
@@ -4057,20 +4401,21 @@ function createStyles(tokens) {
     doodleMaxFeatureItem: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      marginBottom: 20,
-      gap: 16,
-      paddingVertical: 4,
+      marginBottom: 12,
+      gap: 12,
+      paddingVertical: 2,
     },
     doodleMaxFeatureIcon: {
-      width: 48,
-      height: 48,
-      borderRadius: 14,
+      width: 36,
+      height: 36,
+      borderRadius: 10,
       justifyContent: 'center',
       alignItems: 'center',
+      backgroundColor: 'transparent',
     },
     doodleMaxFeatureText: {
       flex: 1,
-      paddingTop: 4,
+      paddingTop: 2,
     },
     doodleMaxFeatureName: {
       fontSize: 16,

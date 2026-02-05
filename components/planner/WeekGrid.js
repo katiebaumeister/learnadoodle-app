@@ -730,8 +730,8 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                             styles.eventBlock,
                             {
                               top: ev.topPx,
-                              left: 4,
-                              right: 4,
+                              left: 6,
+                              right: 6,
                               height: ev.heightPx,
                               minHeight: 24,
                             }
@@ -771,21 +771,19 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                           key={ev.id}
                           style={{
                             position: 'absolute',
-                            left: '4px',
-                            right: '4px',
-                            width: 'auto',
+                            left: 0,
+                            right: 0,
                             top: `${ev.topPx}px`,
                             height: `${ev.heightPx}px`,
                             minHeight: 24,
                             zIndex: 1,
                             cursor: 'pointer',
                             boxSizing: 'border-box',
-                            overflow: 'hidden',
+                            overflow: 'visible',
                             margin: 0,
                             padding: 0,
                             border: 'none',
                             outline: 'none',
-                            // Prevent layout shifts on hover
                             willChange: 'z-index',
                             ...(Platform.OS === 'web' && {
                               transition: 'z-index 0.15s ease',
@@ -805,7 +803,6 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                             }
                           }}
                           onMouseEnter={(e) => {
-                            // Only change z-index, don't add shadow that causes shift
                             e.currentTarget.style.zIndex = '100';
                           }}
                           onMouseLeave={(e) => {
@@ -836,8 +833,8 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                           styles.eventBlock,
                           {
                             top: ev.topPx,
-                            left: 4,
-                            right: 4,
+                            left: 0,
+                            right: 0,
                             height: ev.heightPx,
                             minHeight: 24,
                           }
@@ -1008,13 +1005,14 @@ const styles = StyleSheet.create({
     minHeight: 780, // 13 hours * 60px = 780px
     backgroundColor: 'transparent',
     margin: 0,
-    padding: 0,
+    paddingHorizontal: 4, // Equal padding on both sides
+    paddingVertical: 0,
     ...(Platform.OS === 'web' && {
-      minWidth: 0, // Allow flex shrinking
-      overflow: 'visible',
+      minWidth: 0,
+      overflow: 'visible', // Allow rounded corners to show
       boxSizing: 'border-box',
-      pointerEvents: 'auto', // Allow events to pass through to children
-      cursor: 'default', // Default cursor, not pointer
+      pointerEvents: 'auto',
+      cursor: 'default',
     }),
   },
   hourLine: {
@@ -1038,8 +1036,8 @@ const styles = StyleSheet.create({
   },
   eventBlock: {
     position: 'absolute',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
+    paddingHorizontal: 0, // Padding removed - spacing handled by left/right positioning
+    paddingVertical: 0, // Padding removed - EventChip handles its own padding
     zIndex: 1,
     ...(Platform.OS === 'web' && {
       boxSizing: 'border-box',

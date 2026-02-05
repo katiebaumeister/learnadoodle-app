@@ -1,8 +1,7 @@
 import React, { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
-import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator, StickyNote } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import { BookOpen, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Calculator } from 'lucide-react';
 
 // Avatar-based color mapping
 const AVATAR_COLORS = {
@@ -230,77 +229,11 @@ function hexToRgba(hex, opacity = 1) {
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${opacity})`;
 }
 
-// Web-compatible note badge component for DraggableEvent
+// EventNoteBadge component removed - notes feature has been removed
+// Keeping as empty component to avoid breaking existing code
 function EventNoteBadge({ eventId, familyId }) {
-  const [noteCount, setNoteCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (eventId && familyId) {
-      loadNoteCount();
-    }
-  }, [eventId, familyId]);
-
-  const loadNoteCount = async () => {
-    if (!eventId || !familyId) return;
-    
-    setLoading(true);
-    try {
-      const { count, error } = await supabase
-        .from('notes')
-        .select('*', { count: 'exact', head: true })
-        .eq('family_id', familyId)
-        .eq('linked_event_id', eventId);
-
-      if (error) {
-        setNoteCount(0);
-      } else {
-        setNoteCount(count || 0);
-      }
-    } catch (err) {
-      setNoteCount(0);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading || noteCount === 0) {
-    return null;
-  }
-
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 2,
-        paddingLeft: 4,
-        paddingRight: noteCount > 1 ? 3 : 4,
-        paddingTop: 2,
-        paddingBottom: 2,
-        backgroundColor: '#e3f2fd',
-        borderRadius: 6,
-        marginLeft: 4,
-        pointerEvents: 'none',
-      }}
-    >
-      <StickyNote size={10} color={colors.primary || '#3b82f6'} />
-      {noteCount > 1 && (
-        <span
-          style={{
-            fontSize: 9,
-            fontWeight: '600',
-            color: colors.primary || '#3b82f6',
-            minWidth: 10,
-            textAlign: 'center',
-          }}
-        >
-          {noteCount}
-        </span>
-      )}
-    </div>
-  );
+  // Notes feature removed - return null
+  return null;
 }
 
 // Get event colors based on child avatar - unified styling for all events
@@ -354,58 +287,8 @@ export default function DraggableEvent({
 }) {
   const ref = useRef(null);
   const [isHovered, setIsHovered] = useState(false);
-  const [showNoteTooltip, setShowNoteTooltip] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const [notePreview, setNotePreview] = useState([]);
-  const hoverTimeoutRef = useRef(null);
-
-  // Stable mousemove handler so we can remove it properly
-  const handleMouseMove = useCallback((e) => {
-    setTooltipPosition({ x: e.clientX + 10, y: e.clientY + 10 });
-  }, []);
-
-  // Load note preview on hover
-  useEffect(() => {
-    const el = ref.current;
-    const canShow = isHovered && ev?.id && familyId && typeof window !== 'undefined';
-
-    if (!canShow) {
-      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
-      setShowNoteTooltip(false);
-      setNotePreview([]);
-      if (el) el.removeEventListener('mousemove', handleMouseMove);
-      return;
-    }
-
-    hoverTimeoutRef.current = setTimeout(async () => {
-      try {
-        const { data, error } = await supabase
-          .from('notes')
-          .select('id, text, type, created_at')
-          .eq('family_id', familyId)
-          .eq('linked_event_id', ev.id)
-          .order('created_at', { ascending: false })
-          .limit(3);
-
-        if (!error && data?.length) {
-          setNotePreview(data);
-          if (el) el.addEventListener('mousemove', handleMouseMove);
-          setShowNoteTooltip(true);
-        } else {
-          setShowNoteTooltip(false);
-          setNotePreview([]);
-        }
-      } catch {
-        setShowNoteTooltip(false);
-        setNotePreview([]);
-      }
-    }, 500);
-
-    return () => {
-      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
-      if (el) el.removeEventListener('mousemove', handleMouseMove);
-    };
-  }, [isHovered, ev?.id, familyId, handleMouseMove]);
+  
+  // Note preview functionality removed - notes feature has been removed
 
   const durMin = useMemo(() => {
     const s = new Date(ev.start_ts);
@@ -438,27 +321,17 @@ export default function DraggableEvent({
   }
 
   const childName = getChildName(ev.child_id, children);
-  const subjectName = ev.subject_name || ev.title || 'Event';
+  const subjectName = ev.subject_name || 'Event';
   const category = getSubjectCategory(subjectName);
   const categoryLabel = category === 'core' ? 'Core Subject' : category === 'creative' ? 'Creative' : category === 'physical' ? 'Physical' : 'Other';
-  const topic = ev.title && ev.title !== subjectName ? ev.title : ev.description || '';
+  // Show event title, fallback to subject name if no title
+  const eventTitle = ev.title || subjectName;
   
-  // Calculate how many lines will be displayed
-  // Line 1: Subject name (always shown)
-  // Line 2: Child name + category (if childName exists)
-  // Line 3: Topic (if topic exists)
-  const hasLine2 = !!childName;
-  const hasLine3 = !!topic;
-  const lineCount = 1 + (hasLine2 ? 1 : 0) + (hasLine3 ? 1 : 0);
-  
-  // Calculate exact height based on content
-  // Top bar: 2px, paddingTop: 2px, paddingBottom: 1px
-  // Line heights: 10px (line1), 8px (line2), 9px (line3)
-  // Gaps: 0.5px between lines
-  let contentHeight = 2 + 2 + 1; // top bar + paddingTop + paddingBottom
-  if (lineCount >= 1) contentHeight += 10; // line 1
-  if (lineCount >= 2) contentHeight += 0.5 + 8; // gap + line 2
-  if (lineCount >= 3) contentHeight += 0.5 + 9; // gap + line 3
+  // Calculate height for compact single-line card style
+  // Padding: 6px top + 6px bottom = 12px
+  // Content height: 24px (icon/avatar circle)
+  // Total: 12px + 24px = 36px minimum
+  const contentHeight = 36; // Fixed height for compact card
   
   // Convert pixel height to percentage of column height
   // Column minHeight is 1440px for a full day (24 hours * 60px)
@@ -476,13 +349,31 @@ export default function DraggableEvent({
   
   const eventColors = getEventColors(ev, children, isBlackoutDay);
   
+  // Get background color based on event type (matching filter colors)
+  const getEventTypeBackgroundColor = () => {
+    const eventType = (ev.event_type || ev.type || '').toLowerCase();
+    switch (eventType) {
+      case 'lesson':
+        return '#E3F0FF'; // Soft Blue
+      case 'activity':
+        return '#EDE6FF'; // Lavender
+      case 'assignment':
+        return '#DFF7E3'; // Soft Green
+      case 'schedule block':
+        return '#FFE8D1'; // Soft Orange / Peach
+      case 'appointment':
+        return '#F2F4F7'; // Warm Gray
+      default:
+        return '#F2F4F7'; // Default Warm Gray
+    }
+  };
+  
   // Focus mode: fade events not for focused child
   const isFocused = !focusedChildId || ev.child_id === focusedChildId;
   const opacity = isFocused ? 1 : 0.4;
 
   return (
-    <>
-      <div
+    <><div
         ref={ref}
         onClick={(e) => {
           // Only handle click if not wrapped (wrapper handles drag)
@@ -491,12 +382,21 @@ export default function DraggableEvent({
             if (onClick) {
               onClick(ev);
             }
+          } else {
+            // When wrapped, don't handle click - let wrapper handle it
+            // This prevents click from interfering with drag
           }
         }}
         onMouseDown={(e) => {
-          // Don't prevent default on mousedown - let drag-drop library handle it
+          // When wrapped, don't interfere with wrapper's drag handling
+          // Let the event bubble up to the wrapper - don't stop propagation
+          if (isWrapped) {
+            // Let the event bubble up to wrapper's onMouseDown handler
+            // Don't prevent default or stop propagation
+            return;
+          }
           // Only handle right-click if not wrapped
-          if (!isWrapped && e.button === 2 && onRightClick) {
+          if (e.button === 2 && onRightClick) {
             e.preventDefault();
             e.stopPropagation();
             // Pass the native event for position access
@@ -524,168 +424,78 @@ export default function DraggableEvent({
           right: isWrapped ? 0 : 4,
           top: isWrapped ? 0 : `${top}%`,
           height: isWrapped ? '100%' : `${heightPercent}%`,
+          minHeight: 32,
           width: '100%',
-          pointerEvents: isWrapped ? 'auto' : 'auto', // Allow pointer events so drag can work
-          // Apply event colors
-          backgroundColor: eventColors.backgroundColor,
-          borderRadius: 12,
+          // When wrapped, allow pointer events but don't interfere with drag
+          pointerEvents: 'auto',
+          // Background color based on event type (matching filter colors)
+          backgroundColor: getEventTypeBackgroundColor(),
+          borderRadius: 8,
           borderStyle: isBlackoutDay ? 'dashed' : 'solid',
-          borderWidth: 1,
-          borderColor: hexToRgba(eventColors.border, 0.25),
-          paddingLeft: 4,
-          paddingRight: 4,
-          paddingTop: 0,
-          paddingBottom: 1,
+          borderWidth: 0,
           cursor: isBlackoutDay ? 'not-allowed' : 'pointer',
           overflow: 'hidden',
           opacity: opacity,
           display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
+          flexDirection: 'row',
+          alignItems: 'center',
           justifyContent: 'flex-start',
+          paddingLeft: 8,
+          paddingRight: 8,
+          paddingTop: 6,
+          paddingBottom: 6,
+          gap: 8,
           zIndex: isHovered ? 20 : 10,
           userSelect: 'none',
           WebkitUserSelect: 'none',
-          transform: isHovered ? 'scale(1.02)' : 'scale(1)',
+          transform: isHovered ? 'scale(1.01)' : 'scale(1)',
           transition: 'transform 0.15s ease-out, box-shadow 0.15s ease-out',
-          boxShadow: isHovered ? '0 4px 12px rgba(0,0,0,0.15)' : '0 1px 3px rgba(0,0,0,0.06)',
-          backdropFilter: 'blur(4px)',
-          WebkitBackdropFilter: 'blur(4px)',
+          boxShadow: isHovered ? '0 2px 8px rgba(0,0,0,0.1)' : '0 1px 2px rgba(0,0,0,0.05)',
         }}
-        title={`${subjectName}${childName ? ` • ${childName}` : ''}${topic ? ` • ${topic}` : ''}`}
-      >
-        {/* Top color bar */}
-        <div
+        title={`${eventTitle}${childName ? ` • ${childName}` : ''}`}
+      ><Text
           style={{
-            height: 3,
-            width: '100%',
-            backgroundColor: eventColors.topBar,
-            borderTopLeftRadius: 12,
-            borderTopRightRadius: 12,
-            opacity: isFocused ? 0.95 : 0.4, // Dim top bar on unfocused events
+            fontSize: 13,
+            fontWeight: '700',
+            color: '#111827',
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
-        />
-
-        {/* Content */}
-        <div
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >{eventTitle}</Text><Text
           style={{
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'flex-start',
-            gap: 4,
-            paddingTop: 2,
-            width: '100%',
-            position: 'relative',
-            zIndex: 2,
-            pointerEvents: 'none',
+            fontSize: 12,
+            fontWeight: '400',
+            color: '#6B7280',
+            flexShrink: 0,
           }}
-        >
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-            <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              {getSubjectIcon(subjectName, eventColors.topBar)}
-              <Text
-                style={[styles.subjectName, isBlackoutDay && styles.eventTextBlackout]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {subjectName}
-              </Text>
-
-              {/* Note badge */}
-              {familyId && ev.id && <EventNoteBadge eventId={ev.id} familyId={familyId} />}
-            </div>
-
-            {childName && (
-              <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={styles.metaText} numberOfLines={1} ellipsizeMode="tail">
-                  {childName}
-                </Text>
-                {/* Color badge */}
-                <span
-                  style={{
-                    fontSize: 7,
-                    fontWeight: '500',
-                    color: eventColors.topBar,
-                    backgroundColor: hexToRgba(eventColors.topBar, 0.12),
-                    paddingLeft: 4,
-                    paddingRight: 4,
-                    paddingTop: 1,
-                    paddingBottom: 1,
-                    borderRadius: 4,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.3,
-                  }}
-                >
-                  {categoryLabel}
-                </span>
-              </div>
-            )}
-
-            {topic ? (
-              <Text style={styles.topicText} numberOfLines={1} ellipsizeMode="tail">
-                {topic}
-              </Text>
-            ) : isHovered ? (
-              <Text style={[styles.topicText, { color: '#9CA3AF', fontStyle: 'italic' }]} numberOfLines={1} ellipsizeMode="tail">
-                Tap to add details
-              </Text>
-            ) : null}
-          </div>
-        </div>
-        
-        {isBlackoutDay && (
-          <Text style={styles.blackoutBadge}>Needs reschedule</Text>
-        )}
-      </div>
-      
-      {/* Note Preview Tooltip */}
-      {showNoteTooltip && notePreview.length > 0 && typeof window !== 'undefined' && (
-        <div
+        >{(() => {
+            let hours, minutes;
+            if (ev.start_local) {
+              [hours, minutes] = ev.start_local.split(':').map(Number);
+            } else {
+              const eventDate = new Date(ev.start_ts);
+              hours = eventDate.getHours();
+              minutes = eventDate.getMinutes();
+            }
+            const hour12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+            const period = hours >= 12 ? 'PM' : 'AM';
+            return `${hour12} ${period}`;
+          })()}</Text><View
           style={{
-            position: 'fixed',
-            left: `${tooltipPosition.x}px`,
-            top: `${tooltipPosition.y}px`,
-            backgroundColor: '#ffffff',
-            borderRadius: 8,
-            padding: 12,
-            borderWidth: 1,
-            borderStyle: 'solid',
-            borderColor: '#e5e7eb',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-            zIndex: 10000,
-            minWidth: 200,
-            maxWidth: 300,
-            pointerEvents: 'none',
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: '#10B981',
+            flexShrink: 0,
           }}
-        >
-          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #e5e7eb' }}>
-            <StickyNote size={14} color={colors.primary || '#3b82f6'} />
-            <span style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>
-              {notePreview.length} {notePreview.length === 1 ? 'note' : 'notes'}
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {notePreview.map((note) => {
-              const date = new Date(note.created_at);
-              const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-              const textPreview = note.text && note.text.length > 60 
-                ? note.text.substring(0, 60) + '...' 
-                : note.text;
-              return (
-                <div key={note.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#374151', lineHeight: '16px' }}>
-                    {textPreview}
-                  </span>
-                  <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                    {dateStr}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </>
+        /></div>
+      {/* Note tooltip removed - notes feature has been removed */}
+      </>
   );
 }
 

@@ -474,9 +474,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       borderRadius: 6,
       borderWidth: 0,
       backgroundColor: getBackgroundColor(),
-      paddingHorizontal: 6,
-      paddingLeft: 8, // Tiny left inset so events don't feel glued to the edge
-      paddingVertical: 4, // Slightly increased row height
+      paddingHorizontal: 4,
+      paddingVertical: 4,
       width: '100%',
       opacity: shouldShowLighterText ? 0.5 : 1,
       ...(Platform.OS === 'web' && {

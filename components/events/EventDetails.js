@@ -609,6 +609,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   
   // Validation
   const [validationErrors, setValidationErrors] = useState({});
+  
+  // Conflict warning state
+  const [conflictWarning, setConflictWarning] = useState(null); // { event: {...}, message: "..." }
+  const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false); // Flag for "Adjust automatically"
+  const [shouldAllowOverlaps, setShouldAllowOverlaps] = useState(false); // Flag for "Save anyway"
 
   const startPeriod = useMemo(() => {
     if (!draftStartTime) return null;
@@ -1700,7 +1705,110 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDraftTags((prev) => prev.filter((t) => t !== tag));
   };
 
-  const handleSave = async () => {
+  // Handle overlap errors by fetching conflicting events and showing conflict UI
+  const handleOverlapError = async (errorMessage, startDate, endDate, assigneeIds) => {
+    try {
+      // Check if error is an overlap error
+      if (!errorMessage || (!errorMessage.includes('overlap') && !errorMessage.includes('Event overlaps'))) {
+        return false;
+      }
+
+      console.log('[EventDetails] Detected overlap error, fetching conflicting events...');
+      
+      // Extract child ID from error message if available
+      const childIdMatch = errorMessage.match(/child:\s*([a-f0-9-]+)/i);
+      const targetChildIds = childIdMatch ? [childIdMatch[1]] : assigneeIds;
+
+      if (!targetChildIds || targetChildIds.length === 0) {
+        console.warn('[EventDetails] No child IDs available for conflict check');
+        return false;
+      }
+
+      // Fetch events that might conflict in the date range
+      const startOfRange = new Date(startDate);
+      startOfRange.setHours(0, 0, 0, 0);
+      const endOfRange = new Date(endDate || startDate);
+      endOfRange.setHours(23, 59, 59, 999);
+
+      const { data: existingEvents, error: fetchError } = await supabase
+        .from('events')
+        .select('*')
+        .eq('family_id', familyId)
+        .in('child_id', targetChildIds)
+        .gte('start_ts', startOfRange.toISOString())
+        .lte('start_ts', endOfRange.toISOString())
+        .neq('status', 'canceled')
+        .is('canceled_at', null)
+        .is('deleted_at', null)
+        .neq('id', event?.id); // Exclude the current event being edited
+
+      if (fetchError || !existingEvents || existingEvents.length === 0) {
+        console.warn('[EventDetails] Could not fetch conflicting events:', fetchError);
+        return false;
+      }
+
+      // Check which events actually overlap
+      const conflicts = [];
+      const resolvedStart = new Date(startDate);
+      const resolvedEnd = new Date(endDate || startDate);
+
+      for (const existingEvent of existingEvents) {
+        const eventStart = new Date(existingEvent.start_ts);
+        const eventEnd = new Date(existingEvent.end_ts || existingEvent.start_ts);
+
+        if (resolvedStart < eventEnd && eventStart < resolvedEnd) {
+          // Format conflict message
+          const eventDate = new Date(existingEvent.start_ts);
+          const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const dayName = dayNames[eventDate.getDay()];
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const monthName = monthNames[eventDate.getMonth()];
+          const day = eventDate.getDate();
+          
+          // Format time
+          const formatTime = (date) => {
+            let hours = date.getHours();
+            const minutes = date.getMinutes();
+            const period = hours >= 12 ? 'PM' : 'AM';
+            if (hours > 12) hours -= 12;
+            else if (hours === 0) hours = 12;
+            return minutes === 0 ? `${hours} ${period}` : `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+          };
+          
+          const startTimeStr = formatTime(eventStart);
+          const endTimeStr = formatTime(eventEnd);
+          
+          // Format time range
+          const startTimeOnly = startTimeStr.replace(/\s*(AM|PM)$/i, '');
+          const endTimeOnly = endTimeStr.replace(/\s*(AM|PM)$/i, '');
+          const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
+          const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
+          
+          conflicts.push({
+            event: existingEvent,
+            message: `${existingEvent.title} (${dayName} ${monthName} ${day}, ${timeRange})`
+          });
+        }
+      }
+
+      if (conflicts.length > 0) {
+        console.log('[EventDetails] Setting conflict warning from overlap error:', conflicts[0]);
+        setConflictWarning({
+          ...conflicts[0],
+          conflictCount: conflicts.length,
+          allConflicts: conflicts,
+        });
+        return true;
+      }
+
+      return false;
+    } catch (err) {
+      console.error('[EventDetails] Error handling overlap error:', err);
+      return false;
+    }
+  };
+
+  const handleSave = async (skipValidation = false, allowOverlaps = false) => {
     if (!event?.id) return;
     if (!draftTitle.trim()) {
       Alert.alert('Validation', 'Please enter a title.');
@@ -2040,12 +2148,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         returnedChildId: data?.[0]?.child_id
       });
       
-      // If we get an overlap error, do a multi-step update:
-      // 1. First set is_flexible = true (this removes it from the constraint)
-      // 2. Update all fields except child_id
-      // 3. Finally update child_id separately (if it changed)
+      // If we get an overlap error, show conflict UI instead of auto-fixing
+      // Unless allowOverlaps is true (user clicked "Save anyway")
       if (error && (error.message?.includes('overlap') || error.message?.includes('Event overlaps'))) {
-        console.log('[EventDetails] Overlap error detected, doing multi-step update with is_flexible=true');
+        if (!allowOverlaps) {
+          // Show conflict warning UI - don't auto-fix
+          console.log('[EventDetails] Overlap error detected, showing conflict warning');
+          const handled = await handleOverlapError(error.message, startDateObj, endDateObj, assigneeIds);
+          if (handled) {
+            // Conflict warning is now shown, don't show toast or continue
+            setSaving(false);
+            return;
+          }
+        }
+        
+        // If allowOverlaps is true, proceed with multi-step update
+        console.log('[EventDetails] Overlap error detected, doing multi-step update with is_flexible=true (allowOverlaps=true)');
         
         // Step 1: Set is_flexible = true first (only if it's not already set)
         if (!cleanUpdates.is_flexible) {
@@ -2346,6 +2464,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setEditing(false);
       setSchedulingBacklog(false);
       
+      // Clear conflict warning on successful save
+      setConflictWarning(null);
+      setShouldAutoAdjust(false);
+      setShouldAllowOverlaps(false);
+      
       // Show toast for regular edits (not backlog moves, which already showed toast above)
       if (!isBacklog || !startDateObj) {
         toast.push('Event updated', 'success');
@@ -2361,8 +2484,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       });
       onEventUpdated?.();
     } catch (err) {
-      toast.push('Failed to update event', 'error');
-      Alert.alert('Error', 'Failed to update event');
+      // Only show error toast if it's not an overlap error (those are handled by conflict UI)
+      const errorMessage = err?.message || '';
+      if (!errorMessage.includes('overlap') && !errorMessage.includes('Event overlaps')) {
+        toast.push('Failed to update event', 'error');
+        Alert.alert('Error', 'Failed to update event');
+      }
     } finally {
       setSaving(false);
     }
@@ -4114,6 +4241,121 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           multiline
         />
       </ScrollView>
+
+      {/* Conflict Warning Banner */}
+      {conflictWarning && (
+        <View style={{
+          marginTop: 12,
+          marginHorizontal: 16,
+          paddingVertical: 10,
+          paddingHorizontal: 12,
+          backgroundColor: '#FFF5F5',
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: '#FEE2E2',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+            <AlertCircle size={18} color="#EF4444" style={{ marginTop: 2, flexShrink: 0 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ 
+                fontSize: 13, 
+                color: '#9A3412', 
+                fontWeight: '500', 
+                marginBottom: 8,
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }),
+              }}>
+                Conflicts with {conflictWarning.message}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                <TouchableOpacity
+                  {...(Platform.OS === 'web' && { type: 'button' })}
+                  onPress={async (e) => {
+                    if (Platform.OS === 'web' && e) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }
+                    
+                    // Open Quick Reschedule modal for automatic adjustment
+                    setShouldAutoAdjust(true);
+                    setConflictWarning(null);
+                    
+                    // Close this modal and open Quick Reschedule
+                    onClose?.();
+                    
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('openQuickReschedule', {
+                          detail: {
+                            event: event,
+                            skipToPreview: false,
+                          }
+                        }));
+                      }, 100);
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#FDD7D7',
+                    borderWidth: 1,
+                    borderColor: '#FCA5A5',
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 6,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ 
+                    color: '#9A3412', 
+                    fontSize: 13, 
+                    fontWeight: '600',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}>
+                    Adjust automatically
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  {...(Platform.OS === 'web' && { type: 'button' })}
+                  onPress={(e) => {
+                    if (Platform.OS === 'web' && e) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }
+                    // Save anyway - allow overlaps
+                    setShouldAllowOverlaps(true);
+                    setConflictWarning(null);
+                    handleSave(false, true); // Skip validation, allow overlaps
+                  }}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 6,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ 
+                    color: '#374151', 
+                    fontSize: 13, 
+                    fontWeight: '500',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}>
+                    Save anyway
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* Footer with Save/Cancel buttons */}
       <View style={styles.footer}>

@@ -22,7 +22,6 @@ import {
   TrendingUp,
   CheckCircle,
   XCircle,
-  MinusCircle,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail } from '../../lib/services/subjectsClient';
@@ -201,8 +200,7 @@ export default function SubjectDetailPage({
   const attendance30Days = useMemo(() => {
     const present = attendanceRecords.filter(ar => ar.status === 'present').length;
     const absent = attendanceRecords.filter(ar => ar.status === 'absent').length;
-    const partial = attendanceRecords.filter(ar => ar.status === 'partial').length;
-    return { present, absent, partial, total: attendanceRecords.length };
+    return { present, absent, total: attendanceRecords.length };
   }, [attendanceRecords]);
 
   // Process graded items
@@ -271,6 +269,52 @@ export default function SubjectDetailPage({
     ];
     return items.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
   }, [grades, eventOutcomes, subjectData?.events]);
+
+  // What's Next: upcoming events from today onwards (lesson, activity, assignment, project, exam)
+  const whatsNextEvents = useMemo(() => {
+    const events = subjectData?.events || [];
+    const now = new Date();
+    now.setHours(0, 0, 0, 0); // Start of today
+    
+    const validTypes = ['lesson', 'activity', 'assignment', 'project', 'exam'];
+    
+    const filteredEvents = events
+      .filter(event => {
+        if (!event.start_ts || !event.id) return false;
+
+        const eventDate = new Date(event.start_ts);
+        eventDate.setHours(0, 0, 0, 0);
+        if (eventDate < now) return false; // Only upcoming / today+
+
+        const rawType = event.event_type || event.type || '';
+        const eventType = typeof rawType === 'string' ? rawType.toLowerCase() : '';
+        if (!validTypes.includes(eventType)) return false;
+
+        // Exclude canceled or backlog events if those flags exist
+        if (event.status === 'canceled' || event.is_backlog) return false;
+
+        return true;
+      })
+      .map(event => {
+        const eventDate = new Date(event.start_ts);
+        return {
+          id: event.id,
+          title: event.title || 'Untitled',
+          dueDate: event.start_ts,
+          childId: event.child_id,
+          eventType: event.event_type || event.type,
+          date: eventDate,
+        };
+      })
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .slice(0, 10);
+
+    return filteredEvents;
+  }, [subjectData?.events]);
+
+  const hasAnyEvents = useMemo(() => {
+    return (subjectData?.events || []).length > 0;
+  }, [subjectData?.events]);
 
   // Process compliance by requirement type
   const complianceByType = useMemo(() => {
@@ -343,24 +387,24 @@ export default function SubjectDetailPage({
                 <Text style={styles.subtext}>Students: {childrenNames.join(', ')}</Text>
               )}
             </View>
-          </View>
-          <View style={styles.headerActions}>
-            {onEditSubject && (
+            <View style={styles.headerActions}>
+              {onEditSubject && (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => onEditSubject(subject)}
+                >
+                  <Edit2 size={16} color="#6B7280" />
+                  <Text style={styles.actionButtonText}>Edit subject</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => onEditSubject(subject)}
+                onPress={() => onNavigateToPlanner?.({ subjectId: subject.id })}
               >
-                <Edit2 size={16} color={colors.accent || '#4F46E5'} />
-                <Text style={styles.actionButtonText}>Edit subject</Text>
+                <Calendar size={16} color="#6B7280" />
+                <Text style={styles.actionButtonText}>View in Planner</Text>
               </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => onNavigateToPlanner?.({ subjectId: subject.id })}
-            >
-              <Calendar size={16} color={colors.accent || '#4F46E5'} />
-              <Text style={styles.actionButtonText}>View in Planner</Text>
-            </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -393,7 +437,7 @@ export default function SubjectDetailPage({
             ) : (
               <>
                 <Text style={styles.summaryTileValue}>Not started</Text>
-                <Text style={styles.summaryTileSubtext}>Add 1 lesson to begin tracking.</Text>
+                <Text style={styles.summaryTileSubtext}>Add a lesson to begin tracking.</Text>
                 <View style={styles.summaryProgressBar}>
                   <View style={styles.summaryProgressBarSkeleton} />
                 </View>
@@ -535,43 +579,26 @@ export default function SubjectDetailPage({
         {/* Section 1: Timeline / What's Next */}
         <View id="progress-section" style={styles.section}>
           <Text style={styles.sectionTitle}>Timeline / What's Next</Text>
-          {nextItem ? (
-            <View style={styles.nextItemCard}>
-              <Clock size={16} color={colors.accent || '#4F46E5'} />
-              <View style={styles.nextItemContent}>
-                <Text style={styles.nextItemTitle}>{nextItem.title}</Text>
-                <Text style={styles.nextItemDate}>
-                  {formatRelativeDate(nextItem.dueDate)} ({formatDayOfWeek(nextItem.dueDate)})
-                </Text>
-              </View>
-            </View>
-          ) : null}
-          {overdueItems.length > 0 && (
-            <View style={styles.overdueBanner}>
-              <AlertTriangle size={16} color={colors.redBold || '#EF4444'} />
-              <Text style={styles.overdueText}>
-                {overdueItems.length} {overdueItems.length === 1 ? 'item' : 'items'} overdue
-              </Text>
-            </View>
-          )}
-          {upcomingItems.length > 0 || overdueItems.length > 0 ? (
+          {whatsNextEvents.length > 0 ? (
             <View style={styles.timelineList}>
-              {[...overdueItems, ...upcomingItems].slice(0, 5).map((item) => (
+              {whatsNextEvents.map((item) => (
                 <TouchableOpacity
                   key={item.id}
-                  style={[styles.timelineItem, item.isOverdue && styles.timelineItemOverdue]}
-                  onPress={() => onNavigateToPlanner?.({
-                    subjectId: subject.id,
-                    childId: item.childId,
-                    date: item.dueDate,
-                  })}
+                  style={styles.timelineItem}
+                  onPress={() =>
+                    onNavigateToPlanner?.({
+                      subjectId: subject.id,
+                      childId: item.childId,
+                      date: item.dueDate,
+                    })
+                  }
                 >
                   <View style={styles.timelineItemContent}>
-                    <Text style={[styles.timelineItemTitle, item.isOverdue && styles.timelineItemTitleOverdue]}>
+                    <Text style={styles.timelineItemTitle}>
                       {item.title}
                     </Text>
                     <Text style={styles.timelineItemDate}>
-                      {formatRelativeDate(item.dueDate)}
+                      {formatRelativeDate(item.dueDate)} ({formatDayOfWeek(item.dueDate)})
                     </Text>
                   </View>
                   <ChevronRight size={16} color={colors.muted || '#6B7280'} />
@@ -579,16 +606,31 @@ export default function SubjectDetailPage({
               ))}
             </View>
           ) : (
-            <View style={styles.emptyStateBox}>
-              <Text style={styles.emptyStateBanner}>This subject hasn't started yet.</Text>
-              <Text style={styles.emptyStateText}>
-                Add a lesson or syllabus to begin tracking progress.
-              </Text>
-              <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson}>
-                <Plus size={18} color={colors.accent || '#4F46E5'} />
-                <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
-              </TouchableOpacity>
-            </View>
+            <>
+              {hasAnyEvents ? (
+                <View style={styles.emptyStateBox}>
+                  <Text style={styles.emptyStateBanner}>You're all caught up.</Text>
+                  <Text style={styles.emptyStateText}>
+                    No upcoming lessons, activities, or assignments are scheduled.
+                  </Text>
+                  <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson}>
+                    <Plus size={18} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.emptyStateBox}>
+                  <Text style={styles.emptyStateBanner}>This subject hasn't started yet.</Text>
+                  <Text style={styles.emptyStateText}>
+                    Add a lesson or syllabus to begin tracking progress.
+                  </Text>
+                  <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson}>
+                    <Plus size={18} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
           )}
         </View>
 
@@ -608,12 +650,6 @@ export default function SubjectDetailPage({
                   <XCircle size={14} color="#EF4444" />
                   <Text style={styles.attendanceChipText}>
                     {attendance30Days.absent} Absent
-                  </Text>
-                </View>
-                <View style={styles.attendanceChip}>
-                  <MinusCircle size={14} color="#F59E0B" />
-                  <Text style={styles.attendanceChipText}>
-                    {attendance30Days.partial} Partial
                   </Text>
                 </View>
               </View>
@@ -697,7 +733,7 @@ export default function SubjectDetailPage({
                 Grades appear once you add assignments or assessments.
               </Text>
               <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddAssignment}>
-                <Plus size={18} color={colors.accent || '#4F46E5'} />
+                <Plus size={18} color="#6B7280" />
                 <Text style={styles.emptyStateButtonText}>Add Assignment</Text>
               </TouchableOpacity>
             </View>
@@ -755,7 +791,7 @@ export default function SubjectDetailPage({
                 onPress={() => onNavigateToLibrary?.(subjectId)}
               >
                 <Text style={styles.viewAllButtonText}>Go to Library</Text>
-                <ExternalLink size={14} color={colors.accent || '#4F46E5'} />
+                <ExternalLink size={14} color="#6B7280" />
               </TouchableOpacity>
             )}
           </View>
@@ -776,17 +812,14 @@ export default function SubjectDetailPage({
             </View>
           ) : (
             <View style={styles.emptyStateBox}>
-              <Text style={styles.emptyStateTitle}>Materials help Learnadoodle:</Text>
-              <View style={styles.benefitsList}>
-                <Text style={styles.benefitText}>• Plan lessons</Text>
-                <Text style={styles.benefitText}>• Track coverage</Text>
-                <Text style={styles.benefitText}>• Generate insights</Text>
-              </View>
+              <Text style={styles.emptyStateText}>
+                Materials help Learnadoodle plan lessons, track coverage, and generate insights.
+              </Text>
               <TouchableOpacity
                 style={styles.emptyStateButton}
                 onPress={() => onNavigateToLibrary?.(subjectId)}
               >
-                <BookOpen size={18} color={colors.accent || '#4F46E5'} />
+                <BookOpen size={18} color="#6B7280" />
                 <Text style={styles.emptyStateButtonText}>Go to Library</Text>
               </TouchableOpacity>
             </View>
@@ -810,6 +843,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 24,
+    paddingTop: 60,
     ...(Platform.OS === 'web' && {
       maxWidth: 1200,
       marginHorizontal: 'auto',
@@ -851,7 +885,7 @@ const styles = StyleSheet.create({
   headerTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 20,
+    justifyContent: 'space-between',
   },
   backButton: {
     marginRight: 12,
@@ -890,10 +924,11 @@ const styles = StyleSheet.create({
     }),
   },
   headerActions: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'flex-start',
-    paddingTop: 4,
+    flexDirection: 'column',
+    gap: 8,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    marginLeft: 16,
   },
   actionButton: {
     flexDirection: 'row',
@@ -901,10 +936,10 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.accent || '#4F46E5',
+    borderColor: 'rgba(148, 163, 184, 0.24)',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease',
@@ -912,8 +947,8 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: colors.accent || '#4F46E5',
+    fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -973,8 +1008,11 @@ const styles = StyleSheet.create({
   },
   summaryProgressBarFill: {
     height: '100%',
-    backgroundColor: colors.accent || '#4F46E5',
+    backgroundColor: Platform.OS === 'web' ? 'transparent' : (colors.accent || '#4F46E5'), // Fallback for native
     borderRadius: 2,
+    ...(Platform.OS === 'web' && {
+      backgroundImage: 'linear-gradient(90deg, #f4b4f8 0%, #c4b5fd 20%, #93c5fd 40%, #a5f3fc 60%, #bbf7d0 80%, #facc15 100%)',
+    }),
   },
   summaryProgressBarSkeleton: {
     height: '100%',
@@ -1158,18 +1196,19 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.accent || '#4F46E5',
-    backgroundColor: colors.accentLight || '#f0f9ff',
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+      transition: 'all 0.2s ease',
     }),
   },
   emptyStateButtonText: {
     fontSize: 14,
     fontWeight: '500',
-    color: colors.accent || '#4F46E5',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1372,14 +1411,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+      transition: 'all 0.2s ease',
     }),
   },
   viewAllButtonText: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.accent || '#4F46E5',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

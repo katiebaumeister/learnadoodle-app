@@ -75,6 +75,9 @@ export default function AddMaterialModal({
   allSubjects: propAllSubjects = [], // Pre-loaded subjects from parent
   defaultRole = null, // Default role to set when opening modal (e.g., 'syllabus')
   defaultSubjectId = null, // Default subject ID to set when opening modal
+  defaultSubjectName = null, // Optional subject name for defaultSubjectId (used when subject not in filtered list)
+  defaultChildId = null, // Default child ID to set when opening modal
+  defaultChildIds = [], // Optional array of child IDs to default-select (for multi-child subjects)
 }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -201,7 +204,19 @@ export default function AddMaterialModal({
           }
         });
         
-        const uniqueSubjects = Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+        let uniqueSubjects = Array.from(subjectMap.values());
+
+        // Ensure defaultSubjectId is present even if filters/dedup skipped it
+        if (defaultSubjectId && !uniqueSubjects.some(s => s.id === defaultSubjectId)) {
+          const fallbackName = defaultSubjectName || 'Selected subject';
+          uniqueSubjects.push({
+            id: defaultSubjectId,
+            name: fallbackName,
+            child_id: null,
+          });
+        }
+
+        uniqueSubjects = uniqueSubjects.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         setAllSubjects(uniqueSubjects);
         setFilteredSubjects(uniqueSubjects);
       } else if (error) {
@@ -366,7 +381,11 @@ export default function AddMaterialModal({
       setTitle('');
       setRole(defaultRole || '');
       setSelectedSubjectId(defaultSubjectId || null);
-      setSelectedChildIds([]);
+      const initialChildIds =
+        Array.isArray(defaultChildIds) && defaultChildIds.length > 0
+          ? defaultChildIds
+          : (defaultChildId ? [defaultChildId] : []);
+      setSelectedChildIds(initialChildIds);
       setProviderName('');
       setProviderUrl('');
       setPurchaseDate(null);
@@ -387,7 +406,7 @@ export default function AddMaterialModal({
       setReviewDifficulty(null);
       setReviewNotes('');
     }
-  }, [visible, material, defaultRole, defaultSubjectId]);
+  }, [visible, material, defaultRole, defaultSubjectId, defaultChildId, defaultChildIds]);
 
   const handleFileSelect = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -782,6 +801,7 @@ export default function AddMaterialModal({
             family_id: familyId,
             title: title.trim(),
             type: isSubscription ? 'subscription' : 'other',
+            subject_id: selectedSubjectId || null,
             subject_key: selectedSubjectId ? allSubjects.find(s => s.id === selectedSubjectId)?.name || null : null,
             is_subscription: isSubscription,
             provider_name: providerName.trim() || null,
