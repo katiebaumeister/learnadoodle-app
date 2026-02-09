@@ -12,6 +12,7 @@ import PrivacyPage from './PrivacyPage';
 import AboutPage from './AboutPage';
 import BlogIndexPage from './blog/BlogIndexPage';
 import BlogPostPage from './blog/BlogPostPage';
+import BlogAllPage from './blog/BlogAllPage';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 
@@ -323,11 +324,25 @@ export default function WebRouter() {
   }
 
   // Handle blog routes
-  if (currentPath === '/blog') {
-    // Extract tag from query params if present
-    const urlParams = new URLSearchParams(window.location.search);
-    const selectedTag = urlParams.get('tag');
-    
+  if (currentPath === '/blog/all' || currentPath.startsWith('/blog/all?') || 
+      currentPath === '/blog/search' || currentPath.startsWith('/blog/search?')) {
+    return (
+      <BlogAllPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentPath === '/blog' || currentPath === '/blog/') {
     return (
       <BlogIndexPage
         onNavigateToLogin={() => {
@@ -340,7 +355,6 @@ export default function WebRouter() {
             window.location.href = '/';
           }
         }}
-        selectedTag={selectedTag}
       />
     );
   }

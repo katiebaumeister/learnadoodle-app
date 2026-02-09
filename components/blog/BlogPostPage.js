@@ -9,6 +9,7 @@ import {
 import BlogShell from './BlogShell';
 import PostMetaRow from './PostMetaRow';
 import MoreEssays from './MoreEssays';
+import BlogFooter from './BlogFooter';
 import { getPostBySlug, getRelatedPosts } from '../../lib/blog';
 
 // Simple markdown-like parser for basic formatting
@@ -200,6 +201,9 @@ export default function BlogPostPage({ slug, onNavigateToLogin, onNavigateToSign
             .
           </Text>
         </View>
+
+        {/* Footer as part of scrollable content */}
+        <BlogFooter />
       </ScrollView>
     </BlogShell>
   );

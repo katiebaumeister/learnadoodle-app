@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,13 +7,35 @@ import {
   TouchableOpacity,
   Platform,
   Image,
+  Animated,
 } from 'react-native';
 
 export default function LandingPage({ onGetStarted, onLogIn }) {
+  const [isScrolled, setIsScrolled] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: isScrolled ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [isScrolled, fadeAnim]);
+
+  const handleScroll = (event) => {
+    const scrollY = event.nativeEvent.contentOffset.y;
+    setIsScrolled(scrollY > 10);
+  };
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+    <ScrollView 
+      style={styles.container} 
+      contentContainerStyle={styles.contentContainer}
+      onScroll={handleScroll}
+      scrollEventThrottle={16}
+    >
       {/* Top Nav */}
-      <View style={styles.header}>
+      <View style={[styles.header, isScrolled && styles.headerScrolled]}>
         <View style={styles.headerContent}>
           <View style={styles.logoContainer}>
             <Image 
@@ -23,7 +45,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
             />
             <Text style={styles.logoText}>learnadoodle</Text>
           </View>
-          <View style={styles.headerButtons}>
+          <Animated.View style={[styles.headerButtons, { opacity: fadeAnim, pointerEvents: isScrolled ? 'auto' : 'none' }]}>
             <TouchableOpacity
               style={styles.headerGetStartedButton}
               onPress={onGetStarted}
@@ -38,7 +60,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
             >
               <Text style={styles.headerLogInText}>Log in</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
       </View>
 
@@ -46,11 +68,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       <View style={styles.hero}>
         <View style={styles.heroContent}>
           <View style={styles.heroLeft}>
-            <View style={styles.heroBadge}>
-              <View style={styles.heroBadgeDot} />
-              <Text style={styles.heroBadgeText}>Build habits that stick</Text>
-            </View>
-            <Text style={styles.heroTitle}>A planner that adapts to real life.</Text>
+            <Text style={styles.heroTitle}>Homeschool planning that adapts to real life.</Text>
             <Text style={styles.heroSubtitle}>
               Plan in minutes. Track progress automatically. Adjust instantly when life changes.
             </Text>
@@ -82,94 +100,158 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
           <View style={styles.heroRight}>
             <View style={styles.heroImageContainer}>
               <Image 
-                source={require('../assets/icon.png')} 
+                source={require('../assets/landing.gif')} 
                 style={styles.heroImage}
                 resizeMode="contain"
               />
-            </View>
-            <View style={styles.heroBadgeFloating}>
-              <Text style={styles.heroBadgeFloatingTitle}>Today</Text>
-              <Text style={styles.heroBadgeFloatingSubtitle}>3 tasks • 1 goal • 20 min</Text>
             </View>
           </View>
         </View>
       </View>
 
-      {/* SNIPPETS */}
-      <View id="why" style={styles.snippets}>
-        <View style={styles.snippetsContent}>
-          <View style={styles.snippetsHeader}>
-            <Text style={styles.snippetsTitle}>Simple on the surface. Thoughtful underneath.</Text>
-            <Text style={styles.snippetsSubtitle}>
-              Learnadoodle helps you plan, track, and adjust learning without turning your home into a school office.
+      {/* NEW FEATURES SECTION */}
+      <View id="why" style={styles.featuresSection}>
+        <View style={styles.featuresContent}>
+          {/* Header */}
+          <View style={styles.featuresHeader}>
+            <Text style={styles.featuresMainHeading}>
+              Homeschool planning, simplified.{'\n'}Built for real families and real schedules.
+            </Text>
+            <Text style={styles.featuresSubHeading}>
+              Start with flexible plans built around your family. Adjust as life changes. Stay confident you're covering what matters without the stress.
             </Text>
           </View>
-          <View style={styles.snippetsGrid}>
-            {[
-              {
-                emoji: '🗓️',
-                title: 'Plan without pressure',
-                body: 'Create a flexible learning plan that fits your family - not a rigid school template. When life changes, your schedule adjusts with it.',
-                tagline: 'No overplanning. No guilt when plans shift.',
-              },
-              {
-                emoji: '📚',
-                title: 'See progress clearly',
-                body: 'Track lessons, attendance, and learning activity in one place, so you always know what\'s happening - without spreadsheets or binders.',
-                tagline: 'Enough structure to feel confident. Not so much that it feels heavy.',
-              },
-              {
-                emoji: '🌱',
-                title: 'Teach the child you have',
-                body: 'Every child learns differently. Learnadoodle helps you notice patterns, pace learning realistically, and stay aligned with your child\'s needs.',
-                tagline: 'Support curiosity, not comparison.',
-              },
-              {
-                emoji: '🧘',
-                title: 'Stay compliant, stay calm',
-                body: 'Keep records, goals, and requirements organized quietly in the background - so compliance doesn\'t overshadow the joy of learning.',
-                tagline: 'Prepared when you need it. Invisible when you don\'t.',
-              },
-            ].map((card, index) => (
-              <View key={index} style={styles.snippetCard}>
-                <Text style={styles.snippetEmoji}>{card.emoji}</Text>
-                <Text style={styles.snippetCardTitle}>{card.title}</Text>
-                <Text style={styles.snippetCardBody}>{card.body}</Text>
-                <Text style={styles.snippetCardTagline}>{card.tagline}</Text>
-              </View>
-            ))}
+
+          {/* Feature 1: Image left, text right */}
+          <View style={styles.featureRow}>
+            <View style={styles.featureImageContainer}>
+              <Image
+                source={require('../assets/schedule.png')}
+                style={styles.featureImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.featureTextContainer}>
+              <Text style={styles.featureTitle}>
+                Build a schedule that fits your days—not the other way around.
+              </Text>
+              <Text style={styles.featureBody}>
+                Create learning plans that adapt automatically when:{'\n'}
+                • Appointments come up{'\n'}
+                • Travel changes your week{'\n'}
+                • Your child needs more time—or wants to move faster
+              </Text>
+            </View>
           </View>
-          <Text style={styles.snippetsClosing}>
-            Built for real homeschool days - not perfect ones.
-          </Text>
+
+          {/* Feature 2: Image right, text left */}
+          <View style={styles.featureRow}>
+            <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
+              <Text style={styles.featureTitle}>
+                Use the curriculum you trust
+              </Text>
+              <Text style={styles.featureBody}>
+                Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
+              </Text>
+            </View>
+            <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+              <Image
+                source={require('../assets/curriculum.png')}
+                style={styles.featureImage}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
+
+          {/* Feature 3: Image left, text right */}
+          <View style={styles.featureRow}>
+            <View style={styles.featureImageContainer}>
+              <Image
+                source={require('../assets/progress.png')}
+                style={styles.featureImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.featureTextContainer}>
+              <Text style={styles.featureTitle}>
+                See progress without constant tracking
+              </Text>
+              <Text style={styles.featureBody}>
+                Learnadoodle helps you track attendance and learning time automatically. See progress by subject, week, or term. Spot gaps early and adapt learning accordingly.
+              </Text>
+            </View>
+          </View>
+
+          {/* Feature 4: Image right, text left */}
+          <View style={styles.featureRow}>
+            <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
+              <Text style={styles.featureTitle}>
+                Support every child—without comparison
+              </Text>
+              <Text style={styles.featureBody}>
+                Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
+              </Text>
+            </View>
+            <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+              <Image
+                source={require('../assets/support.png')}
+                style={styles.featureImage}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
+
+          {/* Feature 5: Image left, text right */}
+          <View style={styles.featureRow}>
+            <View style={styles.featureImageContainer}>
+              <Image
+                source={require('../assets/teach.png')}
+                style={styles.featureImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.featureTextContainer}>
+              <Text style={styles.featureTitle}>
+                Teach with confidence
+              </Text>
+              <Text style={styles.featureBody}>
+                You don't need to do everything perfectly—you just need the right support. Learnadoodle helps you stay aligned with state or personal requirements, keep records organized and ready, and feel confident you're setting your child up for success. Because peace of mind matters as much as progress.
+              </Text>
+            </View>
+          </View>
+
+          {/* Feature 6: Image right, text left */}
+          <View style={styles.featureRow}>
+            <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
+              <Text style={styles.featureTitle}>
+                Privacy isn't an afterthought—it's foundational.
+              </Text>
+              <Text style={styles.featureBody}>
+                No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
+              </Text>
+            </View>
+            <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+              <Image
+                source={require('../assets/privacy.png')}
+                style={styles.featureImage}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
         </View>
       </View>
 
       {/* CTA STRIP */}
       <View style={styles.ctaStrip}>
         <View style={styles.ctaContent}>
-          <View style={styles.ctaLeft}>
-            <Text style={styles.ctaTitle}>Ready to get organized?</Text>
-            <Text style={styles.ctaSubtitle}>
-              Create an account in under a minute. You can import or start fresh.
-            </Text>
-          </View>
-          <View style={styles.ctaButtons}>
-            <TouchableOpacity
-              style={styles.ctaPrimaryButton}
-              onPress={onGetStarted}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.ctaPrimaryButtonText}>Get started</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.ctaSecondaryButton}
-              onPress={onLogIn}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.ctaSecondaryButtonText}>Log in</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.ctaTitle}>Ready to get organized?</Text>
+          <TouchableOpacity
+            style={styles.ctaPrimaryButton}
+            onPress={onGetStarted}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.ctaPrimaryButtonText}>GET STARTED</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -228,38 +310,6 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
             <Text style={styles.footerCopyright}>
               © {new Date().getFullYear()} Learnadoodle, Inc. All rights reserved.
             </Text>
-            <View style={styles.footerLinks}>
-              <TouchableOpacity
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.location.href = '/privacy';
-                  }
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.footerLink}>Privacy</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.location.href = '/terms';
-                  }
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.footerLink}>Terms</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.location.href = '/contact';
-                  }
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.footerLink}>Contact</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         </View>
       </View>
@@ -316,14 +366,20 @@ const styles = StyleSheet.create({
       zIndex: 50,
       backgroundColor: 'rgba(255, 255, 255, 0.8)',
       backdropFilter: 'blur(8px)',
+    }),
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 0,
+    borderBottomColor: 'transparent',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  headerScrolled: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    ...(Platform.OS === 'web' && {
       borderBottomWidth: 1,
       borderBottomColor: '#f1f5f9',
     }),
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
   },
   headerContent: {
     maxWidth: 1200,
@@ -339,11 +395,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   logoImage: {
-    width: 32,
-    height: 32,
+    width: 56,
+    height: 56,
   },
   logoText: {
-    fontSize: 16,
+    fontSize: 26,
     fontWeight: '600',
     color: '#0f172a',
     ...(Platform.OS === 'web' && {
@@ -397,50 +453,43 @@ const styles = StyleSheet.create({
     } : {
       minHeight: 600,
     }),
-    paddingVertical: 56,
+    paddingTop: 25,
+    paddingBottom: 56,
     paddingHorizontal: 16,
+    position: 'relative',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }),
   },
   heroContent: {
-    maxWidth: 1200,
+    maxWidth: 1000,
     width: '100%',
     marginHorizontal: 'auto',
+    position: 'relative',
     ...(Platform.OS === 'web' ? {
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
+      gridTemplateColumns: '1fr 1.3fr',
       gap: '40px',
       alignItems: 'center',
+      alignContent: 'center',
     } : {}),
     flexDirection: Platform.OS === 'web' ? undefined : 'column',
     gap: 40,
     alignItems: 'center',
   },
   heroLeft: {
-    ...(Platform.OS === 'web' ? {} : {
+    position: 'relative',
+    zIndex: 2,
+    ...(Platform.OS === 'web' ? {
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+    } : {
       width: '100%',
     }),
     flex: 1,
-  },
-  heroBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 16,
-  },
-  heroBadgeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#10b981',
-  },
-  heroBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: '#64748b',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   heroTitle: {
     fontSize: Platform.OS === 'web' ? 48 : 32,
@@ -505,172 +554,32 @@ const styles = StyleSheet.create({
     }),
   },
   heroRight: {
-    ...(Platform.OS === 'web' ? {} : {
+    position: 'relative',
+    zIndex: 1,
+    ...(Platform.OS === 'web' ? {
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'center',
+    } : {
       width: '100%',
       marginTop: 24,
     }),
     flex: 1,
-    position: 'relative',
   },
   heroImageContainer: {
     aspectRatio: 4 / 3,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
     overflow: 'hidden',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 2,
-      elevation: 1,
+    ...(Platform.OS === 'web' && {
+      minHeight: 480,
     }),
   },
   heroImage: {
     width: '100%',
     height: '100%',
   },
-  heroBadgeFloating: {
-    position: 'absolute',
-    bottom: -24,
-    left: 24,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 2,
-      elevation: 1,
-    }),
-  },
-  heroBadgeFloatingTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  heroBadgeFloatingSubtitle: {
-    fontSize: 12,
-    color: '#64748b',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  snippets: {
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-    paddingVertical: 56,
-    paddingHorizontal: 16,
-  },
-  snippetsContent: {
-    maxWidth: 1200,
-    width: '100%',
-    marginHorizontal: 'auto',
-  },
-  snippetsHeader: {
-    maxWidth: 600,
-    marginBottom: 48,
-  },
-  snippetsTitle: {
-    fontSize: Platform.OS === 'web' ? 32 : 24,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  snippetsSubtitle: {
-    fontSize: 16,
-    color: '#475569',
-    lineHeight: 24,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  snippetsGrid: {
-    ...(Platform.OS === 'web' ? {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-      gap: '24px',
-    } : {
-      flexDirection: 'column',
-    }),
-    gap: 24,
-  },
-  snippetCard: {
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    padding: 24,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 2,
-      elevation: 1,
-    }),
-  },
-  snippetEmoji: {
-    fontSize: 32,
-    marginBottom: 16,
-  },
-  snippetCardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  snippetCardBody: {
-    fontSize: 14,
-    color: '#475569',
-    lineHeight: 22,
-    marginBottom: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  snippetCardTagline: {
-    fontSize: 13,
-    color: '#64748b',
-    fontStyle: 'italic',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  snippetsClosing: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#0f172a',
-    textAlign: 'center',
-    marginTop: 48,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   ctaStrip: {
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     paddingVertical: 56,
     paddingHorizontal: 16,
   },
@@ -678,21 +587,21 @@ const styles = StyleSheet.create({
     maxWidth: 1200,
     width: '100%',
     marginHorizontal: 'auto',
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     gap: 24,
-    flexWrap: 'wrap',
   },
   ctaLeft: {
     maxWidth: 500,
     flex: 1,
   },
   ctaTitle: {
-    fontSize: 24,
+    fontSize: 56,
     fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 8,
+    marginBottom: 0,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -712,16 +621,18 @@ const styles = StyleSheet.create({
   ctaPrimaryButton: {
     backgroundColor: '#0f172a',
     paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 16,
+    marginTop: 16,
+    marginBottom: 16,
+    paddingHorizontal: 56,
+    borderRadius: 24,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
   ctaPrimaryButtonText: {
     color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '800',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -748,7 +659,7 @@ const styles = StyleSheet.create({
   footer: {
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fafc',
     paddingVertical: 56,
     paddingHorizontal: 16,
   },
@@ -818,30 +729,126 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
     paddingTop: 32,
-    flexDirection: 'row',
+    width: '100%',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 16,
-    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
   footerCopyright: {
-    fontSize: 16,
+    fontSize: 10,
     color: '#64748b',
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  footerLinks: {
-    flexDirection: 'row',
-    gap: 16,
+  featuresSection: {
+    paddingVertical: 80,
+    paddingHorizontal: 16,
+    backgroundColor: '#ffffff',
   },
-  footerLink: {
-    fontSize: 16,
-    color: '#475569',
-    textDecorationLine: 'underline',
+  featuresContent: {
+    maxWidth: 1200,
+    width: '100%',
+    marginHorizontal: 'auto',
+  },
+  featuresHeader: {
+    marginBottom: 80,
+    alignItems: 'center',
+    textAlign: 'center',
+  },
+  featuresMainHeading: {
+    fontSize: Platform.OS === 'web' ? 48 : 32,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: Platform.OS === 'web' ? 56 : 40,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      cursor: 'pointer',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  featuresSubHeading: {
+    fontSize: Platform.OS === 'web' ? 24 : 18,
+    fontWeight: '400',
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: Platform.OS === 'web' ? 36 : 28,
+    maxWidth: 800,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  featureRow: {
+    ...(Platform.OS === 'web' ? {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 64,
+      marginBottom: 120,
+    } : {
+      flexDirection: 'column',
+      marginBottom: 64,
+    }),
+  },
+  featureRowReversed: {
+    ...(Platform.OS === 'web' ? {
+      flexDirection: 'row-reverse',
+    } : {}),
+  },
+  featureImageContainer: {
+    ...(Platform.OS === 'web' ? {
+      flex: 1,
+      minWidth: 0,
+    } : {
+      width: '100%',
+      marginBottom: 24,
+    }),
+  },
+  featureImageContainerReversed: {
+    ...(Platform.OS === 'web' ? {
+      order: 2,
+    } : {}),
+  },
+  featureTextContainerReversed: {
+    ...(Platform.OS === 'web' ? {
+      order: 1,
+    } : {}),
+  },
+  featureImage: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    borderRadius: 16,
+    ...(Platform.OS === 'web' && {
+      minHeight: 300,
+      maxHeight: 500,
+    } : {
+      height: 200,
+    }),
+  },
+  featureTextContainer: {
+    ...(Platform.OS === 'web' ? {
+      flex: 1,
+      minWidth: 0,
+    } : {
+      width: '100%',
+    }),
+  },
+  featureTitle: {
+    fontSize: Platform.OS === 'web' ? 32 : 24,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    lineHeight: Platform.OS === 'web' ? 40 : 32,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  featureBody: {
+    fontSize: Platform.OS === 'web' ? 18 : 16,
+    fontWeight: '400',
+    color: '#475569',
+    lineHeight: Platform.OS === 'web' ? 28 : 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
 });

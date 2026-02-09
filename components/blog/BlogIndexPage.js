@@ -8,37 +8,32 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import BlogShell from './BlogShell';
-import BlogCard from './BlogCard';
-import { getRecentPosts, getPostsByTag, getFeaturedPost } from '../../lib/blog';
-import { Image } from 'react-native';
+import BlogSearchBar from './BlogSearchBar';
+import PublicationPostItem from './PublicationPostItem';
+import PostMetaRowSimple from './PostMetaRowSimple';
+import BlogFooter from './BlogFooter';
+import { getFeaturedPost, getRecentPosts, getEditorsPicks, getBasicsPosts } from '../../lib/blog';
 
-export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp, selectedTag = null }) {
-  const [recentPosts, setRecentPosts] = useState([]);
+export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp }) {
   const [featuredPost, setFeaturedPost] = useState(null);
+  const [editorsPicks, setEditorsPicks] = useState([]);
+  const [basicsPosts, setBasicsPosts] = useState([]);
+  const [mostRecent, setMostRecent] = useState([]);
 
   useEffect(() => {
-    try {
-      let recent;
-      let featured = null;
-      if (selectedTag) {
-        recent = getPostsByTag(selectedTag);
-        setFeaturedPost(null);
-      } else {
-        featured = getFeaturedPost();
-        setFeaturedPost(featured);
-        recent = getRecentPosts(12, featured?.slug);
-      }
-      // Ensure we have an array
-      if (Array.isArray(recent)) {
-        setRecentPosts(recent);
-      } else {
-        setRecentPosts([]);
-      }
-    } catch (error) {
-      console.error('Error loading blog posts:', error);
-      setRecentPosts([]);
-    }
-  }, [selectedTag]);
+    const featured = getFeaturedPost();
+    setFeaturedPost(featured);
+    
+    const picks = getEditorsPicks();
+    setEditorsPicks(picks);
+    
+    const basics = getBasicsPosts();
+    setBasicsPosts(basics);
+    
+    // Get next 3 posts after featured
+    const recent = getRecentPosts(4, featured?.slug);
+    setMostRecent(recent.slice(0, 3));
+  }, []);
 
   const handlePostPress = (slug) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -46,69 +41,133 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp, s
     }
   };
 
-
   return (
     <BlogShell onNavigateToLogin={onNavigateToLogin} onNavigateToSignUp={onNavigateToSignUp}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
+        {/* Search Bar */}
+        <BlogSearchBar />
+
+        {/* Main Heading */}
+        <View style={styles.headingBlock}>
+          <Text style={styles.mainHeading}>Blog</Text>
+          <Text style={styles.subHeading}>
+            Thoughtful essays on learning, family rhythms, and how kids grow.
+          </Text>
+        </View>
+
         {/* Featured Post */}
-        {featuredPost && !selectedTag && (
-          <TouchableOpacity
-            style={styles.featuredSection}
-            onPress={() => handlePostPress(featuredPost.slug)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <View style={styles.featuredImageContainer}>
-              <Image
-                source={require('../../assets/icon.png')}
-                style={styles.featuredImage}
-                resizeMode="contain"
-              />
-            </View>
-            <View style={styles.featuredContent}>
-              <Text style={styles.featuredTitle}>{featuredPost.title}</Text>
-              <Text style={styles.featuredDek}>{featuredPost.dek}</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* Section Title */}
-        <Text style={styles.sectionTitle}>
-          {selectedTag ? `Essays tagged "${selectedTag}"` : 'Recent essays'}
-        </Text>
-
-        {/* Blog Cards Grid */}
-        {recentPosts.length > 0 ? (
-          <View style={styles.cardsGrid}>
-            {recentPosts.map((post) => (
-              <BlogCard
-                key={post.slug}
-                post={post}
-                onPress={() => handlePostPress(post.slug)}
-              />
-            ))}
-          </View>
-        ) : (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>Loading posts...</Text>
-          </View>
-        )}
-
-        {/* All Posts Button */}
-        {!selectedTag && (
-          <View style={styles.allPostsButtonContainer}>
+        {featuredPost && (
+          <View style={styles.featuredSection}>
             <TouchableOpacity
-              style={styles.allPostsButton}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.location.href = '/blog';
-                }
-              }}
+              onPress={() => handlePostPress(featuredPost.slug)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.allPostsButtonText}>ALL POSTS</Text>
+              <Text style={styles.featuredTitle}>{featuredPost.title}</Text>
+              <Text style={styles.featuredDek}>{featuredPost.dek}</Text>
+              <View style={styles.featuredMeta}>
+                <PostMetaRowSimple post={featuredPost} />
+              </View>
+              <View style={styles.readLink}>
+                <Text style={styles.readLinkText}>Read essay →</Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
+
+        {/* Editor's Picks */}
+        {editorsPicks.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Editor's picks</Text>
+              <Text style={styles.sectionSubtext}>
+                Three pieces we often recommend to families starting out.
+              </Text>
+            </View>
+            <View style={styles.picksGrid}>
+              {editorsPicks.map((post, index) => (
+                <View key={post.slug} style={styles.pickItem}>
+                  <TouchableOpacity
+                    onPress={() => handlePostPress(post.slug)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.pickTitle}>{post.title}</Text>
+                    <Text style={styles.pickDek}>{post.dek}</Text>
+                    <View style={styles.pickMeta}>
+                      <Text style={styles.pickDate}>
+                        {new Date(post.date).toLocaleDateString('en-US', { 
+                          month: 'long', 
+                          day: 'numeric',
+                          year: 'numeric'
+                        })}
+                      </Text>
+                      <Text style={styles.pickTags}>
+                        {post.tags.join(' · ')}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  {index < editorsPicks.length - 1 && <View style={styles.pickDivider} />}
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Homeschooling Basics */}
+        {basicsPosts.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Homeschooling basics</Text>
+              <Text style={styles.sectionSubtext}>
+                Foundational ideas we point families to again and again.
+              </Text>
+            </View>
+            <View style={styles.basicsList}>
+              {basicsPosts.map((post) => (
+                <TouchableOpacity
+                  key={post.slug}
+                  style={styles.basicsItem}
+                  onPress={() => handlePostPress(post.slug)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.basicsTitle}>{post.title}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Most Recent */}
+        {mostRecent.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Most recent</Text>
+            <View style={styles.recentList}>
+              {mostRecent.map((post, index) => (
+                <PublicationPostItem
+                  key={post.slug}
+                  post={post}
+                  onPress={() => handlePostPress(post.slug)}
+                  showDivider={index < mostRecent.length - 1}
+                />
+              ))}
+            </View>
+            <View style={styles.viewAllContainer}>
+              <TouchableOpacity
+                style={styles.viewAllButton}
+                onPress={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.location.href = '/blog/all';
+                  }
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.viewAllText}>View all posts</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Footer as part of scrollable content */}
+        <BlogFooter />
       </ScrollView>
     </BlogShell>
   );
@@ -135,31 +194,8 @@ const styles = StyleSheet.create({
       margin: 0,
     }),
   },
-  featuredSection: {
-    width: '100%',
+  headingBlock: {
     marginBottom: 64,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  featuredImageContainer: {
-    width: '100%',
-    ...(Platform.OS === 'web' ? {
-      height: 500,
-      aspectRatio: '16/9',
-    } : {
-      height: 400,
-    }),
-    backgroundColor: '#f9fafb',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 48,
-  },
-  featuredImage: {
-    width: '60%',
-    height: '60%',
-  },
-  featuredContent: {
     ...(Platform.OS === 'web' && {
       paddingHorizontal: 40,
       maxWidth: 1200,
@@ -167,96 +203,216 @@ const styles = StyleSheet.create({
     } : {
       paddingHorizontal: 24,
     }),
-    alignItems: 'center',
   },
-  featuredTitle: {
-    fontSize: 48,
+  mainHeading: {
+    fontSize: 56,
     fontWeight: '700',
     color: '#0f172a',
-    textAlign: 'center',
     marginBottom: 16,
-    lineHeight: 56,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subHeading: {
+    fontSize: 20,
+    fontWeight: '400',
+    color: '#475569',
+    lineHeight: 30,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  featuredSection: {
+    marginBottom: 80,
+    ...(Platform.OS === 'web' && {
+      paddingHorizontal: 40,
+      maxWidth: 1200,
+      marginHorizontal: 'auto',
+    } : {
+      paddingHorizontal: 24,
+    }),
+  },
+  featuredTitle: {
+    fontSize: 40,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    lineHeight: 48,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   featuredDek: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '400',
     color: '#475569',
-    textAlign: 'center',
-    lineHeight: 34,
+    marginBottom: 20,
+    lineHeight: 32,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  featuredMeta: {
+    marginBottom: 24,
+  },
+  readLink: {
+    marginTop: 8,
+  },
+  readLinkText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#60a5fa',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      cursor: 'pointer',
+    }),
+  },
+  section: {
+    marginBottom: 80,
+    ...(Platform.OS === 'web' && {
+      paddingHorizontal: 40,
+      maxWidth: 1200,
+      marginHorizontal: 'auto',
+    } : {
+      paddingHorizontal: 24,
+    }),
+  },
+  sectionHeader: {
+    marginBottom: 32,
   },
   sectionTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '600',
     color: '#0f172a',
-    marginBottom: 32,
+    marginBottom: 8,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      paddingHorizontal: 40,
-    } : {
-      paddingHorizontal: 24,
     }),
   },
-  cardsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    width: '100%',
-    ...(Platform.OS === 'web' ? {
-      paddingHorizontal: 40,
-    } : {
-      justifyContent: 'space-between',
-      paddingHorizontal: 24,
-    }),
-    gap: 24,
-  },
-  allPostsButtonContainer: {
-    marginTop: 48,
-    alignItems: 'center',
+  sectionSubtext: {
+    fontSize: 18,
+    fontWeight: '400',
+    color: '#64748b',
+    lineHeight: 28,
     ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
-    } : {
-      paddingHorizontal: 24,
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  allPostsButton: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+  picksGrid: {
+    ...(Platform.OS === 'web' ? {
+      flexDirection: 'row',
+      gap: 48,
+    } : {
+      flexDirection: 'column',
+    }),
+  },
+  pickItem: {
+    ...(Platform.OS === 'web' ? {
+      flex: 1,
+    } : {
+      width: '100%',
+      marginBottom: 32,
+    }),
+  },
+  pickTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 12,
+    lineHeight: 30,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pickDek: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#475569',
+    marginBottom: 16,
+    lineHeight: 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pickMeta: {
+    marginTop: 8,
+  },
+  pickDate: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#64748b',
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pickTags: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#64748b',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pickDivider: {
+    ...(Platform.OS === 'web' ? {
+      display: 'none',
+    } : {
+      height: 1,
+      backgroundColor: '#e5e7eb',
+      marginVertical: 24,
+    }),
+  },
+  basicsList: {
+    ...(Platform.OS === 'web' ? {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 24,
+    } : {
+      flexDirection: 'column',
+    }),
+  },
+  basicsItem: {
+    ...(Platform.OS === 'web' ? {
+      width: 'calc(50% - 12px)',
+    } : {
+      width: '100%',
+      marginBottom: 16,
+    }),
     paddingVertical: 12,
-    paddingHorizontal: 32,
+  },
+  basicsTitle: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#0f172a',
+    lineHeight: 26,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      cursor: 'pointer',
+    }),
+  },
+  recentList: {
+    marginBottom: 48,
+  },
+  viewAllContainer: {
+    alignItems: 'flex-start',
+  },
+  viewAllButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'background-color 0.2s ease, border-color 0.2s ease',
     }),
   },
-  allPostsButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#60a5fa',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyState: {
-    padding: 48,
-    alignItems: 'center',
-    ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
-    } : {
-      paddingHorizontal: 24,
-    }),
-  },
-  emptyStateText: {
+  viewAllText: {
     fontSize: 16,
-    color: '#64748b',
+    fontWeight: '500',
+    color: '#0f172a',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
