@@ -276,7 +276,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 style={styles.superDoodleButton}
                 onPress={() => {
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.location.href = '/subscription';
+                    window.location.href = '/products/super-doodle';
                   }
                 }}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -301,7 +301,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               style={styles.superDoodleButton}
               onPress={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.location.href = '/subscription';
+                  window.location.href = '/products/super-doodle';
                 }
               }}
             >
@@ -340,6 +340,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
             <FooterCol
               title="Products"
               links={[
+                ['Learnadoodle', '/'],
                 ['Super Doodle', '/products/super-doodle'],
                 ['Gift Super Doodle', '/products/gift-super-doodle'],
                 ['Doodle Max', '/products/doodle-max'],
@@ -788,15 +789,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 0,
     marginLeft: 0,
     marginRight: 0,
-    ...(Platform.OS === 'web' && {
-      objectFit: 'contain',
-      display: 'block',
-      width: '100vw',
-      height: 600,
-      maxHeight: '80vh',
-      minWidth: '100vw',
-    } : {
-      height: 300,
+    ...Platform.select({
+      web: {
+        objectFit: 'contain',
+        display: 'block',
+        width: '100vw',
+        height: 600,
+        maxHeight: '80vh',
+        minWidth: '100vw',
+      },
+      default: {
+        height: 300,
+      },
     }),
   },
   superDoodleButtonContainer: {
@@ -904,8 +908,6 @@ const styles = StyleSheet.create({
     }),
   },
   footerBottom: {
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
     paddingTop: 32,
     width: '100%',
     alignItems: 'center',

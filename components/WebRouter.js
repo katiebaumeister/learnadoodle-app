@@ -10,6 +10,9 @@ import OnboardingStepper from './OnboardingStepper';
 import TermsPage from './TermsPage';
 import PrivacyPage from './PrivacyPage';
 import AboutPage from './AboutPage';
+import FAQPage from './FAQPage';
+import ContactPage from './ContactPage';
+import SubscriptionPage from './SubscriptionPage';
 import BlogIndexPage from './blog/BlogIndexPage';
 import BlogPostPage from './blog/BlogPostPage';
 import BlogAllPage from './blog/BlogAllPage';
@@ -309,6 +312,57 @@ export default function WebRouter() {
   if (currentPath === '/about' || currentPath.startsWith('/about#')) {
     return (
       <AboutPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentPath === '/help/faqs' || currentPath === '/faq') {
+    return (
+      <FAQPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentPath === '/contact') {
+    return (
+      <ContactPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentPath === '/subscription' || currentPath === '/products/super-doodle') {
+    return (
+      <SubscriptionPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
             window.location.href = '/';

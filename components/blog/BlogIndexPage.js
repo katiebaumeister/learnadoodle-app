@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import BlogShell from './BlogShell';
-import BlogSearchBar from './BlogSearchBar';
 import PublicationPostItem from './PublicationPostItem';
 import PostMetaRowSimple from './PostMetaRowSimple';
 import BlogFooter from './BlogFooter';
@@ -44,9 +43,6 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp })
   return (
     <BlogShell onNavigateToLogin={onNavigateToLogin} onNavigateToSignUp={onNavigateToSignUp}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
-        {/* Search Bar */}
-        <BlogSearchBar />
-
         {/* Main Heading */}
         <View style={styles.headingBlock}>
           <Text style={styles.mainHeading}>Blog</Text>
@@ -209,6 +205,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f172a',
     marginBottom: 16,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -218,6 +215,7 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: '#475569',
     lineHeight: 30,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -238,6 +236,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginBottom: 16,
     lineHeight: 48,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -248,6 +247,7 @@ const styles = StyleSheet.create({
     color: '#475569',
     marginBottom: 20,
     lineHeight: 32,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

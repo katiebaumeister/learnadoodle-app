@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Image } from 'react-native';
+import BlogSearchBar from './BlogSearchBar';
 
 export default function BlogShell({ children, onNavigateToLogin, onNavigateToSignUp }) {
   return (
@@ -15,38 +16,17 @@ export default function BlogShell({ children, onNavigateToLogin, onNavigateToSig
             }}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.logo}>learnadoodle</Text>
+            <View style={styles.logoContainer}>
+              <Image 
+                source={require('../../assets/icon.png')} 
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
+              <Text style={styles.logo}>learnadoodle</Text>
+            </View>
           </TouchableOpacity>
-          <View style={styles.headerLinks}>
-            <TouchableOpacity
-              style={styles.headerLink}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.location.href = '/blog';
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.headerLinkText}>Blog</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerLink}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.location.href = '/about';
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.headerLinkText}>About</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerLink}
-              onPress={onNavigateToLogin}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.headerLinkText}>Login</Text>
-            </TouchableOpacity>
+          <View style={styles.searchContainer}>
+            <BlogSearchBar />
           </View>
         </View>
       </View>
@@ -89,14 +69,25 @@ const styles = StyleSheet.create({
   },
   headerContent: {
     width: '100%',
-    maxWidth: '100%',
+    maxWidth: 1200,
+    marginHorizontal: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 40,
+    gap: 24,
+  },
+  logoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  logoImage: {
+    width: 56,
+    height: 56,
   },
   logo: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: '600',
     color: '#0f172a',
     textTransform: 'lowercase',
@@ -104,23 +95,12 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  headerLinks: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 24,
-  },
-  headerLink: {
-    paddingVertical: 4,
+  searchContainer: {
+    flex: 1,
+    maxWidth: 500,
     ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  headerLinkText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#475569',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      marginLeft: 'auto',
+      paddingLeft: 16,
     }),
   },
   content: {

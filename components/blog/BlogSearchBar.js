@@ -47,19 +47,19 @@ export default function BlogSearchBar({ onSearch, placeholder = "Search topics, 
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    marginBottom: 48,
+    marginBottom: 0,
     ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
-      maxWidth: 1200,
-      marginHorizontal: 'auto',
+      paddingHorizontal: 0,
+      maxWidth: '100%',
+      marginHorizontal: 0,
     } : {
-      paddingHorizontal: 24,
+      paddingHorizontal: 0,
     }),
   },
   input: {
     width: '100%',
     height: 48,
-    borderRadius: 8,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     paddingHorizontal: 16,

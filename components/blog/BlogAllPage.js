@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import BlogShell from './BlogShell';
-import BlogSearchBar from './BlogSearchBar';
 import PublicationPostItem from './PublicationPostItem';
 import TagPill from './TagPill';
 import BlogFooter from './BlogFooter';
@@ -82,9 +81,6 @@ export default function BlogAllPage({ onNavigateToLogin, onNavigateToSignUp }) {
   return (
     <BlogShell onNavigateToLogin={onNavigateToLogin} onNavigateToSignUp={onNavigateToSignUp}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
-        {/* Search Bar */}
-        <BlogSearchBar onSearch={handleSearch} />
-
         {/* Tag Filters */}
         {tags.length > 0 && (
           <View style={styles.tagsRow}>

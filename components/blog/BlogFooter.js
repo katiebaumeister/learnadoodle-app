@@ -13,34 +13,50 @@ export default function BlogFooter() {
       <View style={styles.footerContent}>
         <View style={styles.footerGrid}>
           <FooterCol
-            title="Product"
+            title="About us"
             links={[
-              ['Overview', '/'],
-              ['Features', '/'],
-              ['Security', '/security'],
+              ['Mission', '/about#mission'],
+              ['Approach', '/about#approach'],
+              ['Efficacy', '/about#efficacy'],
             ]}
           />
           <FooterCol
-            title="Company"
+            title="Products"
             links={[
-              ['About', '/about'],
-              ['Contact', '/contact'],
+              ['Learnadoodle', '/'],
+              ['Super Doodle', '/products/super-doodle'],
+              ['Gift Super Doodle', '/products/gift-super-doodle'],
+              ['Doodle Max', '/products/doodle-max'],
             ]}
           />
           <FooterCol
-            title="Resources"
+            title="Apps"
             links={[
-              ['Help Center', '/help'],
-              ['Guides', '/guides'],
+              ['Learnadoodle for Android', '/apps/android'],
+              ['Learnadoodle for iOS', '/apps/ios'],
             ]}
           />
           <FooterCol
-            title="Legal"
+            title="Help and support"
+            links={[
+              ['Learnadoodle FAQs', '/help/faqs'],
+              ['Contact us', '/contact'],
+            ]}
+          />
+          <FooterCol
+            title="Privacy and terms"
             links={[
               ['Terms', '/terms'],
               ['Privacy', '/privacy'],
-              ['Cookies', '/cookies'],
-              ['Contact', '/contact'],
+            ]}
+          />
+          <FooterCol
+            title="Social"
+            links={[
+              ['Blog', '/blog'],
+              ['Instagram', 'https://instagram.com/learnadoodle'],
+              ['Twitter', 'https://twitter.com/learnadoodle'],
+              ['YouTube', 'https://www.youtube.com/@Learnadoodle'],
             ]}
           />
         </View>
@@ -59,11 +75,13 @@ function FooterCol({ title, links }) {
     <View style={styles.footerCol}>
       <Text style={styles.footerColTitle}>{title}</Text>
       <View style={styles.footerColLinks}>
-        {links.map(([label, href], index) => (
+        {links.map(([label, href, onPress], index) => (
           <TouchableOpacity
             key={index}
             onPress={() => {
-              if (href && Platform.OS === 'web' && typeof window !== 'undefined') {
+              if (onPress) {
+                onPress();
+              } else if (href && Platform.OS === 'web' && typeof window !== 'undefined') {
                 if (href.startsWith('#')) {
                   const element = document.getElementById(href.substring(1));
                   if (element) {
@@ -87,58 +105,75 @@ function FooterCol({ title, links }) {
 const styles = StyleSheet.create({
   footer: {
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
-    paddingVertical: 48,
-    paddingHorizontal: 0,
-    ...(Platform.OS === 'web' && {
-      width: '100%',
-    }),
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    paddingVertical: 56,
+    paddingHorizontal: 16,
   },
   footerContent: {
+    maxWidth: 1200,
     width: '100%',
-    maxWidth: '100%',
-    paddingHorizontal: 40,
+    marginHorizontal: 'auto',
   },
   footerGrid: {
     ...(Platform.OS === 'web' ? {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
       gap: '40px',
+      justifyContent: 'center',
+      alignItems: 'start',
     } : {
       flexDirection: 'column',
+      alignItems: 'center',
     }),
     gap: 40,
     marginBottom: 48,
+    alignItems: 'flex-start',
   },
   footerCol: {
     marginBottom: 24,
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' ? {} : {
+      width: '100%',
+      alignItems: 'center',
+    }),
   },
   footerColTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
     color: '#0f172a',
     marginBottom: 16,
-    ...(Platform.OS === 'web' && {
+    ...(Platform.OS === 'web' ? {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      textAlign: 'left',
+    } : {
+      textAlign: 'center',
     }),
   },
   footerColLinks: {
     gap: 8,
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' ? {} : {
+      alignItems: 'center',
+    }),
   },
   footerColLink: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#475569',
     marginBottom: 8,
-    ...(Platform.OS === 'web' && {
+    ...(Platform.OS === 'web' ? {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       cursor: 'pointer',
+      textAlign: 'left',
+      ':hover': {
+        color: '#0f172a',
+      },
+    } : {
+      textAlign: 'center',
     }),
   },
   footerBottom: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 24,
+    paddingTop: 32,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
