@@ -12,30 +12,66 @@ import {
 
 export default function LandingPage({ onGetStarted, onLogIn }) {
   const [isScrolled, setIsScrolled] = useState(false);
+  const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const pageFadeAnim = useRef(new Animated.Value(1)).current;
+  const headerFadeAnim = useRef(new Animated.Value(1)).current;
+  const superDoodleRef = useRef(null);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: isScrolled ? 1 : 0,
       duration: 300,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
   }, [isScrolled, fadeAnim]);
+
+  useEffect(() => {
+    Animated.timing(headerFadeAnim, {
+      toValue: isSuperDoodleVisible ? 0 : 1,
+      duration: 400,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [isSuperDoodleVisible, headerFadeAnim]);
 
   const handleScroll = (event) => {
     const scrollY = event.nativeEvent.contentOffset.y;
     setIsScrolled(scrollY > 10);
+    
+    // Check if superdoodle section is halfway down (50% visible)
+    if (Platform.OS === 'web' && superDoodleRef.current) {
+      const element = superDoodleRef.current;
+      if (element && typeof element.getBoundingClientRect === 'function') {
+        const rect = element.getBoundingClientRect();
+        const sectionHeight = rect.height;
+        const viewportHeight = window.innerHeight;
+        // Hide header when section is at least 50% scrolled into view
+        const isHalfwayVisible = rect.top < viewportHeight - (sectionHeight * 0.5) && rect.bottom > 0;
+        setIsSuperDoodleVisible(isHalfwayVisible);
+      }
+    }
+  };
+
+  const handleLogIn = () => {
+    Animated.timing(pageFadeAnim, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start(() => {
+      onLogIn();
+    });
   };
 
   return (
-    <ScrollView 
-      style={styles.container} 
-      contentContainerStyle={styles.contentContainer}
-      onScroll={handleScroll}
-      scrollEventThrottle={16}
-    >
+    <Animated.View style={{ flex: 1, opacity: pageFadeAnim }}>
+      <ScrollView 
+        style={styles.container} 
+        contentContainerStyle={styles.contentContainer}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+      >
       {/* Top Nav */}
-      <View style={[styles.header, isScrolled && styles.headerScrolled]}>
+      <Animated.View style={[styles.header, isScrolled && styles.headerScrolled, { opacity: headerFadeAnim }]}>
         <View style={styles.headerContent}>
           <View style={styles.logoContainer}>
             <Image 
@@ -51,49 +87,31 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               onPress={onGetStarted}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.headerGetStartedText}>Get started</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerLogInButton}
-              onPress={onLogIn}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.headerLogInText}>Log in</Text>
+              <Text style={styles.headerGetStartedText}>GET STARTED</Text>
             </TouchableOpacity>
           </Animated.View>
         </View>
-      </View>
+      </Animated.View>
 
       {/* HERO */}
       <View style={styles.hero}>
         <View style={styles.heroContent}>
           <View style={styles.heroLeft}>
-            <Text style={styles.heroTitle}>Homeschool planning that adapts to real life.</Text>
-            <Text style={styles.heroSubtitle}>
-              Plan in minutes. Track progress automatically. Adjust instantly when life changes.
-            </Text>
+            <Text style={styles.heroTitle}>Homeschool planning that adapts to real life</Text>
             <View style={styles.heroButtons}>
               <TouchableOpacity
                 style={styles.heroPrimaryButton}
                 onPress={onGetStarted}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={styles.heroPrimaryButtonText}>Create free account</Text>
+                <Text style={styles.heroPrimaryButtonText}>GET STARTED</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.heroSecondaryButton}
-                onPress={() => {
-                  // Scroll to why section
-                  if (Platform.OS === 'web' && typeof document !== 'undefined') {
-                    const element = document.getElementById('why');
-                    if (element) {
-                      element.scrollIntoView({ behavior: 'smooth' });
-                    }
-                  }
-                }}
+                onPress={handleLogIn}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={styles.heroSecondaryButtonText}>See how it works</Text>
+                <Text style={styles.heroSecondaryButtonText}>I ALREADY HAVE AN ACCOUNT</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -241,6 +259,58 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         </View>
       </View>
 
+      {/* GET SUPER DOODLE SECTION */}
+      {Platform.OS === 'web' ? (
+        <View 
+          ref={superDoodleRef}
+          style={styles.superDoodleSectionWrapper}
+        >
+          <View style={styles.superDoodleSection}>
+            <Image
+              source={require('../assets/superdoodlesection.png')}
+              style={styles.superDoodleSectionImage}
+              resizeMode="contain"
+            />
+            <View style={styles.superDoodleButtonContainer}>
+              <TouchableOpacity
+                style={styles.superDoodleButton}
+                onPress={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.location.href = '/subscription';
+                  }
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      ) : (
+        <View 
+          ref={superDoodleRef}
+          style={styles.superDoodleSection}
+        >
+          <Image
+            source={require('../assets/superdoodlesection.png')}
+            style={styles.superDoodleSectionImage}
+            resizeMode="contain"
+          />
+          <View style={styles.superDoodleButtonContainer}>
+            <TouchableOpacity
+              style={styles.superDoodleButton}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.href = '/subscription';
+                }
+              }}
+            >
+              <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* CTA STRIP */}
       <View style={styles.ctaStrip}>
         <View style={styles.ctaContent}>
@@ -314,6 +384,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         </View>
       </View>
     </ScrollView>
+    </Animated.View>
   );
 }
 
@@ -381,6 +452,11 @@ const styles = StyleSheet.create({
       borderBottomColor: '#f1f5f9',
     }),
   },
+  headerHidden: {
+    ...(Platform.OS === 'web' && {
+      display: 'none',
+    }),
+  },
   headerContent: {
     maxWidth: 1200,
     width: '100%',
@@ -413,17 +489,17 @@ const styles = StyleSheet.create({
   },
   headerGetStartedButton: {
     backgroundColor: '#0f172a',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 18,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
   headerGetStartedText: {
     color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '800',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -486,17 +562,20 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'center',
+      alignItems: 'center',
     } : {
       width: '100%',
+      alignItems: 'center',
     }),
     flex: 1,
   },
   heroTitle: {
-    fontSize: Platform.OS === 'web' ? 48 : 32,
-    fontWeight: '800',
+    fontSize: Platform.OS === 'web' ? 34 : 26,
+    fontWeight: '600',
     color: '#0f172a',
-    lineHeight: Platform.OS === 'web' ? 56 : 40,
-    marginBottom: 16,
+    lineHeight: Platform.OS === 'web' ? 44 : 36,
+    marginBottom: 40,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -512,24 +591,35 @@ const styles = StyleSheet.create({
     }),
   },
   heroButtons: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 12,
     marginBottom: 24,
-    flexWrap: 'wrap',
+    alignItems: 'center',
   },
   heroPrimaryButton: {
     backgroundColor: '#0f172a',
-    paddingVertical: 12,
+    paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 16,
-    ...(Platform.OS === 'web' && {
+    minWidth: 400,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
+      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.03), 0 2px 4px rgba(0, 0, 0, 0.03)',
+    } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
     }),
   },
   heroPrimaryButtonText: {
     color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -537,18 +627,29 @@ const styles = StyleSheet.create({
   heroSecondaryButton: {
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    paddingVertical: 12,
+    paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 16,
     backgroundColor: '#ffffff',
-    ...(Platform.OS === 'web' && {
+    minWidth: 400,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
+      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.03), 0 2px 4px rgba(0, 0, 0, 0.03)',
+    } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
     }),
   },
   heroSecondaryButtonText: {
-    color: '#0f172a',
-    fontSize: 14,
-    fontWeight: '600',
+    color: '#81C1E1',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -652,6 +753,83 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontSize: 14,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  superDoodleSectionWrapper: {
+    backgroundColor: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      width: '100vw',
+      height: '100vh',
+      position: 'relative',
+      left: '50%',
+      marginLeft: '-50vw',
+      marginRight: 0,
+    }),
+  },
+  superDoodleSection: {
+    width: '100%',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    marginHorizontal: 0,
+    marginLeft: 0,
+    marginRight: 0,
+    backgroundColor: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      width: '100vw',
+      height: '100vh',
+    }),
+  },
+  superDoodleSectionImage: {
+    width: '100%',
+    marginHorizontal: 0,
+    marginLeft: 0,
+    marginRight: 0,
+    ...(Platform.OS === 'web' && {
+      objectFit: 'contain',
+      display: 'block',
+      width: '100vw',
+      height: 600,
+      maxHeight: '80vh',
+      minWidth: '100vw',
+    } : {
+      height: 300,
+    }),
+  },
+  superDoodleButtonContainer: {
+    position: 'absolute',
+    bottom: 40,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      bottom: 'auto',
+      top: '60%',
+      left: '25%',
+      right: 'auto',
+      alignItems: 'flex-start',
+    }),
+  },
+  superDoodleButton: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 16,
+    paddingHorizontal: 48,
+    borderRadius: 12,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+    }),
+  },
+  superDoodleButtonText: {
+    color: '#1E293B',
+    fontSize: 16,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -817,7 +995,7 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 4 / 3,
     borderRadius: 16,
-    ...(Platform.OS === 'web' && {
+    ...(Platform.OS === 'web' ? {
       minHeight: 300,
       maxHeight: 500,
     } : {

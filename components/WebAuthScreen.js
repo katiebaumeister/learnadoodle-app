@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,9 @@ import {
   ScrollView,
   Platform,
   Image,
+  Animated,
 } from 'react-native';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import LandingPage from './LandingPage';
 
@@ -27,6 +28,29 @@ export default function WebAuthScreen() {
   const [successMessage, setSuccessMessage] = useState('');
 
   const { signIn, signUp, resetPassword } = useAuth();
+  const pageFadeAnim = useRef(new Animated.Value(1)).current;
+
+  const handleClose = () => {
+    Animated.timing(pageFadeAnim, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start(() => {
+      setShowWelcome(true);
+      // Reset animation for next time
+      pageFadeAnim.setValue(1);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/');
+      }
+    });
+  };
+
+  // Reset animation when showing auth screen
+  useEffect(() => {
+    if (!showWelcome) {
+      pageFadeAnim.setValue(1);
+    }
+  }, [showWelcome, pageFadeAnim]);
 
   // Helper to update URL without reload
   const updateURL = (view) => {
@@ -290,7 +314,14 @@ export default function WebAuthScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, { opacity: pageFadeAnim }]}>
+      <TouchableOpacity
+        style={styles.closeButton}
+        onPress={handleClose}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <X size={24} color="#64748b" />
+      </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.contentContainer}>
       <View style={styles.authCard}>
         <Text style={styles.title}>{isSignUp ? 'Create Account' : 'Hello again!'}</Text>
@@ -471,11 +502,11 @@ export default function WebAuthScreen() {
             >
               Privacy Policy
             </Text>
-            .
+            {' '}.
           </Text>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -530,14 +561,17 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     width: '100%',
     alignItems: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 3,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+      },
     }),
   },
   getStartedButtonText: {
@@ -564,30 +598,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#E6F4FC',
     position: 'relative',
   },
+  closeButton: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    zIndex: 100,
+    padding: 8,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
   contentContainer: {
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
     paddingBottom: 60,
-    minHeight: '100vh',
+    ...Platform.select({
+      web: {
+        minHeight: '100vh',
+      },
+      default: {
+        minHeight: '100%',
+      },
+    }),
   },
   authCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
     padding: 32,
     width: '100%',
     maxWidth: 400,
     position: 'relative',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 8,
-      elevation: 3,
-    }),
   },
   title: {
     fontSize: 28,
