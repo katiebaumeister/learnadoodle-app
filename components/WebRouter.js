@@ -6,13 +6,22 @@ import WebLayout from './WebLayout';
 import InviteAcceptancePage from './InviteAcceptancePage';
 import ChildInvitePage from './auth/ChildInvitePage';
 import ContinueLearningPage from './ContinueLearningPage';
+import OnboardingStepper from './OnboardingStepper';
+import TermsPage from './TermsPage';
+import PrivacyPage from './PrivacyPage';
+import AboutPage from './AboutPage';
+import BlogIndexPage from './blog/BlogIndexPage';
+import BlogPostPage from './blog/BlogPostPage';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 export default function WebRouter() {
   const { user, loading, session } = useAuth();
   const [currentPath, setCurrentPath] = useState('/');
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
   const [resetFlowStartTime, setResetFlowStartTime] = useState(null);
+  const [needsOnboarding, setNeedsOnboarding] = useState(null);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
   useEffect(() => {
     // Update path when URL changes
@@ -207,15 +216,187 @@ export default function WebRouter() {
     );
   }
 
+  // Check if authenticated user needs onboarding
+  useEffect(() => {
+    const checkOnboardingStatus = async () => {
+      if (!user) {
+        setNeedsOnboarding(false);
+        setCheckingOnboarding(false);
+        return;
+      }
+
+      try {
+        // Get user's profile and family
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('family_id')
+          .eq('id', user.id)
+          .single();
+
+        if (!profile?.family_id) {
+          // No family yet, needs onboarding
+          setNeedsOnboarding(true);
+          setCheckingOnboarding(false);
+          return;
+        }
+
+        // Check if family has completed onboarding
+        const { data: family, error: familyError } = await supabase
+          .from('family')
+          .select('has_completed_onboarding')
+          .eq('id', profile.family_id)
+          .single();
+
+        if (familyError) {
+          console.error('Error checking family onboarding status:', familyError);
+          // If error, check children as fallback
+          const { count } = await supabase
+            .from('children')
+            .select('*', { count: 'exact', head: true })
+            .eq('family_id', profile.family_id);
+          setNeedsOnboarding(count === 0);
+        } else {
+          // Use the has_completed_onboarding flag
+          setNeedsOnboarding(!family?.has_completed_onboarding);
+        }
+      } catch (err) {
+        console.error('Error checking onboarding status:', err);
+        setNeedsOnboarding(false);
+      } finally {
+        setCheckingOnboarding(false);
+      }
+    };
+
+    checkOnboardingStatus();
+  }, [user]);
+
+  // Handle public pages (terms, privacy, about) - accessible without authentication
+  if (currentPath === '/terms') {
+    return (
+      <TermsPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentPath === '/privacy') {
+    return (
+      <PrivacyPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentPath === '/about' || currentPath.startsWith('/about#')) {
+    return (
+      <AboutPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
+  // Handle blog routes
+  if (currentPath === '/blog') {
+    // Extract tag from query params if present
+    const urlParams = new URLSearchParams(window.location.search);
+    const selectedTag = urlParams.get('tag');
+    
+    return (
+      <BlogIndexPage
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        selectedTag={selectedTag}
+      />
+    );
+  }
+
+  // Handle individual blog post routes
+  const blogPostMatch = currentPath.match(/^\/blog\/(.+)$/);
+  const blogPostSlug = blogPostMatch ? blogPostMatch[1] : null;
+
+  if (blogPostSlug) {
+    return (
+      <BlogPostPage
+        slug={blogPostSlug}
+        onNavigateToLogin={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+        onNavigateToSignUp={() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/';
+          }
+        }}
+      />
+    );
+  }
+
   // If no user, show appropriate auth screen based on route
   if (!user) {
     if (currentPath === '/reset-password') {
       return <PasswordResetPage />;
     }
+    // Show WebAuthScreen for sign in/sign up
+    // Account creation happens here, then user verifies email, then signs in
     return <WebAuthScreen />;
   }
 
-  // User is authenticated, show main app
+  // Show loading while checking onboarding status
+  if (checkingOnboarding) {
+    return null; // Let parent handle loading
+  }
+
+  // If user needs onboarding, show onboarding stepper
+  if (needsOnboarding) {
+    // Check if user just verified email (has session but no children)
+    const shouldStartAtStep2 = user && !checkingOnboarding;
+    return <OnboardingStepper 
+      startAtStep={shouldStartAtStep2 ? 2 : 1}
+      onComplete={() => {
+        setNeedsOnboarding(false);
+        // Reload to refresh data
+        window.location.href = '/';
+      }} 
+    />;
+  }
+
+  // User is authenticated and has completed onboarding, show main app
   // Role-based routing will be handled by WebLayout based on /api/me response
   return <WebLayout user={user} />;
 }

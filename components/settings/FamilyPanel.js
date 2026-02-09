@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -39,12 +39,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [profilePhone, setProfilePhone] = useState('');
   const [familyName, setFamilyName] = useState('');
   const [profileUsername, setProfileUsername] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const lastProfileSaveRef = useRef(0);
   
@@ -66,9 +60,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Connected accounts (integrations) state - UI only for now; wire to real APIs later
   const [connectedProviders, setConnectedProviders] = useState({
-    google_drive: false,
-    google_docs: false,
-    google_classroom: false,
+    google: false,
     dropbox: false,
     youtube: false,
     khan_academy: false,
@@ -240,6 +232,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       loadSubjects();
     }
   }, [familyId, activeSection]);
+
+  // Handle browser back button for About page
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handlePopState = (event) => {
+      // If we're on the about, terms, or privacy page and user hits back, return to profile
+      if (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') {
+        setActiveSection('profile');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [activeSection]);
 
   // Subject management functions
   const handleEditSubject = (subject) => {
@@ -590,7 +599,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         throw new Error('User not authenticated');
       }
 
-      const emailChanged = profileEmail.trim() && profileEmail.trim().toLowerCase() !== (profile?.email || '').toLowerCase();
+      const currentEmail = (profile?.email || user?.email || authUser?.email || '').toLowerCase();
+      const newEmail = profileEmail.trim().toLowerCase();
+      const emailChanged = newEmail && newEmail !== currentEmail;
 
       // If email is being changed, trigger verification through Supabase Auth
       if (emailChanged) {
@@ -603,58 +614,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }
         
         // Show verification message - email won't actually change until verified
-        toast.push('Verification email sent to ' + profileEmail.trim() + '. Please check your inbox to confirm the change.', 'info');
+        toast.push('Verification email sent to ' + profileEmail.trim() + '. Please check your inbox to confirm the change. Your email will only be updated after you verify it.', 'info');
         
         // Reset email field to current email since change is pending verification
-        setProfileEmail(profile?.email || '');
-      }
-
-      // Update user profile (but NOT the email in profiles table - that will be updated by Supabase trigger on verification)
-      const profileUpdates = {};
-      if (profileName.trim()) {
-        profileUpdates.name = profileName.trim();
-        profileUpdates.first_name = profileName.trim();
-      }
-      if (profilePhone.trim() !== (profile?.phone || '')) {
-        profileUpdates.phone = profilePhone.trim() || null;
-      }
-
-      if (Object.keys(profileUpdates).length > 0) {
-        const { data: updatedProfile, error: profileError } = await supabase
-          .from('profiles')
-          .update(profileUpdates)
-          .eq('id', authUser.id)
-          .select()
-          .single();
-
-        if (profileError) throw profileError;
-        
-        // Immediately update state with returned data
-        if (updatedProfile) {
-          setProfile(prev => ({ ...prev, ...updatedProfile }));
-          setProfileName(updatedProfile.name || updatedProfile.first_name || '');
-          setProfilePhone(updatedProfile.phone || '');
-        }
-      }
-
-      // Update family name if changed
-      if (familyName.trim() !== (family?.family_name || '')) {
-        if (familyId) {
-          const { data: updatedFamily, error: familyError } = await supabase
-            .from('family')
-            .update({ family_name: familyName.trim() || null })
-            .eq('id', familyId)
-            .select()
-            .single();
-
-          if (familyError) throw familyError;
-          
-          // Immediately update state with returned data
-          if (updatedFamily) {
-            setFamily(prev => ({ ...prev, ...updatedFamily }));
-            setFamilyName(updatedFamily.family_name || '');
-          }
-        }
+        setProfileEmail(profile?.email || user?.email || authUser?.email || '');
+      } else {
+        // No changes to save
+        toast.push('No changes to save', 'info');
       }
 
       // Dispatch global events to refresh profile in other components
@@ -665,14 +631,51 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
       lastProfileSaveRef.current = Date.now();
       setEditingProfile(false);
-      toast.push('Profile updated successfully!', 'success');
     } catch (err) {
       setError(err.message || 'Failed to update profile');
-      toast.push('Failed to update profile', 'error');
+      toast.push(err.message || 'Failed to update profile', 'error');
     } finally {
       setSavingProfile(false);
     }
   };
+
+  // Sync email from auth.users to profiles when email is verified
+  useEffect(() => {
+    if (!user) return;
+
+    const syncEmail = async () => {
+      try {
+        // Check if auth email differs from profile email
+        const authEmail = user?.email || '';
+        const profileEmailValue = profile?.email || '';
+        
+        if (authEmail && authEmail !== profileEmailValue) {
+          // Call the sync function to update profile email
+          const { error } = await supabase.rpc('sync_current_user_email');
+          
+          if (!error) {
+            // Refresh profile data
+            const { data: updatedProfile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', user.id)
+              .single();
+            
+            if (updatedProfile) {
+              setProfile(updatedProfile);
+              setProfileEmail(updatedProfile.email || authEmail);
+            }
+          }
+        }
+      } catch (err) {
+        // Silently fail - email sync is not critical
+        console.log('Email sync check failed:', err);
+      }
+    };
+
+    // Check on mount and when user/profile changes
+    syncEmail();
+  }, [user?.email, profile?.email, user?.id]);
 
   if (error && !family) {
     return (
@@ -703,21 +706,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   const CONNECTION_PROVIDERS = [
     {
-      key: 'google_drive',
-      label: 'Google Drive',
-      description: 'Attach files and folders from your Google Drive across lessons and materials.',
-      image: googleLogo,
-    },
-    {
-      key: 'google_docs',
-      label: 'Google Docs',
-      description: 'Link rich documents, plans, and worksheets stored in Google Docs.',
-      image: googleLogo,
-    },
-    {
-      key: 'google_classroom',
-      label: 'Google Classroom',
-      description: 'Keep Learnadoodle in sync with assignments and classes from Google Classroom.',
+      key: 'google',
+      label: 'Google Drive/Docs/Classroom',
+      description: 'Connect once to access Google Drive files, Google Docs, and sync with Google Classroom.',
       image: googleLogo,
     },
     {
@@ -783,7 +774,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
-                ['google_drive', 'google_docs', 'google_classroom', 'dropbox'].includes(p.key)
+                ['google', 'dropbox'].includes(p.key)
               ).map(({ key, label, description, image }) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
@@ -975,42 +966,58 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         );
       
       case 'profile':
-        const hasProfileChanges = 
-          profileName !== (profile?.name || profile?.first_name || '') ||
-          profileUsername !== (profile?.username || '') ||
-          profileEmail !== (profile?.email || user?.email || '') ||
-          currentPassword !== '' ||
-          newPassword !== '' ||
-          confirmNewPassword !== '';
+        const hasProfileChanges = profileEmail.trim() !== (profile?.email || user?.email || '');
         
         return (
           <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Profile</Text>
             
-            {/* Name Field */}
-            <View style={styles.profileFieldGroup}>
-              <Text style={styles.profileFieldLabel}>Name</Text>
-              <TextInput
-                style={styles.profileDarkInput}
-                value={profileName}
-                onChangeText={setProfileName}
-                placeholder="Enter your name"
-                placeholderTextColor="#6b7280"
-              />
-            </View>
-            
             {/* Email Field */}
             <View style={styles.profileFieldGroup}>
               <Text style={styles.profileFieldLabel}>Email</Text>
-              <TextInput
-                style={styles.profileDarkInput}
-                value={profileEmail}
-                onChangeText={setProfileEmail}
-                placeholder="Enter your email"
-                placeholderTextColor="#6b7280"
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
+              <View style={styles.profileEmailInputContainer}>
+                <TextInput
+                  style={[styles.profileDarkInput, styles.profileEmailInput]}
+                  value={profileEmail}
+                  onChangeText={setProfileEmail}
+                  placeholder="Enter your email"
+                  placeholderTextColor="#6b7280"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+                {hasProfileChanges && (
+                  <TouchableOpacity
+                    style={styles.profileEmailCheckButton}
+                    onPress={async () => {
+                      setSavingProfile(true);
+                      try {
+                        // Update email if changed
+                        await handleSaveProfile();
+                      } catch (err) {
+                        toast.push(err.message || 'Failed to save changes', 'error');
+                      } finally {
+                        setSavingProfile(false);
+                      }
+                    }}
+                    disabled={savingProfile}
+                    {...(Platform.OS === 'web' && { cursor: savingProfile ? 'not-allowed' : 'pointer' })}
+                  >
+                    {savingProfile ? (
+                      <ActivityIndicator size="small" color="#60a5fa" />
+                    ) : (
+                      <Check size={20} color="#60a5fa" />
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+              {hasProfileChanges && (
+                <Text style={styles.profileEmailSaveHint}>
+                  Click the checkmark to save your changes
+                </Text>
+              )}
+              <Text style={styles.profileEmailHint}>
+                Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.
+              </Text>
               {user && !user.email_confirmed_at && (
                 <View style={styles.profileEmailVerify}>
                   <Text style={styles.profileEmailVerifyText}>Email not verified. </Text>
@@ -1021,152 +1028,25 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               )}
             </View>
             
-            {/* Current Password Field */}
+            {/* Reset Password Button */}
             <View style={styles.profileFieldGroup}>
-              <Text style={styles.profileFieldLabel}>Current password</Text>
-              <View style={styles.profilePasswordContainer}>
-                <TextInput
-                  style={[styles.profileDarkInput, styles.profilePasswordInput]}
-                  value={currentPassword}
-                  onChangeText={setCurrentPassword}
-                  placeholder=""
-                  placeholderTextColor="#6b7280"
-                  secureTextEntry={!showCurrentPassword}
-                />
-                <TouchableOpacity
-                  style={styles.profilePasswordToggle}
-                  onPress={() => setShowCurrentPassword(!showCurrentPassword)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  {showCurrentPassword ? (
-                    <EyeOff size={20} color="#60a5fa" />
-                  ) : (
-                    <Eye size={20} color="#60a5fa" />
-                  )}
-                </TouchableOpacity>
-              </View>
+              <Text style={styles.profileFieldLabel}>Password</Text>
+              <TouchableOpacity
+                style={styles.profileResetPasswordButton}
+                onPress={handleResetPassword}
+                disabled={resettingPassword}
+                {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
+              >
+                {resettingPassword ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
+                )}
+              </TouchableOpacity>
+              <Text style={styles.profileResetPasswordHint}>
+                We'll send you an email with a link to reset your password.
+              </Text>
             </View>
-            
-            {/* New Password Field */}
-            <View style={styles.profileFieldGroup}>
-              <Text style={styles.profileFieldLabel}>New password</Text>
-              <View style={styles.profilePasswordContainer}>
-                <TextInput
-                  style={[styles.profileDarkInput, styles.profilePasswordInput]}
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  placeholder=""
-                  placeholderTextColor="#6b7280"
-                  secureTextEntry={!showNewPassword}
-                />
-                <TouchableOpacity
-                  style={styles.profilePasswordToggle}
-                  onPress={() => setShowNewPassword(!showNewPassword)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  {showNewPassword ? (
-                    <EyeOff size={20} color="#60a5fa" />
-                  ) : (
-                    <Eye size={20} color="#60a5fa" />
-                  )}
-                </TouchableOpacity>
-              </View>
-              {newPassword.length > 0 && newPassword.length < 8 && (
-                <Text style={styles.passwordRequirement}>Password must be at least 8 characters</Text>
-              )}
-            </View>
-            
-            {/* Confirm New Password Field */}
-            <View style={styles.profileFieldGroup}>
-              <Text style={styles.profileFieldLabel}>Confirm new password</Text>
-              <View style={styles.profilePasswordContainer}>
-                <TextInput
-                  style={[styles.profileDarkInput, styles.profilePasswordInput]}
-                  value={confirmNewPassword}
-                  onChangeText={setConfirmNewPassword}
-                  placeholder=""
-                  placeholderTextColor="#6b7280"
-                  secureTextEntry={!showConfirmPassword}
-                />
-                <TouchableOpacity
-                  style={styles.profilePasswordToggle}
-                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  {showConfirmPassword ? (
-                    <EyeOff size={20} color="#60a5fa" />
-                  ) : (
-                    <Eye size={20} color="#60a5fa" />
-                  )}
-                </TouchableOpacity>
-              </View>
-              {confirmNewPassword.length > 0 && newPassword !== confirmNewPassword && (
-                <Text style={styles.passwordRequirement}>Passwords do not match</Text>
-              )}
-            </View>
-            
-            {/* Save Changes Button */}
-            <TouchableOpacity
-              style={[
-                styles.profileSaveButton,
-                (!hasProfileChanges || savingProfile) && styles.profileSaveButtonDisabled
-              ]}
-              onPress={async () => {
-                setSavingProfile(true);
-                try {
-                  // Update profile
-                  await handleSaveProfile();
-                  
-                  // Update password if provided
-                  if (currentPassword && newPassword) {
-                    // Validate password requirements
-                    if (newPassword.length < 8) {
-                      throw new Error('New password must be at least 8 characters');
-                    }
-                    
-                    // Validate passwords match
-                    if (newPassword !== confirmNewPassword) {
-                      throw new Error('New passwords do not match');
-                    }
-                    
-                    // First verify the current password by re-authenticating
-                    const userEmail = profile?.email || user?.email;
-                    if (!userEmail) {
-                      throw new Error('Email not found. Please try again.');
-                    }
-                    
-                    const { error: verifyError } = await supabase.auth.signInWithPassword({
-                      email: userEmail,
-                      password: currentPassword,
-                    });
-                    
-                    if (verifyError) {
-                      throw new Error('Current password is incorrect');
-                    }
-                    
-                    // Current password verified, now update to new password
-                    const { error } = await supabase.auth.updateUser({ password: newPassword });
-                    if (error) throw error;
-                    toast.push('Password updated successfully!', 'success');
-                    setCurrentPassword('');
-                    setNewPassword('');
-                    setConfirmNewPassword('');
-                  }
-                } catch (err) {
-                  toast.push(err.message || 'Failed to save changes', 'error');
-                } finally {
-                  setSavingProfile(false);
-                }
-              }}
-              disabled={!hasProfileChanges || savingProfile}
-              {...(Platform.OS === 'web' && { cursor: (!hasProfileChanges || savingProfile) ? 'not-allowed' : 'pointer' })}
-            >
-              {savingProfile ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Text style={styles.profileSaveButtonText}>SAVE CHANGES</Text>
-              )}
-            </TouchableOpacity>
             
             {/* Data & Account Actions */}
             <View style={styles.profileActionsSection}>
@@ -2044,6 +1924,690 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           </View>
         );
       
+      case 'about':
+        return (
+          <View style={styles.aboutPageContainer}>
+            <Text style={styles.aboutPageTitle}>About Learnadoodle</Text>
+            
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Our mission</Text>
+              <Text style={styles.aboutText}>
+                To help families plan, adapt, and document learning with confidence—without sacrificing joy, flexibility, or privacy.
+              </Text>
+              <Text style={styles.aboutText}>
+                Learning at home is deeply personal. It changes week to week, child to child, and season to season. Our mission is to give families tools that respect that reality: tools that adapt as life happens, support thoughtful decision-making, and keep parents firmly in control.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Who we are</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle was co-founded by Elisa, a homeschooling parent and college professor with over 15 years of experience teaching at the university level, and Kate, a technologist with deep expertise in building secure, privacy-first learning software.
+              </Text>
+              <Text style={styles.aboutText}>
+                Between us, we've lived both sides of the learning journey—designing curriculum, teaching in formal institutions, managing real household schedules, and building complex systems that must be reliable, explainable, and safe. We didn't come to education technology as outsiders; we came to it as practitioners who felt the pain points firsthand.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Why we built Learnadoodle</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle is the tool Elisa wished she had while homeschooling.
+              </Text>
+              <Text style={styles.aboutText}>
+                Like many parents, she found herself juggling calendars, lesson plans, state requirements, progress notes, and the constant question: Is this working for my child? Existing tools were either rigid, overwhelming, or disconnected from how families actually live.
+              </Text>
+              <Text style={styles.aboutText}>
+                So we started by listening. We spoke with hundreds of parents to understand how they plan, track, and adapt learning in the real world—not in idealized school models. From those conversations, we built an AI-powered planner that supports flexibility rather than fighting it.
+              </Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle helps parents:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Organize learning without turning it into bureaucracy</Text>
+                <Text style={styles.aboutListItem}>• Adapt plans when life changes (because it always does)</Text>
+                <Text style={styles.aboutListItem}>• Track progress in ways that feel meaningful, not punitive</Text>
+                <Text style={styles.aboutListItem}>• Meet requirements without losing curiosity or momentum</Text>
+              </View>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Our approach to technology and trust</Text>
+              <Text style={styles.aboutText}>
+                We believe families should never have to trade convenience for control.
+              </Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle is built with privacy, security, and transparency at its core. We design our systems so parents understand what's happening, why suggestions are made, and how their data is used—if it's used at all. Your family's learning data belongs to you, not advertisers or opaque algorithms.
+              </Text>
+              <Text style={styles.aboutText}>
+                AI should feel like a thoughtful assistant, not a black box.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>What we believe</Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Parents are capable decision-makers when given the right tools</Text>
+                <Text style={styles.aboutListItem}>• Learning is not linear—and systems shouldn't pretend it is</Text>
+                <Text style={styles.aboutListItem}>• Flexibility and accountability can coexist</Text>
+                <Text style={styles.aboutListItem}>• Technology should support human judgment, not replace it</Text>
+                <Text style={styles.aboutListItem}>• Joy and rigor are not opposites</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                Learnadoodle exists to support families who want structure and freedom, insight and intuition, planning and room to breathe.
+              </Text>
+            </View>
+          </View>
+        );
+      
+      case 'terms':
+        return (
+          <View style={styles.aboutPageContainer}>
+            <Text style={styles.aboutPageTitle}>Terms and Conditions of Service</Text>
+            
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>1. General / Our Services</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle Inc. ("Learnadoodle," "we," "us," or "our") operates the Learnadoodle website, mobile applications, and related services (collectively, the "Services").
+              </Text>
+              <Text style={styles.aboutText}>
+                By accessing or using any part of the Services, you agree to these Legal Terms ("Terms"). If you do not agree, do not use the Services.
+              </Text>
+              <Text style={styles.aboutText}>
+                Availability by location. The Services are not intended for distribution or use in any jurisdiction where doing so would violate local law or subject Learnadoodle to registration or regulatory requirements. If you access the Services from outside the United States, you do so on your own initiative and are responsible for complying with applicable local laws.
+              </Text>
+              <Text style={styles.aboutText}>
+                Education and compliance context. Learnadoodle is designed to help families organize learning. It does not provide legal, tax, medical, or professional compliance advice, and we do not guarantee that use of the Services will satisfy any particular educational requirement.
+              </Text>
+              <Text style={styles.aboutText}>
+                Privacy and child safety laws. Learnadoodle is built to support privacy-first family use and is designed to comply with applicable privacy laws, including, as relevant:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• COPPA (children under 13): requires verifiable parental consent for the collection of personal information from children under 13 and additional safeguards for child data.</Text>
+                <Text style={styles.aboutListItem}>• GDPR (EU/EEA): provides lawful processing requirements and user rights such as access, correction, and deletion, as described in our Privacy Policy.</Text>
+                <Text style={styles.aboutListItem}>• CCPA/CPRA (California): provides rights to know, delete, and opt out of certain data sharing, and to limit use of sensitive personal information, as described in our Privacy Policy.</Text>
+              </View>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>2. Changes to These Terms</Text>
+              <Text style={styles.aboutText}>
+                We may update these Terms from time to time. When we do, we will update the "Last revised" date at the bottom of these Terms and may provide additional notice via the Services or email.
+              </Text>
+              <Text style={styles.aboutText}>
+                If you continue to use the Services after changes take effect, you agree to the updated Terms.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>3. Intellectual Property</Text>
+              <Text style={styles.aboutText}>
+                Our IP. We own or license all rights in the Services, including the software, source code, databases, functionality, website and app design, text, graphics, images, audio, video, and other content (collectively, "Content"), as well as our trademarks, service marks, and logos ("Marks"). These are protected by U.S. and international intellectual property laws.
+              </Text>
+              <Text style={styles.aboutText}>
+                Limited license. Subject to these Terms, we grant you a limited, non-exclusive, non-transferable, revocable license to access and use the Services for personal, non-commercial household and educational use.
+              </Text>
+              <Text style={styles.aboutText}>
+                Restrictions. You may not:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• copy, reproduce, distribute, publicly display, republish, upload, transmit, or exploit any part of the Services, Content, or Marks for commercial purposes;</Text>
+                <Text style={styles.aboutListItem}>• reverse engineer, decompile, or attempt to extract source code (except where permitted by law);</Text>
+                <Text style={styles.aboutListItem}>• use our Content or Marks in a way that infringes rights or violates applicable law.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                For permissions beyond this license, contact contact@learnadoodle.com. All rights not expressly granted are reserved.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>4. User Uploads and Submissions</Text>
+              <Text style={styles.aboutText}>
+                Your content stays yours. You may upload personal educational materials (e.g., learning notes, progress records, documents). You retain ownership of content you upload.
+              </Text>
+              <Text style={styles.aboutText}>
+                Private by default. Learnadoodle does not provide public sharing, public profiles, or user forums. Your uploaded content is intended to be private and accessible only through your account, subject to these Terms and our Privacy Policy.
+              </Text>
+              <Text style={styles.aboutText}>
+                Feedback. If you submit feedback, suggestions, or ideas ("Submissions"), you grant Learnadoodle a non-exclusive, royalty-free, worldwide license to use those Submissions to improve or develop the Services. This does not transfer ownership of your personal educational records or other private content.
+              </Text>
+              <Text style={styles.aboutText}>
+                Your responsibility. You are responsible for the content you upload and represent that:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• you have the right to upload it;</Text>
+                <Text style={styles.aboutListItem}>• it is lawful and does not infringe third-party rights; and</Text>
+                <Text style={styles.aboutListItem}>• you understand you control what you choose to store.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                We may remove or restrict access to content if required by law, a valid legal request, or to protect the security and integrity of the Services.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>5. User Representations</Text>
+              <Text style={styles.aboutText}>
+                By using the Services, you represent and warrant that:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• the information you provide is accurate, current, and complete, and you will keep it updated;</Text>
+                <Text style={styles.aboutListItem}>• you have the legal capacity to agree to these Terms;</Text>
+                <Text style={styles.aboutListItem}>• if you are under the age of digital consent (including where applicable under COPPA or GDPR), you have verifiable parental/guardian consent;</Text>
+                <Text style={styles.aboutListItem}>• you will not access the Services through automated or non-human means (e.g., bots, scripts) unless expressly permitted;</Text>
+                <Text style={styles.aboutListItem}>• you will not use the Services for illegal or unauthorized purposes; and</Text>
+                <Text style={styles.aboutListItem}>• your use will comply with applicable laws and regulations.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                If any information is untrue, inaccurate, or incomplete, we may suspend or terminate your account.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>6. Registration and Account Security</Text>
+              <Text style={styles.aboutText}>
+                Certain features may require an account. You agree to:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• keep your login credentials confidential;</Text>
+                <Text style={styles.aboutListItem}>• be responsible for all activity under your account; and</Text>
+                <Text style={styles.aboutListItem}>• notify us promptly of unauthorized access.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                We may reclaim or modify usernames that are misleading, offensive, or inappropriate.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>7. Beta Access (Free Testing Phase)</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle may be offered in a free beta phase. During beta, features may change, and the Services may be interrupted or modified.
+              </Text>
+              <Text style={styles.aboutText}>
+                If we introduce paid plans in the future, we will provide notice in advance (for example, via email or in-app notice) and require you to accept updated pricing and terms before charges apply.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>8. Acceptable Use / Prohibited Activities</Text>
+              <Text style={styles.aboutText}>
+                You may use the Services only as permitted by these Terms. You agree not to:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• scrape, harvest, or systematically retrieve data or Content without written permission;</Text>
+                <Text style={styles.aboutListItem}>• interfere with or bypass security features or access controls;</Text>
+                <Text style={styles.aboutListItem}>• upload malware or disruptive code;</Text>
+                <Text style={styles.aboutListItem}>• impersonate others or misrepresent your identity;</Text>
+                <Text style={styles.aboutListItem}>• reverse engineer or attempt unauthorized access to the Services or systems;</Text>
+                <Text style={styles.aboutListItem}>• use the Services to resell, redistribute, or build a competing product;</Text>
+                <Text style={styles.aboutListItem}>• collect or store personal information about others without consent.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                AI use. You also agree not to use AI features to generate or request harmful, exploitative, or inappropriate content—especially content involving minors—or to use AI features in ways that violate law or others' rights.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>9. Mobile Application License</Text>
+              <Text style={styles.aboutText}>
+                If you access the Services via a mobile app, we grant you a limited, revocable, non-exclusive, non-transferable license to install and use the app on a device you own or control, solely for personal, non-commercial use consistent with these Terms.
+              </Text>
+              <Text style={styles.aboutText}>
+                You may not modify, reverse engineer, decompile, or use the app unlawfully.
+              </Text>
+              <Text style={styles.aboutText}>
+                App Stores. If you download the app from Apple's App Store or Google Play, your use is also subject to the applicable store terms. Apple and Google are third-party beneficiaries of this section to the extent required by their terms.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>10. Third-Party Links and Content</Text>
+              <Text style={styles.aboutText}>
+                The Services may contain links to third-party websites or resources ("Third-Party Content"). We do not control or endorse Third-Party Content and are not responsible for its accuracy, legality, or availability. Your use of Third-Party Content is at your own risk and subject to the third party's terms and policies.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>11. Services Management and Safety</Text>
+              <Text style={styles.aboutText}>
+                We may (but are not required to) monitor the Services for violations of these Terms, investigate potential misuse, and take appropriate action, including restricting access or terminating accounts.
+              </Text>
+              <Text style={styles.aboutText}>
+                To help keep Learnadoodle safe for families, we may monitor AI interactions for abuse patterns and provide a way to report concerns at contact@learnadoodle.com.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>12. Privacy</Text>
+              <Text style={styles.aboutText}>
+                Your use of the Services is governed by our Privacy Policy. By using the Services, you consent to our collection, use, and sharing practices as described there, including processing and storage in the United States.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>13. DMCA Notice and Policy</Text>
+              <Text style={styles.aboutText}>
+                If you believe content on the Services infringes your copyright, send a DMCA notice including the required information under 17 U.S.C. § 512(c)(3).
+              </Text>
+              <Text style={styles.aboutText}>
+                DMCA Agent{'\n'}
+                Elisa Alvarez-Garrido{'\n'}
+                Attn: Copyright Agent{'\n'}
+                3011 Blossom St{'\n'}
+                Columbia, SC 29205{'\n'}
+                United States{'\n'}
+                contact@learnadoodle.com
+              </Text>
+              <Text style={styles.aboutText}>
+                Counter-notifications must include the required statements and consent to jurisdiction as applicable.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>14. Termination</Text>
+              <Text style={styles.aboutText}>
+                These Terms remain in effect while you use the Services. We may suspend or terminate your access at any time, with or without notice, if we believe you have violated these Terms or if necessary to protect the Services, users, or Learnadoodle.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>15. Modifications and Interruptions</Text>
+              <Text style={styles.aboutText}>
+                We may modify, suspend, or discontinue any part of the Services at any time. We are not liable for downtime, interruptions, or loss of access, subject to applicable law.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>16. Disclaimers</Text>
+              <Text style={styles.aboutText}>
+                THE SERVICES ARE PROVIDED "AS IS" AND "AS AVAILABLE." TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE DISCLAIM ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+              </Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle does not warrant that the Services will be uninterrupted, error-free, or that use of the Services will satisfy any specific educational, legal, or compliance requirement.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>17. Limitation of Liability</Text>
+              <Text style={styles.aboutText}>
+                TO THE MAXIMUM EXTENT PERMITTED BY LAW, LEARNADOODLE AND ITS AFFILIATES, OFFICERS, EMPLOYEES, AND AGENTS WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, CONSEQUENTIAL, SPECIAL, EXEMPLARY, OR PUNITIVE DAMAGES.
+              </Text>
+              <Text style={styles.aboutText}>
+                OUR TOTAL LIABILITY FOR ANY CLAIM ARISING OUT OF OR RELATING TO THE SERVICES WILL NOT EXCEED $100, OR THE MAXIMUM AMOUNT PERMITTED BY LAW IF A DIFFERENT LIMIT IS REQUIRED.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>18. Indemnification</Text>
+              <Text style={styles.aboutText}>
+                You agree to indemnify, defend, and hold harmless Learnadoodle and its affiliates, officers, employees, and agents from claims, liabilities, damages, losses, and expenses (including reasonable attorneys' fees) arising from your use of the Services, your content, or your violation of these Terms.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>19. Governing Law</Text>
+              <Text style={styles.aboutText}>
+                These Terms are governed by the laws of the State of Delaware, without regard to conflict of laws principles.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>20. Dispute Resolution and Arbitration</Text>
+              <Text style={styles.aboutText}>
+                PLEASE READ THIS SECTION CAREFULLY. IT AFFECTS YOUR LEGAL RIGHTS.
+              </Text>
+              <Text style={styles.aboutText}>
+                You and Learnadoodle agree to try to resolve disputes informally for at least 30 days after written notice.
+              </Text>
+              <Text style={styles.aboutText}>
+                If unresolved, disputes will be resolved by binding arbitration on an individual basis administered by the American Arbitration Association ("AAA") under its applicable rules, in New Castle County, Delaware, unless otherwise agreed.
+              </Text>
+              <Text style={styles.aboutText}>
+                You waive the right to a jury trial and to participate in class actions or class arbitration.
+              </Text>
+              <Text style={styles.aboutText}>
+                This section does not prevent either party from seeking injunctive or equitable relief for intellectual property infringement or unauthorized access/misuse.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>21. Electronic Communications</Text>
+              <Text style={styles.aboutText}>
+                You consent to receive notices and communications electronically. Electronic communications satisfy any legal requirement that such communications be in writing.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>22. California Residents</Text>
+              <Text style={styles.aboutText}>
+                If you are a California resident and have a complaint not satisfactorily resolved, you may contact the California Department of Consumer Affairs, Consumer Information Division at 1625 North Market Blvd., Suite N 112, Sacramento, CA 95834, by phone at (800) 952-5210 or (916) 445-1254.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>23. Miscellaneous</Text>
+              <Text style={styles.aboutText}>
+                These Terms constitute the entire agreement between you and Learnadoodle regarding the Services. If any provision is unenforceable, the remainder will remain in effect. No waiver is valid unless in writing. No agency, partnership, or joint venture is created.
+              </Text>
+              <Text style={styles.aboutText}>
+                Claims must be filed within one (1) year of the event giving rise to the claim, unless a longer period is required by law.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>24. Contact</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle Inc{'\n'}
+                Email: contact@learnadoodle.com{'\n'}
+                Phone: 803-728-1336
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutText}>
+                Last revised: February 5, 2026
+              </Text>
+            </View>
+          </View>
+        );
+      
+      case 'privacy':
+        return (
+          <View style={styles.aboutPageContainer}>
+            <Text style={styles.aboutPageTitle}>Privacy Policy</Text>
+            
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>General</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle Inc ("Learnadoodle," "Company," "we," "us," or "our") cares about your privacy. This Privacy Policy explains how we collect, use, and share information when you use our website learnadoodle.com (the "Site") and our Learnadoodle mobile application (the "App"), together the "Services."
+              </Text>
+              <Text style={styles.aboutText}>
+                By using the Services, you agree to the collection and use of information as described in this Privacy Policy. If you do not agree, do not use the Services.
+              </Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle is built for families. Parents (or legal guardians) are the account holders, and children may use limited features through parent-managed accounts.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Information We Collect</Text>
+              <Text style={styles.aboutText}>
+                We collect information in the following ways:
+              </Text>
+              <Text style={styles.aboutText}>
+                a. Information you provide
+              </Text>
+              <Text style={styles.aboutText}>
+                When you create an account, set up your family, or use the Services, you may provide:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Parent/guardian information: name, email, and account credentials (email/password or other login method)</Text>
+                <Text style={styles.aboutListItem}>• Child information (optional/limited): child name or nickname, and age in years</Text>
+                <Text style={styles.aboutListItem}>• Educational content you choose to store: learning notes, progress records, and uploaded documents</Text>
+                <Text style={styles.aboutListItem}>• Support communications: messages you send to us (e.g., customer support requests)</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                b. Information collected automatically
+              </Text>
+              <Text style={styles.aboutText}>
+                When you use the Services, we may automatically collect:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Device and log data: IP address, browser type, operating system, device identifiers, and timestamps</Text>
+                <Text style={styles.aboutListItem}>• Usage data: pages or screens viewed, features used, clicks/taps, and actions taken in the Services</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                c. Cookies and similar technologies
+              </Text>
+              <Text style={styles.aboutText}>
+                On the Site, we use cookies and similar technologies for:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Essential functionality (e.g., login/session and security)</Text>
+                <Text style={styles.aboutListItem}>• Analytics (e.g., understanding usage patterns)</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                See "Cookies and Tracking" below for details and choices.
+              </Text>
+              <Text style={styles.aboutText}>
+                d. Payment information (if applicable)
+              </Text>
+              <Text style={styles.aboutText}>
+                If we offer paid plans in the future, payments will be processed by third parties (for example, Stripe or app stores). We generally receive limited billing details (such as payment status and subscription tier), and do not store full card numbers directly.
+              </Text>
+              <Text style={styles.aboutText}>
+                e. Sensitive information
+              </Text>
+              <Text style={styles.aboutText}>
+                Some information you store in Learnadoodle may be sensitive depending on what you upload (e.g., educational history, progress notes, documents). You control what you upload.
+              </Text>
+              <Text style={styles.aboutText}>
+                We do not intentionally collect:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• biometric identifiers,</Text>
+                <Text style={styles.aboutListItem}>• precise geolocation,</Text>
+                <Text style={styles.aboutListItem}>• or browsing history outside our Services.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                f. AI interactions
+              </Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle includes an AI-powered assistant for educational support. When you use AI features:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• We may collect the messages and content you submit to provide the feature, improve reliability, and help keep the Services safe.</Text>
+                <Text style={styles.aboutListItem}>• You are interacting with an AI system, not a human.</Text>
+                <Text style={styles.aboutListItem}>• Please avoid entering highly sensitive personal information into AI prompts.</Text>
+              </View>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>How We Use Your Information</Text>
+              <Text style={styles.aboutText}>
+                We use information to:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Provide and operate the Services (account creation, family setup, planning tools, uploads)</Text>
+                <Text style={styles.aboutListItem}>• Personalize features (e.g., planning suggestions based on your inputs)</Text>
+                <Text style={styles.aboutListItem}>• Improve and maintain the Services (debugging, performance, product development)</Text>
+                <Text style={styles.aboutListItem}>• Communicate with you (support responses, service-related notices)</Text>
+                <Text style={styles.aboutListItem}>• Protect safety and integrity (fraud prevention, abuse detection, security monitoring)</Text>
+                <Text style={styles.aboutListItem}>• Comply with legal obligations (including COPPA, GDPR, and CCPA/CPRA where applicable)</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                No advertising or data sales. We do not sell personal information and do not use your information for targeted advertising.
+              </Text>
+              <Text style={styles.aboutText}>
+                Legal bases for processing (GDPR/EEA and similar laws)
+              </Text>
+              <Text style={styles.aboutText}>
+                Where required, we process personal information under one or more of these bases:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Contract (to provide the Services you request)</Text>
+                <Text style={styles.aboutListItem}>• Consent (for certain optional features, and for parental consent where required)</Text>
+                <Text style={styles.aboutListItem}>• Legitimate interests (security, fraud prevention, product improvement—balanced against your rights)</Text>
+                <Text style={styles.aboutListItem}>• Legal obligation (compliance with applicable law)</Text>
+              </View>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>How We Share Information</Text>
+              <Text style={styles.aboutText}>
+                We share information only as needed to operate the Services, including with:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Infrastructure and hosting providers (e.g., Supabase for data storage; Render for hosting/logs where applicable)</Text>
+                <Text style={styles.aboutListItem}>• Analytics providers (e.g., Google Analytics on the Site, if enabled by your cookie choices)</Text>
+                <Text style={styles.aboutListItem}>• Platform providers (e.g., Apple and Google for app distribution and platform services)</Text>
+                <Text style={styles.aboutListItem}>• Payment processors (e.g., Stripe or app stores, if paid plans are offered)</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                We do not share personal information for cross-context behavioral advertising (as defined by CCPA/CPRA).
+              </Text>
+              <Text style={styles.aboutText}>
+                Service providers (processors)
+              </Text>
+              <Text style={styles.aboutText}>
+                When we use service providers, they are authorized to process information only for us and are required to protect it under contractual obligations consistent with applicable law.
+              </Text>
+              <Text style={styles.aboutText}>
+                Legal and safety disclosures
+              </Text>
+              <Text style={styles.aboutText}>
+                We may disclose information if we believe it is necessary to:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• comply with a legal obligation or valid legal request,</Text>
+                <Text style={styles.aboutListItem}>• protect the rights, safety, and security of users, Learnadoodle, or the public,</Text>
+                <Text style={styles.aboutListItem}>• investigate fraud or security issues.</Text>
+              </View>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Children's Privacy</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle is intended to be used by parents/guardians. Children under 13 may access limited features only through parent-managed accounts.
+              </Text>
+              <Text style={styles.aboutText}>
+                To help comply with COPPA and similar child privacy laws:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• We collect minimal child information (typically name/nickname and age in years) as needed for family planning features.</Text>
+                <Text style={styles.aboutListItem}>• Parents may request to review, delete, or restrict their child's information by contacting contact@learnadoodle.com.</Text>
+                <Text style={styles.aboutListItem}>• Child data is not public and is not shared except with essential service providers to operate the Services.</Text>
+                <Text style={styles.aboutListItem}>• We take steps to promote safe use of AI features for families, including monitoring for abuse patterns and offering reporting at contact@learnadoodle.com.</Text>
+              </View>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Your Rights and Choices</Text>
+              <Text style={styles.aboutText}>
+                a. Account controls
+              </Text>
+              <Text style={styles.aboutText}>
+                You can update certain account information through the Services (where available). You may also contact us to request changes or help.
+              </Text>
+              <Text style={styles.aboutText}>
+                b. GDPR/EEA rights (and similar rights where applicable)
+              </Text>
+              <Text style={styles.aboutText}>
+                Depending on your location, you may have rights to:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• access your personal information,</Text>
+                <Text style={styles.aboutListItem}>• correct inaccuracies,</Text>
+                <Text style={styles.aboutListItem}>• request deletion,</Text>
+                <Text style={styles.aboutListItem}>• restrict or object to processing,</Text>
+                <Text style={styles.aboutListItem}>• request portability,</Text>
+                <Text style={styles.aboutListItem}>• withdraw consent (where processing is based on consent),</Text>
+                <Text style={styles.aboutListItem}>• lodge a complaint with your local data protection authority.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                c. California rights (CCPA/CPRA)
+              </Text>
+              <Text style={styles.aboutText}>
+                California residents may have the right to:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• know what personal information we collect, use, and disclose,</Text>
+                <Text style={styles.aboutListItem}>• request deletion,</Text>
+                <Text style={styles.aboutListItem}>• request correction (where applicable),</Text>
+                <Text style={styles.aboutListItem}>• opt out of "sale" or "sharing" (not applicable because we do not sell/share for advertising),</Text>
+                <Text style={styles.aboutListItem}>• not be discriminated against for exercising privacy rights.</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                To exercise privacy rights, contact contact@learnadoodle.com. We may verify your identity before fulfilling a request. We respond within timeframes required by law (typically 30 days for GDPR requests, 45 days for CCPA/CPRA requests, with extensions where permitted).
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Data Retention</Text>
+              <Text style={styles.aboutText}>
+                We retain personal information as long as needed to provide the Services and for legitimate business purposes (such as security, dispute resolution, and enforcement), unless a longer or shorter retention period is required by law.
+              </Text>
+              <Text style={styles.aboutText}>
+                Account deletion: We retain account data for up to 30 days after deletion to allow recovery if deletion was accidental. After that, we delete or de-identify it, unless retention is required by law.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Security</Text>
+              <Text style={styles.aboutText}>
+                We use reasonable administrative, technical, and organizational safeguards, including encryption in transit and at rest (where supported), access controls, and secure infrastructure practices.
+              </Text>
+              <Text style={styles.aboutText}>
+                No method of transmission or storage is 100% secure. If a breach occurs, we will notify you as required by law (including where applicable GDPR's 72-hour notification framework).
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Cookies and Tracking</Text>
+              <Text style={styles.aboutText}>
+                We use cookies (and similar technologies) on the Site for:
+              </Text>
+              <View style={styles.aboutList}>
+                <Text style={styles.aboutListItem}>• Essential cookies (required for core functionality and security)</Text>
+                <Text style={styles.aboutListItem}>• Analytics cookies (to understand and improve usage, such as via Google Analytics)</Text>
+              </View>
+              <Text style={styles.aboutText}>
+                Where required, we present a cookie banner that lets you accept or reject analytics cookies.
+              </Text>
+              <Text style={styles.aboutText}>
+                You can also control cookies through your browser settings. For Google Analytics, you can opt out using Google's browser add-on at:
+              </Text>
+              <Text style={styles.aboutText}>
+                https://tools.google.com/dlpage/gaoptout
+              </Text>
+              <Text style={styles.aboutText}>
+                We do not use cookies for targeted advertising.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>International Data Transfers</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle is based in the United States, and information may be processed and stored in the United States or other locations where our service providers operate.
+              </Text>
+              <Text style={styles.aboutText}>
+                If you are located in the EEA/UK/Switzerland, we use appropriate safeguards for transfers (such as Standard Contractual Clauses) where required.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Changes to This Policy</Text>
+              <Text style={styles.aboutText}>
+                We may update this Privacy Policy from time to time. If changes are material, we will provide notice through the Services or by email as required by law. The "last revised" date at the top shows when it was most recently updated.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutSectionTitle}>Contact Us</Text>
+              <Text style={styles.aboutText}>
+                Learnadoodle Inc{'\n'}
+                Email: contact@learnadoodle.com{'\n'}
+                Phone: (803) 728-1336 (not toll-free)
+              </Text>
+              <Text style={styles.aboutText}>
+                California residents: If a complaint is not satisfactorily resolved, you may contact the California Department of Consumer Affairs:
+              </Text>
+              <Text style={styles.aboutText}>
+                Consumer Information Division, 1625 North Market Blvd., Suite N 112, Sacramento, CA 95834{'\n'}
+                Phone: (800) 952-5210 or (916) 445-1254
+              </Text>
+              <Text style={styles.aboutText}>
+                EU/EEA residents: You may also contact your local data protection authority to lodge a complaint.
+              </Text>
+            </View>
+
+            <View style={styles.aboutSection}>
+              <Text style={styles.aboutText}>
+                This Privacy Policy was last revised on February 5, 2026.
+              </Text>
+            </View>
+          </View>
+        );
+      
       default:
         return null;
     }
@@ -2053,12 +2617,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     <View style={styles.container}>
       <View style={styles.twoColumnLayout}>
         {/* Left: Scrollable main content */}
-        <ScrollView style={styles.mainContent} contentContainerStyle={styles.mainContentContainer}>
+        <ScrollView 
+          style={[
+            styles.mainContent,
+            (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') && styles.mainContentFullWidth
+          ]} 
+          contentContainerStyle={[
+            styles.mainContentContainer,
+            (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') && styles.mainContentContainerAbout
+          ]}
+        >
           {renderMainContent()}
         </ScrollView>
 
-        {/* Right: Fixed sidebar */}
-        <View style={styles.sidebar}>
+        {/* Right: Fixed sidebar - hidden on About, Terms, and Privacy pages */}
+        {activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
+          <View style={styles.sidebar}>
           {/* Account Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Account</Text>
@@ -2115,7 +2689,51 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           >
             <Text style={styles.logoutButtonText}>{loggingOut ? 'LOGGING OUT...' : 'LOG OUT'}</Text>
           </TouchableOpacity>
-        </View>
+
+          {/* Footer Links */}
+          <View style={styles.footerLinksContainer}>
+            <TouchableOpacity
+              style={styles.footerLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  // Use browser history for navigation
+                  window.history.pushState({ section: 'about' }, '', window.location.pathname);
+                  setActiveSection('about');
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.footerLinkText}>ABOUT</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.footerLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  // Use browser history for navigation
+                  window.history.pushState({ section: 'terms' }, '', window.location.pathname);
+                  setActiveSection('terms');
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.footerLinkText}>TERMS</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.footerLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  // Use browser history for navigation
+                  window.history.pushState({ section: 'privacy' }, '', window.location.pathname);
+                  setActiveSection('privacy');
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.footerLinkText}>PRIVACY</Text>
+            </TouchableOpacity>
+          </View>
+          </View>
+        )}
       </View>
 
       {/* Modals */}
@@ -2195,9 +2813,18 @@ function createStyles(tokens) {
         overflowY: 'auto',
       }),
     },
+    mainContentFullWidth: {
+      flex: 1,
+      maxWidth: '100%',
+    },
     mainContentContainer: {
       padding: 32,
       paddingRight: 16,
+    },
+    mainContentContainerAbout: {
+      padding: 32,
+      paddingRight: 32,
+      alignItems: 'center',
     },
     mainContentInner: {
       width: '100%',
@@ -2384,6 +3011,83 @@ function createStyles(tokens) {
       fontWeight: '700',
       color: '#60a5fa',
       letterSpacing: 0.5,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    footerLinksContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: 12,
+      marginTop: 16,
+      paddingTop: 16,
+      borderTopWidth: 1,
+      borderTopColor: '#e5e7eb',
+    },
+    footerLink: {
+      paddingVertical: 4,
+      paddingHorizontal: 8,
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+        transition: 'opacity 0.2s ease',
+      }),
+    },
+    footerLinkText: {
+      fontSize: 11,
+      fontWeight: '500',
+      color: '#6B7280',
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    aboutPageContainer: {
+      maxWidth: 800,
+      width: '100%',
+      marginHorizontal: 'auto',
+      paddingVertical: 32,
+    },
+    aboutPageTitle: {
+      fontSize: 36,
+      fontWeight: '700',
+      color: '#111827',
+      marginBottom: 48,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    aboutSection: {
+      marginBottom: 48,
+    },
+    aboutSectionTitle: {
+      fontSize: 24,
+      fontWeight: '600',
+      color: '#111827',
+      marginBottom: 16,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    aboutText: {
+      fontSize: 16,
+      lineHeight: 24,
+      color: '#374151',
+      marginBottom: 16,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    aboutList: {
+      marginTop: 8,
+      marginBottom: 16,
+    },
+    aboutListItem: {
+      fontSize: 16,
+      lineHeight: 24,
+      color: '#374151',
+      marginBottom: 8,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -2590,7 +3294,7 @@ function createStyles(tokens) {
       alignItems: 'center',
     },
     profileFieldGroup: {
-      marginBottom: 20,
+      marginBottom: 32,
     },
     profileFieldLabel: {
       fontSize: 15,
@@ -2614,6 +3318,21 @@ function createStyles(tokens) {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         outlineWidth: 0,
       }),
+    },
+    profileEmailInputContainer: {
+      position: 'relative',
+    },
+    profileEmailInput: {
+      paddingRight: 50,
+    },
+    profileEmailCheckButton: {
+      position: 'absolute',
+      right: 14,
+      top: 0,
+      bottom: 0,
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: 32,
     },
     profilePasswordContainer: {
       position: 'relative',
@@ -2650,6 +3369,20 @@ function createStyles(tokens) {
       color: '#3b82f6',
       textDecorationLine: 'underline',
     },
+    profileEmailSaveHint: {
+      fontSize: 13,
+      color: '#60a5fa',
+      marginTop: 8,
+      lineHeight: 18,
+      fontWeight: '500',
+    },
+    profileEmailHint: {
+      fontSize: 13,
+      color: '#6b7280',
+      marginTop: 10,
+      lineHeight: 20,
+      marginBottom: 0,
+    },
     profileSaveButton: {
       backgroundColor: '#60a5fa',
       paddingVertical: 14,
@@ -2657,7 +3390,8 @@ function createStyles(tokens) {
       borderRadius: 10,
       alignItems: 'center',
       alignSelf: 'flex-start',
-      marginTop: 12,
+      marginTop: 0,
+      marginBottom: 32,
     },
     profileSaveButtonDisabled: {
       backgroundColor: '#d1d5db',
@@ -2670,6 +3404,28 @@ function createStyles(tokens) {
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
+    },
+    profileResetPasswordButton: {
+      backgroundColor: '#60a5fa',
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+    },
+    profileResetPasswordButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#ffffff',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    profileResetPasswordHint: {
+      fontSize: 13,
+      color: '#6b7280',
+      marginTop: 10,
+      lineHeight: 20,
     },
     profileActionsSection: {
       marginTop: 48,

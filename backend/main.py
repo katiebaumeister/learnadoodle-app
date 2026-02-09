@@ -23,6 +23,8 @@ from routers.google_calendar import router as google_calendar_router
 from routers.onboarding_routes import router as onboarding_router
 from routers.state_standards_routes import router as state_standards_router
 from routers.year_routes import router as year_router
+from routers.academic_year_routes import router as academic_year_router
+from routers.holiday_routes import router as holiday_router
 from routers.blackout_routes import router as blackout_router
 from routers.ai_routes import router as ai_router
 from routers.attendance_routes import router as attendance_router
@@ -208,6 +210,8 @@ app.include_router(google_calendar_router)
 app.include_router(onboarding_router)
 app.include_router(state_standards_router)
 app.include_router(year_router)
+app.include_router(academic_year_router)
+app.include_router(holiday_router)
 app.include_router(blackout_router)
 app.include_router(ai_router)
 app.include_router(attendance_router)

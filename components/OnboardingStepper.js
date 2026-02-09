@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,1479 +7,1380 @@ import {
   ScrollView,
   Alert,
   StyleSheet,
-  Switch,
-  Modal,
-  FlatList,
+  Platform,
+  ActivityIndicator,
+  Image,
+  Animated,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { ChevronRight, ChevronLeft, ChevronDown, ChevronUp, UserPlus, BookOpen, Check } from 'lucide-react';
 
-export default function OnboardingStepper({ onComplete }) {
-  const { signUp, signIn, user } = useAuth();
+const GRADES = ['Pre-K','K','1','2','3','4','5','6','7','8','9','10','11','12'];
+const SUBJECT_GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const STATES = ['None','AL','AK','AZ','AR','CA','CO','CT','DC','DE','FL','GA','HI','IA','ID','IL','IN','KS','KY','LA','MA','MD','ME','MI','MN','MO','MS','MT','NC','ND','NE','NH','NJ','NM','NV','NY','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VA','VT','WA','WI','WV','WY'];
+const INTERESTS = ['STEM','Reading','Writing','Arts','Music','Sports','Outdoors','Languages','History','Coding','Woodworking','Other'];
+const DIAGNOSES = [
+  'Attention regulation (e.g., focus shifts quickly)',
+  'Reading / decoding challenges',
+  'Math / number sense challenges',
+  'Writing or fine-motor challenges',
+  'Auditory processing challenges (e.g., following spoken directions)',
+  'Visual processing challenges (e.g., interpreting visuals or layouts)',
+  'Neurodiverse',
+  'Gifted',
+  'Other'
+];
+const LEARNING_MODALITIES = ['Visual', 'Hands-on', 'Verbal', 'Repetition-based', 'Short bursts (Pomodoro-like)'];
+const SUPPORT_NEEDS = [
+  'Frequent breaks',
+  'Step-by-step instructions',
+  'Visual supports',
+  'Chunked tasks',
+  'Allow extra processing time',
+  'Quiet workspace',
+  'Movement breaks',
+  'Multi-sensory instruction',
+  'One-on-one guidance'
+];
+const EXECUTIVE_FUNCTION = [
+  'Difficulty with transitions',
+  'Difficulty sustaining attention',
+  'Difficulty planning tasks'
+];
+
+export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [currentStep, setCurrentStep] = useState(startAtStep);
+  const bounceAnim = useRef(new Animated.Value(0)).current;
 
-  // Modal states
-  const [showGradePicker, setShowGradePicker] = useState(false);
-  const [showStandardsPicker, setShowStandardsPicker] = useState(false);
-  const [showLearningStylePicker, setShowLearningStylePicker] = useState(false);
-  const [showPlatformPicker, setShowPlatformPicker] = useState(false);
-  const [showSubjectPicker, setShowSubjectPicker] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [currentDateField, setCurrentDateField] = useState('');
+  // Step 1: Parent Name
+  const [parentName, setParentName] = useState('');
 
-  // Family Information
-  const [familyCity, setFamilyCity] = useState('');
-  const [familyState, setFamilyState] = useState('');
-  const [familyCountry, setFamilyCountry] = useState('');
-
-  // Children Information
+  // Step 2: Children
   const [children, setChildren] = useState([]);
   const [childName, setChildName] = useState('');
   const [childAge, setChildAge] = useState('');
   const [childGrade, setChildGrade] = useState('');
-  const [childStandards, setChildStandards] = useState('');
-  const [childInterests, setChildInterests] = useState('');
-  const [childStyle, setChildStyle] = useState('');
-  const [childCollegeBound, setChildCollegeBound] = useState(false);
-  
-  // Academic Year Information
-  const [startDate, setStartDate] = useState('');
-  const [totalDays, setTotalDays] = useState('');
-  const [totalHours, setTotalHours] = useState('');
-  const [hoursPerDay, setHoursPerDay] = useState('');
-  const [teachingDays, setTeachingDays] = useState([1, 2, 3, 4, 5]); // Mon-Fri default
-  
-  // Subjects Information
+  const [childStandardsState, setChildStandardsState] = useState('None');
+  const [childInterests, setChildInterests] = useState([]);
+  const [childDiagnoses, setChildDiagnoses] = useState([]);
+  const [childLearningModalities, setChildLearningModalities] = useState([]);
+  const [childSupportNeeds, setChildSupportNeeds] = useState([]);
+  const [childExecutiveFunction, setChildExecutiveFunction] = useState([]);
+  const [childSupportNotes, setChildSupportNotes] = useState('');
+  const [childOtherDiagnosis, setChildOtherDiagnosis] = useState('');
+  const [childAvatar, setChildAvatar] = useState('prof1');
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
+
+  // Step 3: Subjects (optional)
   const [subjects, setSubjects] = useState([]);
   const [subjectName, setSubjectName] = useState('');
+  const [subjectSummary, setSubjectSummary] = useState('');
   const [subjectGrade, setSubjectGrade] = useState('');
+  const [subjectCredits, setSubjectCredits] = useState('');
   const [subjectNotes, setSubjectNotes] = useState('');
-  const [selectedChildForSubject, setSelectedChildForSubject] = useState('0');
-  
-  // Activities Information
-  const [activities, setActivities] = useState([]);
-  const [activityName, setActivityName] = useState('');
-  const [activityPlatform, setActivityPlatform] = useState('');
-  const [activityLink, setActivityLink] = useState('');
-  const [activityStartDate, setActivityStartDate] = useState('');
-  const [activityEndDate, setActivityEndDate] = useState('');
-  const [activityStudyDays, setActivityStudyDays] = useState('');
-  const [activityTravelMinutes, setActivityTravelMinutes] = useState('');
-  const [activityClassSchedule, setActivityClassSchedule] = useState('');
-  const [activityInitialPlan, setActivityInitialPlan] = useState('');
-  const [selectedChildrenForActivity, setSelectedChildrenForActivity] = useState([]);
-  const [selectedSubjectsForActivity, setSelectedSubjectsForActivity] = useState([]);
-  
-  // Account Information
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [selectedChildIndexForSubject, setSelectedChildIndexForSubject] = useState(null);
+  const [isFieldFocused, setIsFieldFocused] = useState(false);
 
-  // Predefined options
-  const gradeOptions = [
-    'Pre-K', 'Kindergarten', '1st Grade', '2nd Grade', '3rd Grade', '4th Grade', 
-    '5th Grade', '6th Grade', '7th Grade', '8th Grade', '9th Grade', '10th Grade', 
-    '11th Grade', '12th Grade', 'College Freshman', 'College Sophomore', 
-    'College Junior', 'College Senior'
-  ];
-
-  const standardsOptions = [
-    'Common Core State Standards',
-    'Next Generation Science Standards',
-    'State Standards',
-    'International Baccalaureate',
-    'Montessori',
-    'Waldorf',
-    'Classical Education',
-    'Charlotte Mason',
-    'Unschooling',
-    'Other'
-  ];
-
-  const learningStyleOptions = [
-    'Visual Learner',
-    'Auditory Learner',
-    'Kinesthetic Learner',
-    'Reading/Writing Learner',
-    'Social Learner',
-    'Solitary Learner',
-    'Logical Learner',
-    'Naturalistic Learner'
-  ];
-
-  const platformOptions = [
-    'Khan Academy',
-    'Outschool',
-    'Local School',
-    'Homeschool Co-op',
-    'Online Private School',
-    'Tutoring Center',
-    'Library Program',
-    'Community Center',
-    'Sports/Activities',
-    'Music Lessons',
-    'Art Classes',
-    'Science Lab',
-    'Math Center',
-    'Language School',
-    'Other'
-  ];
-
-  const subjectOptions = [
-    'Mathematics',
-    'Science',
-    'English/Language Arts',
-    'History/Social Studies',
-    'Foreign Language',
-    'Art',
-    'Music',
-    'Physical Education',
-    'Computer Science',
-    'Literature',
-    'Writing',
-    'Reading',
-    'Grammar',
-    'Spelling',
-    'Geography',
-    'Civics',
-    'Economics',
-    'Biology',
-    'Chemistry',
-    'Physics',
-    'Algebra',
-    'Geometry',
-    'Calculus',
-    'Statistics',
-    'Other'
-  ];
-
-  const interestOptions = [
-    'Mathematics', 'Science', 'Reading', 'Writing', 'Art', 'Music', 'Sports',
-    'Technology', 'Cooking', 'Gardening', 'Animals', 'Space', 'History',
-    'Geography', 'Languages', 'Dance', 'Theater', 'Photography', 'Coding',
-    'Engineering', 'Medicine', 'Business', 'Law', 'Teaching', 'Other'
-  ];
-
-  // Helper functions
-  const openDatePicker = (field) => {
-    setCurrentDateField(field);
-    setShowDatePicker(true);
+  const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8'];
+  const avatarSources = {
+    prof1: require('../assets/prof1.png'),
+    prof2: require('../assets/prof2.png'),
+    prof3: require('../assets/prof3.png'),
+    prof4: require('../assets/prof4.png'),
+    prof5: require('../assets/prof5.png'),
+    prof6: require('../assets/prof6.png'),
+    prof7: require('../assets/prof7.png'),
+    prof8: require('../assets/prof8.png'),
   };
 
-  const selectDate = (date) => {
-    const formattedDate = date.toISOString().split('T')[0];
-    switch (currentDateField) {
-      case 'startDate':
-        setStartDate(formattedDate);
-        break;
-      case 'activityStartDate':
-        setActivityStartDate(formattedDate);
-        break;
-      case 'activityEndDate':
-        setActivityEndDate(formattedDate);
-        break;
-    }
-    setShowDatePicker(false);
-  };
-
-  const getCurrentDate = () => {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-  };
-
-  const generateDateOptions = () => {
-    const options = [];
-    const today = new Date();
-    const currentYear = today.getFullYear();
-    
-    // Generate dates for current and next 2 years
-    for (let year = currentYear; year <= currentYear + 2; year++) {
-      for (let month = 1; month <= 12; month++) {
-        for (let day = 1; day <= 28; day++) {
-          const date = new Date(year, month - 1, day);
-          if (date >= today) {
-            options.push({
-              label: date.toLocaleDateString('en-US', { 
-                weekday: 'short', 
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric' 
-              }),
-              value: date.toISOString().split('T')[0]
-            });
-          }
-        }
-      }
-    }
-    return options;
-  };
-
-  const renderPickerModal = (visible, onClose, title, options, onSelect, currentValue) => (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={styles.closeButton}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={options}
-            keyExtractor={(item, index) => index.toString()}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[
-                  styles.optionItem,
-                  currentValue === item && styles.selectedOptionItem
-                ]}
-                onPress={() => {
-                  onSelect(item);
-                  onClose();
-                }}
-              >
-                <Text style={[
-                  styles.optionText,
-                  currentValue === item && styles.selectedOptionText
-                ]}>
-                  {typeof item === 'string' ? item : item.label}
-                </Text>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-
-  const renderDatePickerModal = () => (
-    <Modal
-      visible={showDatePicker}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowDatePicker(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Date</Text>
-            <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-              <Text style={styles.closeButton}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={generateDateOptions()}
-            keyExtractor={(item, index) => index.toString()}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.optionItem}
-                onPress={() => selectDate(new Date(item.value))}
-              >
-                <Text style={styles.optionText}>{item.label}</Text>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // Validation functions with specific constraints
-  const validateEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  const validatePassword = (password) => {
-    return password.length >= 6 && password.length <= 50;
-  };
-
-  const validateAge = (age) => {
-    const numAge = parseInt(age);
-    return !isNaN(numAge) && numAge >= 0 && numAge <= 25;
-  };
-
-  const validateNumeric = (value, min = 0, max = 999) => {
-    const num = parseFloat(value);
-    return !isNaN(num) && num >= min && num <= max;
-  };
-
-  const validateDate = (dateString) => {
-    // Must be in YYYY-MM-DD format
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(dateString)) return false;
-    
-    const date = new Date(dateString);
-    return date instanceof Date && !isNaN(date);
-  };
-
-  const validateDateRange = (startDate, endDate) => {
-    if (!startDate || !endDate) return true; // Both optional
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    return start < end;
-  };
-
-  const validateURL = (url) => {
-    if (!url) return true; // Optional
-    try {
-      new URL(url);
-      return true;
-    } catch {
+  const validateStep1 = () => {
+    if (!parentName.trim()) {
+      Alert.alert('Required', 'Please enter your name');
       return false;
     }
+    return true;
+  };
+
+  const canAddChild = () => {
+    return childName.trim() && 
+           childAge.trim() && 
+           childStandardsState && 
+           childAvatar;
+  };
+
+  const validateStep2 = () => {
+    if (children.length === 0) {
+      Alert.alert('Required', 'Please add at least one child');
+      return false;
+    }
+    if (children.length > 5) {
+      Alert.alert('Limit Reached', 'You can add up to 5 children during onboarding. To add more, please contact us after completing setup.');
+      return false;
+    }
+    return true;
+  };
+
+  const validateStep3 = () => {
+    // Subjects are optional, so this always returns true
+    return true;
   };
 
   const validateChild = () => {
     if (!childName.trim()) {
-      Alert.alert('Validation Error', 'Child name is required');
+      Alert.alert('Required', 'Please enter the child\'s name');
       return false;
     }
     if (!childAge.trim()) {
-      Alert.alert('Validation Error', 'Child age is required');
+      Alert.alert('Required', 'Please enter the child\'s age');
       return false;
     }
-    if (!validateAge(childAge)) {
-      Alert.alert('Validation Error', 'Age must be between 0 and 25');
+    const age = parseInt(childAge);
+    if (isNaN(age) || age < 0 || age > 25) {
+      Alert.alert('Invalid Age', 'Age must be between 0 and 25');
       return false;
     }
-    return true;
-  };
-
-  const validateAcademicYear = () => {
-    if (!startDate.trim()) {
-      Alert.alert('Validation Error', 'Start date is required');
+    if (!childStandardsState) {
+      Alert.alert('Required', 'Please select a state for standards');
       return false;
     }
-    if (!validateDate(startDate)) {
-      Alert.alert('Validation Error', 'Start date must be in YYYY-MM-DD format (e.g., 2024-09-01)');
-      return false;
-    }
-    if (!totalDays.trim()) {
-      Alert.alert('Validation Error', 'Total days is required');
-      return false;
-    }
-    if (!validateNumeric(totalDays, 1, 365)) {
-      Alert.alert('Validation Error', 'Total days must be between 1 and 365');
-      return false;
-    }
-    if (!totalHours.trim()) {
-      Alert.alert('Validation Error', 'Total hours is required');
-      return false;
-    }
-    if (!validateNumeric(totalHours, 1, 1000)) {
-      Alert.alert('Validation Error', 'Total hours must be between 1 and 1000');
-      return false;
-    }
-    if (!hoursPerDay.trim()) {
-      Alert.alert('Validation Error', 'Hours per day is required');
-      return false;
-    }
-    if (!validateNumeric(hoursPerDay, 0.1, 12)) {
-      Alert.alert('Validation Error', 'Hours per day must be between 0.1 and 12');
+    if (!childAvatar) {
+      Alert.alert('Required', 'Please choose an avatar');
       return false;
     }
     return true;
   };
 
-  const validateSubject = () => {
-    if (!subjectName.trim()) {
-      Alert.alert('Validation Error', 'Subject name is required');
-      return false;
-    }
-    if (children.length === 0) {
-      Alert.alert('Validation Error', 'Please add at least one child first');
-      return false;
-    }
-    return true;
-  };
-
-  const validateActivity = () => {
-    if (!activityName.trim()) {
-      Alert.alert('Validation Error', 'Activity name is required');
-      return false;
-    }
-    if (activityStartDate && !validateDate(activityStartDate)) {
-      Alert.alert('Validation Error', 'Start date must be in YYYY-MM-DD format (e.g., 2024-09-01)');
-      return false;
-    }
-    if (activityEndDate && !validateDate(activityEndDate)) {
-      Alert.alert('Validation Error', 'End date must be in YYYY-MM-DD format (e.g., 2024-06-15)');
-      return false;
-    }
-    if (!validateDateRange(activityStartDate, activityEndDate)) {
-      Alert.alert('Validation Error', 'End date must be after start date');
-      return false;
-    }
-    if (activityLink && !validateURL(activityLink)) {
-      Alert.alert('Validation Error', 'Please enter a valid URL (e.g., https://example.com)');
-      return false;
-    }
-    if (activityTravelMinutes && !validateNumeric(activityTravelMinutes, 0, 180)) {
-      Alert.alert('Validation Error', 'Travel minutes must be between 0 and 180');
-      return false;
-    }
-    return true;
-  };
-
-  const validateLogin = () => {
-    if (!email.trim()) {
-      Alert.alert('Validation Error', 'Email is required');
-      return false;
-    }
-    if (!validateEmail(email)) {
-      Alert.alert('Validation Error', 'Please enter a valid email address (e.g., user@example.com)');
-      return false;
-    }
-    if (!password.trim()) {
-      Alert.alert('Validation Error', 'Password is required');
-      return false;
-    }
-    if (!validatePassword(password)) {
-      Alert.alert('Validation Error', 'Password must be between 6 and 50 characters long');
-      return false;
-    }
-    return true;
-  };
-
-  const validateAll = () => {
-    if (children.length === 0) {
-      Alert.alert('Validation Error', 'Please add at least one child');
-      return false;
-    }
-    if (!validateAcademicYear()) {
-      return false;
-    }
-    if (subjects.length === 0) {
-      Alert.alert('Validation Error', 'Please add at least one subject');
-      return false;
-    }
-    if (!validateLogin()) {
-      return false;
-    }
-    return true;
+  const toggleFromList = (value, list, setList) => {
+    if (list.includes(value)) setList(list.filter(v => v !== value));
+    else setList([...list, value]);
   };
 
   const handleAddChild = () => {
     if (!validateChild()) return;
+    if (children.length >= 5) {
+      Alert.alert('Limit Reached', 'You can add up to 5 children during onboarding. To add more children, please contact us at support@learnadoodle.com after completing setup.');
+      return;
+    }
+    
+    // Handle "Other" diagnosis
+    let finalDiagnoses = [...childDiagnoses];
+    if (childDiagnoses.includes('Other') && childOtherDiagnosis.trim()) {
+      finalDiagnoses = childDiagnoses.filter(d => d !== 'Other');
+      finalDiagnoses.push(`Other: ${childOtherDiagnosis.trim()}`);
+    }
     
     setChildren([...children, {
-      name: childName,
+      first_name: childName.trim(),
       age: parseInt(childAge),
-      grade: childGrade,
-      standards: childStandards,
-      interests: childInterests,
-      style: childStyle,
-      collegeBound: childCollegeBound
+      grade_label: childGrade || null,
+      avatar_url: childAvatar,
+      standards_state: childStandardsState === 'None' ? null : childStandardsState,
+      interests: childInterests.length > 0 ? childInterests : null,
+      diagnoses: finalDiagnoses.length > 0 ? finalDiagnoses : null,
+      learning_modalities: childLearningModalities.length > 0 ? childLearningModalities : null,
+      support_needs: childSupportNeeds.length > 0 ? childSupportNeeds : null,
+      executive_function: childExecutiveFunction.length > 0 ? childExecutiveFunction : null,
+      support_notes: childSupportNotes.trim() || null,
     }]);
     
-    // Reset form
+    // Reset form only after successful add
     setChildName('');
     setChildAge('');
     setChildGrade('');
-    setChildStandards('');
-    setChildInterests('');
-    setChildStyle('');
-    setChildCollegeBound(false);
+    setChildStandardsState('None');
+    setChildInterests([]);
+    setChildDiagnoses([]);
+    setChildLearningModalities([]);
+    setChildSupportNeeds([]);
+    setChildExecutiveFunction([]);
+    setChildSupportNotes('');
+    setChildOtherDiagnosis('');
+    setChildAvatar('prof1');
+    setShowOptionalFields(false);
   };
+
+  // Animation for dialog box on step 3
+  useEffect(() => {
+    if (currentStep === 3) {
+      const animation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(bounceAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(bounceAnim, {
+            toValue: 0,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      animation.start();
+      return () => animation.stop();
+    } else {
+      bounceAnim.setValue(0);
+    }
+  }, [currentStep, bounceAnim]);
 
   const handleRemoveChild = (index) => {
     setChildren(children.filter((_, i) => i !== index));
   };
 
   const handleAddSubject = () => {
-    if (!validateSubject()) return;
+    if (!subjectName.trim()) {
+      Alert.alert('Required', 'Please enter a subject name');
+      return;
+    }
+    if (selectedChildIndexForSubject === null) {
+      Alert.alert('Required', 'Please select a child for this subject');
+      return;
+    }
     
     setSubjects([...subjects, {
-      name: subjectName,
-      grade: subjectGrade,
-      notes: subjectNotes,
-      childId: selectedChildForSubject
+      name: subjectName.trim(),
+      summary: subjectSummary.trim() || null,
+      grade: subjectGrade || null,
+      credits: subjectCredits ? parseFloat(subjectCredits) : null,
+      notes: subjectNotes.trim() || null,
+      childIndex: selectedChildIndexForSubject,
     }]);
     
     // Reset form
     setSubjectName('');
+    setSubjectSummary('');
     setSubjectGrade('');
+    setSubjectCredits('');
     setSubjectNotes('');
-    setSelectedChildForSubject('0');
+    setSelectedChildIndexForSubject(null);
   };
 
   const handleRemoveSubject = (index) => {
     setSubjects(subjects.filter((_, i) => i !== index));
   };
 
-  const handleAddActivity = () => {
-    if (!validateActivity()) return;
-    
-    setActivities([...activities, {
-      name: activityName,
-      platform: activityPlatform,
-      link: activityLink,
-      startDate: activityStartDate,
-      endDate: activityEndDate,
-      studyDays: activityStudyDays,
-      travelMinutes: activityTravelMinutes,
-      classSchedule: activityClassSchedule,
-      initialPlan: activityInitialPlan,
-      childIds: selectedChildrenForActivity,
-      subjectIds: selectedSubjectsForActivity
-    }]);
-    
-    // Reset form
-    setActivityName('');
-    setActivityPlatform('');
-    setActivityLink('');
-    setActivityStartDate('');
-    setActivityEndDate('');
-    setActivityStudyDays('');
-    setActivityTravelMinutes('');
-    setActivityClassSchedule('');
-    setActivityInitialPlan('');
-    setSelectedChildrenForActivity([]);
-    setSelectedSubjectsForActivity([]);
-  };
-
-  const handleRemoveActivity = (index) => {
-    setActivities(activities.filter((_, i) => i !== index));
-  };
-
-  const toggleTeachingDay = (day) => {
-    if (teachingDays.includes(day)) {
-      setTeachingDays(teachingDays.filter(d => d !== day));
-    } else {
-      setTeachingDays([...teachingDays, day]);
+  const handleNext = async () => {
+    if (currentStep === 1) {
+      if (!validateStep1()) return;
+      setCurrentStep(2);
+    } else if (currentStep === 2) {
+      if (!validateStep2()) return;
+      setCurrentStep(3);
     }
   };
 
-  const handleCompleteOnboarding = async () => {
-    if (!validateAll()) return;
-    
-    setError(null);
+  const handleSkipSubjects = async () => {
+    await handleComplete();
+  };
+
+  const handleComplete = async () => {
     setLoading(true);
+    setError(null);
     
     try {
-      let result;
-      let userId = user?.id;
-      
-      if (!user) {
-        // Try sign in first, then sign up if not found
-        result = await signIn(email, password);
-        if (result?.error) {
-          // If sign in fails, try sign up
-          result = await signUp(email, password);
-          if (result?.error) {
-            const errorMessage = result.error.message || 'Sign up failed';
-            setError(errorMessage);
-            Alert.alert('Sign Up Error', errorMessage);
-            setLoading(false);
-            return;
-          }
-        }
-        userId = result?.user?.id;
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) {
+        throw new Error('User not authenticated');
       }
 
-      if (userId) {
-        await handleOnboardingData(userId);
-        onComplete();
+      // 1. Get or create family
+      let familyId;
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', authUser.id)
+        .single();
+
+      if (profile?.family_id) {
+        familyId = profile.family_id;
+      } else {
+        // Create family
+        const { data: family, error: familyError } = await supabase
+          .from('family')
+          .insert({})
+          .select('id')
+          .single();
+        
+        if (familyError) throw familyError;
+        familyId = family.id;
+
+        // Update profile with family_id and parent name
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ 
+            family_id: familyId,
+            full_name: parentName.trim()
+          })
+          .eq('id', authUser.id);
+        
+        if (profileError) throw profileError;
       }
+      
+      // Update existing profile with parent name if not already set
+      if (parentName.trim() && !profile?.full_name) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ full_name: parentName.trim() })
+          .eq('id', authUser.id);
+        
+        if (profileError) console.error('Error updating parent name:', profileError);
+      }
+
+          // 2. Insert children
+          const childIds = [];
+          for (const child of children) {
+            const { data: childData, error: childError } = await supabase
+              .from('children')
+              .insert({
+                family_id: familyId,
+                first_name: child.first_name,
+                age: child.age,
+                grade: child.grade_label || null,
+                avatar: child.avatar_url || null,
+                standards: child.standards_state && child.standards_state !== 'None' ? child.standards_state : null,
+                interests: child.interests || null,
+              })
+              .select('id')
+              .single();
+            
+            if (childError) throw childError;
+            const childId = childData.id;
+            childIds.push(childId);
+
+            // Create or update support profile if any support fields are provided
+            if (child.diagnoses || child.learning_modalities || child.support_needs || child.executive_function || child.support_notes) {
+              const supportProfileData = {
+                child_id: childId,
+              };
+              if (child.diagnoses) supportProfileData.diagnoses = child.diagnoses;
+              if (child.learning_modalities) supportProfileData.learning_modalities = child.learning_modalities;
+              if (child.support_needs) supportProfileData.support_needs = child.support_needs;
+              if (child.executive_function) supportProfileData.executive_function = child.executive_function;
+              if (child.support_notes) supportProfileData.notes = child.support_notes;
+
+              const { error: profileError } = await supabase
+                .from('child_support_profiles')
+                .upsert(supportProfileData, { onConflict: 'child_id' });
+              
+              if (profileError) {
+                console.error('Error creating support profile:', profileError);
+                // Don't throw - child was created successfully, profile is optional
+              }
+            }
+          }
+
+      // 3. Insert subjects (if any)
+      if (subjects.length > 0) {
+        for (const subject of subjects) {
+          const childIndex = subject.childIndex;
+          if (childIndex >= 0 && childIndex < childIds.length) {
+            const { data: subjectData, error: subjectError } = await supabase
+              .from('subject')
+              .insert({
+                family_id: familyId,
+                name: subject.name,
+                summary: subject.summary || null,
+                grade: subject.grade || null,
+                credits: subject.credits || null,
+                notes: subject.notes || null,
+                child_id: childIds[childIndex],
+              })
+              .select('id')
+              .single();
+            
+            if (subjectError) throw subjectError;
+          }
+        }
+      }
+
+      // 4. Mark onboarding as complete
+      const { error: onboardingError } = await supabase
+        .from('family')
+        .update({ 
+          has_completed_onboarding: true,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', familyId);
+      
+      if (onboardingError) {
+        console.error('Error marking onboarding complete:', onboardingError);
+        // Don't throw - onboarding data is saved, just the flag update failed
+      }
+
+      onComplete();
     } catch (err) {
-      const errorMessage = err.message || 'Error saving onboarding data';
-      setError(errorMessage);
-      Alert.alert('Error', errorMessage);
+      setError(err.message || 'Failed to complete onboarding');
+      Alert.alert('Error', err.message || 'Failed to complete onboarding');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOnboardingData = async (userId) => {
-    // 1. Create family
-      const { data: family, error: familyError } = await supabase
-        .from('family')
-      .insert({
-        city: familyCity || 'Unknown',
-        state: familyState || 'Unknown',
-        country: familyCountry || 'Unknown'
-      })
-        .select('id')
-        .single();
-      if (familyError) throw familyError;
-
-    // 2. Update profile with family_id
-      const { error: profileError } = await supabase
-        .from('profiles')
-      .update({ family_id: family.id })
-        .eq('id', userId);
-      if (profileError) throw profileError;
-
-      // 3. Insert children
-      const childIds = [];
-      for (const child of children) {
-        const { data: childData, error: childError } = await supabase
-          .from('children')
-          .insert({
-          family_id: family.id,
-            first_name: child.first_name,
-          age: child.age,
-            grade: child.grade,
-            standards: child.standards,
-            interests: child.interests,
-            style: child.style,
-          college_bound: child.collegeBound ? 'yes' : 'no'
-          })
-          .select('id')
-          .single();
-        if (childError) throw childError;
-        childIds.push(childData.id);
-      }
-
-    // 4. Calculate end date
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + parseInt(totalDays) - 1);
+  const renderStep1 = () => (
+    <View style={styles.stepContent}>
+      <View style={styles.step1Header}>
+        <Image 
+          source={require('../assets/poodle-icon.png')} 
+          style={styles.poodleImage}
+          resizeMode="contain"
+        />
+        <View style={styles.step1TextContainer}>
+          <Text style={styles.stepTitle}>
+            Hello! I'm Doodle.{'\n'}What's your name?
+          </Text>
+          <Text style={styles.privacyNote}>
+            I take data privacy seriously. We securely store and never share your data.
+          </Text>
+        </View>
+      </View>
       
-    // 5. Insert family_years
-    const { data: familyYear, error: familyYearError } = await supabase
-      .from('family_years')
-      .insert({
-        family_id: family.id,
-        start_date: startDate,
-        end_date: endDate.toISOString().split('T')[0],
-        total_days: parseInt(totalDays),
-        total_hours: parseInt(totalHours),
-        hours_per_day: parseFloat(hoursPerDay),
-        is_current: true
-      })
-      .select('id')
-      .single();
-    if (familyYearError) throw familyYearError;
+      <View style={styles.formGroup}>
+        <TextInput
+          style={styles.inputPill}
+          placeholder="e.g., Mom, Dad, or whatever else you want us to greet you as"
+          placeholderTextColor="#9ca3af"
+          value={parentName}
+          onChangeText={setParentName}
+          autoCapitalize="words"
+          autoCorrect={false}
+        />
+      </View>
+    </View>
+  );
 
-    // 8. Define teaching pattern via rules (handled later) – skip legacy family_teaching_days
+  const renderStep2 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Add Your Children</Text>
+      <Text style={styles.stepSubtitle}>Add at least one child to get started {children.length > 0 && `(${children.length}/5)`}</Text>
 
-    // 9. Refresh availability cache for initial window (no bulk calendar_days inserts)
-      const { error: refreshErr } = await supabase.rpc('refresh_calendar_days_cache', {
-        p_family_id: family.id,
-        p_from_date: startDate,
-        p_to_date: endDate.toISOString().split('T')[0],
-      });
-      if (refreshErr) 
+      {children.length >= 5 && (
+        <View style={styles.warningBox}>
+          <Text style={styles.warningText}>
+            You've reached the limit of 5 children for onboarding. To add more children, please contact us at support@learnadoodle.com after completing setup.
+          </Text>
+        </View>
+      )}
 
-    // 10. Insert subjects
-      for (const subject of subjects) {
-      const childIndex = parseInt(subject.childId);
-      const child = children[childIndex];
-      
-      if (!child) {
-        continue;
-      }
-      
-        const { error: subjectError } = await supabase
-          .from('subject')
-          .insert({
-          family_id: family.id,
-          student_id: childIds[childIndex],
-            name: subject.name,
-            grade: subject.grade,
-            notes: subject.notes,
-            family_year_id: familyYear.id
-          });
-        if (subjectError) throw subjectError;
-      }
-
-    // 11. Insert activities/courses (subject_track)
-      for (const activity of activities) {
-        const { data: activityData, error: activityError } = await supabase
-          .from('subject_track')
-          .insert({
-          family_id: family.id,
-            name: activity.name,
-            platform: activity.platform,
-            link: activity.link,
-          start_date: activity.startDate || null,
-          end_date: activity.endDate || null,
-            study_days: activity.studyDays,
-            travel_minutes: parseInt(activity.travelMinutes) || 0,
-            class_schedule: activity.classSchedule,
-            initial_plan: activity.initialPlan,
-          status: 'active',
-          family_year_id: familyYear.id
-          })
-          .select('id')
-          .single();
-        if (activityError) throw activityError;
-
-      // Link subjects to this activity
-      if (activity.subjectIds && activity.subjectIds.length > 0) {
-        for (const subjectIndex of activity.subjectIds) {
-          const subject = subjects[subjectIndex];
-          if (subject) {
-            const { data: subjectData, error: subjectLookupError } = await supabase
-              .from('subject')
-              .select('id')
-              .eq('name', subject.name)
-              .eq('family_id', family.id)
-              .single();
-            if (subjectData && !subjectLookupError) {
-            const { error: trackError } = await supabase
-              .from('track')
-              .insert({
-                subject_track_id: activityData.id,
-                  subject_id: subjectData.id,
-                  family_id: family.id
-              });
-            if (trackError) throw trackError;
-          }
-        }
-      }
-    }
-    }
-  };
-
-    return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Complete Your Family Setup</Text>
-        <Text style={styles.subtitle}>Fill out all the information below to get started</Text>
-
-        {/* Family Information */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Family Information</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="City (optional)"
-            value={familyCity}
-            onChangeText={setFamilyCity}
-            maxLength={50}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="State/Province (optional)"
-            value={familyState}
-            onChangeText={setFamilyState}
-            maxLength={50}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Country (optional)"
-            value={familyCountry}
-            onChangeText={setFamilyCountry}
-            maxLength={50}
-          />
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>
+          Name<Text style={styles.requiredAsterisk}> *</Text>
+        </Text>
+        <TextInput
+          style={styles.inputPill}
+          placeholder="Child's name"
+          placeholderTextColor="#9ca3af"
+          value={childName}
+          onChangeText={setChildName}
+          autoCapitalize="words"
+        />
       </View>
 
-        {/* Children Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Children</Text>
-          
-          {/* Add Child Form */}
-          <View style={styles.addForm}>
-          <TextInput
-            style={styles.input}
-              placeholder="Child's Name (max 50 characters)"
-            value={childName}
-            onChangeText={setChildName}
-              maxLength={50}
-              autoCapitalize="words"
-          />
-          <TextInput
-            style={styles.input}
-              placeholder="Age (0-25)"
-            value={childAge}
-            onChangeText={setChildAge}
-            keyboardType="numeric"
-              maxLength={2}
-          />
-            
-            {/* Grade Picker */}
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => setShowGradePicker(true)}
-            >
-              <Text style={styles.pickerButtonText}>
-                {childGrade || 'Select Grade (optional)'}
-              </Text>
-              <Text style={styles.pickerArrow}>▼</Text>
-            </TouchableOpacity>
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>
+          Age<Text style={styles.requiredAsterisk}> *</Text>
+        </Text>
+        <TextInput
+          style={styles.inputPill}
+          placeholder="Age"
+          placeholderTextColor="#9ca3af"
+          value={childAge}
+          onChangeText={setChildAge}
+          keyboardType="numeric"
+          maxLength={2}
+        />
+      </View>
 
-            {/* Standards Picker */}
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>
+          Follow State Standards?<Text style={styles.requiredAsterisk}> *</Text>
+        </Text>
+        <View style={styles.chipsWrap}>
+          {STATES.map(s => (
             <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => setShowStandardsPicker(true)}
+              key={s}
+              style={[styles.chip, childStandardsState === s && styles.chipSelected]}
+              onPress={() => setChildStandardsState(s)}
             >
-              <Text style={styles.pickerButtonText}>
-                {childStandards || 'Select Standards (optional)'}
-              </Text>
-              <Text style={styles.pickerArrow}>▼</Text>
+              <Text style={[styles.chipText, childStandardsState === s && styles.chipTextSelected]}>{s}</Text>
             </TouchableOpacity>
+          ))}
+        </View>
+      </View>
 
-          <TextInput
-            style={styles.input}
-              placeholder="Interests (e.g., math, art, science) - max 200 chars"
-            value={childInterests}
-            onChangeText={setChildInterests}
-              maxLength={200}
-            />
-
-            {/* Learning Style Picker */}
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>
+          Choose Avatar<Text style={styles.requiredAsterisk}> *</Text>
+        </Text>
+        <View style={styles.avatarsWrap}>
+          {AVATAR_KEYS.map(key => (
             <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => setShowLearningStylePicker(true)}
+              key={key}
+              onPress={() => setChildAvatar(key)}
+              style={[styles.avatarCell, childAvatar === key && styles.avatarCellSelected]}
             >
-              <Text style={styles.pickerButtonText}>
-                {childStyle || 'Select Learning Style (optional)'}
-              </Text>
-              <Text style={styles.pickerArrow}>▼</Text>
+              <Image source={avatarSources[key]} style={styles.avatarImg} resizeMode="contain" />
             </TouchableOpacity>
-          
-          <View style={styles.switchContainer}>
-              <Text>College Bound</Text>
-            <Switch
-              value={childCollegeBound}
-              onValueChange={setChildCollegeBound}
-            />
+          ))}
+        </View>
+      </View>
+
+      {/* Optional Fields Accordion */}
+      <View style={styles.accordionContainer}>
+        <TouchableOpacity
+          style={styles.accordionHeader}
+          onPress={() => setShowOptionalFields(!showOptionalFields)}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <View style={styles.accordionTitleContainer}>
+            <Text style={styles.accordionTitle}>Optional</Text>
+            {showOptionalFields ? (
+              <ChevronUp size={20} color="#6b7280" />
+            ) : (
+              <ChevronDown size={20} color="#6b7280" />
+            )}
           </View>
-            <TouchableOpacity style={styles.addButton} onPress={handleAddChild}>
-              <Text style={styles.addButtonText}>Add Child</Text>
-          </TouchableOpacity>
-          </View>
+        </TouchableOpacity>
 
-          {/* Children List */}
-          {children.length > 0 && (
-            <View style={styles.listContainer}>
-              <Text style={styles.listTitle}>Children Added:</Text>
-              {children.map((child, idx) => (
-                <View key={idx} style={styles.listItem}>
-                  <Text style={styles.listItemText}>
-                    {child.first_name} (Age: {child.age}) - {child.collegeBound ? 'College Bound' : 'Not College Bound'}
-                </Text>
+        {showOptionalFields && (
+          <View style={styles.accordionContent}>
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Grade (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {GRADES.map(g => (
                   <TouchableOpacity
-                    style={styles.removeButton}
-                    onPress={() => handleRemoveChild(idx)}
+                    key={g}
+                    style={[styles.chip, childGrade === g && styles.chipSelected]}
+                    onPress={() => setChildGrade(g)}
                   >
-                    <Text style={styles.removeButtonText}>Remove</Text>
+                    <Text style={[styles.chipText, childGrade === g && styles.chipTextSelected]}>{g}</Text>
                   </TouchableOpacity>
-                </View>
-              ))}
+                ))}
+              </View>
             </View>
-          )}
-        </View>
 
-        {/* Academic Year Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Academic Year Setup</Text>
-          
-          {/* Start Date Picker */}
-          <TouchableOpacity
-            style={styles.pickerButton}
-            onPress={() => openDatePicker('startDate')}
-          >
-            <Text style={styles.pickerButtonText}>
-              {startDate ? new Date(startDate).toLocaleDateString() : 'Select Start Date'}
-            </Text>
-            <Text style={styles.pickerArrow}>📅</Text>
-          </TouchableOpacity>
-          
-          <TextInput
-            style={styles.input}
-            placeholder="Total Days (1-365)"
-            value={totalDays}
-            onChangeText={setTotalDays}
-            keyboardType="numeric"
-            maxLength={3}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Total Hours (1-1000)"
-            value={totalHours}
-            onChangeText={setTotalHours}
-            keyboardType="numeric"
-            maxLength={4}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Hours Per Day (0.1-12)"
-            value={hoursPerDay}
-            onChangeText={setHoursPerDay}
-            keyboardType="numeric"
-            maxLength={4}
-          />
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Interests (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {INTERESTS.map(it => (
+                  <TouchableOpacity
+                    key={it}
+                    style={[styles.chip, childInterests.includes(it) && styles.chipSelected]}
+                    onPress={() => toggleFromList(it, childInterests, setChildInterests)}
+                  >
+                    <Text style={[styles.chipText, childInterests.includes(it) && styles.chipTextSelected]}>{it}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
 
-          {/* Teaching Days */}
-          <Text style={styles.subsectionTitle}>Teaching Days</Text>
-          <View style={styles.daysContainer}>
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
-          <TouchableOpacity
-                key={index}
-                style={[
-                  styles.dayButton,
-                  teachingDays.includes(index) && styles.selectedDayButton
-                ]}
-                onPress={() => toggleTeachingDay(index)}
-          >
-                <Text style={[
-                  styles.dayButtonText,
-                  teachingDays.includes(index) && styles.selectedDayButtonText
-                ]}>
-                  {day}
-                </Text>
-          </TouchableOpacity>
-            ))}
-        </View>
-        </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Learning & processing needs (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {DIAGNOSES.map(d => (
+                  <TouchableOpacity
+                    key={d}
+                    style={[styles.chip, childDiagnoses.includes(d) && styles.chipSelected]}
+                    onPress={() => toggleFromList(d, childDiagnoses, setChildDiagnoses)}
+                  >
+                    <Text style={[styles.chipText, childDiagnoses.includes(d) && styles.chipTextSelected]}>{d}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {childDiagnoses.includes('Other') && (
+                <TextInput
+                  style={[styles.inputPill, { marginTop: 8 }]}
+                  placeholder="Specify other diagnosis"
+                  placeholderTextColor="#9ca3af"
+                  value={childOtherDiagnosis}
+                  onChangeText={setChildOtherDiagnosis}
+                />
+              )}
+            </View>
 
-        {/* Subjects Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Subjects</Text>
-          
-          {/* Add Subject Form */}
-          <View style={styles.addForm}>
-            {/* Subject Name Picker */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Executive function needs (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {EXECUTIVE_FUNCTION.map(ef => (
+                  <TouchableOpacity
+                    key={ef}
+                    style={[styles.chip, childExecutiveFunction.includes(ef) && styles.chipSelected]}
+                    onPress={() => toggleFromList(ef, childExecutiveFunction, setChildExecutiveFunction)}
+                  >
+                    <Text style={[styles.chipText, childExecutiveFunction.includes(ef) && styles.chipTextSelected]}>{ef}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Preferred learning modalities (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {LEARNING_MODALITIES.map(mod => (
+                  <TouchableOpacity
+                    key={mod}
+                    style={[styles.chip, childLearningModalities.includes(mod) && styles.chipSelected]}
+                    onPress={() => toggleFromList(mod, childLearningModalities, setChildLearningModalities)}
+                  >
+                    <Text style={[styles.chipText, childLearningModalities.includes(mod) && styles.chipTextSelected]}>{mod}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Support needs (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {SUPPORT_NEEDS.map(need => (
+                  <TouchableOpacity
+                    key={need}
+                    style={[styles.chip, childSupportNeeds.includes(need) && styles.chipSelected]}
+                    onPress={() => toggleFromList(need, childSupportNeeds, setChildSupportNeeds)}
+                  >
+                    <Text style={[styles.chipText, childSupportNeeds.includes(need) && styles.chipTextSelected]}>{need}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Additional notes (Optional)</Text>
+              <TextInput
+                style={[styles.inputPill, styles.textArea]}
+                placeholder="Add any additional notes about learning supports..."
+                placeholderTextColor="#9ca3af"
+                value={childSupportNotes}
+                onChangeText={setChildSupportNotes}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </View>
+          </View>
+        )}
+      </View>
+
+      <TouchableOpacity
+        style={[styles.addButton, (!canAddChild() || children.length >= 5) && styles.addButtonDisabled]}
+        onPress={handleAddChild}
+        disabled={!canAddChild() || children.length >= 5}
+      >
+        <UserPlus size={18} color="#ffffff" />
+        <Text style={styles.addButtonText}>Add Child</Text>
+      </TouchableOpacity>
+
+      {children.length > 0 && (
+        <View style={styles.listContainer}>
+          <Text style={styles.listTitle}>Children Added:</Text>
+          {children.map((child, idx) => (
+            <View key={idx} style={styles.listItem}>
+              <Text style={styles.listItemText}>
+                {child.first_name} (Age: {child.age}){child.grade_label && ` - Grade ${child.grade_label}`}
+              </Text>
+              <TouchableOpacity
+                style={styles.removeButton}
+                onPress={() => handleRemoveChild(idx)}
+              >
+                <Text style={styles.removeButtonText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  const renderStep3 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Add Subjects</Text>
+      <Text style={styles.stepSubtitle}>You can add subjects now or skip and add them later</Text>
+
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>
+          Subject Name<Text style={styles.requiredAsterisk}> *</Text>
+        </Text>
+        <TextInput
+          style={styles.inputPill}
+          placeholder="e.g., Math, Reading, Science"
+          placeholderTextColor="#9ca3af"
+          value={subjectName}
+          onChangeText={setSubjectName}
+          onFocus={() => setIsFieldFocused(true)}
+          onBlur={() => setIsFieldFocused(false)}
+        />
+      </View>
+
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>Summary (Optional)</Text>
+        <TextInput
+          style={styles.inputPill}
+          placeholder="Brief description of the subject"
+          placeholderTextColor="#9ca3af"
+          value={subjectSummary}
+          onChangeText={setSubjectSummary}
+          onFocus={() => setIsFieldFocused(true)}
+          onBlur={() => setIsFieldFocused(false)}
+        />
+      </View>
+
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>
+          For Child<Text style={styles.requiredAsterisk}> *</Text>
+        </Text>
+        <View style={styles.chipsWrap}>
+          {children.map((child, idx) => (
             <TouchableOpacity
-              style={styles.pickerButton}
+              key={idx}
+              style={[styles.chip, selectedChildIndexForSubject === idx && styles.chipSelected]}
               onPress={() => {
-                // Show subject picker modal
-                setShowSubjectPicker(true);
+                setSelectedChildIndexForSubject(idx);
+                setIsFieldFocused(true);
               }}
             >
-              <Text style={styles.pickerButtonText}>
-                {subjectName || 'Select Subject'}
+              <Text style={[styles.chipText, selectedChildIndexForSubject === idx && styles.chipTextSelected]}>
+                {child.first_name}
               </Text>
-              <Text style={styles.pickerArrow}>▼</Text>
             </TouchableOpacity>
-
-            {/* Subject Grade Picker */}
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => setShowGradePicker(true)}
-            >
-              <Text style={styles.pickerButtonText}>
-                {subjectGrade || 'Select Grade Level (optional)'}
-              </Text>
-              <Text style={styles.pickerArrow}>▼</Text>
-            </TouchableOpacity>
-
-              <TextInput
-                style={styles.input}
-              placeholder="Notes (e.g., curriculum, resources, goals) - max 500 chars"
-                value={subjectNotes}
-                onChangeText={setSubjectNotes}
-                multiline
-              maxLength={500}
-              numberOfLines={3}
-            />
-            {children.length > 0 && (
-              <View style={styles.pickerContainer}>
-                <Text style={styles.pickerLabel}>For Child:</Text>
-                <View style={styles.childPicker}>
-                  {children.map((child, index) => (
-              <TouchableOpacity
-                      key={index}
-                      style={[
-                        styles.childOption,
-                        selectedChildForSubject === index.toString() && styles.selectedChildOption
-                      ]}
-                      onPress={() => setSelectedChildForSubject(index.toString())}
-                    >
-                      <Text style={[
-                        styles.childOptionText,
-                        selectedChildForSubject === index.toString() && styles.selectedChildOptionText
-                      ]}>
-                        {child.first_name}
-                      </Text>
-              </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-          )}
-            <TouchableOpacity style={styles.addButton} onPress={handleAddSubject}>
-              <Text style={styles.addButtonText}>Add Subject</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Subjects List */}
-          {subjects.length > 0 && (
-            <View style={styles.listContainer}>
-              <Text style={styles.listTitle}>Subjects Added:</Text>
-              {subjects.map((subject, idx) => (
-                <View key={idx} style={styles.listItem}>
-                  <Text style={styles.listItemText}>
-                    {subject.name} - {children[parseInt(subject.childId)]?.first_name || 'Unknown Child'}
-                </Text>
-          <TouchableOpacity
-                    style={styles.removeButton}
-                    onPress={() => handleRemoveSubject(idx)}
-          >
-                    <Text style={styles.removeButtonText}>Remove</Text>
-          </TouchableOpacity>
+          ))}
         </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Activities Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Activities/Courses</Text>
-          
-          {/* Add Activity Form */}
-          <View style={styles.addForm}>
-          <TextInput
-            style={styles.input}
-              placeholder="Activity/Course Name (e.g., Algebra 1, Science Lab) - max 100 chars"
-            value={activityName}
-            onChangeText={setActivityName}
-              maxLength={100}
-              autoCapitalize="words"
-            />
-
-            {/* Platform Picker */}
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => setShowPlatformPicker(true)}
-            >
-              <Text style={styles.pickerButtonText}>
-                {activityPlatform || 'Select Platform'}
-              </Text>
-              <Text style={styles.pickerArrow}>▼</Text>
-            </TouchableOpacity>
-
-          <TextInput
-            style={styles.input}
-              placeholder="Link (e.g., https://example.com) - optional"
-            value={activityLink}
-            onChangeText={setActivityLink}
-              maxLength={500}
-              autoCapitalize="none"
-              keyboardType="url"
-            />
-
-            {/* Start Date Picker */}
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => openDatePicker('activityStartDate')}
-            >
-              <Text style={styles.pickerButtonText}>
-                {activityStartDate ? new Date(activityStartDate).toLocaleDateString() : 'Select Start Date (optional)'}
-              </Text>
-              <Text style={styles.pickerArrow}>📅</Text>
-            </TouchableOpacity>
-
-            {/* End Date Picker */}
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => openDatePicker('activityEndDate')}
-            >
-              <Text style={styles.pickerButtonText}>
-                {activityEndDate ? new Date(activityEndDate).toLocaleDateString() : 'Select End Date (optional)'}
-              </Text>
-              <Text style={styles.pickerArrow}>📅</Text>
-            </TouchableOpacity>
-
-          <TextInput
-            style={styles.input}
-              placeholder="Study Days (e.g., Mon, Wed, Fri) - max 50 chars"
-            value={activityStudyDays}
-            onChangeText={setActivityStudyDays}
-              maxLength={50}
-          />
-          <TextInput
-            style={styles.input}
-              placeholder="Travel Minutes (0-180)"
-            value={activityTravelMinutes}
-            onChangeText={setActivityTravelMinutes}
-            keyboardType="numeric"
-              maxLength={3}
-          />
-          <TextInput
-            style={styles.input}
-              placeholder="Class Schedule (e.g., Tues/Thurs 2-3pm) - max 100 chars"
-            value={activityClassSchedule}
-            onChangeText={setActivityClassSchedule}
-              maxLength={100}
-          />
-          <TextInput
-            style={styles.input}
-              placeholder="Initial Plan (curriculum outline, goals) - max 1000 chars"
-            value={activityInitialPlan}
-            onChangeText={setActivityInitialPlan}
-            multiline
-              maxLength={1000}
-              numberOfLines={4}
-            />
-            <TouchableOpacity style={styles.addButton} onPress={handleAddActivity}>
-              <Text style={styles.addButtonText}>Add Activity</Text>
-          </TouchableOpacity>
-          </View>
-
-          {/* Activities List */}
-          {activities.length > 0 && (
-            <View style={styles.listContainer}>
-              <Text style={styles.listTitle}>Activities Added:</Text>
-              {activities.map((activity, idx) => (
-                <View key={idx} style={styles.listItem}>
-                  <Text style={styles.listItemText}>
-                  {activity.name} ({activity.platform})
-                </Text>
-          <TouchableOpacity
-                    style={styles.removeButton}
-                    onPress={() => handleRemoveActivity(idx)}
-          >
-                    <Text style={styles.removeButtonText}>Remove</Text>
-          </TouchableOpacity>
-        </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Account Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Create Account</Text>
-        <TextInput
-          style={styles.input}
-            placeholder="Email (e.g., user@example.com) - max 100 chars"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-            keyboardType="email-address"
-            maxLength={100}
-        />
-        <TextInput
-          style={styles.input}
-            placeholder="Password (6-50 characters)"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-            maxLength={50}
-        />
-        </View>
-
-        {/* Error Display */}
-        {error && <Text style={styles.error}>{error}</Text>}
-
-        {/* Complete Button */}
-        <TouchableOpacity
-          style={[styles.completeButton, loading && styles.disabledButton]}
-          onPress={handleCompleteOnboarding}
-          disabled={loading}
-        >
-          <Text style={styles.completeButtonText}>
-            {loading ? 'Setting Up...' : 'Complete Setup'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
-      {/* Modals */}
-      {renderPickerModal(
-        showGradePicker,
-        () => setShowGradePicker(false),
-        'Select Grade',
-        gradeOptions,
-        setChildGrade,
-        childGrade
-      )}
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>Grade Level (Optional)</Text>
+        <View style={styles.chipsWrap}>
+          {SUBJECT_GRADE_OPTIONS.map(g => (
+            <TouchableOpacity
+              key={g}
+              style={[styles.chip, subjectGrade === g && styles.chipSelected]}
+              onPress={() => {
+                setSubjectGrade(g);
+                setIsFieldFocused(true);
+              }}
+            >
+              <Text style={[styles.chipText, subjectGrade === g && styles.chipTextSelected]}>{g}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
 
-      {renderPickerModal(
-        showStandardsPicker,
-        () => setShowStandardsPicker(false),
-        'Select Standards',
-        standardsOptions,
-        setChildStandards,
-        childStandards
-      )}
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>Credits (Optional)</Text>
+        <TextInput
+          style={styles.inputPill}
+          placeholder="e.g., 0.5, 1.0, 1.5"
+          placeholderTextColor="#9ca3af"
+          value={subjectCredits}
+          onChangeText={(text) => {
+            // Allow only numbers and decimal point
+            const numericValue = text.replace(/[^0-9.]/g, '');
+            // Prevent multiple decimal points
+            const parts = numericValue.split('.');
+            const filteredValue = parts.length > 2 
+              ? parts[0] + '.' + parts.slice(1).join('')
+              : numericValue;
+            setSubjectCredits(filteredValue);
+          }}
+          keyboardType="numeric"
+          onFocus={() => setIsFieldFocused(true)}
+          onBlur={() => setIsFieldFocused(false)}
+        />
+      </View>
 
-      {renderPickerModal(
-        showLearningStylePicker,
-        () => setShowLearningStylePicker(false),
-        'Select Learning Style',
-        learningStyleOptions,
-        setChildStyle,
-        childStyle
-      )}
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>Notes (Optional)</Text>
+        <TextInput
+          style={[styles.inputPill, styles.textArea]}
+          placeholder="Add any additional notes about this subject..."
+          placeholderTextColor="#9ca3af"
+          value={subjectNotes}
+          onChangeText={setSubjectNotes}
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+          onFocus={() => setIsFieldFocused(true)}
+          onBlur={() => setIsFieldFocused(false)}
+        />
+      </View>
 
-      {renderPickerModal(
-        showPlatformPicker,
-        () => setShowPlatformPicker(false),
-        'Select Platform',
-        platformOptions,
-        setActivityPlatform,
-        activityPlatform
-      )}
+      <TouchableOpacity style={styles.addButton} onPress={handleAddSubject}>
+        <BookOpen size={18} color="#ffffff" />
+        <Text style={styles.addButtonText}>Add Subject</Text>
+      </TouchableOpacity>
 
-      {renderPickerModal(
-        showSubjectPicker,
-        () => setShowSubjectPicker(false),
-        'Select Subject',
-        subjectOptions,
-        setSubjectName,
-        subjectName
+      {subjects.length > 0 && (
+        <View style={styles.listContainer}>
+          <Text style={styles.listTitle}>Subjects Added:</Text>
+          {subjects.map((subject, idx) => {
+            const child = children[subject.childIndex];
+            return (
+              <View key={idx} style={styles.listItem}>
+                <Text style={styles.listItemText}>
+                  {subject.name} - {child?.first_name || 'Unknown'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.removeButton}
+                  onPress={() => handleRemoveSubject(idx)}
+                >
+                  <Text style={styles.removeButtonText}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+        </View>
       )}
+    </View>
+  );
 
-      {renderDatePickerModal()}
-    </ScrollView>
+  return (
+    <View style={styles.container}>
+      {/* Top Header with Back Arrow and Progress Bar */}
+      <View style={styles.topHeader}>
+        {currentStep > 1 && (
+          <TouchableOpacity
+            style={styles.topBackButton}
+            onPress={() => setCurrentStep(currentStep - 1)}
+            disabled={loading}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <ChevronLeft size={24} color="#111827" />
+          </TouchableOpacity>
+        )}
+        <View style={styles.progressBarContainer}>
+          <View style={styles.progressBarBackground}>
+            <View 
+              style={[
+                styles.progressBarFill,
+                { width: `${(currentStep / 3) * 100}%` }
+              ]} 
+            />
+          </View>
+        </View>
+      </View>
+
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {currentStep === 1 && renderStep1()}
+        {currentStep === 2 && renderStep2()}
+        {currentStep === 3 && renderStep3()}
+      </ScrollView>
+
+      {/* Continue Button */}
+      <View style={styles.footer}>
+        {currentStep === 3 && !isFieldFocused && (
+          <Animated.View 
+            style={[
+              styles.skipDialogBox,
+              {
+                transform: [
+                  {
+                    translateY: bounceAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, -8],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Text style={styles.skipDialogText}>Want to skip adding subjects for now?</Text>
+            <View style={styles.skipDialogCaret} />
+          </Animated.View>
+        )}
+        {currentStep < 3 ? (
+          <TouchableOpacity
+            style={[styles.continueButton, (loading || (currentStep === 2 && children.length === 0)) && styles.buttonDisabled]}
+            onPress={handleNext}
+            disabled={loading || (currentStep === 2 && children.length === 0)}
+            {...(Platform.OS === 'web' && { cursor: (loading || (currentStep === 2 && children.length === 0)) ? 'not-allowed' : 'pointer' })}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={styles.continueButtonText}>CONTINUE</Text>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.continueButton, loading && styles.buttonDisabled]}
+            onPress={handleComplete}
+            disabled={loading}
+            {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={styles.continueButtonText}>COMPLETE SETUP</Text>
+            )}
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#E6F4FC', // Light blue background matching sign in/sign up
   },
-  content: {
-    padding: 20,
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#E6F4FC', // Light blue background
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 10,
+  topBackButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
-  subtitle: {
+  progressBarContainer: {
+    flex: 1,
+  },
+  progressBarBackground: {
+    height: 8,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 50,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 50,
+    backgroundColor: '#a78bfa', // Plain purple
+  },
+  scrollView: {
+    flex: 1,
+    backgroundColor: '#E6F4FC', // Light blue background
+  },
+  scrollContent: {
+    flexGrow: 1,
+    backgroundColor: '#E6F4FC', // Light blue background
+  },
+  stepContent: {
+    flex: 1,
+    backgroundColor: '#E6F4FC', // Light blue background
+    paddingHorizontal: 32,
+    paddingVertical: 48,
+    justifyContent: 'center',
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  step1Header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 32,
+    gap: 16,
+  },
+  poodleImage: {
+    width: 200,
+    height: 200,
+    flexShrink: 0,
+  },
+  step1TextContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingTop: 48,
+  },
+  stepTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  privacyNote: {
     fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 25,
+    color: '#6b7280',
+    textAlign: 'left',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
-  section: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 10,
-    padding: 20,
-    marginBottom: 20,
-    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+  stepSubtitle: {
+    fontSize: 15,
+    color: '#6b7280',
+    marginBottom: 32,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
+  formGroup: {
+    marginBottom: 24,
   },
-  subsectionTitle: {
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  requiredAsterisk: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  inputPill: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 50,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    backgroundColor: '#ffffff',
+    fontSize: 16,
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  textArea: {
+    borderRadius: 12,
+    minHeight: 80,
+    paddingTop: 12,
+    paddingBottom: 12,
+  },
+  accordionContainer: {
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  accordionHeader: {
+    paddingVertical: 16,
+    paddingHorizontal: 0,
+    backgroundColor: '#E6F4FC',
+  },
+  accordionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  accordionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 10,
-    marginTop: 15,
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
-  input: {
-    width: '100%',
+  accordionContent: {
+    padding: 0,
+    backgroundColor: '#E6F4FC',
+  },
+  chipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 15,
-    fontSize: 16,
-    backgroundColor: '#fff',
+    borderColor: '#d1d5db',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
   },
-  addForm: {
-    marginTop: 10,
+  chipSelected: {
+    borderColor: '#60a5fa',
+    backgroundColor: '#dbeafe',
+  },
+  chipText: {
+    color: '#6b7280',
+    fontSize: 13,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  chipTextSelected: {
+    color: '#1e40af',
+    fontWeight: '600',
+  },
+  avatarsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  avatarCell: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  avatarCellSelected: {
+    borderColor: '#60a5fa',
+    backgroundColor: '#f0f9ff',
+  },
+  avatarImg: {
+    width: 48,
+    height: 48,
   },
   addButton: {
-    backgroundColor: '#667eea',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 15,
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#60a5fa',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  addButtonDisabled: {
+    backgroundColor: '#d1d5db',
+    opacity: 0.6,
   },
   addButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
   listContainer: {
-    marginTop: 10,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 8,
-    padding: 10,
+    marginTop: 24,
+    padding: 16,
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
   },
   listTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    paddingLeft: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
   listItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: '#fff',
-    borderRadius: 6,
-    marginBottom: 5,
-    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
   },
   listItemText: {
-    fontSize: 15,
+    fontSize: 14,
+    color: '#111827',
     flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
   removeButton: {
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    backgroundColor: '#e53e3e',
-    borderRadius: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
   },
   removeButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
+    color: '#ef4444',
+    fontSize: 13,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
-  pickerContainer: {
-    marginTop: 15,
-    marginBottom: 15,
-  },
-  pickerLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  childPicker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-around',
-    backgroundColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 5,
-  },
-  childOption: {
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
-    margin: 5,
-  },
-  selectedChildOption: {
-    backgroundColor: '#667eea',
-    borderColor: '#667eea',
-  },
-  childOptionText: {
-    fontSize: 14,
-    color: '#333',
-  },
-  selectedChildOptionText: {
-    color: '#fff',
-  },
-  switchContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 15,
-    marginBottom: 15,
-  },
-  daysContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-around',
-    backgroundColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 5,
-  },
-  dayButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
-    margin: 5,
-  },
-  dayButtonText: {
-    fontSize: 14,
-    color: '#333',
-  },
-  selectedDayButton: {
-    backgroundColor: '#667eea',
-    borderColor: '#667eea',
-  },
-  selectedDayButtonText: {
-    color: '#fff',
-  },
-  completeButton: {
-    backgroundColor: '#667eea',
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  completeButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
-  },
-  disabledButton: {
-    backgroundColor: '#ccc',
-    opacity: 0.7,
-  },
-  error: {
-    color: '#e53e3e',
-    marginTop: 10,
-    textAlign: 'center',
-    fontSize: 14,
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    width: '80%',
-    maxHeight: '70%',
-    padding: 20,
-    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.25)',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  closeButton: {
-    fontSize: 24,
-    color: '#666',
-  },
-  optionItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  optionText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  selectedOptionItem: {
-    backgroundColor: '#e0e0e0',
-  },
-  selectedOptionText: {
-    fontWeight: 'bold',
-    color: '#667eea',
-  },
-  pickerButton: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
+  warningBox: {
+    backgroundColor: '#fef3c7',
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: '#fde047',
     borderRadius: 8,
     padding: 12,
-    marginBottom: 15,
-    backgroundColor: '#fff',
+    marginBottom: 24,
   },
-  pickerButtonText: {
+  warningText: {
+    fontSize: 13,
+    color: '#92400e',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 24,
+  },
+  errorText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  footer: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    backgroundColor: '#E6F4FC', // Light blue background
+    gap: 12,
+  },
+  skipDialogBox: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignSelf: 'flex-end',
+    minWidth: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  skipDialogText: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  skipDialogCaret: {
+    position: 'absolute',
+    bottom: -8,
+    right: 24,
+    width: 16,
+    height: 16,
+    backgroundColor: '#ffffff',
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#e5e7eb',
+    transform: [{ rotate: '45deg' }],
+  },
+  footerWithSkip: {
+    justifyContent: 'space-between',
+  },
+  skipButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  skipButtonText: {
+    color: '#6b7280',
+    fontSize: 15,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  continueButton: {
+    backgroundColor: '#60a5fa',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 50,
+    minWidth: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  continueButtonText: {
+    color: '#ffffff',
     fontSize: 16,
-    color: '#333',
-    flex: 1,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
-  pickerArrow: {
-    fontSize: 20,
-    color: '#666',
+  buttonDisabled: {
+    opacity: 0.5,
   },
-}); 
+  signInLinkContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  signInLinkText: {
+    fontSize: 14,
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  signInLink: {
+    fontSize: 14,
+    color: '#60a5fa',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  successIconContainer: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  verificationInstructions: {
+    fontSize: 15,
+    color: '#6b7280',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  continueButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#60a5fa',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 50,
+    marginBottom: 16,
+  },
+  continueButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  resendButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  resendButtonText: {
+    color: '#60a5fa',
+    fontSize: 14,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+});

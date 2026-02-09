@@ -59,7 +59,7 @@ export default function AddChildModal({
         standards_state: formData.standardsState === 'None' || !formData.standardsState ? null : formData.standardsState,
         avatar_url: formData.avatar || null,
         interests: formData.interests || [],
-        learning_styles: formData.learningStyle ? [formData.learningStyle] : [],
+        learning_styles: [], // Learning style removed from form
         // Support profile fields
         diagnoses: formData.diagnoses || null,
         learning_modalities: formData.learningModalities || null,

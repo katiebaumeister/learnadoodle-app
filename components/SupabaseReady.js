@@ -82,30 +82,31 @@ export default function SupabaseReady({ children }) {
 const styles = StyleSheet.create({
   errorContainer: {
     flex: 1,
-    backgroundColor: '#667eea',
+    backgroundColor: '#9DB5D8', // Periwinkle blue background
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   errorTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: 'white',
-    marginBottom: 16,
+    marginBottom: 20,
     textAlign: 'center',
   },
   errorMessage: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 20,
+    color: 'rgba(255, 255, 255, 0.95)',
+    marginBottom: 12,
     textAlign: 'center',
     lineHeight: 24,
+    maxWidth: 600,
   },
   errorTip: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: 'rgba(255, 255, 255, 0.9)',
     textAlign: 'center',
-    fontStyle: 'italic',
     lineHeight: 20,
+    maxWidth: 600,
   },
 });

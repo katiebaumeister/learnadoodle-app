@@ -1042,7 +1042,7 @@ const styles = StyleSheet.create({
     color: colors.accent || '#4F46E5',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      textDecoration: 'underline',
+      textDecorationLine: 'underline',
     }),
   },
   section: {

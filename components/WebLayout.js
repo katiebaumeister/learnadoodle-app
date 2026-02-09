@@ -26,6 +26,7 @@ import EventModal from './events/EventModal';
 import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
 import PlanYearWizard from './year/PlanYearWizard';
+import PlanYearModal from './planner/PlanYearModal';
 import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
@@ -90,6 +91,7 @@ export default function WebLayout({ navigation, routeParams }) {
   const [showCatchUpModal, setShowCatchUpModal] = useState(false);
   const [showSummarizeProgressModal, setShowSummarizeProgressModal] = useState(false);
   const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
+  const [showPlanYearModal, setShowPlanYearModal] = useState(false);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -1880,24 +1882,6 @@ export default function WebLayout({ navigation, routeParams }) {
                         }
                         setShowViewModeDropdown(!showViewModeDropdown);
                       }}
-                      {...(Platform.OS === 'web' && {
-                        onMouseEnter: () => {
-                          if (viewModeButtonRef.current) {
-                            const node = viewModeButtonRef.current._nativeNode || viewModeButtonRef.current;
-                            if (node && typeof node.getBoundingClientRect === 'function') {
-                              const rect = node.getBoundingClientRect();
-                              setViewModeDropdownPosition({
-                                top: rect.bottom + 4,
-                                left: rect.left,
-                              });
-                              setShowViewModeDropdown(true);
-                            }
-                          }
-                        },
-                        onMouseLeave: () => {
-                          setShowViewModeDropdown(false);
-                        },
-                      })}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -1932,14 +1916,6 @@ export default function WebLayout({ navigation, routeParams }) {
                     {showViewModeDropdown && Platform.OS === 'web' && (
                       <View
                         ref={viewModeDropdownRef}
-                        {...(Platform.OS === 'web' && {
-                          onMouseEnter: () => {
-                            setShowViewModeDropdown(true);
-                          },
-                          onMouseLeave: () => {
-                            setShowViewModeDropdown(false);
-                          },
-                        })}
                         style={{
                           position: 'fixed',
                           top: viewModeDropdownPosition.top,
@@ -2018,24 +1994,6 @@ export default function WebLayout({ navigation, routeParams }) {
                         }
                         setShowFiltersDropdown(!showFiltersDropdown);
                       }}
-                      {...(Platform.OS === 'web' && {
-                        onMouseEnter: () => {
-                          if (filtersButtonRef.current) {
-                            const node = filtersButtonRef.current._nativeNode || filtersButtonRef.current;
-                            if (node && typeof node.getBoundingClientRect === 'function') {
-                              const rect = node.getBoundingClientRect();
-                              setFiltersDropdownPosition({
-                                top: rect.bottom + 4,
-                                left: rect.left,
-                              });
-                              setShowFiltersDropdown(true);
-                            }
-                          }
-                        },
-                        onMouseLeave: () => {
-                          setShowFiltersDropdown(false);
-                        },
-                      })}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -2070,14 +2028,6 @@ export default function WebLayout({ navigation, routeParams }) {
                     {showFiltersDropdown && Platform.OS === 'web' && (
                       <View
                         ref={filtersDropdownRef}
-                        {...(Platform.OS === 'web' && {
-                          onMouseEnter: () => {
-                            setShowFiltersDropdown(true);
-                          },
-                          onMouseLeave: () => {
-                            setShowFiltersDropdown(false);
-                          },
-                        })}
                         style={{
                           position: 'fixed',
                           top: filtersDropdownPosition.top,
@@ -2340,24 +2290,6 @@ export default function WebLayout({ navigation, routeParams }) {
                         }
                         setShowPlanOptimizeDropdown(!showPlanOptimizeDropdown);
                       }}
-                      {...(Platform.OS === 'web' && {
-                        onMouseEnter: () => {
-                          if (planOptimizeButtonRef.current) {
-                            const node = planOptimizeButtonRef.current._nativeNode || planOptimizeButtonRef.current;
-                            if (node && typeof node.getBoundingClientRect === 'function') {
-                              const rect = node.getBoundingClientRect();
-                              setPlanOptimizeDropdownPosition({
-                                top: rect.bottom + 4,
-                                left: rect.left,
-                              });
-                              setShowPlanOptimizeDropdown(true);
-                            }
-                          }
-                        },
-                        onMouseLeave: () => {
-                          setShowPlanOptimizeDropdown(false);
-                        },
-                      })}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -2384,14 +2316,6 @@ export default function WebLayout({ navigation, routeParams }) {
                     {showPlanOptimizeDropdown && Platform.OS === 'web' && (
                       <View
                         ref={planOptimizeDropdownRef}
-                        {...(Platform.OS === 'web' && {
-                          onMouseEnter: () => {
-                            setShowPlanOptimizeDropdown(true);
-                          },
-                          onMouseLeave: () => {
-                            setShowPlanOptimizeDropdown(false);
-                          },
-                        })}
                         style={{
                           position: 'fixed',
                           top: planOptimizeDropdownPosition.top,
@@ -2410,6 +2334,7 @@ export default function WebLayout({ navigation, routeParams }) {
                           { id: 'buildCurriculum', label: 'Build Curriculum', icon: BookOpen },
                           { id: 'rebalance', label: 'Rebalance', icon: RefreshCw },
                           { id: 'schedulingAssistant', label: 'Scheduling Assistant', icon: Clock },
+                          { id: 'planYear', label: 'Plan My Year', icon: Calendar },
                         ].map((action) => {
                           const ActionIcon = action.icon;
                           return (
@@ -2447,6 +2372,9 @@ export default function WebLayout({ navigation, routeParams }) {
                                       : (children.length > 0 ? children[0].id : null);
                                     setSchedulingAssistantChildId(selectedChild);
                                     setShowSchedulingAssistantModal(true);
+                                    break;
+                                  case 'planYear':
+                                    setShowPlanYearModal(true);
                                     break;
                                 }
                               }}
@@ -3093,6 +3021,17 @@ export default function WebLayout({ navigation, routeParams }) {
         visible={showPlanYearWizard}
         onClose={() => setShowPlanYearWizard(false)}
         familyId={familyId}
+      />
+
+      <PlanYearModal
+        visible={showPlanYearModal}
+        onClose={() => setShowPlanYearModal(false)}
+        familyId={familyId}
+        children={children}
+        onComplete={() => {
+          setShowPlanYearModal(false);
+          // Optionally refresh data or show success message
+        }}
       />
 
       {/* Rebalance Modal */}

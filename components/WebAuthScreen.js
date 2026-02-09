@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,14 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  Image,
 } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import LandingPage from './LandingPage';
 
 export default function WebAuthScreen() {
+  const [showWelcome, setShowWelcome] = useState(true);
   const [isSignUp, setIsSignUp] = useState(false);
   const [isResetPassword, setIsResetPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -24,6 +27,55 @@ export default function WebAuthScreen() {
   const [successMessage, setSuccessMessage] = useState('');
 
   const { signIn, signUp, resetPassword } = useAuth();
+
+  // Helper to update URL without reload
+  const updateURL = (view) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (view) {
+        url.searchParams.set('view', view);
+      } else {
+        url.searchParams.delete('view');
+      }
+      window.history.pushState({ view }, '', url.toString());
+    }
+  };
+
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handlePopState = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const view = urlParams.get('view');
+      
+      if (view === 'signup') {
+        setShowWelcome(false);
+        setIsSignUp(true);
+        setIsResetPassword(false);
+      } else if (view === 'signin') {
+        setShowWelcome(false);
+        setIsSignUp(false);
+        setIsResetPassword(false);
+      } else if (view === 'reset') {
+        setShowWelcome(false);
+        setIsResetPassword(true);
+      } else {
+        setShowWelcome(true);
+        setIsResetPassword(false);
+      }
+    };
+
+    // Check initial URL state
+    handlePopState();
+
+    // Listen for browser navigation
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
 
   const clearMessages = () => {
     setErrorMessage('');
@@ -111,7 +163,10 @@ export default function WebAuthScreen() {
           setSuccessMessage('Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.');
           setIsSignUp(false); // Switch to sign in mode
         } else {
-          setSuccessMessage('Account created and signed in successfully!');
+          // Account created and signed in - redirect to onboarding
+          if (typeof window !== 'undefined') {
+            window.location.href = '/?signup=true';
+          }
         }
       } else {
         setSuccessMessage('Signed in successfully!');
@@ -204,12 +259,33 @@ export default function WebAuthScreen() {
           
           <TouchableOpacity
             style={styles.linkButton}
-            onPress={() => setIsResetPassword(false)}
+            onPress={() => {
+              setIsResetPassword(false);
+              updateURL('signin');
+            }}
           >
             <Text style={styles.linkText}>Back to Sign In</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
+    );
+  }
+
+  // Show landing page first
+  if (showWelcome) {
+    return (
+      <LandingPage
+        onGetStarted={() => {
+          setShowWelcome(false);
+          setIsSignUp(true);
+          updateURL('signup');
+        }}
+        onLogIn={() => {
+          setShowWelcome(false);
+          setIsSignUp(false);
+          updateURL('signin');
+        }}
+      />
     );
   }
 
@@ -342,6 +418,7 @@ export default function WebAuthScreen() {
             onPress={() => {
               setIsSignUp(!isSignUp);
               resetForm();
+              updateURL(isSignUp ? 'signin' : 'signup');
             }}
           >
             <Text style={styles.linkText}>
@@ -353,7 +430,10 @@ export default function WebAuthScreen() {
             <>
               <TouchableOpacity
                 style={styles.linkButton}
-                onPress={() => setIsResetPassword(true)}
+                onPress={() => {
+                  setIsResetPassword(true);
+                  updateURL('reset');
+                }}
               >
                 <Text style={styles.linkText}>Forgot Password</Text>
               </TouchableOpacity>
@@ -365,15 +445,120 @@ export default function WebAuthScreen() {
     </ScrollView>
       
       {!isSignUp && (
-        <Text style={styles.termsNote}>
-          By signing in to Learnadoodle, you agree to our Terms and Privacy Policy.
-        </Text>
+        <View style={styles.termsNoteContainer}>
+          <Text style={styles.termsNote}>
+            By signing in to Learnadoodle, you agree to our{' '}
+            <Text 
+              style={styles.termsLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.href = '/terms';
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              Terms
+            </Text>
+            {' '}and{' '}
+            <Text 
+              style={styles.termsLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.href = '/privacy';
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              Privacy Policy
+            </Text>
+            .
+          </Text>
+        </View>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  welcomeContainer: {
+    flex: 1,
+    backgroundColor: '#60a5fa', // Bright blue background
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  welcomeContent: {
+    alignItems: 'center',
+    maxWidth: 400,
+    width: '100%',
+  },
+  dogIllustration: {
+    width: 350,
+    height: 350,
+    marginBottom: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dogImage: {
+    width: 350,
+    height: 350,
+  },
+  welcomeTitle: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#1e3a8a', // Dark blue
+    textAlign: 'center',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  welcomeSubtitle: {
+    fontSize: 18,
+    color: '#1e40af', // Slightly lighter dark blue
+    textAlign: 'center',
+    marginBottom: 48,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  getStartedButton: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 16,
+    paddingHorizontal: 48,
+    borderRadius: 12,
+    marginBottom: 20,
+    width: '100%',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+    } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+    }),
+  },
+  getStartedButtonText: {
+    color: '#374151', // Dark gray
+    fontSize: 16,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  logInLink: {
+    padding: 8,
+  },
+  logInLinkText: {
+    color: '#374151', // Dark gray
+    fontSize: 15,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
   container: {
     flex: 1,
     backgroundColor: '#E6F4FC',
@@ -388,17 +573,28 @@ const styles = StyleSheet.create({
     minHeight: '100vh',
   },
   authCard: {
-    backgroundColor: '#E6F4FC',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     padding: 32,
     width: '100%',
     maxWidth: 400,
+    position: 'relative',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+    } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 3,
+    }),
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#1f2937',
     textAlign: 'center',
+    marginTop: 8,
     marginBottom: 8,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -441,7 +637,7 @@ const styles = StyleSheet.create({
     }),
   },
   authButton: {
-    backgroundColor: '#A78BFA',
+    backgroundColor: '#60a5fa', // Blue button to match theme
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -510,19 +706,31 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 8,
   },
-  termsNote: {
-    fontSize: 12,
-    color: '#6b7280',
-    textAlign: 'center',
+  termsNoteContainer: {
     paddingHorizontal: 20,
     paddingBottom: 20,
     width: '100%',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       position: 'absolute',
       bottom: 0,
       left: 0,
       right: 0,
+    }),
+  },
+  termsNote: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termsLink: {
+    color: '#60a5fa',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      cursor: 'pointer',
     }),
   },
   passwordInputContainer: {

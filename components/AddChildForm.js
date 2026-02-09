@@ -4,10 +4,19 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Platform } 
 const GRADES = ['Pre-K','K','1','2','3','4','5','6','7','8','9','10','11','12'];
 const STATES = ['None','AL','AK','AZ','AR','CA','CO','CT','DC','DE','FL','GA','HI','IA','ID','IL','IN','KS','KY','LA','MA','MD','ME','MI','MN','MO','MS','MT','NC','ND','NE','NH','NJ','NM','NV','NY','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VA','VT','WA','WI','WV','WY'];
 const INTERESTS = ['STEM','Reading','Writing','Arts','Music','Sports','Outdoors','Languages','History','Coding','Woodworking','Other'];
-const LEARNING_STYLES = ['Visual','Auditory','Kinesthetic','Mixed','Unsure'];
 
 // Support profile options
-const DIAGNOSES = ['ADHD', 'Dyslexia', 'Dyscalculia', 'Autism', 'Auditory Processing Disorder', 'Visual Processing Disorder', 'Gifted/2e', 'Motor challenges', 'Other'];
+const DIAGNOSES = [
+  'Attention regulation (e.g., focus shifts quickly)',
+  'Reading / decoding challenges',
+  'Math / number sense challenges',
+  'Writing or fine-motor challenges',
+  'Auditory processing challenges (e.g., following spoken directions)',
+  'Visual processing challenges (e.g., interpreting visuals or layouts)',
+  'Neurodiverse',
+  'Gifted',
+  'Other'
+];
 const LEARNING_MODALITIES = ['Visual', 'Hands-on', 'Verbal', 'Repetition-based', 'Short bursts (Pomodoro-like)'];
 const SUPPORT_NEEDS = [
   'Frequent breaks',
@@ -36,11 +45,6 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const [grade, setGrade] = useState(initial.grade || initial.grade_label || '');
   const [standardsState, setStandardsState] = useState(initial.standards_state || initial.standardsState || 'None');
   const [interests, setInterests] = useState(Array.isArray(initial.interests) ? initial.interests : []);
-  const [learningStyle, setLearningStyle] = useState(
-    Array.isArray(initial.learning_styles) && initial.learning_styles.length > 0 
-      ? initial.learning_styles[0] 
-      : initial.learning_style || ''
-  );
   const [avatar, setAvatar] = useState(initial.avatar || initial.avatar_url || 'prof1');
   
   // Support profile state
@@ -64,13 +68,6 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
     }
     if (initial.interests !== undefined) {
       setInterests(Array.isArray(initial.interests) ? initial.interests : []);
-    }
-    if (initial.learning_styles !== undefined || initial.learning_style !== undefined) {
-      setLearningStyle(
-        Array.isArray(initial.learning_styles) && initial.learning_styles.length > 0 
-          ? initial.learning_styles[0] 
-          : initial.learning_style || ''
-      );
     }
     if (initial.avatar !== undefined || initial.avatar_url !== undefined) {
       setAvatar(initial.avatar || initial.avatar_url || 'prof1');
@@ -140,7 +137,6 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       grade: grade || null,
       standardsState: standardsState === 'None' ? null : standardsState,
       interests: interests || [],
-      learningStyle: learningStyle || null,
       avatar: avatar || null,
       // Support profile fields (only include if any are filled)
       diagnoses: finalDiagnoses.length > 0 ? finalDiagnoses : null,
@@ -253,30 +249,14 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
         </View>
       </View>
 
-      {/* Section: Learning Style */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Learning Style</Text>
-        <View style={styles.chipsWrap}>
-          {LEARNING_STYLES.map(ls => (
-            <TouchableOpacity 
-              key={ls} 
-              style={[styles.chip, learningStyle === ls && styles.chipSelected]} 
-              onPress={() => setLearningStyle(ls)}
-            >
-              <Text style={[styles.chipText, learningStyle === ls && styles.chipTextSelected]}>{ls}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
       {/* Section: Learning Profile & Supports (Optional) */}
       <View style={[styles.section, styles.sectionLast]}>
         <Text style={styles.sectionTitle}>Learning Profile & Supports</Text>
         <Text style={styles.sectionSubtitle}>(Optional)</Text>
 
-        {/* Diagnosed learning differences */}
+        {/* Learning & processing needs */}
         <View style={styles.field}>
-          <Text style={styles.label}>Diagnosed learning differences</Text>
+          <Text style={styles.label}>Learning & processing needs</Text>
           <View style={styles.chipsWrap}>
             {DIAGNOSES.map(d => (
               <TouchableOpacity 
@@ -299,9 +279,9 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
           )}
         </View>
 
-        {/* Executive function challenges */}
+        {/* Executive function needs */}
         <View style={styles.field}>
-          <Text style={styles.label}>Executive function challenges</Text>
+          <Text style={styles.label}>Executive function needs</Text>
           <View style={styles.chipsWrap}>
             {EXECUTIVE_FUNCTION.map(ef => (
               <TouchableOpacity 
