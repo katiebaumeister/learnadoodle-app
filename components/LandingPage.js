@@ -220,6 +220,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               </View>
             )}
             <View style={styles.featureTextContainer}>
+              {isMobile && (
+                <View style={styles.featureImageContainerMobile}>
+                  <Image
+                    source={require('../assets/schedule.png')}
+                    style={styles.featureImageMobile}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
               <Text style={styles.featureTitle}>
                 Build a schedule that fits your days—not the other way around.
               </Text>
@@ -235,6 +244,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
           {/* Feature 2: Image right, text left */}
           <View style={styles.featureRow}>
             <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
+              {isMobile && (
+                <View style={styles.featureImageContainerMobile}>
+                  <Image
+                    source={require('../assets/curriculum.png')}
+                    style={styles.featureImageMobile}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
               <Text style={styles.featureTitle}>
                 Use the curriculum you trust
               </Text>
@@ -265,6 +283,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               </View>
             )}
             <View style={styles.featureTextContainer}>
+              {isMobile && (
+                <View style={styles.featureImageContainerMobile}>
+                  <Image
+                    source={require('../assets/progress.png')}
+                    style={styles.featureImageMobile}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
               <Text style={styles.featureTitle}>
                 See progress without constant tracking
               </Text>
@@ -277,6 +304,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
           {/* Feature 4: Image right, text left */}
           <View style={styles.featureRow}>
             <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
+              {isMobile && (
+                <View style={styles.featureImageContainerMobile}>
+                  <Image
+                    source={require('../assets/support.png')}
+                    style={styles.featureImageMobile}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
               <Text style={styles.featureTitle}>
                 Support every child—without comparison
               </Text>
@@ -307,6 +343,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               </View>
             )}
             <View style={styles.featureTextContainer}>
+              {isMobile && (
+                <View style={styles.featureImageContainerMobile}>
+                  <Image
+                    source={require('../assets/teach.png')}
+                    style={styles.featureImageMobile}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
               <Text style={styles.featureTitle}>
                 Teach with confidence
               </Text>
@@ -319,6 +364,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
           {/* Feature 6: Image right, text left */}
           <View style={styles.featureRow}>
             <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
+              {isMobile && (
+                <View style={styles.featureImageContainerMobile}>
+                  <Image
+                    source={require('../assets/privacy.png')}
+                    style={styles.featureImageMobile}
+                    resizeMode="contain"
+                  />
+                </View>
+              )}
               <Text style={styles.featureTitle}>
                 Privacy isn't an afterthought—it's foundational.
               </Text>
@@ -675,14 +729,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web'
       ? {
           minHeight: '100vh',
-          paddingTop: 40,
+          paddingTop: 16,
           paddingBottom: 40,
         }
       : {
           flex: 1,
           justifyContent: 'center',
-          paddingTop: 40,
-          paddingBottom: 40,
+          paddingTop: 24,
+          paddingBottom: 32,
         }),
   },
   heroContent: {
@@ -1168,6 +1222,16 @@ const styles = StyleSheet.create({
     } : {
       height: 200,
     }),
+  },
+  featureImageContainerMobile: {
+    width: '100%',
+    marginBottom: 16,
+  },
+  featureImageMobile: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    borderRadius: 16,
+    height: 'auto',
   },
   featureTextContainer: {
     ...(Platform.OS === 'web' ? {
