@@ -176,23 +176,21 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         </View>
         
         {/* Scroll Indicator */}
-        {!isMobile && (
-          <TouchableOpacity
-            style={styles.scrollIndicator}
-            onPress={() => {
-              if (Platform.OS === 'web' && typeof document !== 'undefined') {
-                const featuresSection = document.getElementById('why');
-                if (featuresSection) {
-                  featuresSection.scrollIntoView({ behavior: 'smooth' });
-                }
+        <TouchableOpacity
+          style={[styles.scrollIndicator, isMobile && styles.scrollIndicatorMobile]}
+          onPress={() => {
+            if (Platform.OS === 'web' && typeof document !== 'undefined') {
+              const featuresSection = document.getElementById('why');
+              if (featuresSection) {
+                featuresSection.scrollIntoView({ behavior: 'smooth' });
               }
-            }}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={styles.scrollIndicatorText}>See how it works</Text>
-            <ChevronDown size={20} color="#64748b" />
-          </TouchableOpacity>
-        )}
+            }
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={styles.scrollIndicatorText}>See how it works</Text>
+          <ChevronDown size={20} color="#64748b" />
+        </TouchableOpacity>
       </View>
 
       {/* NEW FEATURES SECTION */}
@@ -729,14 +727,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web'
       ? {
           minHeight: '100vh',
-          paddingTop: 16,
-          paddingBottom: 40,
+          paddingTop: 12,
+          paddingBottom: 32,
         }
       : {
           flex: 1,
           justifyContent: 'center',
-          paddingTop: 24,
-          paddingBottom: 32,
+          paddingTop: 16,
+          paddingBottom: 24,
         }),
   },
   heroContent: {
