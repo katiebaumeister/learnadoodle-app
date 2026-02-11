@@ -16,6 +16,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
@@ -36,6 +37,21 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       useNativeDriver: Platform.OS !== 'web',
     }).start();
   }, [isSuperDoodleVisible, headerFadeAnim]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const checkMobile = () => {
+        setIsMobile(window.innerWidth <= 768);
+      };
+      
+      checkMobile();
+      window.addEventListener('resize', checkMobile);
+      
+      return () => window.removeEventListener('resize', checkMobile);
+    } else {
+      setIsMobile(true);
+    }
+  }, []);
 
   const handleScroll = (event) => {
     const scrollY = event.nativeEvent.contentOffset.y;
@@ -67,8 +83,8 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
   return (
     <Animated.View style={{ flex: 1, opacity: pageFadeAnim }}>
-      {/* Corner Text - Only visible when not scrolled */}
-      {!isScrolled && (
+      {/* Corner Text - Only visible when not scrolled and not mobile */}
+      {!isScrolled && !isMobile && (
         <View style={styles.cornerText}>
           <Text style={styles.cornerTextContent}>PLAN, TEACH, CONNECT</Text>
         </View>
@@ -125,15 +141,17 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.heroRight}>
-            <View style={styles.heroImageContainer}>
-              <Image 
-                source={require('../assets/landing.gif')} 
-                style={styles.heroImage}
-                resizeMode="contain"
-              />
+          {!isMobile && (
+            <View style={styles.heroRight}>
+              <View style={styles.heroImageContainer}>
+                <Image 
+                  source={require('../assets/landing.gif')} 
+                  style={styles.heroImage}
+                  resizeMode="contain"
+                />
+              </View>
             </View>
-          </View>
+          )}
         </View>
         
         {/* Scroll Indicator */}
@@ -287,12 +305,38 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       </View>
 
       {/* GET SUPER DOODLE SECTION */}
-      {Platform.OS === 'web' ? (
-        <View 
-          ref={superDoodleRef}
-          style={styles.superDoodleSectionWrapper}
-        >
-          <View style={styles.superDoodleSection}>
+      {!isMobile && (
+        Platform.OS === 'web' ? (
+          <View 
+            ref={superDoodleRef}
+            style={styles.superDoodleSectionWrapper}
+          >
+            <View style={styles.superDoodleSection}>
+              <Image
+                source={require('../assets/superdoodlesection.png')}
+                style={styles.superDoodleSectionImage}
+                resizeMode="contain"
+              />
+              <View style={styles.superDoodleButtonContainer}>
+                <TouchableOpacity
+                  style={styles.superDoodleButton}
+                  onPress={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.location.href = '/products/super-doodle';
+                    }
+                  }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View 
+            ref={superDoodleRef}
+            style={styles.superDoodleSection}
+          >
             <Image
               source={require('../assets/superdoodlesection.png')}
               style={styles.superDoodleSectionImage}
@@ -306,36 +350,12 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     window.location.href = '/products/super-doodle';
                   }
                 }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
-      ) : (
-        <View 
-          ref={superDoodleRef}
-          style={styles.superDoodleSection}
-        >
-          <Image
-            source={require('../assets/superdoodlesection.png')}
-            style={styles.superDoodleSectionImage}
-            resizeMode="contain"
-          />
-          <View style={styles.superDoodleButtonContainer}>
-            <TouchableOpacity
-              style={styles.superDoodleButton}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.location.href = '/products/super-doodle';
-                }
-              }}
-            >
-              <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        )
       )}
 
       {/* CTA STRIP */}
