@@ -1,13 +1,30 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, Image } from 'react-native';
 import BlogSearchBar from './BlogSearchBar';
 
 export default function BlogShell({ children, onNavigateToLogin, onNavigateToSignUp }) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const checkMobile = () => {
+        setIsMobile(window.innerWidth <= 768);
+      };
+      
+      checkMobile();
+      window.addEventListener('resize', checkMobile);
+      
+      return () => window.removeEventListener('resize', checkMobile);
+    } else {
+      setIsMobile(true);
+    }
+  }, []);
+
   return (
     <View style={styles.container}>
       {/* Sticky Header */}
       <View style={styles.header}>
-        <View style={styles.headerContent}>
+        <View style={[styles.headerContent, isMobile && styles.headerContentMobile]}>
           <TouchableOpacity
             onPress={() => {
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -25,9 +42,11 @@ export default function BlogShell({ children, onNavigateToLogin, onNavigateToSig
               <Text style={styles.logo}>learnadoodle</Text>
             </View>
           </TouchableOpacity>
-          <View style={styles.searchContainer}>
-            <BlogSearchBar />
-          </View>
+          {!isMobile && (
+            <View style={styles.searchContainer}>
+              <BlogSearchBar />
+            </View>
+          )}
         </View>
       </View>
 
@@ -67,6 +86,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 40,
     gap: 24,
+  },
+  headerContentMobile: {
+    justifyContent: 'center',
+    paddingHorizontal: 16,
   },
   logoContainer: {
     flexDirection: 'row',

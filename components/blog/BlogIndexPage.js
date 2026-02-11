@@ -35,6 +35,22 @@ function formatCardDate(dateString) {
 export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp }) {
   const [featuredPost, setFeaturedPost] = useState(null);
   const [mostRecent, setMostRecent] = useState([]);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const checkMobile = () => {
+        setIsMobile(window.innerWidth <= 768);
+      };
+      
+      checkMobile();
+      window.addEventListener('resize', checkMobile);
+      
+      return () => window.removeEventListener('resize', checkMobile);
+    } else {
+      setIsMobile(true);
+    }
+  }, []);
 
   useEffect(() => {
     const featured = getFeaturedPost();
@@ -61,27 +77,44 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp })
               onPress={() => handlePostPress(featuredPost.slug)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <View style={styles.featuredContent}>
-                <View style={styles.featuredText}>
-                  <Text style={styles.featuredTitle}>{featuredPost.title}</Text>
-                  <Text style={styles.featuredDek}>{featuredPost.dek}</Text>
-                  <View style={styles.featuredMeta}>
-                    <PostMetaRowSimple post={featuredPost} />
-                  </View>
-                  <View style={styles.readLink}>
-                    <Text style={styles.readLinkText}>Read more →</Text>
+              {isMobile ? (
+                <View style={styles.featuredContentMobile}>
+                  {featuredPost.image && (
+                    <View style={styles.featuredImageContainerMobile}>
+                      <Image 
+                        source={getImageSource(featuredPost.image)} 
+                        style={styles.featuredImageMobile}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  )}
+                  <View style={styles.featuredTextMobile}>
+                    <Text style={styles.featuredTitleMobile}>{featuredPost.title}</Text>
                   </View>
                 </View>
-                {featuredPost.image && (
-                  <View style={styles.featuredImageContainer}>
-                    <Image 
-                      source={getImageSource(featuredPost.image)} 
-                      style={styles.featuredImage}
-                      resizeMode="contain"
-                    />
+              ) : (
+                <View style={styles.featuredContent}>
+                  <View style={styles.featuredText}>
+                    <Text style={styles.featuredTitle}>{featuredPost.title}</Text>
+                    <Text style={styles.featuredDek}>{featuredPost.dek}</Text>
+                    <View style={styles.featuredMeta}>
+                      <PostMetaRowSimple post={featuredPost} />
+                    </View>
+                    <View style={styles.readLink}>
+                      <Text style={styles.readLinkText}>Read more →</Text>
+                    </View>
                   </View>
-                )}
-              </View>
+                  {featuredPost.image && (
+                    <View style={styles.featuredImageContainer}>
+                      <Image 
+                        source={getImageSource(featuredPost.image)} 
+                        style={styles.featuredImage}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         )}
@@ -98,21 +131,40 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp })
                   onPress={() => handlePostPress(post.slug)}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  {post.image && (
-                    <View style={styles.recentCardImageContainer}>
-                      <Image 
-                        source={getImageSource(post.image)} 
-                        style={styles.recentCardImage}
-                        resizeMode="contain"
-                      />
-                    </View>
+                  {isMobile ? (
+                    <>
+                      {post.image && (
+                        <View style={styles.recentCardImageContainerMobile}>
+                          <Image 
+                            source={getImageSource(post.image)} 
+                            style={styles.recentCardImageMobile}
+                            resizeMode="contain"
+                          />
+                        </View>
+                      )}
+                      <View style={styles.recentCardContentMobile}>
+                        <Text style={styles.recentCardTitleMobile}>{post.title}</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      {post.image && (
+                        <View style={styles.recentCardImageContainer}>
+                          <Image 
+                            source={getImageSource(post.image)} 
+                            style={styles.recentCardImage}
+                            resizeMode="contain"
+                          />
+                        </View>
+                      )}
+                      <View style={styles.recentCardContent}>
+                        <Text style={styles.recentCardDate}>
+                          {formatCardDate(post.date)}
+                        </Text>
+                        <Text style={styles.recentCardTitle}>{post.title}</Text>
+                      </View>
+                    </>
                   )}
-                  <View style={styles.recentCardContent}>
-                    <Text style={styles.recentCardDate}>
-                      {formatCardDate(post.date)}
-                    </Text>
-                    <Text style={styles.recentCardTitle}>{post.title}</Text>
-                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -196,7 +248,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? {
       paddingHorizontal: 40,
     } : {
-      paddingHorizontal: 24,
+      paddingHorizontal: 16,
+      marginTop: 32,
+      marginBottom: 48,
     }),
   },
   featuredContent: {
@@ -208,6 +262,10 @@ const styles = StyleSheet.create({
     } : {
       flexDirection: 'column',
     }),
+  },
+  featuredContentMobile: {
+    flexDirection: 'column',
+    gap: 24,
   },
   featuredText: {
     ...(Platform.OS === 'web' ? {
@@ -233,6 +291,10 @@ const styles = StyleSheet.create({
       marginTop: 24,
     }),
   },
+  featuredImageContainerMobile: {
+    width: '100%',
+    marginBottom: 24,
+  },
   featuredImage: {
     width: '100%',
     height: '100%',
@@ -241,6 +303,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       objectFit: 'contain',
     }),
+  },
+  featuredImageMobile: {
+    width: '100%',
+    height: 'auto',
+    aspectRatio: 16 / 9,
   },
   featuredTitle: {
     fontSize: 40,
@@ -253,6 +320,19 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  featuredTitleMobile: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#0f172a',
+    lineHeight: 32,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  featuredTextMobile: {
+    width: '100%',
   },
   featuredDek: {
     fontSize: 22,
@@ -286,7 +366,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? {
       paddingHorizontal: 40,
     } : {
-      paddingHorizontal: 24,
+      paddingHorizontal: 16,
+      marginBottom: 48,
     }),
   },
   sectionHeader: {
@@ -424,13 +505,14 @@ const styles = StyleSheet.create({
   recentCard: {
     borderRadius: 16,
     overflow: 'hidden',
-    padding: 20,
     backgroundColor: 'transparent',
     ...(Platform.OS === 'web' ? {
       flex: 1,
       minHeight: 400,
+      padding: 20,
     } : {
       width: '100%',
+      padding: 0,
     }),
   },
   recentCardImageContainer: {
@@ -440,10 +522,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  recentCardImageContainerMobile: {
+    width: '100%',
+    marginBottom: 16,
+  },
   recentCardImage: {
     width: '100%',
     height: '100%',
     maxWidth: 380,
+  },
+  recentCardImageMobile: {
+    width: '100%',
+    height: 'auto',
+    aspectRatio: 16 / 9,
   },
   recentCardContent: {
     flex: 1,
@@ -467,6 +558,20 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  recentCardTitleMobile: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#0f172a',
+    lineHeight: 28,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  recentCardContentMobile: {
+    width: '100%',
+    paddingHorizontal: 0,
+    paddingTop: 16,
   },
   viewAllContainer: {
     alignItems: 'center',
