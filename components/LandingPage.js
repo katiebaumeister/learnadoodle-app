@@ -176,21 +176,23 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         </View>
         
         {/* Scroll Indicator */}
-        <TouchableOpacity
-          style={[styles.scrollIndicator, isMobile && styles.scrollIndicatorMobile]}
-          onPress={() => {
-            if (Platform.OS === 'web' && typeof document !== 'undefined') {
-              const featuresSection = document.getElementById('why');
-              if (featuresSection) {
-                featuresSection.scrollIntoView({ behavior: 'smooth' });
+        {!isMobile && (
+          <TouchableOpacity
+            style={styles.scrollIndicator}
+            onPress={() => {
+              if (Platform.OS === 'web' && typeof document !== 'undefined') {
+                const featuresSection = document.getElementById('why');
+                if (featuresSection) {
+                  featuresSection.scrollIntoView({ behavior: 'smooth' });
+                }
               }
-            }
-          }}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Text style={styles.scrollIndicatorText}>See how it works</Text>
-          <ChevronDown size={20} color="#64748b" />
-        </TouchableOpacity>
+            }}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.scrollIndicatorText}>See how it works</Text>
+            <ChevronDown size={20} color="#64748b" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* NEW FEATURES SECTION */}
@@ -208,13 +210,15 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 1: Image left, text right */}
           <View style={styles.featureRow}>
-            <View style={styles.featureImageContainer}>
-              <Image
-                source={require('../assets/schedule.png')}
-                style={styles.featureImage}
-                resizeMode="contain"
-              />
-            </View>
+            {!isMobile && (
+              <View style={styles.featureImageContainer}>
+                <Image
+                  source={require('../assets/schedule.png')}
+                  style={styles.featureImage}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
             <View style={styles.featureTextContainer}>
               <Text style={styles.featureTitle}>
                 Build a schedule that fits your days—not the other way around.
@@ -230,54 +234,36 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 2: Image right, text left */}
           <View style={styles.featureRow}>
-            {isMobile ? (
-              <>
-                <View style={styles.featureImageContainer}>
-                  <Image
-                    source={require('../assets/curriculum.png')}
-                    style={styles.featureImage}
-                    resizeMode="contain"
-                  />
-                </View>
-                <View style={styles.featureTextContainer}>
-                  <Text style={styles.featureTitle}>
-                    Use the curriculum you trust
-                  </Text>
-                  <Text style={styles.featureBody}>
-                    Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
-                  <Text style={styles.featureTitle}>
-                    Use the curriculum you trust
-                  </Text>
-                  <Text style={styles.featureBody}>
-                    Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
-                  </Text>
-                </View>
-                <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-                  <Image
-                    source={require('../assets/curriculum.png')}
-                    style={styles.featureImage}
-                    resizeMode="contain"
-                  />
-                </View>
-              </>
+            <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
+              <Text style={styles.featureTitle}>
+                Use the curriculum you trust
+              </Text>
+              <Text style={styles.featureBody}>
+                Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
+              </Text>
+            </View>
+            {!isMobile && (
+              <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+                <Image
+                  source={require('../assets/curriculum.png')}
+                  style={styles.featureImage}
+                  resizeMode="contain"
+                />
+              </View>
             )}
           </View>
 
           {/* Feature 3: Image left, text right */}
           <View style={styles.featureRow}>
-            <View style={styles.featureImageContainer}>
-              <Image
-                source={require('../assets/progress.png')}
-                style={styles.featureImage}
-                resizeMode="contain"
-              />
-            </View>
+            {!isMobile && (
+              <View style={styles.featureImageContainer}>
+                <Image
+                  source={require('../assets/progress.png')}
+                  style={styles.featureImage}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
             <View style={styles.featureTextContainer}>
               <Text style={styles.featureTitle}>
                 See progress without constant tracking
@@ -290,54 +276,36 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 4: Image right, text left */}
           <View style={styles.featureRow}>
-            {isMobile ? (
-              <>
-                <View style={styles.featureImageContainer}>
-                  <Image
-                    source={require('../assets/support.png')}
-                    style={styles.featureImage}
-                    resizeMode="contain"
-                  />
-                </View>
-                <View style={styles.featureTextContainer}>
-                  <Text style={styles.featureTitle}>
-                    Support every child—without comparison
-                  </Text>
-                  <Text style={styles.featureBody}>
-                    Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
-                  <Text style={styles.featureTitle}>
-                    Support every child—without comparison
-                  </Text>
-                  <Text style={styles.featureBody}>
-                    Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
-                  </Text>
-                </View>
-                <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-                  <Image
-                    source={require('../assets/support.png')}
-                    style={styles.featureImage}
-                    resizeMode="contain"
-                  />
-                </View>
-              </>
+            <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
+              <Text style={styles.featureTitle}>
+                Support every child—without comparison
+              </Text>
+              <Text style={styles.featureBody}>
+                Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
+              </Text>
+            </View>
+            {!isMobile && (
+              <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+                <Image
+                  source={require('../assets/support.png')}
+                  style={styles.featureImage}
+                  resizeMode="contain"
+                />
+              </View>
             )}
           </View>
 
           {/* Feature 5: Image left, text right */}
           <View style={styles.featureRow}>
-            <View style={styles.featureImageContainer}>
-              <Image
-                source={require('../assets/teach.png')}
-                style={styles.featureImage}
-                resizeMode="contain"
-              />
-            </View>
+            {!isMobile && (
+              <View style={styles.featureImageContainer}>
+                <Image
+                  source={require('../assets/teach.png')}
+                  style={styles.featureImage}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
             <View style={styles.featureTextContainer}>
               <Text style={styles.featureTitle}>
                 Teach with confidence
@@ -350,42 +318,22 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 6: Image right, text left */}
           <View style={styles.featureRow}>
-            {isMobile ? (
-              <>
-                <View style={styles.featureImageContainer}>
-                  <Image
-                    source={require('../assets/privacy.png')}
-                    style={styles.featureImage}
-                    resizeMode="contain"
-                  />
-                </View>
-                <View style={styles.featureTextContainer}>
-                  <Text style={styles.featureTitle}>
-                    Privacy isn't an afterthought—it's foundational.
-                  </Text>
-                  <Text style={styles.featureBody}>
-                    No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
-                  <Text style={styles.featureTitle}>
-                    Privacy isn't an afterthought—it's foundational.
-                  </Text>
-                  <Text style={styles.featureBody}>
-                    No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
-                  </Text>
-                </View>
-                <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-                  <Image
-                    source={require('../assets/privacy.png')}
-                    style={styles.featureImage}
-                    resizeMode="contain"
-                  />
-                </View>
-              </>
+            <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
+              <Text style={styles.featureTitle}>
+                Privacy isn't an afterthought—it's foundational.
+              </Text>
+              <Text style={styles.featureBody}>
+                No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
+              </Text>
+            </View>
+            {!isMobile && (
+              <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+                <Image
+                  source={require('../assets/privacy.png')}
+                  style={styles.featureImage}
+                  resizeMode="contain"
+                />
+              </View>
             )}
           </View>
         </View>
