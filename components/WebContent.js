@@ -521,6 +521,12 @@ import HomeTilePortfolioSuggestions from './home/tiles/HomeTilePortfolioSuggesti
 import HomeTileAreasOfMastery from './home/tiles/HomeTileAreasOfMastery'
 import HomeTileReflectionPrompt from './home/tiles/HomeTileReflectionPrompt'
 import QuickAddCard from './home/QuickAddCard'
+import TodayHeroCard from './home/TodayHeroCard'
+import TodayScheduleCard from './home/TodayScheduleCard'
+import BacklogCard from './home/BacklogCard'
+import WeeklyPulseCard from './home/WeeklyPulseCard'
+import ThisWeekStrip from './home/ThisWeekStrip'
+import ParentDigestModal from './home/ParentDigestModal'
 import GroupsPage from './social/GroupsPage'
 import MarketplacePage from './social/MarketplacePage'
 
@@ -567,7 +573,6 @@ import DailyConnectionUnified from './home/DailyConnectionUnified'
 import TodayCard from './home/TodayCard'
 import WeeklyProgress from './home/WeeklyProgress'
 import DailyInsights from './home/DailyInsights'
-import HeroInsights from './home/HeroInsights'
 import AnimatedIcon from './AnimatedIcon'
 import StickyNotesContainer from './notes/StickyNotesContainer'
 import { getDailyTips } from '../lib/dailyTips'
@@ -679,6 +684,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [hasBacklogItems, setHasBacklogItems] = useState(false);
   const [backlogCount, setBacklogCount] = useState(0);
   const [hasAnyEvents, setHasAnyEvents] = useState(null); // null = not checked yet, true/false = checked
+  const [showParentDigest, setShowParentDigest] = useState(false);
   
   // Home filters (date and children)
   const [homeSelectedDate, setHomeSelectedDate] = useState(() => {
@@ -7382,6 +7388,114 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     };
     const dailyTips = getDailyTips(tipsContext, 2);
 
+    // Compute learning weather
+    const blockCount = filteredLearning.length;
+    const overdueCount = (homeData.tasks || []).filter(t => t.due_time === 'Overdue').length;
+    let weatherStatus = 'light';
+    let weatherMessage = perspectiveMessage;
+    
+    if (blockCount <= 3 && backlogCount <= 2) {
+      weatherStatus = 'light';
+      weatherMessage = eventCount === 0 
+        ? "Open day — good opportunity for gentle review or exploration."
+        : "Light day — good opportunity for gentle review or exploration.";
+    } else if (blockCount >= 4 && blockCount <= 5) {
+      weatherStatus = 'moderate';
+      weatherMessage = "Steady day — balanced schedule ahead.";
+    } else if (blockCount >= 6 || overdueCount > 0) {
+      weatherStatus = overdueCount > 0 ? 'catch-up' : 'heavy';
+      weatherMessage = overdueCount > 0 
+        ? "Time to catch up — focus on overdue items first."
+        : "Heavy day — pace yourself and take breaks.";
+    }
+
+    // Get backlog items (top 3)
+    const backlogItems = (homeData.tasks || []).slice(0, 3);
+
+    // Compute weekly pulse from events this week
+    const weeklyPulse = (() => {
+      if (!homeData.subjects || homeData.subjects.length === 0) return [];
+      
+      const weekStart = getWeekStart(validSelectedDate);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+      
+      // Count events by subject for this week
+      const subjectCounts = {};
+      
+      // Count from learning events (today's events)
+      (homeData.learning || []).forEach(event => {
+        if (!event.subject_id) return;
+        const eventDate = new Date(event.start_ts || event.start_local);
+        if (eventDate >= weekStart && eventDate <= weekEnd) {
+          if (!subjectCounts[event.subject_id]) {
+            subjectCounts[event.subject_id] = { sessions: 0, overdue: 0 };
+          }
+          if (event.status === 'done' || event.status === 'scheduled') {
+            subjectCounts[event.subject_id].sessions++;
+          }
+        }
+      });
+      
+      // Count overdue tasks by subject
+      (homeData.tasks || []).forEach(task => {
+        if (task.subject_id && task.due_time === 'Overdue') {
+          if (!subjectCounts[task.subject_id]) {
+            subjectCounts[task.subject_id] = { sessions: 0, overdue: 0 };
+          }
+          subjectCounts[task.subject_id].overdue++;
+        }
+      });
+      
+      // Convert to array format, prioritize subjects with activity
+      const pulse = Object.entries(subjectCounts)
+        .map(([subjectId, counts]) => {
+          const subject = homeData.subjects.find(s => String(s.id) === String(subjectId));
+          if (!subject) return null;
+          return {
+            subjectName: subject.name,
+            sessions: counts.sessions,
+            overdue: counts.overdue,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => {
+          // Sort by sessions first, then by overdue
+          if (b.sessions !== a.sessions) return b.sessions - a.sessions;
+          return b.overdue - a.overdue;
+        })
+        .slice(0, 3); // Top 3 subjects
+      
+      // If no pulse data, show top 3 subjects as "On track"
+      if (pulse.length === 0 && homeData.subjects.length > 0) {
+        return homeData.subjects.slice(0, 3).map(subject => ({
+          subjectName: subject.name,
+          sessions: 0,
+          overdue: 0,
+        }));
+      }
+      
+      return pulse;
+    })();
+
+    // Suggested rhythms (default suggestions)
+    const suggestedRhythms = [
+      { time: '9:00 AM', title: 'Morning math block' },
+      { time: '2:00 PM', title: 'Afternoon reading & writing' },
+      { time: '4:00 PM', title: 'Project work or exploration' },
+    ];
+
+    // Compute parent digest data
+    const mostActiveSubject = filteredLearning.length > 0 
+      ? filteredLearning[0]?.subject || null
+      : null;
+    const suggestedAction = overdueCount > 0 
+      ? "Review overdue items in backlog"
+      : blockCount === 0
+      ? "Add your first learning block"
+      : "Continue with today's schedule";
+
     return (
       <View style={{ flex: 1 }}>
         <ScrollView 
@@ -7389,245 +7503,84 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           contentContainerStyle={styles.homeContentContainer}
           showsVerticalScrollIndicator={true}
         >
-        {/* Animated Icon Header */}
-        <View style={{ alignItems: 'center', marginTop: 24, marginBottom: 16 }}>
-          <AnimatedIcon
-            source={require('../assets/icon.png')}
-            size={64}
-            animationType="pulse"
-            duration={2000}
+          {/* Today Hero Card */}
+          <TodayHeroCard
+            date={validSelectedDate}
+            weatherStatus={weatherStatus}
+            weatherMessage={weatherMessage}
+            blockCount={blockCount}
+            backlogCount={backlogCount}
+            overdueCount={overdueCount}
+            onParentDigest={() => setShowParentDigest(true)}
           />
-        </View>
-        
-        {/* Hero Insights - Co-Star style daily guidance */}
-        <HeroInsights
-          primary={dailyInsightsData?.primary}
-          child_insight={dailyInsightsData?.child_insight}
-          emotional={null}
-          tactical={null}
-          strategic={dailyInsightsData?.strategic}
-          cta={dailyInsightsData?.cta || "View weekly story"}
-          onViewFull={() => onTabChange('records')}
-        />
-        
-        {/* Quick Add Card */}
-        <QuickAddCard
-          onAddEvent={() => {
-            setTaskModalDate(validSelectedDate);
-            setTaskModalDefaultPlacement('calendar');
-            setShowTaskModal(true);
-          }}
-          onAddGrade={() => {
-            // Navigate to records/portfolio where grades can be added
-            onTabChange('records');
-          }}
-          onAddMaterial={() => {
-            setShowAddMaterialModal(true);
-          }}
-          onAddSubject={() => {
-            // This uses the callback from WebLayout.js
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
-            }
-          }}
-          onAddChild={() => {
-            // This uses the callback from WebLayout.js
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('openAddChildModal'));
-            }
-          }}
-        />
 
-        {/* Single Column Layout: Learning + Tasks */}
-        <View style={styles.homeMainLayout}>
-          <View style={styles.homeLeftColumn}>
-            {/* Today's Learning */}
-            <View style={styles.familyScheduleHeader}>
-              <Text style={styles.familyScheduleTitle}>Family Schedule</Text>
-            </View>
-            <TodaysLearningTimeGrouped 
-          children={homeData.children || []}
-              learning={filteredLearning}
-              currentDate={validSelectedDate}
-              onViewPlanner={() => onTabChange('planner')}
-              onAddBlock={() => {
-                setTaskModalDate(validSelectedDate);
-                setTaskModalDefaultPlacement('calendar'); // Default to calendar for new blocks
-                setShowTaskModal(true);
-              }}
-              onEventClick={(event) => {
-                // Navigate to planner screen month view showing today's date
-                const todayStr = validSelectedDate.toISOString().split('T')[0];
-                
-                // Update URL with date and view parameters
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('tab', 'planner');
-                  url.searchParams.set('date', todayStr);
-                  url.searchParams.set('view', 'month');
-                  window.history.replaceState({}, '', url.toString());
-                }
-                
-                // Switch to planner tab
-                onTabChange('planner');
-                
-                // Dispatch events to ensure view switches correctly
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  setTimeout(() => {
-                    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
-                    // Also update the month to show the event's date
-                    if (onCurrentMonthChange) {
-                      onCurrentMonthChange(validSelectedDate);
-                    }
-                    // Dispatch month change event
-                    window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: validSelectedDate }));
-                  }, 100);
-                }
-              }}
-              onEventComplete={async (event) => {
-                console.log('[WebContent] onEventComplete callback triggered for event:', event?.id);
-                
-                // Optimistically update the event status in homeData immediately
-                if (homeData && event?.id) {
-                  setHomeData(prev => {
-                    if (!prev) return prev;
-                    const updatedLearning = (prev.learning || []).map(e => 
-                      e.id === event.id ? { ...e, status: e.status === 'done' ? 'scheduled' : 'done' } : e
-                    );
-                    return {
-                      ...prev,
-                      learning: updatedLearning
-                    };
-                  });
-                }
-                
-                // Refresh home data in the background without showing loading screen
-                // Don't invalidate cache - just update it directly to avoid triggering reload
-                if (user && homeData) {
-                  try {
-                    const { data: profileData } = await supabase
-                      .from('profiles')
-                      .select('family_id')
-                      .eq('id', user.id)
-                      .maybeSingle();
-                    
-                    if (profileData?.family_id) {
-                      const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
-                        ? homeSelectedDate
-                        : new Date();
-                      validDate.setHours(0, 0, 0, 0);
-                      const selectedDateStr = validDate.toISOString().split('T')[0];
-                      
-                      // Refetch in background without setting loading state
-                      const homeDataResult = await supabase.rpc('get_home_data', {
-                        _family_id: profileData.family_id,
-                        _date: selectedDateStr,
-                        _horizon_days: 14,
-                      });
-                      
-                      const { data: rawData, error } = homeDataResult;
-                      
-                      // Clean invalid avatar UUIDs from RPC response before using
-                      const data = rawData ? cleanAvatarUrls(rawData) : rawData;
-                      
-                      if (!error && data) {
-                        const stories = (data?.stories || []).filter(s => 
-                          s && s.title && s.body && s.title.trim() && s.body.trim()
-                        );
-                        
-                        const updatedData = {
-                          ...data,
-                          stories: stories,
-                        };
-                        
-                        // Update state and cache without invalidating
-                        setHomeData(updatedData);
-                        saveHomeDataToCache(profileData.family_id, selectedDateStr, updatedData);
-                      }
-                    }
-                  } catch (err) {
-                    console.error('[WebContent] Error refreshing home data after event complete:', err);
-                  }
-                }
-                
-                // Also dispatch refresh event for other components
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
-                }
-          }}
-        />
-        
-            {/* Backlog Tasks */}
-            <TasksToday
-              tasks={homeData.tasks || []}
-              backlogCount={backlogCount}
-              onViewPlanner={() => {
-                // Navigate to planner list view with backlog tab
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  // Set URL parameters first - this ensures planner reads 'tasks' view on mount
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('tab', 'planner');
-                  url.searchParams.set('view', 'tasks');
-                  url.searchParams.set('section', 'backlog');
-                  window.history.replaceState({}, '', url.toString());
-                  
-                  // Dispatch events synchronously to update state immediately
-                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
-                  window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
-                  
-                  // Switch tabs immediately - URL params are already set so planner will read 'tasks' view
-                  onTabChange('planner');
-                } else {
-                  onTabChange('planner');
-                }
-              }}
-              onAddTask={() => {
-                setTaskModalDate(validSelectedDate);
-                setTaskModalDefaultPlacement('backlog'); // Default to backlog when opened from backlog container
-                setShowTaskModal(true);
-              }}
-              onToggleTask={(taskId) => {
-                // Handle task toggle
-              }}
-              onAddFromBacklog={() => {
-                const dateStr = validSelectedDate.toISOString().split('T')[0];
-                onTabChange(`planner?date=${dateStr}&action=add_from_backlog`);
-                }}
-              onTaskClick={(task) => {
-                // Navigate to planner list view with backlog tab
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  // Set URL parameters first - this ensures planner reads 'tasks' view on mount
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('tab', 'planner');
-                  url.searchParams.set('view', 'tasks');
-                  url.searchParams.set('section', 'backlog');
-                  window.history.replaceState({}, '', url.toString());
-                  
-                  // Dispatch events synchronously to update state immediately
-                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
-                  window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
-                  
-                  // Switch tabs immediately - URL params are already set so planner will read 'tasks' view
-                  onTabChange('planner');
-                } else {
-                  onTabChange('planner');
-                }
-              }}
-              />
+          {/* Today Schedule Card */}
+          <TodayScheduleCard
+            events={filteredLearning}
+            children={homeData.children || []}
+            subjects={propSubjects || []}
+            onOpenPlanner={() => {
+              const todayStr = validSelectedDate.toISOString().split('T')[0];
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', 'planner');
+                url.searchParams.set('date', todayStr);
+                window.history.replaceState({}, '', url.toString());
+              }
+              onTabChange('planner');
+            }}
+            onAddBlock={() => {
+              setTaskModalDate(validSelectedDate);
+              setTaskModalDefaultPlacement('calendar');
+              setShowTaskModal(true);
+            }}
+            suggestedRhythms={suggestedRhythms}
+            onAddSuggestedRhythm={(rhythm) => {
+              // Create event from suggested rhythm
+              setTaskModalDate(validSelectedDate);
+              setTaskModalDefaultPlacement('calendar');
+              setShowTaskModal(true);
+            }}
+          />
 
-              {/* Home screen footer animation */}
-              <View style={styles.homeAnimationContainer}>
-                <AnimatedIcon
-                  lottieSource={require('../assets/animation.json')}
-                  size={200}
-                  animationType="none"
-                  loop
-                  autoPlay
-                />
-              </View>
-          </View>
-          </View>
+          {/* This Week Strip */}
+          <ThisWeekStrip weeklyPulse={weeklyPulse} />
+
+          {/* Backlog Card */}
+          <BacklogCard
+            backlogItems={backlogItems}
+            backlogCount={backlogCount}
+            children={homeData.children || []}
+            onViewBacklog={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', 'planner');
+                url.searchParams.set('view', 'tasks');
+                url.searchParams.set('section', 'backlog');
+                window.history.replaceState({}, '', url.toString());
+                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
+                window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
+              }
+              onTabChange('planner');
+            }}
+          />
+
+          {/* Weekly Pulse Card (optional) */}
+          {weeklyPulse.length > 0 && (
+            <WeeklyPulseCard weeklyPulse={weeklyPulse} />
+          )}
         </ScrollView>
+
+        {/* Parent Digest Modal */}
+        <ParentDigestModal
+          visible={showParentDigest}
+          onClose={() => setShowParentDigest(false)}
+          todayBlocks={blockCount}
+          overdueCount={overdueCount}
+          mostActiveSubject={mostActiveSubject}
+          suggestedAction={suggestedAction}
+        />
+
 
         {/* Suggestion Action Modal */}
         <SuggestionActionModal
@@ -16686,7 +16639,13 @@ const styles = StyleSheet.create({
     }),
   },
   homeContentContainer: {
+    paddingTop: 24,
     paddingBottom: 40,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      marginHorizontal: 'auto',
+      width: '100%',
+    }),
   },
   homeMainLayout: {
     flexDirection: 'column',
@@ -16701,12 +16660,6 @@ const styles = StyleSheet.create({
         flexDirection: 'column',
       },
     }),
-  },
-  homeAnimationContainer: {
-    marginTop: 24,
-    marginBottom: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   homeLeftColumn: {
     flex: 1,

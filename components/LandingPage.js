@@ -81,7 +81,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         scrollEventThrottle={16}
       >
       {/* Top Nav */}
-      <Animated.View style={[styles.header, isScrolled && styles.headerScrolled, { opacity: headerFadeAnim }]}>
+      <Animated.View style={[styles.header, isScrolled && styles.headerScrolled]}>
         <View style={styles.headerContent}>
           <View style={styles.logoContainer}>
             <Image 

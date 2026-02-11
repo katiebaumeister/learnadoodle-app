@@ -500,9 +500,11 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    // Neutral bar with subtle neutral purple fill (reserve rainbow for detail view)
-    backgroundColor: Platform.OS === 'web' ? '#9CA3AF' : '#9CA3AF', // Neutral muted gray-purple
+    backgroundColor: Platform.OS === 'web' ? 'transparent' : (colors.accent || '#4F46E5'), // Fallback for native
     borderRadius: 2,
+    ...(Platform.OS === 'web' && {
+      backgroundImage: 'linear-gradient(90deg, #f4b4f8 0%, #c4b5fd 20%, #93c5fd 40%, #a5f3fc 60%, #bbf7d0 80%, #facc15 100%)',
+    }),
   },
   progressBarLabel: {
     fontSize: 11,
