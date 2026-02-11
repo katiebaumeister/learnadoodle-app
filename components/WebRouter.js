@@ -280,12 +280,12 @@ export default function WebRouter() {
       <TermsPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signin';
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signup';
           }
         }}
       />
@@ -297,12 +297,12 @@ export default function WebRouter() {
       <PrivacyPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signin';
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signup';
           }
         }}
       />
@@ -314,12 +314,12 @@ export default function WebRouter() {
       <AboutPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signin';
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signup';
           }
         }}
       />
@@ -331,12 +331,12 @@ export default function WebRouter() {
       <FAQPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signin';
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signup';
           }
         }}
       />
@@ -348,12 +348,12 @@ export default function WebRouter() {
       <ContactPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signin';
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signup';
           }
         }}
       />
@@ -365,12 +365,12 @@ export default function WebRouter() {
       <SubscriptionPage
         onNavigateToLogin={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signin';
           }
         }}
         onNavigateToSignUp={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = '/';
+            window.location.href = '/?view=signup';
           }
         }}
       />

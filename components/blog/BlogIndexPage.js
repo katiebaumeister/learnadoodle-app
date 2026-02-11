@@ -9,26 +9,36 @@ import {
   Image,
 } from 'react-native';
 import BlogShell from './BlogShell';
-import PublicationPostItem from './PublicationPostItem';
 import PostMetaRowSimple from './PostMetaRowSimple';
 import BlogFooter from './BlogFooter';
-import { getFeaturedPost, getRecentPosts, getEditorsPicks, getBasicsPosts } from '../../lib/blog';
+import { getFeaturedPost, getRecentPosts } from '../../lib/blog';
+
+// Helper function to get image source based on filename
+function getImageSource(imageName) {
+  const imageMap = {
+    'googlecalblog.png': require('../../assets/googlecalblog.png'),
+    'togetherblog.png': require('../../assets/togetherblog.png'),
+    'pomodoroblog.png': require('../../assets/pomodoroblog.png'),
+    'famblog.png': require('../../assets/famblog.png'),
+  };
+  return imageMap[imageName] || require('../../assets/googlecalblog.png');
+}
+
+// Helper function to format date as "FEB 10" style
+function formatCardDate(dateString) {
+  const date = new Date(dateString);
+  const month = date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
+  const day = date.getDate();
+  return `${month} ${day}`;
+}
 
 export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp }) {
   const [featuredPost, setFeaturedPost] = useState(null);
-  const [editorsPicks, setEditorsPicks] = useState([]);
-  const [basicsPosts, setBasicsPosts] = useState([]);
   const [mostRecent, setMostRecent] = useState([]);
 
   useEffect(() => {
     const featured = getFeaturedPost();
     setFeaturedPost(featured);
-    
-    const picks = getEditorsPicks();
-    setEditorsPicks(picks);
-    
-    const basics = getBasicsPosts();
-    setBasicsPosts(basics);
     
     // Get next 3 posts after featured
     const recent = getRecentPosts(4, featured?.slug);
@@ -62,92 +72,48 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp })
                     <Text style={styles.readLinkText}>Read more →</Text>
                   </View>
                 </View>
-                <View style={styles.featuredImageContainer}>
-                  <Image 
-                    source={require('../../assets/googlecalblog.png')} 
-                    style={styles.featuredImage}
-                    resizeMode="contain"
-                  />
-                </View>
+                {featuredPost.image && (
+                  <View style={styles.featuredImageContainer}>
+                    <Image 
+                      source={getImageSource(featuredPost.image)} 
+                      style={styles.featuredImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                )}
               </View>
             </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Editor's Picks */}
-        {editorsPicks.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Editor's picks</Text>
-              <Text style={styles.sectionSubtext}>
-                Three pieces we often recommend to families starting out.
-              </Text>
-            </View>
-            <View style={styles.picksGrid}>
-              {editorsPicks.map((post, index) => (
-                <View key={post.slug} style={styles.pickItem}>
-                  <TouchableOpacity
-                    onPress={() => handlePostPress(post.slug)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.pickTitle}>{post.title}</Text>
-                    <Text style={styles.pickDek}>{post.dek}</Text>
-                    <View style={styles.pickMeta}>
-                      <Text style={styles.pickDate}>
-                        {new Date(post.date).toLocaleDateString('en-US', { 
-                          month: 'long', 
-                          day: 'numeric',
-                          year: 'numeric'
-                        })}
-                      </Text>
-                      <Text style={styles.pickTags}>
-                        {post.tags.join(' · ')}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  {index < editorsPicks.length - 1 && <View style={styles.pickDivider} />}
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Homeschooling Basics */}
-        {basicsPosts.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Homeschooling basics</Text>
-              <Text style={styles.sectionSubtext}>
-                Foundational ideas we point families to again and again.
-              </Text>
-            </View>
-            <View style={styles.basicsList}>
-              {basicsPosts.map((post) => (
-                <TouchableOpacity
-                  key={post.slug}
-                  style={styles.basicsItem}
-                  onPress={() => handlePostPress(post.slug)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.basicsTitle}>{post.title}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
           </View>
         )}
 
         {/* Most Recent */}
         {mostRecent.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Most recent</Text>
-            <View style={styles.recentList}>
+            <Text style={styles.sectionTitle}>MOST RECENT POSTS</Text>
+            <View style={styles.recentCardsContainer}>
               {mostRecent.map((post, index) => (
-                <PublicationPostItem
+                <TouchableOpacity
                   key={post.slug}
-                  post={post}
+                  style={styles.recentCard}
                   onPress={() => handlePostPress(post.slug)}
-                  showDivider={index < mostRecent.length - 1}
-                />
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  {post.image && (
+                    <View style={styles.recentCardImageContainer}>
+                      <Image 
+                        source={getImageSource(post.image)} 
+                        style={styles.recentCardImage}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  )}
+                  <View style={styles.recentCardContent}>
+                    <Text style={styles.recentCardDate}>
+                      {formatCardDate(post.date)}
+                    </Text>
+                    <Text style={styles.recentCardTitle}>{post.title}</Text>
+                  </View>
+                </TouchableOpacity>
               ))}
             </View>
             <View style={styles.viewAllContainer}>
@@ -327,11 +293,13 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   sectionTitle: {
-    fontSize: 32,
+    fontSize: 24,
     fontWeight: '600',
     color: '#0f172a',
-    marginBottom: 8,
+    marginBottom: 32,
     textAlign: 'left',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -444,11 +412,64 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
   },
-  recentList: {
-    marginBottom: 48,
+  recentCardsContainer: {
+    ...(Platform.OS === 'web' ? {
+      flexDirection: 'row',
+      gap: 24,
+    } : {
+      flexDirection: 'column',
+      gap: 24,
+    }),
+  },
+  recentCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    padding: 20,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' ? {
+      flex: 1,
+      minHeight: 400,
+    } : {
+      width: '100%',
+    }),
+  },
+  recentCardImageContainer: {
+    width: '100%',
+    height: 200,
+    marginBottom: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentCardImage: {
+    width: '100%',
+    height: '100%',
+    maxWidth: 380,
+  },
+  recentCardContent: {
+    flex: 1,
+  },
+  recentCardDate: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748b',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  recentCardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#0f172a',
+    lineHeight: 26,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   viewAllContainer: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   viewAllButton: {
     paddingVertical: 12,

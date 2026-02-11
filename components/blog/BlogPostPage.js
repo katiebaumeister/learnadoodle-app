@@ -16,6 +16,17 @@ import BlogFooter from './BlogFooter';
 import TagPill from './TagPill';
 import { getPostBySlug, getRelatedPosts } from '../../lib/blog';
 
+// Helper function to get image source based on filename
+function getImageSource(imageName) {
+  const imageMap = {
+    'googlecalblog.png': require('../../assets/googlecalblog.png'),
+    'togetherblog.png': require('../../assets/togetherblog.png'),
+    'pomodoroblog.png': require('../../assets/pomodoroblog.png'),
+    'famblog.png': require('../../assets/famblog.png'),
+  };
+  return imageMap[imageName] || require('../../assets/googlecalblog.png');
+}
+
 // Simple markdown-like parser for basic formatting
 function parseContent(content) {
   const lines = content.split('\n');
@@ -239,13 +250,15 @@ export default function BlogPostPage({ slug, onNavigateToLogin, onNavigateToSign
         </View>
 
         {/* Image */}
-        <View style={styles.postImageContainer}>
-          <Image 
-            source={require('../../assets/googlecalblog.png')} 
-            style={styles.postImage}
-            resizeMode="contain"
-          />
-        </View>
+        {post.meta.image && (
+          <View style={styles.postImageContainer}>
+            <Image 
+              source={getImageSource(post.meta.image)} 
+              style={styles.postImage}
+              resizeMode="contain"
+            />
+          </View>
+        )}
 
         {/* Content */}
         <ContentRenderer elements={contentElements} />
@@ -442,7 +455,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '600',
     color: '#0f172a',
-    marginTop: 40,
+    marginTop: 0,
     marginBottom: 16,
     lineHeight: 36,
     ...(Platform.OS === 'web' && {
@@ -464,7 +477,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 30,
     color: '#1e293b',
-    marginBottom: 24,
+    marginBottom: 32,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -495,8 +508,8 @@ const styles = StyleSheet.create({
     }),
   },
   tagsSection: {
-    marginTop: 48,
-    marginBottom: 48,
+    marginTop: 32,
+    marginBottom: 32,
     ...(Platform.OS === 'web' ? {
       paddingHorizontal: 240,
     } : {
@@ -521,8 +534,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   shareSection: {
-    marginTop: 48,
-    marginBottom: 48,
+    marginTop: 32,
+    marginBottom: 64,
     ...(Platform.OS === 'web' ? {
       paddingHorizontal: 240,
     } : {

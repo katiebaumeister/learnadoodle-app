@@ -48,7 +48,13 @@ export default function WebAuthScreen() {
   // Reset animation when showing auth screen
   useEffect(() => {
     if (!showWelcome) {
-      pageFadeAnim.setValue(1);
+      // Fade in animation when auth screen appears
+      pageFadeAnim.setValue(0);
+      Animated.timing(pageFadeAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: Platform.OS !== 'web',
+      }).start();
     }
   }, [showWelcome, pageFadeAnim]);
 
@@ -315,6 +321,9 @@ export default function WebAuthScreen() {
 
   return (
     <Animated.View style={[styles.container, { opacity: pageFadeAnim }]}>
+      {Platform.OS === 'web' && (
+        <View style={styles.backgroundPattern} />
+      )}
       <TouchableOpacity
         style={styles.closeButton}
         onPress={handleClose}
@@ -323,7 +332,8 @@ export default function WebAuthScreen() {
         <X size={24} color="#64748b" />
       </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.contentContainer}>
-      <View style={styles.authCard}>
+      <View style={styles.authCardWrapper}>
+        <View style={styles.authCard}>
         <Text style={styles.title}>{isSignUp ? 'Create Account' : 'Hello again!'}</Text>
         <Text style={styles.subtitle}>
           {isSignUp 
@@ -471,7 +481,7 @@ export default function WebAuthScreen() {
             </>
           )}
         </View>
-
+        </View>
       </View>
     </ScrollView>
       
@@ -566,10 +576,6 @@ const styles = StyleSheet.create({
         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
       },
       default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
         elevation: 3,
       },
     }),
@@ -597,6 +603,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#E6F4FC',
     position: 'relative',
+    overflow: 'hidden',
+  },
+  backgroundPattern: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 0.3,
+    ...(Platform.OS === 'web' && {
+      backgroundImage: `radial-gradient(circle at 20% 50%, rgba(96, 165, 250, 0.3) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 80%, rgba(147, 197, 253, 0.3) 0%, transparent 50%),
+                        radial-gradient(circle at 40% 20%, rgba(191, 219, 254, 0.2) 0%, transparent 50%)`,
+      pointerEvents: 'none',
+    }),
   },
   closeButton: {
     position: 'absolute',
@@ -623,10 +644,22 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  authCardWrapper: {
+    width: '100%',
+    maxWidth: 400,
+    ...(Platform.OS === 'web' ? {
+      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
+      borderRadius: 16,
+      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+      // Ensure the element can blur
+      isolation: 'isolate',
+    } : {}),
+  },
   authCard: {
     padding: 32,
     width: '100%',
-    maxWidth: 400,
     position: 'relative',
   },
   title: {
