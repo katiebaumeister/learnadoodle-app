@@ -16,7 +16,13 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      return window.innerWidth <= 768;
+    }
+    // Treat non-web platforms as mobile by default
+    return Platform.OS !== 'web';
+  });
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
@@ -97,43 +103,58 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         scrollEventThrottle={16}
       >
       {/* Top Nav */}
-      <Animated.View style={[styles.header, isScrolled && styles.headerScrolled]}>
-        <View style={styles.headerContent}>
-          <View style={styles.logoContainer}>
-            <Image 
-              source={require('../assets/icon.png')} 
-              style={styles.logoImage}
-              resizeMode="contain"
-            />
-            <Text style={styles.logoText}>learnadoodle</Text>
+      {isMobile ? (
+        <View style={styles.headerMobile}>
+          <View style={styles.headerContentMobile}>
+            <View style={styles.logoContainer}>
+              <Image 
+                source={require('../assets/icon.png')} 
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
+              <Text style={styles.logoText}>learnadoodle</Text>
+            </View>
           </View>
-          <Animated.View style={[styles.headerButtons, { opacity: fadeAnim, pointerEvents: isScrolled ? 'auto' : 'none' }]}>
-            <TouchableOpacity
-              style={styles.headerGetStartedButton}
-              onPress={onGetStarted}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.headerGetStartedText}>GET STARTED</Text>
-            </TouchableOpacity>
-          </Animated.View>
         </View>
-      </Animated.View>
+      ) : (
+        <Animated.View style={[styles.header, isScrolled && styles.headerScrolled]}>
+          <View style={styles.headerContent}>
+            <View style={styles.logoContainer}>
+              <Image 
+                source={require('../assets/icon.png')} 
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
+              <Text style={styles.logoText}>learnadoodle</Text>
+            </View>
+            <Animated.View style={[styles.headerButtons, { opacity: fadeAnim, pointerEvents: isScrolled ? 'auto' : 'none' }]}>
+              <TouchableOpacity
+                style={styles.headerGetStartedButton}
+                onPress={onGetStarted}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.headerGetStartedText}>GET STARTED</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+        </Animated.View>
+      )}
 
       {/* HERO */}
-      <View style={styles.hero}>
-        <View style={styles.heroContent}>
+      <View style={[styles.hero, isMobile && styles.heroMobile]}>
+        <View style={[styles.heroContent, isMobile && styles.heroContentMobile]}>
           <View style={styles.heroLeft}>
             <Text style={styles.heroTitle}>Homeschool planning that adapts to real life</Text>
             <View style={styles.heroButtons}>
               <TouchableOpacity
-                style={styles.heroPrimaryButton}
+                style={[styles.heroPrimaryButton, isMobile && styles.heroButtonMobile]}
                 onPress={onGetStarted}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Text style={styles.heroPrimaryButtonText}>GET STARTED</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.heroSecondaryButton}
+                style={[styles.heroSecondaryButton, isMobile && styles.heroButtonMobile]}
                 onPress={handleLogIn}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
@@ -156,7 +177,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
         
         {/* Scroll Indicator */}
         <TouchableOpacity
-          style={styles.scrollIndicator}
+          style={[styles.scrollIndicator, isMobile && styles.scrollIndicatorMobile]}
           onPress={() => {
             if (Platform.OS === 'web' && typeof document !== 'undefined') {
               const featuresSection = document.getElementById('why');
@@ -209,21 +230,43 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 2: Image right, text left */}
           <View style={styles.featureRow}>
-            <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
-              <Text style={styles.featureTitle}>
-                Use the curriculum you trust
-              </Text>
-              <Text style={styles.featureBody}>
-                Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
-              </Text>
-            </View>
-            <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-              <Image
-                source={require('../assets/curriculum.png')}
-                style={styles.featureImage}
-                resizeMode="contain"
-              />
-            </View>
+            {isMobile ? (
+              <>
+                <View style={styles.featureImageContainer}>
+                  <Image
+                    source={require('../assets/curriculum.png')}
+                    style={styles.featureImage}
+                    resizeMode="contain"
+                  />
+                </View>
+                <View style={styles.featureTextContainer}>
+                  <Text style={styles.featureTitle}>
+                    Use the curriculum you trust
+                  </Text>
+                  <Text style={styles.featureBody}>
+                    Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
+                  <Text style={styles.featureTitle}>
+                    Use the curriculum you trust
+                  </Text>
+                  <Text style={styles.featureBody}>
+                    Bring your materials together in one place (online courses, textbooks, videos, projects, hands-on activities) then turn them into organized lessons, assignments, and goals without rewriting everything or starting from scratch.
+                  </Text>
+                </View>
+                <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+                  <Image
+                    source={require('../assets/curriculum.png')}
+                    style={styles.featureImage}
+                    resizeMode="contain"
+                  />
+                </View>
+              </>
+            )}
           </View>
 
           {/* Feature 3: Image left, text right */}
@@ -247,21 +290,43 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 4: Image right, text left */}
           <View style={styles.featureRow}>
-            <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
-              <Text style={styles.featureTitle}>
-                Support every child—without comparison
-              </Text>
-              <Text style={styles.featureBody}>
-                Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
-              </Text>
-            </View>
-            <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-              <Image
-                source={require('../assets/support.png')}
-                style={styles.featureImage}
-                resizeMode="contain"
-              />
-            </View>
+            {isMobile ? (
+              <>
+                <View style={styles.featureImageContainer}>
+                  <Image
+                    source={require('../assets/support.png')}
+                    style={styles.featureImage}
+                    resizeMode="contain"
+                  />
+                </View>
+                <View style={styles.featureTextContainer}>
+                  <Text style={styles.featureTitle}>
+                    Support every child—without comparison
+                  </Text>
+                  <Text style={styles.featureBody}>
+                    Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
+                  <Text style={styles.featureTitle}>
+                    Support every child—without comparison
+                  </Text>
+                  <Text style={styles.featureBody}>
+                    Learning doesn't look the same for everyone. Plan at your child's pace. Adjust goals when needed. Celebrate effort, curiosity, and growth—not just checkmarks. Learnadoodle is built for different learning styles, neurodiverse learners, mixed-age families, and flexible homeschooling paths.
+                  </Text>
+                </View>
+                <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+                  <Image
+                    source={require('../assets/support.png')}
+                    style={styles.featureImage}
+                    resizeMode="contain"
+                  />
+                </View>
+              </>
+            )}
           </View>
 
           {/* Feature 5: Image left, text right */}
@@ -285,21 +350,43 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
           {/* Feature 6: Image right, text left */}
           <View style={styles.featureRow}>
-            <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
-              <Text style={styles.featureTitle}>
-                Privacy isn't an afterthought—it's foundational.
-              </Text>
-              <Text style={styles.featureBody}>
-                No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
-              </Text>
-            </View>
-            <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-              <Image
-                source={require('../assets/privacy.png')}
-                style={styles.featureImage}
-                resizeMode="contain"
-              />
-            </View>
+            {isMobile ? (
+              <>
+                <View style={styles.featureImageContainer}>
+                  <Image
+                    source={require('../assets/privacy.png')}
+                    style={styles.featureImage}
+                    resizeMode="contain"
+                  />
+                </View>
+                <View style={styles.featureTextContainer}>
+                  <Text style={styles.featureTitle}>
+                    Privacy isn't an afterthought—it's foundational.
+                  </Text>
+                  <Text style={styles.featureBody}>
+                    No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={[styles.featureTextContainer, styles.featureTextContainerReversed]}>
+                  <Text style={styles.featureTitle}>
+                    Privacy isn't an afterthought—it's foundational.
+                  </Text>
+                  <Text style={styles.featureBody}>
+                    No ads. No selling data. No training models on your family's content. You stay in control of what you add, share, and export—always.
+                  </Text>
+                </View>
+                <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
+                  <Image
+                    source={require('../assets/privacy.png')}
+                    style={styles.featureImage}
+                    resizeMode="contain"
+                  />
+                </View>
+              </>
+            )}
           </View>
         </View>
       </View>
@@ -515,6 +602,11 @@ const styles = StyleSheet.create({
       minHeight: '100vh',
     }),
   },
+  headerMobile: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  },
   header: {
     ...(Platform.OS === 'web' && {
       position: 'sticky',
@@ -549,6 +641,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  headerContentMobile: {
+    maxWidth: 1200,
+    width: '100%',
+    marginHorizontal: 'auto',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   logoContainer: {
     flexDirection: 'row',
@@ -624,6 +723,20 @@ const styles = StyleSheet.create({
       justifyContent: 'center',
     }),
   },
+  heroMobile: {
+    ...(Platform.OS === 'web'
+      ? {
+          minHeight: '100vh',
+          paddingTop: 40,
+          paddingBottom: 40,
+        }
+      : {
+          flex: 1,
+          justifyContent: 'center',
+          paddingTop: 40,
+          paddingBottom: 40,
+        }),
+  },
   heroContent: {
     maxWidth: 1000,
     width: '100%',
@@ -639,6 +752,21 @@ const styles = StyleSheet.create({
     flexDirection: Platform.OS === 'web' ? undefined : 'column',
     gap: 40,
     alignItems: 'center',
+  },
+  heroContentMobile: {
+    ...(Platform.OS === 'web'
+      ? {
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 24,
+        }
+      : {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }),
   },
   heroLeft: {
     position: 'relative',
@@ -680,6 +808,11 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 24,
     alignItems: 'center',
+  },
+  heroButtonMobile: {
+    minWidth: '100%',
+    maxWidth: 360,
+    alignSelf: 'stretch',
   },
   heroPrimaryButton: {
     backgroundColor: '#0f172a',
@@ -1196,6 +1329,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
+  },
+  scrollIndicatorMobile: {
+    bottom: 20,
   },
   scrollIndicatorText: {
     fontSize: 16,
