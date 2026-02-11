@@ -6,6 +6,7 @@ import {
   ScrollView,
   Platform,
   TouchableOpacity,
+  Image,
 } from 'react-native';
 import BlogShell from './BlogShell';
 import PublicationPostItem from './PublicationPostItem';
@@ -43,14 +44,6 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp })
   return (
     <BlogShell onNavigateToLogin={onNavigateToLogin} onNavigateToSignUp={onNavigateToSignUp}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
-        {/* Main Heading */}
-        <View style={styles.headingBlock}>
-          <Text style={styles.mainHeading}>Blog</Text>
-          <Text style={styles.subHeading}>
-            Thoughtful essays on learning, family rhythms, and how kids grow.
-          </Text>
-        </View>
-
         {/* Featured Post */}
         {featuredPost && (
           <View style={styles.featuredSection}>
@@ -58,13 +51,24 @@ export default function BlogIndexPage({ onNavigateToLogin, onNavigateToSignUp })
               onPress={() => handlePostPress(featuredPost.slug)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.featuredTitle}>{featuredPost.title}</Text>
-              <Text style={styles.featuredDek}>{featuredPost.dek}</Text>
-              <View style={styles.featuredMeta}>
-                <PostMetaRowSimple post={featuredPost} />
-              </View>
-              <View style={styles.readLink}>
-                <Text style={styles.readLinkText}>Read essay →</Text>
+              <View style={styles.featuredContent}>
+                <View style={styles.featuredText}>
+                  <Text style={styles.featuredTitle}>{featuredPost.title}</Text>
+                  <Text style={styles.featuredDek}>{featuredPost.dek}</Text>
+                  <View style={styles.featuredMeta}>
+                    <PostMetaRowSimple post={featuredPost} />
+                  </View>
+                  <View style={styles.readLink}>
+                    <Text style={styles.readLinkText}>Read more →</Text>
+                  </View>
+                </View>
+                <View style={styles.featuredImageContainer}>
+                  <Image 
+                    source={require('../../assets/googlecalblog.png')} 
+                    style={styles.featuredImage}
+                    resizeMode="contain"
+                  />
+                </View>
               </View>
             </TouchableOpacity>
           </View>
@@ -185,17 +189,16 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     ...(Platform.OS === 'web' && {
       width: '100%',
-      maxWidth: '100%',
+      maxWidth: 1200,
+      marginHorizontal: 'auto',
       alignItems: 'stretch',
-      margin: 0,
     }),
   },
   headingBlock: {
     marginBottom: 64,
-    ...(Platform.OS === 'web' && {
+    marginTop: 48,
+    ...(Platform.OS === 'web' ? {
       paddingHorizontal: 40,
-      maxWidth: 1200,
-      marginHorizontal: 'auto',
     } : {
       paddingHorizontal: 24,
     }),
@@ -204,7 +207,8 @@ const styles = StyleSheet.create({
     fontSize: 56,
     fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 16,
+    marginTop: 48,
+    marginBottom: 48,
     textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -221,19 +225,62 @@ const styles = StyleSheet.create({
     }),
   },
   featuredSection: {
+    marginTop: 72,
     marginBottom: 80,
-    ...(Platform.OS === 'web' && {
+    ...(Platform.OS === 'web' ? {
       paddingHorizontal: 40,
-      maxWidth: 1200,
-      marginHorizontal: 'auto',
     } : {
       paddingHorizontal: 24,
+    }),
+  },
+  featuredContent: {
+    ...(Platform.OS === 'web' ? {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      alignContent: 'flex-start',
+      gap: 48,
+    } : {
+      flexDirection: 'column',
+    }),
+  },
+  featuredText: {
+    ...(Platform.OS === 'web' ? {
+      flex: 1,
+      minWidth: 0,
+      marginTop: 0,
+    } : {
+      width: '100%',
+    }),
+  },
+  featuredImageContainer: {
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? {
+      width: 560,
+      height: 420,
+      flexShrink: 0,
+      marginTop: 0,
+      paddingTop: 0,
+      padding: 0,
+    } : {
+      width: '100%',
+      height: 200,
+      marginTop: 24,
+    }),
+  },
+  featuredImage: {
+    width: '100%',
+    height: '100%',
+    marginTop: 0,
+    paddingTop: 0,
+    ...(Platform.OS === 'web' && {
+      objectFit: 'contain',
     }),
   },
   featuredTitle: {
     fontSize: 40,
     fontWeight: '700',
     color: '#0f172a',
+    marginTop: 0,
     marginBottom: 16,
     lineHeight: 48,
     textAlign: 'left',
@@ -262,6 +309,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '500',
     color: '#60a5fa',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       cursor: 'pointer',
@@ -269,10 +317,8 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 80,
-    ...(Platform.OS === 'web' && {
+    ...(Platform.OS === 'web' ? {
       paddingHorizontal: 40,
-      maxWidth: 1200,
-      marginHorizontal: 'auto',
     } : {
       paddingHorizontal: 24,
     }),
@@ -285,6 +331,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0f172a',
     marginBottom: 8,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -294,6 +341,7 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: '#64748b',
     lineHeight: 28,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -320,6 +368,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginBottom: 12,
     lineHeight: 30,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -330,6 +379,7 @@ const styles = StyleSheet.create({
     color: '#475569',
     marginBottom: 16,
     lineHeight: 24,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -342,6 +392,7 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: '#64748b',
     marginBottom: 4,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -350,6 +401,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '400',
     color: '#64748b',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -386,6 +438,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#0f172a',
     lineHeight: 26,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       cursor: 'pointer',
@@ -413,6 +466,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     color: '#0f172a',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

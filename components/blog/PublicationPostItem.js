@@ -40,13 +40,6 @@ export default function PublicationPostItem({ post, onPress, showDivider = true 
 const styles = StyleSheet.create({
   postItem: {
     paddingVertical: 24,
-    ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
-      maxWidth: 1200,
-      marginHorizontal: 'auto',
-    } : {
-      paddingHorizontal: 24,
-    }),
   },
   postTitle: {
     fontSize: 24,
@@ -83,11 +76,5 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#e5e7eb',
-    ...(Platform.OS === 'web' && {
-      marginHorizontal: 40,
-      maxWidth: 1200,
-    } : {
-      marginHorizontal: 24,
-    }),
   },
 });

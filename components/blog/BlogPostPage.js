@@ -5,11 +5,15 @@ import {
   StyleSheet,
   ScrollView,
   Platform,
+  Image,
+  TouchableOpacity,
 } from 'react-native';
+import { Mail, MessageSquare, Facebook, Twitter } from 'lucide-react';
 import BlogShell from './BlogShell';
 import PostMetaRow from './PostMetaRow';
 import MoreEssays from './MoreEssays';
 import BlogFooter from './BlogFooter';
+import TagPill from './TagPill';
 import { getPostBySlug, getRelatedPosts } from '../../lib/blog';
 
 // Simple markdown-like parser for basic formatting
@@ -142,7 +146,17 @@ export default function BlogPostPage({ slug, onNavigateToLogin, onNavigateToSign
       const related = getRelatedPosts(postData.meta, 3);
       setRelatedPosts(related);
       const elements = parseContent(postData.content);
-      setContentElements(elements);
+      // Filter out the duplicate title (first h1) and first paragraph if they match the title/dek
+      const filteredElements = elements.filter((element, index) => {
+        if (index === 0 && element.type === 'h1' && element.content === postData.meta.title) {
+          return false;
+        }
+        if (index === 1 && element.type === 'p' && element.content.includes('can now connect with Google Calendar')) {
+          return false;
+        }
+        return true;
+      });
+      setContentElements(filteredElements);
     }
   }, [slug]);
 
@@ -162,6 +176,48 @@ export default function BlogPostPage({ slug, onNavigateToLogin, onNavigateToSign
     }
   };
 
+  const getShareUrl = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      return window.location.href;
+    }
+    return '';
+  };
+
+  const getShareText = () => {
+    return post ? `${post.meta.title} - ${post.meta.dek}` : '';
+  };
+
+  const handleShareEmail = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const url = getShareUrl();
+      const text = getShareText();
+      window.location.href = `mailto:?subject=${encodeURIComponent(post.meta.title)}&body=${encodeURIComponent(text + '\n\n' + url)}`;
+    }
+  };
+
+  const handleShareText = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const url = getShareUrl();
+      const text = getShareText();
+      window.location.href = `sms:?body=${encodeURIComponent(text + ' ' + url)}`;
+    }
+  };
+
+  const handleShareFacebook = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const url = encodeURIComponent(getShareUrl());
+      window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`, '_blank');
+    }
+  };
+
+  const handleShareX = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const url = encodeURIComponent(getShareUrl());
+      const text = encodeURIComponent(getShareText());
+      window.open(`https://twitter.com/intent/tweet?url=${url}&text=${text}`, '_blank');
+    }
+  };
+
   return (
     <BlogShell onNavigateToLogin={onNavigateToLogin} onNavigateToSignUp={onNavigateToSignUp}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
@@ -169,37 +225,80 @@ export default function BlogPostPage({ slug, onNavigateToLogin, onNavigateToSign
         <View style={styles.header}>
           <Text style={styles.title}>{post.meta.title}</Text>
           <Text style={styles.dek}>{post.meta.dek}</Text>
-          <PostMetaRow post={post.meta} />
+          <View style={styles.metaRow}>
+            <Text style={styles.metaDate}>
+              {new Date(post.meta.date).toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
+            </Text>
+            <Text style={styles.metaSeparator}>·</Text>
+            <Text style={styles.metaReadingTime}>{post.meta.readingTime}</Text>
+          </View>
         </View>
 
-        {/* Divider */}
-        <View style={styles.divider} />
+        {/* Image */}
+        <View style={styles.postImageContainer}>
+          <Image 
+            source={require('../../assets/googlecalblog.png')} 
+            style={styles.postImage}
+            resizeMode="contain"
+          />
+        </View>
 
         {/* Content */}
         <ContentRenderer elements={contentElements} />
 
-        {/* Divider */}
-        <View style={styles.divider} />
+        {/* Tags Section */}
+        {post.meta.tags && post.meta.tags.length > 0 && (
+          <View style={styles.tagsSection}>
+            <Text style={styles.tagsHeading}>TAGS</Text>
+            <View style={styles.tagsContainer}>
+              {post.meta.tags.map((tag, index) => (
+                <TagPill key={index} tag={tag} />
+              ))}
+            </View>
+          </View>
+        )}
 
-        {/* More Essays */}
-        <MoreEssays
-          posts={relatedPosts}
-          onPostPress={handleRelatedPostPress}
-        />
-
-        {/* Quiet CTA */}
-        <View style={styles.cta}>
-          <Text style={styles.ctaText}>
-            Ready to organize your family's learning?{' '}
-            <Text
-              style={styles.ctaLink}
-              onPress={onNavigateToSignUp}
+        {/* Share Section */}
+        <View style={styles.shareSection}>
+          <Text style={styles.shareHeading}>SHARE</Text>
+          <View style={styles.shareButtons}>
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShareText}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              Get started
-            </Text>
-            .
-          </Text>
+              <MessageSquare size={18} color="#475569" />
+              <Text style={styles.shareButtonText}>Text</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShareEmail}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Mail size={18} color="#475569" />
+              <Text style={styles.shareButtonText}>Email</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShareFacebook}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Facebook size={18} color="#475569" />
+              <Text style={styles.shareButtonText}>Facebook</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShareX}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Twitter size={18} color="#475569" />
+              <Text style={styles.shareButtonText}>X</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Footer as part of scrollable content */}
@@ -219,6 +318,8 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     ...(Platform.OS === 'web' && {
       width: '100%',
+      maxWidth: 1100,
+      marginHorizontal: 'auto',
     }),
   },
   notFoundContainer: {
@@ -235,9 +336,10 @@ const styles = StyleSheet.create({
     }),
   },
   header: {
-    marginBottom: 32,
-    ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
+    marginBottom: 0,
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      paddingHorizontal: 240,
     } : {
       paddingHorizontal: 24,
     }),
@@ -248,6 +350,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginBottom: 16,
     lineHeight: 56,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -257,6 +360,33 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     color: '#475569',
     marginBottom: 24,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  metaDate: {
+    fontSize: 14,
+    color: '#64748b',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  metaSeparator: {
+    fontSize: 14,
+    color: '#cbd5e1',
+    marginHorizontal: 4,
+  },
+  metaReadingTime: {
+    fontSize: 14,
+    color: '#64748b',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -265,16 +395,34 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#e5e7eb',
     marginVertical: 48,
-    ...(Platform.OS === 'web' && {
-      marginHorizontal: 40,
+    ...(Platform.OS === 'web' ? {
+      marginHorizontal: 240,
     } : {
       marginHorizontal: 24,
     }),
   },
+  postImageContainer: {
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? {
+      paddingHorizontal: 240,
+    } : {
+      paddingHorizontal: 24,
+    }),
+  },
+  postImage: {
+    width: '100%',
+    ...(Platform.OS === 'web' ? {
+      height: 500,
+      objectFit: 'contain',
+    } : {
+      height: 250,
+    }),
+  },
   content: {
-    marginTop: 8,
-    ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
+    marginTop: 0,
+    marginBottom: 0,
+    ...(Platform.OS === 'web' ? {
+      paddingHorizontal: 240,
     } : {
       paddingHorizontal: 24,
     }),
@@ -346,13 +494,84 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  tagsSection: {
+    marginTop: 48,
+    marginBottom: 48,
+    ...(Platform.OS === 'web' ? {
+      paddingHorizontal: 240,
+    } : {
+      paddingHorizontal: 24,
+    }),
+  },
+  tagsHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+  },
+  shareSection: {
+    marginTop: 48,
+    marginBottom: 48,
+    ...(Platform.OS === 'web' ? {
+      paddingHorizontal: 240,
+    } : {
+      paddingHorizontal: 24,
+    }),
+  },
+  shareHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  shareButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    alignItems: 'center',
+  },
+  shareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  shareButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   cta: {
     marginTop: 64,
     paddingTop: 48,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
-    ...(Platform.OS === 'web' && {
-      paddingHorizontal: 40,
+    ...(Platform.OS === 'web' ? {
+      paddingHorizontal: 240,
     } : {
       paddingHorizontal: 24,
     }),

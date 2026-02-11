@@ -108,12 +108,18 @@ const styles = StyleSheet.create({
     borderTopColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
     paddingVertical: 56,
-    paddingHorizontal: 16,
+    paddingHorizontal: 0,
+    ...(Platform.OS === 'web' && {
+      width: '100vw',
+      marginLeft: 'calc(-50vw + 50%)',
+      marginRight: 'calc(-50vw + 50%)',
+    }),
   },
   footerContent: {
     maxWidth: 1200,
     width: '100%',
     marginHorizontal: 'auto',
+    paddingHorizontal: 40,
   },
   footerGrid: {
     ...(Platform.OS === 'web' ? {
