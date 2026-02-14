@@ -18,6 +18,7 @@ import {
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
 
@@ -37,6 +38,9 @@ export default function SubjectsPage({
   userRole = 'parent',
   accessibleChildren = [],
 }) {
+  // Get session context for role-based filtering
+  const session = useSession();
+  
   // Determine if this is a child/student view
   const isChildView = userRole === 'child' || userRole === 'student';
   const childId = isChildView && accessibleChildren.length > 0 ? accessibleChildren[0].id : null;
@@ -71,7 +75,8 @@ export default function SubjectsPage({
 
     try {
       const childId = selectedChildFilter === 'all' ? null : selectedChildFilter;
-      const data = await getSubjectsWithOverview(familyId, childId);
+      // Pass session for role-based filtering (preferred) or fallback to childId
+      const data = await getSubjectsWithOverview(familyId, childId, session);
       setSubjects(data);
       
       if (onSubjectsUpdate) {
@@ -88,7 +93,8 @@ export default function SubjectsPage({
             if (subjectDetailCache[subject.id]) return;
             
             try {
-              const detailData = await getSubjectDetail(subject.id, familyId);
+              // Pass session for role-based filtering
+              const detailData = await getSubjectDetail(subject.id, familyId, null, session);
               const updatedCache = {
                 ...subjectDetailCache,
                 [subject.id]: detailData,

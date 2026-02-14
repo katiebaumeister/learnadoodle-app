@@ -7,8 +7,12 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from '
 import { Calendar, ChevronLeft, ChevronRight, BookOpen, Award, Upload, Clock } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
+import { applyChildFilter } from '../../lib/queryFilters';
+import { useSession } from '../../contexts/SessionContext';
 
-export default function YearTimeline({ familyId, childId = null, year = null }) {
+export default function YearTimeline({ familyId, childId = null, year = null, session: propSession = null }) {
+  const contextSession = useSession();
+  const session = propSession || contextSession;
   const [selectedYear, setSelectedYear] = useState(year || new Date().getFullYear());
   const [timelineData, setTimelineData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,44 +27,60 @@ export default function YearTimeline({ familyId, childId = null, year = null }) 
       const startDate = `${selectedYear}-01-01`;
       const endDate = `${selectedYear}-12-31`;
 
+      // Build base queries
+      let eventsQuery = supabase
+        .from('events')
+        .select('id, title, start_ts, child_id, subject, status')
+        .eq('family_id', familyId)
+        .eq('status', 'done')
+        .gte('start_ts', startDate)
+        .lte('start_ts', endDate)
+        .order('start_ts', { ascending: false });
+
+      let attendanceQuery = supabase
+        .from('attendance_records')
+        .select('id, day_date, minutes, status, child_id')
+        .eq('family_id', familyId)
+        .gte('day_date', startDate)
+        .lte('day_date', endDate)
+        .order('day_date', { ascending: false });
+
+      let uploadsQuery = supabase
+        .from('uploads')
+        .select('id, title, caption, created_at, child_id')
+        .eq('family_id', familyId)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false });
+
+      let gradesQuery = supabase
+        .from('grades')
+        .select('id, grade, created_at, child_id, subject_id')
+        .eq('family_id', familyId)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false });
+
+      // Apply session-based filtering if available
+      if (session && !session.loading) {
+        eventsQuery = applyChildFilter(eventsQuery, session, 'child_id');
+        attendanceQuery = applyChildFilter(attendanceQuery, session, 'child_id');
+        uploadsQuery = applyChildFilter(uploadsQuery, session, 'child_id');
+        gradesQuery = applyChildFilter(gradesQuery, session, 'child_id');
+      } else if (childId) {
+        // Legacy: filter by single childId
+        eventsQuery = eventsQuery.eq('child_id', childId);
+        attendanceQuery = attendanceQuery.eq('child_id', childId);
+        uploadsQuery = uploadsQuery.eq('child_id', childId);
+        gradesQuery = gradesQuery.eq('child_id', childId);
+      }
+
       // Fetch all timeline items in parallel
       const [eventsResult, attendanceResult, uploadsResult, gradesResult] = await Promise.all([
-        // Completed events
-        supabase
-          .from('events')
-          .select('id, title, start_ts, child_id, subject, status')
-          .eq('family_id', familyId)
-          .eq('status', 'done')
-          .gte('start_ts', startDate)
-          .lte('start_ts', endDate)
-          .order('start_ts', { ascending: false }),
-        
-        // Attendance records
-        supabase
-          .from('attendance_records')
-          .select('id, day_date, minutes, status, child_id')
-          .eq('family_id', familyId)
-          .gte('day_date', startDate)
-          .lte('day_date', endDate)
-          .order('day_date', { ascending: false }),
-        
-        // Portfolio uploads
-        supabase
-          .from('uploads')
-          .select('id, title, caption, created_at, child_id')
-          .eq('family_id', familyId)
-          .gte('created_at', startDate)
-          .lte('created_at', endDate)
-          .order('created_at', { ascending: false }),
-        
-        // Grades
-        supabase
-          .from('grades')
-          .select('id, grade, created_at, child_id, subject_id')
-          .eq('family_id', familyId)
-          .gte('created_at', startDate)
-          .lte('created_at', endDate)
-          .order('created_at', { ascending: false }),
+        eventsQuery,
+        attendanceQuery,
+        uploadsQuery,
+        gradesQuery,
       ]);
 
       const items = [];

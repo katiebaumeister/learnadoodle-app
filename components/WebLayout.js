@@ -52,8 +52,19 @@ import RebalanceModal from './planner/modals/RebalanceModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 
-export default function WebLayout({ navigation, routeParams }) {
+export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user } = useAuth();
+  // Try to get session from context if not provided as prop
+  let session = propSession;
+  try {
+    const { useSession } = require('../contexts/SessionContext');
+    const contextSession = useSession();
+    if (!session) {
+      session = contextSession;
+    }
+  } catch (e) {
+    // SessionContext not available or not in provider, use prop only
+  }
   const { openSearch } = useGlobalSearch();
   const [activeTab, setActiveTab] = useState('home');
   const [activeSubtab, setActiveSubtab] = useState(null);
@@ -119,7 +130,14 @@ export default function WebLayout({ navigation, routeParams }) {
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAIToolsModal, setShowAIToolsModal] = useState(false);
-  const [userRole, setUserRole] = useState(null);
+  const [userRole, setUserRole] = useState(propUserRole || null);
+  
+  // Update userRole from session if available
+  useEffect(() => {
+    if (session && session.effective_role) {
+      setUserRole(session.effective_role);
+    }
+  }, [session]);
   const [homeLoading, setHomeLoading] = useState(false);
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
@@ -1501,6 +1519,12 @@ export default function WebLayout({ navigation, routeParams }) {
             window.history.pushState({}, '', '/subjects');
           }
           break;
+        case 'review':
+          handleTabChange('review');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/review');
+          }
+          break;
         case 'records':
           handleTabChange('records');
           break;
@@ -2829,6 +2853,7 @@ export default function WebLayout({ navigation, routeParams }) {
             onFamilyUpdate={(updatedFamily) => {
               setFamily(updatedFamily);
             }}
+            session={session}
             profile={profile}
           />
         </AppShell>

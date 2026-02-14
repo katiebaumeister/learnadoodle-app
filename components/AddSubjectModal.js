@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { getMaterials } from '../lib/services/materialsClient';
+import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
 
@@ -31,6 +32,7 @@ export default function AddSubjectModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const toast = useToast();
+  const session = useSession();
 
   // Materials/attachments state
   const [materials, setMaterials] = useState([]);
@@ -300,7 +302,7 @@ export default function AddSubjectModal({
     if (!familyId) return;
     setLoadingMaterials(true);
     try {
-      const materialsData = await getMaterials(familyId);
+      const materialsData = await getMaterials(familyId, {}, session);
       setMaterials(materialsData || []);
     } catch (error) {
       console.error('Error loading materials:', error);

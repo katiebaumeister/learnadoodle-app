@@ -598,6 +598,7 @@ import LessonPlans from './lesson-plans/LessonPlans'
 // import RecordsPhase4 from './records/RecordsPhase4' // Archived - records screen removed
 // import WebRecordsScreen from './records/WebRecordsScreen' // Archived - records screen removed
 import PortfolioTimeline from './portfolio/PortfolioTimeline'
+import ReviewInboxScreen from './parent/ReviewInboxScreen'
 import MaterialsLibrary from './materials/MaterialsLibrary'
 // Archived: import IntelligenceHub from './intelligence/IntelligenceHub'
 import SubjectDetailPage from './subjects/SubjectDetailPage'
@@ -622,7 +623,9 @@ import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null }) {
+import ParentHomeScreen from './home/ParentHomeScreen';
+
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -776,7 +779,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     
     if (shouldPreload) {
       setMaterialsCacheLoading(true);
-      getMaterials(familyId, {})
+      getMaterials(familyId, {}, propSession)
         .then(data => {
           setMaterialsCache(data);
           setMaterialsCacheTimestamp(Date.now());
@@ -3017,7 +3020,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
 
     const loadInitialSubjectsOverview = async () => {
       try {
-        const data = await getSubjectsWithOverview(familyId, null);
+        const data = await getSubjectsWithOverview(familyId, null, propSession);
         if (!isCancelled) {
           setSubjectsOverviewCache(data);
         }
@@ -6353,7 +6356,47 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         } else if (userRole === 'tutor') {
           return <TutorDashboard accessibleChildren={accessibleChildren} />
         } else {
-          // Don't show loading screen here - it's shown at WebLayout level
+          // Use ParentHomeScreen for parent users (only if session is ready and we have homeData or it's loading)
+          // If RPC fails, fall back to legacy home content
+          if (propSession && (propSession.role_flags?.isParent || (!propSession.role_flags?.isChild && !propSession.role_flags?.isTutor)) && !propSession.loading) {
+            // Try ParentHomeScreen, but if it fails, we'll fall back to legacy
+            return (
+              <ParentHomeScreen
+                familyId={familyId}
+                onNavigate={onTabChange}
+                onAddEvent={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openTaskModal', {
+                      detail: { date: new Date() }
+                    }));
+                  }
+                }}
+                onAddGrade={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openAddGradeModal'));
+                  }
+                }}
+                onAddMaterial={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openAddMaterialModal'));
+                  }
+                }}
+                onAddSubject={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+                  }
+                }}
+                onAddChild={() => {
+                  if (onCloseAddChildModal) {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openAddChildModal'));
+                    }
+                  }
+                }}
+              />
+            );
+          }
+          // Fallback to legacy home content for non-parents or when session not ready
           if (homeLoading || !homeData) {
             return null;
           }
@@ -6575,6 +6618,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return <GroupsPage familyId={familyId} userId={user?.id} />
       case 'marketplace':
         return <MarketplacePage familyId={familyId} userId={user?.id} />
+      case 'review':
+      case 'review-inbox':
+        // Only show for parents
+        if (userRole === 'parent' || !userRole) {
+          return <ReviewInboxScreen familyId={familyId} onNavigate={onTabChange} />
+        }
+        return renderHomeContent()
       default:
         // Default routing based on role
         if (userRole === 'child' && accessibleChildren.length > 0) {

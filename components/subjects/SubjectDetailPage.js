@@ -26,6 +26,7 @@ import {
 import { colors } from '../../theme/colors';
 import { getSubjectDetail } from '../../lib/services/subjectsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
+import { useSession } from '../../contexts/SessionContext';
 
 export default function SubjectDetailPage({
   subjectId,
@@ -38,6 +39,7 @@ export default function SubjectDetailPage({
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
 }) {
+  const session = useSession();
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
@@ -67,7 +69,8 @@ export default function SubjectDetailPage({
     setLoading(true);
     setError(null);
     try {
-      const data = await getSubjectDetail(subjectId, familyId);
+      // Pass session for role-based filtering
+      const data = await getSubjectDetail(subjectId, familyId, null, session);
       setSubjectData(data);
       if (onSubjectDataUpdate) {
         onSubjectDataUpdate(data);

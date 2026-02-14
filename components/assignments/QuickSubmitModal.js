@@ -9,10 +9,13 @@ import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { submitAssignment } from '../../lib/services/assignmentsClient';
 import { createFileMaterial } from '../../lib/services/materialsClient';
+import ReflectionPrompts from '../child/ReflectionPrompts';
 
-export default function QuickSubmitModal({ visible, assignment, childId, familyId, onClose, onSubmitted }) {
+export default function QuickSubmitModal({ visible, assignment, childId, familyId, onClose, onSubmitted, showReflection = false }) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [showReflectionPrompts, setShowReflectionPrompts] = useState(false);
+  const [submittedEvidenceId, setSubmittedEvidenceId] = useState(null);
 
   const handleCameraCapture = async () => {
     if (Platform.OS === 'web') {
@@ -112,17 +115,24 @@ export default function QuickSubmitModal({ visible, assignment, childId, familyI
         .eq('id', assignment.id);
 
       // Success!
-      if (Platform.OS === 'web') {
-        alert('Assignment submitted successfully!');
+      setSubmittedEvidenceId(recordData.id);
+
+      if (showReflection) {
+        // Show reflection prompts instead of closing
+        setShowReflectionPrompts(true);
       } else {
-        Alert.alert('Success', 'Assignment submitted successfully!');
-      }
+        if (Platform.OS === 'web') {
+          // Don't show alert - let parent component handle success
+        } else {
+          Alert.alert('Success', 'Assignment submitted successfully!');
+        }
 
-      if (onSubmitted) {
-        onSubmitted(assignment.id, recordData.id);
-      }
+        if (onSubmitted) {
+          onSubmitted(assignment.id, recordData.id);
+        }
 
-      onClose();
+        onClose();
+      }
     } catch (error) {
       const errorMessage = error.message || 'Failed to submit assignment';
       if (Platform.OS === 'web') {
@@ -135,6 +145,35 @@ export default function QuickSubmitModal({ visible, assignment, childId, familyI
       setUploadProgress(0);
     }
   };
+
+  // Show reflection prompts if enabled and submission successful
+  if (showReflectionPrompts && showReflection) {
+    return (
+      <Modal
+        visible={visible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={onClose}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.modalContent}>
+            <ReflectionPrompts
+              assignment={assignment}
+              childId={childId}
+              familyId={familyId}
+              onComplete={(reflection) => {
+                setShowReflectionPrompts(false);
+                if (onSubmitted) {
+                  onSubmitted(assignment.id, submittedEvidenceId, reflection);
+                }
+                onClose();
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
+    );
+  }
 
   return (
     <Modal

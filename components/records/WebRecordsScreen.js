@@ -24,8 +24,10 @@ import GradebookMasteryTab from './tabs/GradebookMasteryTab';
 import TemplatesPage from '../templates/TemplatesPage';
 import DigitalBinder from '../content/DigitalBinder';
 import YearTimeline from '../timeline/YearTimeline';
+import { useSession } from '../../contexts/SessionContext';
 
 export default function WebRecordsScreen({ familyId, navigation }) {
+  const session = useSession();
   // State management
   const [children, setChildren] = useState([]);
   const [selectedChildren, setSelectedChildren] = useState('all');
@@ -338,6 +340,7 @@ export default function WebRecordsScreen({ familyId, navigation }) {
             <YearTimeline 
               familyId={familyId} 
               childId={resolvedChildIds.length === 1 ? resolvedChildIds[0] : null}
+              session={session}
             />
           </View>
         );

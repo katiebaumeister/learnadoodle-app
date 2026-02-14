@@ -68,14 +68,16 @@ export default function TodayScheduleCard({
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.title}>Today's schedule</Text>
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={onAddBlock}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={16} color="#64748b" />
-            <Text style={styles.addButtonText}>Add event</Text>
-          </TouchableOpacity>
+          {onAddBlock && (
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={onAddBlock}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color="#64748b" />
+              <Text style={styles.addButtonText}>Add event</Text>
+            </TouchableOpacity>
+          )}
         </View>
         {onOpenPlanner && (
           <TouchableOpacity
@@ -125,7 +127,7 @@ export default function TodayScheduleCard({
         </View>
       )}
 
-      {suggestedRhythms && suggestedRhythms.length > 0 && (
+      {!hasEvents && (
         <View style={styles.suggestedSection}>
           <TouchableOpacity
             style={styles.suggestedHeader}
@@ -140,7 +142,7 @@ export default function TodayScheduleCard({
             )}
           </TouchableOpacity>
 
-          {showSuggestedRhythms && (
+          {showSuggestedRhythms && suggestedRhythms && suggestedRhythms.length > 0 && (
             <View style={styles.suggestedList}>
               {suggestedRhythms.slice(0, 4).map((rhythm, index) => (
                 <View key={index} style={styles.suggestedItem}>
@@ -363,10 +365,9 @@ const styles = StyleSheet.create({
     }),
   },
   suggestedSection: {
-    marginTop: 24,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    marginTop: 20,
+    paddingTop: 0,
+    borderTopWidth: 0,
   },
   suggestedHeader: {
     flexDirection: 'row',

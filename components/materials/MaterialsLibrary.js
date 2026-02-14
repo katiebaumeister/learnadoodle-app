@@ -19,6 +19,7 @@ import {
 import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen, Edit2, Sparkles } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
+import { useSession } from '../../contexts/SessionContext';
 import MaterialCard from './MaterialCard';
 import MaterialDetailDrawer from './MaterialDetailDrawer';
 import QuickReviewModal from './QuickReviewModal';
@@ -266,7 +267,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     
     const loadAllMaterials = async () => {
       try {
-        const data = await getMaterials(familyId, {}); // No filters
+        // Pass session for role-based filtering
+        const data = await getMaterials(familyId, {}, session); // No filters
         setAllMaterials(data);
       } catch (err) {
         console.warn('[MaterialsLibrary] Error loading all materials:', err);
@@ -340,7 +342,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         }
       }
 
-      const data = await getMaterials(familyId, filters);
+      // Pass session for role-based filtering
+      const data = await getMaterials(familyId, filters, session);
       
       setMaterials(data);
       
@@ -474,7 +477,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     loadMaterials();
     if (selectedMaterial) {
       // Reload selected material
-      getMaterials(familyId, {})
+      getMaterials(familyId, {}, session)
         .then(data => {
           const updated = data.find(m => m.id === selectedMaterial.id);
           if (updated) {
@@ -1832,7 +1835,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
             loadMaterials();
             if (selectedMaterial && selectedMaterial.id === reviewMaterial.id) {
               // Reload selected material if it's the one being reviewed
-              getMaterials(familyId, {})
+              getMaterials(familyId, {}, session)
                 .then(data => {
                   const updated = data.find(m => m.id === selectedMaterial.id);
                   if (updated) {

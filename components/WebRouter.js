@@ -17,6 +17,8 @@ import BlogIndexPage from './blog/BlogIndexPage';
 import BlogPostPage from './blog/BlogPostPage';
 import BlogAllPage from './blog/BlogAllPage';
 import { useAuth } from '../contexts/AuthContext';
+import { SessionProvider } from '../contexts/SessionContext';
+import RoleGate from './navigation/RoleGate';
 import { supabase } from '../lib/supabase';
 
 export default function WebRouter() {
@@ -465,8 +467,13 @@ export default function WebRouter() {
   }
 
   // User is authenticated and has completed onboarding, show main app
-  // Role-based routing will be handled by WebLayout based on /api/me response
-  return <WebLayout user={user} />;
+  // Wrap with SessionProvider for role-based access control
+  // RoleGate will choose the appropriate navigator based on role
+  return (
+    <SessionProvider>
+      <RoleGate user={user} />
+    </SessionProvider>
+  );
 }
 
 const styles = StyleSheet.create({

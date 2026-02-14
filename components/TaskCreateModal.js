@@ -6,6 +6,7 @@ import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
 import { logAddEvent } from '../app/services/plannerInstrumentation';
 import { getMaterials } from '../lib/services/materialsClient';
+import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { apiRequest } from '../lib/apiClient';
 import { Search } from 'lucide-react';
@@ -772,7 +773,7 @@ export default function TaskCreateModal({
     setLoadingMaterials(true);
     try {
       // Load all materials (includes both purchased materials and uploaded files)
-      const materialsData = await getMaterials(familyId);
+      const materialsData = await getMaterials(familyId, {}, session);
       console.log('[TaskCreateModal] Loaded materials:', materialsData?.length || 0);
       
       setMaterials(materialsData || []);

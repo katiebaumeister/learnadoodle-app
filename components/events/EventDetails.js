@@ -496,6 +496,7 @@ function ChipRow({ children, style }) {
 }
 
 export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false }) {
+  const session = useSession();
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
@@ -1231,7 +1232,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setLoadingMaterials(true);
     try {
       // Load all materials (now includes both purchased materials and uploaded files)
-      const materialsData = await getMaterials(familyId);
+      const materialsData = await getMaterials(familyId, {}, session);
       console.log('[EventDetails] Loaded materials:', materialsData?.length || 0);
       
       setMaterials(materialsData || []);
