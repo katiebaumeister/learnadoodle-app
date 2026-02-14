@@ -34,12 +34,21 @@ export default function SubjectsPage({
   onEditSubject,
   onNavigateToPlanner,
   onNavigateToLibrary,
+  userRole = 'parent',
+  accessibleChildren = [],
 }) {
+  // Determine if this is a child/student view
+  const isChildView = userRole === 'child' || userRole === 'student';
+  const childId = isChildView && accessibleChildren.length > 0 ? accessibleChildren[0].id : null;
+  
   const [subjects, setSubjects] = useState(preloadedSubjects || []);
   const [loading, setLoading] = useState(!preloadedSubjects);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedChildFilter, setSelectedChildFilter] = useState('all');
+  // Auto-set child filter for child/student role
+  const [selectedChildFilter, setSelectedChildFilter] = useState(
+    isChildView && childId ? childId : 'all'
+  );
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const loadingRef = useRef(false);
@@ -107,6 +116,13 @@ export default function SubjectsPage({
       loadingRef.current = false;
     }
   }, [familyId, selectedChildFilter, onSubjectsUpdate]);
+
+  // Lock child filter for child/student view
+  useEffect(() => {
+    if (isChildView && childId && selectedChildFilter !== childId) {
+      setSelectedChildFilter(childId);
+    }
+  }, [isChildView, childId, selectedChildFilter]);
 
   useEffect(() => {
     if (!preloadedSubjects) {
@@ -241,7 +257,11 @@ export default function SubjectsPage({
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Your Family's Subjects</Text>
+        <Text style={styles.headerTitle}>
+          {isChildView && childId 
+            ? `${accessibleChildren[0]?.first_name || accessibleChildren[0]?.name || 'Your'} Subjects`
+            : "Your Family's Subjects"}
+        </Text>
         <View style={styles.headerActions}>
           <View style={styles.searchContainer}>
             <TextInput
@@ -265,78 +285,83 @@ export default function SubjectsPage({
               </View>
             )}
           </View>
-          <TouchableOpacity
-            style={styles.newButton}
-            onPress={() => {
-              if (onAddSubject) {
-                onAddSubject();
-              } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
-              }
-            }}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && {
-              cursor: 'pointer',
-            })}
-          >
-            <Text style={styles.newButtonText}>+ NEW</Text>
-          </TouchableOpacity>
+          {/* Hide + NEW button for child/student view */}
+          {!isChildView && (
+            <TouchableOpacity
+              style={styles.newButton}
+              onPress={() => {
+                if (onAddSubject) {
+                  onAddSubject();
+                } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+                }
+              }}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && {
+                cursor: 'pointer',
+              })}
+            >
+              <Text style={styles.newButtonText}>+ NEW</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
       <View style={styles.divider} />
 
-      {/* Children Filter Chips */}
-      <View style={styles.filterRow}>
-        <Text style={styles.filterLabel}>Children</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterChips}
-          contentContainerStyle={styles.filterChipsContent}
-        >
-          <TouchableOpacity
-            style={[
-              styles.filterChip,
-              selectedChildFilter === 'all' && styles.filterChipActive,
-            ]}
-            onPress={() => setSelectedChildFilter('all')}
+      {/* Children Filter Chips - Hide for child/student view */}
+      {!isChildView && (
+        <View style={styles.filterRow}>
+          <Text style={styles.filterLabel}>Children</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterChips}
+            contentContainerStyle={styles.filterChipsContent}
           >
-            <Text style={[
-              styles.filterChipText,
-              selectedChildFilter === 'all' && styles.filterChipTextActive,
-            ]}>
-              All Children
-            </Text>
-          </TouchableOpacity>
-          {children.map((child) => {
-            const childColor = getChildColorFromAvatar(child.avatar);
-            const isActive = selectedChildFilter === child.id;
-            return (
-              <TouchableOpacity
-                key={child.id}
-                style={[
-                  styles.filterChip,
-                  isActive && styles.filterChipActive,
-                ]}
-                onPress={() => setSelectedChildFilter(child.id)}
-              >
-                <View 
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                selectedChildFilter === 'all' && styles.filterChipActive,
+              ]}
+              onPress={() => setSelectedChildFilter('all')}
+            >
+              <Text style={[
+                styles.filterChipText,
+                selectedChildFilter === 'all' && styles.filterChipTextActive,
+              ]}>
+                All Children
+              </Text>
+            </TouchableOpacity>
+            {children.map((child) => {
+              const childColor = getChildColorFromAvatar(child.avatar);
+              const isActive = selectedChildFilter === child.id;
+              return (
+                <TouchableOpacity
+                  key={child.id}
                   style={[
-                    styles.childDotSmall, 
-                    { backgroundColor: childColor, marginRight: 6 }
-                  ]} 
-                />
-                <Text style={[
-                  styles.filterChipText,
-                  isActive && styles.filterChipTextActive,
-                ]}>
-                  {child.name || child.first_name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+                    styles.filterChip,
+                    isActive && styles.filterChipActive,
+                  ]}
+                  onPress={() => setSelectedChildFilter(child.id)}
+                >
+                  <View 
+                    style={[
+                      styles.childDotSmall, 
+                      { backgroundColor: childColor, marginRight: 6 }
+                    ]} 
+                  />
+                  <Text style={[
+                    styles.filterChipText,
+                    isActive && styles.filterChipTextActive,
+                  ]}>
+                    {child.name || child.first_name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
 
       {/* Content */}
       {loading ? (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -8,13 +8,14 @@ import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
+import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import EditChildModal from '../EditChildModal';
 import AddChildModal from '../AddChildModal';
 import AddSubjectModal from '../AddSubjectModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null }) {
   const { mode } = useSensoryMode();
   const tokens = getModeTokens(mode);
   const toast = useToast();
@@ -67,25 +68,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   });
   const [connectingProvider, setConnectingProvider] = useState(null);
   const [hoveredConnectionKey, setHoveredConnectionKey] = useState(null);
+  const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
   // Active section for sidebar navigation
-  const [activeSection, setActiveSection] = useState('profile');
+  const [activeSection, setActiveSection] = useState('members');
   
   // Modal state
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const [editingSubjectInModal, setEditingSubjectInModal] = useState(null);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [expandedFAQSection, setExpandedFAQSection] = useState(null);
   const [expandedFAQQuestion, setExpandedFAQQuestion] = useState(null);
   
   // Courses/Subjects state
-  const [subjects, setSubjects] = useState([]);
+  const [subjects, setSubjects] = useState(propPreloadedSubjects || []);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
   const [editSubjectName, setEditSubjectName] = useState('');
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
+  const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
   
   // Feedback form state
   const [feedbackSubject, setFeedbackSubject] = useState('');
@@ -109,15 +113,69 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [selectedChildForInvite, setSelectedChildForInvite] = useState(null);
   const [childInviteResultUrl, setChildInviteResultUrl] = useState(null);
   const [invitingChild, setInvitingChild] = useState(false);
+  const [showChildInviteModal, setShowChildInviteModal] = useState(false);
+  const [childInviteStep, setChildInviteStep] = useState('select'); // 'select' or 'email'
   
   // Parent invite state
+  const [showParentInviteModal, setShowParentInviteModal] = useState(false);
   const [parentInviteEmail, setParentInviteEmail] = useState('');
   const [parentInviteResultUrl, setParentInviteResultUrl] = useState(null);
   const [invitingParent, setInvitingParent] = useState(false);
   
+  // Tutor invite state
+  const [showTutorInviteModal, setShowTutorInviteModal] = useState(false);
+  const [tutorInviteEmail, setTutorInviteEmail] = useState('');
+  const [invitingTutor, setInvitingTutor] = useState(false);
+  
   const [updatingTutorId, setUpdatingTutorId] = useState(null);
+  const [copiedUrl, setCopiedUrl] = useState(null);
+  const [showInviteUrlModal, setShowInviteUrlModal] = useState(false);
+  const [inviteUrlToShow, setInviteUrlToShow] = useState(null);
+  const [inviteUrlCopied, setInviteUrlCopied] = useState(false);
 
   const styles = createStyles(tokens);
+
+  // Copy to clipboard helper
+  const copyToClipboard = async (text, label = 'Link') => {
+    try {
+      if (Platform.OS === 'web' && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        setInviteUrlCopied(true);
+        toast.push(`${label} copied to clipboard!`, 'success');
+        setTimeout(() => setInviteUrlCopied(false), 2000);
+        return true;
+      } else if (Platform.OS === 'web') {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (success) {
+          setInviteUrlCopied(true);
+          toast.push(`${label} copied to clipboard!`, 'success');
+          setTimeout(() => setInviteUrlCopied(false), 2000);
+          return true;
+        }
+      }
+      return false;
+    } catch (err) {
+      console.error('Copy to clipboard error:', err);
+      return false;
+    }
+  };
+
+  // Show invite URL modal
+  const showInviteSuccessModal = (url) => {
+    setInviteUrlToShow(url);
+    setShowInviteUrlModal(true);
+    setInviteUrlCopied(false);
+    // Try to copy automatically, but don't show error if it fails
+    copyToClipboard(url, 'Invite link').catch(() => {});
+  };
 
   // Provider logo assets (PNG)
   const googleLogo = require('../../assets/google.png');
@@ -206,6 +264,75 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   }, [family]);
 
+  // Sync preloaded subjects when prop changes
+  useEffect(() => {
+    if (propPreloadedSubjects && Array.isArray(propPreloadedSubjects)) {
+      setSubjects(propPreloadedSubjects);
+    }
+  }, [propPreloadedSubjects]);
+
+  // Fetch children with avatar data for colored dots (matching WebLayout pattern)
+  useEffect(() => {
+    if (!familyId) return;
+    
+    const validateAvatarUrl = (url) => {
+      if (!url || typeof url !== 'string') return null;
+      // If it's a UUID (36 chars with hyphens), it's not a valid URL
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url)) {
+        return null;
+      }
+      // If it looks like a URL, return it
+      if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/')) {
+        return url;
+      }
+      // Otherwise assume it's an avatar name like "prof1"
+      return url;
+    };
+    
+    const fetchChildren = async () => {
+      try {
+        const { data: childrenData, error: childrenError } = await supabase
+          .from('children')
+          .select('*')
+          .eq('family_id', familyId)
+          .eq('archived', false);
+        
+        if (childrenError) {
+          // Try without archived filter if that fails
+          if (childrenError.code === '400' || childrenError.code === 'PGRST301' || childrenError.code === '42703') {
+            const { data: allData } = await supabase
+              .from('children')
+              .select('*')
+              .eq('family_id', familyId);
+            // Validate and clean avatar URLs
+            const cleaned = (allData || []).map(child => ({
+              ...child,
+              avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
+              avatar: validateAvatarUrl(child.avatar) || child.avatar
+            }));
+            setChildrenWithAvatars(cleaned);
+          } else {
+            console.warn('[FamilyPanel] Error fetching children:', childrenError);
+            setChildrenWithAvatars([]);
+          }
+        } else {
+          // Validate and clean avatar URLs
+          const cleaned = (childrenData || []).map(child => ({
+            ...child,
+            avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
+            avatar: validateAvatarUrl(child.avatar) || child.avatar
+          }));
+          setChildrenWithAvatars(cleaned);
+        }
+      } catch (err) {
+        console.error('[FamilyPanel] Error fetching children:', err);
+        setChildrenWithAvatars([]);
+      }
+    };
+    
+    fetchChildren();
+  }, [familyId]);
+
   // Load subjects for courses page
   const loadSubjects = async () => {
     if (!familyId) return;
@@ -227,11 +354,15 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  // Only load subjects if preloadedSubjects is not available
   useEffect(() => {
     if (familyId && activeSection === 'courses') {
-      loadSubjects();
+      // If we have preloaded subjects, use them; otherwise load
+      if (!propPreloadedSubjects || propPreloadedSubjects.length === 0) {
+        loadSubjects();
+      }
     }
-  }, [familyId, activeSection]);
+  }, [familyId, activeSection, propPreloadedSubjects]);
 
   // Handle browser back button for About page
   useEffect(() => {
@@ -252,9 +383,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Subject management functions
   const handleEditSubject = (subject) => {
-    setEditingSubject(subject);
-    setEditSubjectName(subject.name || '');
-    setEditSubjectNotes(subject.notes || '');
+    setEditingSubjectInModal(subject);
+    setShowAddSubjectModal(true);
   };
 
   const handleSaveSubject = async () => {
@@ -278,61 +408,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       toast.push('Failed to update subject: ' + err.message, 'error');
     } finally {
       setSavingSubject(false);
-    }
-  };
-
-  const handleResetSubject = async (subject) => {
-    const confirmed = Platform.OS === 'web' 
-      ? window.confirm(`Are you sure you want to reset "${subject.name}"? This will delete all related events, materials, and data. The subject itself will remain.`)
-      : await new Promise((resolve) => {
-          Alert.alert(
-            'Reset Subject',
-            `Are you sure you want to reset "${subject.name}"? This will delete all related events, materials, and data. The subject itself will remain.`,
-            [
-              { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
-              { text: 'Reset', onPress: () => resolve(true), style: 'destructive' }
-            ]
-          );
-        });
-    
-    if (!confirmed) return;
-    
-    try {
-      // Delete related events
-      await supabase
-        .from('events')
-        .delete()
-        .eq('subject_id', subject.id);
-      
-      // Delete related materials
-      await supabase
-        .from('materials')
-        .delete()
-        .eq('subject_id', subject.id);
-      
-      // Delete related syllabi and their sections
-      const { data: syllabi } = await supabase
-        .from('syllabi')
-        .select('id')
-        .eq('subject_id', subject.id);
-      
-      if (syllabi && syllabi.length > 0) {
-        const syllabusIds = syllabi.map(s => s.id);
-        await supabase
-          .from('syllabus_sections')
-          .delete()
-          .in('syllabus_id', syllabusIds);
-        
-        await supabase
-          .from('syllabi')
-          .delete()
-          .eq('subject_id', subject.id);
-      }
-      
-      toast.push(`"${subject.name}" has been reset. All related data has been removed.`, 'success');
-      loadSubjects();
-    } catch (err) {
-      toast.push('Failed to reset subject: ' + err.message, 'error');
     }
   };
 
@@ -402,12 +477,31 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     if (!subject.child_id || subject.child_id === '') {
       return 'All children';
     }
+    // Use childrenWithAvatars which has full data, fallback to family.children
+    const availableChildren = childrenWithAvatars.length > 0 ? childrenWithAvatars : (family?.children || []);
     const childIds = subject.child_id.split(';').map(id => id.trim()).filter(Boolean);
     const childNames = childIds.map(id => {
-      const child = children.find(c => c.id === id);
+      const child = availableChildren.find(c => String(c.id) === String(id));
       return child ? (child.name || child.first_name || 'Child') : null;
     }).filter(Boolean);
     return childNames.length > 0 ? childNames.join(', ') : 'All children';
+  };
+
+  // Helper to get last activity text for a subject
+  const getSubjectLastActivity = (subject) => {
+    // For now, return a placeholder. In the future, this would come from actual activity data
+    // This could be based on last assignment, last lesson, last update, etc.
+    if (subject.updated_at) {
+      const updatedDate = new Date(subject.updated_at);
+      const now = new Date();
+      const diffDays = Math.floor((now - updatedDate) / (1000 * 60 * 60 * 24));
+      if (diffDays === 0) return 'Last activity today';
+      if (diffDays === 1) return 'Last activity yesterday';
+      if (diffDays < 7) return `Last activity ${diffDays} days ago`;
+      if (diffDays < 30) return `Last activity ${Math.floor(diffDays / 7)} weeks ago`;
+      return 'Last activity over a month ago';
+    }
+    return 'Not started';
   };
 
   // Listen for profile refresh events
@@ -469,6 +563,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setInviteEmail('');
       setSelectedChildIds([]);
       toast.push('Invite sent successfully!', 'success');
+      if (data.invite_url) {
+        showInviteSuccessModal(data.invite_url);
+      }
     } catch (err) {
       setError(err.message || 'Failed to invite tutor');
       toast.push('Failed to invite tutor', 'error');
@@ -500,7 +597,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setChildInviteResultUrl(data.invite_url);
       setChildInviteEmail('');
       setSelectedChildForInvite(null);
+      setShowChildInviteModal(false);
+      setChildInviteStep('select');
       toast.push('Child invite sent successfully!', 'success');
+      if (data.invite_url) {
+        showInviteSuccessModal(data.invite_url);
+      }
+      if (onFamilyUpdate) onFamilyUpdate();
     } catch (err) {
       setError(err.message || 'Failed to invite child');
       toast.push('Failed to invite child', 'error');
@@ -537,13 +640,70 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       if (err) throw err;
       setParentInviteResultUrl(data.invite_url);
       setParentInviteEmail('');
+      setShowParentInviteModal(false);
       toast.push('Parent invite sent successfully!', 'success');
+      if (data.invite_url) {
+        showInviteSuccessModal(data.invite_url);
+      }
+      if (onFamilyUpdate) onFamilyUpdate();
     } catch (err) {
       setError(err.message || 'Failed to invite parent');
       toast.push('Failed to invite parent', 'error');
     } finally {
       setInvitingParent(false);
     }
+  };
+
+  const handleInviteTutorFromModal = async () => {
+    if (!tutorInviteEmail.trim()) {
+      setError('Please enter an email for the tutor.');
+      return;
+    }
+
+    setInvitingTutor(true);
+    setError(null);
+    try {
+      const { data, error: err } = await inviteTutor({
+        email: tutorInviteEmail.trim(),
+        role: 'tutor',
+        child_ids: children.map(c => c.id),
+      });
+      if (err) throw err;
+      setTutorInviteEmail('');
+      setShowTutorInviteModal(false);
+      toast.push('Tutor invite sent successfully!', 'success');
+      if (data?.invite_url) {
+        showInviteSuccessModal(data.invite_url);
+      }
+      if (onFamilyUpdate) onFamilyUpdate();
+    } catch (err) {
+      setError(err.message || 'Failed to invite tutor');
+      toast.push('Failed to invite tutor', 'error');
+    } finally {
+      setInvitingTutor(false);
+    }
+  };
+
+
+  const handleOpenChildInviteModal = () => {
+    if (children.length === 0) {
+      toast.push('Please add a child first before inviting', 'error');
+      return;
+    }
+    setShowChildInviteModal(true);
+    setChildInviteStep(children.length === 1 ? 'email' : 'select');
+    if (children.length === 1) {
+      setSelectedChildForInvite(children[0].id);
+    } else {
+      setSelectedChildForInvite(null);
+    }
+    setChildInviteEmail('');
+    setError(null);
+  };
+
+  const handleSelectChildForInvite = (childId) => {
+    setSelectedChildForInvite(childId);
+    setChildInviteStep('email');
   };
 
   const handleCopyInvite = async (url) => {
@@ -761,148 +921,194 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     switch (activeSection) {
       case 'connections':
         return (
-          <View style={styles.mainContentInner}>
+          <View style={[styles.mainContentInner, styles.mainContentCard]}>
             <Text style={styles.mainContentTitle}>Connected accounts</Text>
-
-            <Text style={styles.connectionsIntro}>
-              Connect the tools you already use so it is faster to pull in documents, videos, and courses while you plan.
-              These connections are optional and you stay in full control of what gets shared.
+            <Text style={styles.connectionsIntroText}>
+              Connect tools you already use to automatically sync learning materials, videos, and coursework.
             </Text>
 
-            <Text style={styles.subsectionTitle}>Cloud storage & docs</Text>
-            <View style={styles.subsectionDivider} />
+            <Text style={styles.connectionsSectionTitle}>Cloud storage & docs</Text>
+            <View style={styles.connectionsSectionDivider} />
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
                 ['google', 'dropbox'].includes(p.key)
-              ).map(({ key, label, description, image }) => {
+              ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
+                const isRecommended = key === 'google';
+                const isHovered = hoveredConnectionKey === key;
 
                 return (
-                  <View key={key} style={styles.connectionRow}>
-                    <View style={styles.connectionRowLeft}>
-                      <View style={styles.connectionRowIcon}>
-                        <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                  <React.Fragment key={key}>
+                    <View 
+                      style={[
+                        styles.connectionCardRow,
+                        isHovered && styles.connectionCardRowHovered,
+                      ]}
+                      {...(Platform.OS === 'web' && {
+                        onMouseEnter: () => setHoveredConnectionKey(key),
+                        onMouseLeave: () => setHoveredConnectionKey(null),
+                      })}
+                    >
+                      <View style={styles.connectionRowLeft}>
+                        <View style={styles.connectionRowIconContainer}>
+                          <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                        </View>
+                        <View style={styles.connectionRowText}>
+                          <View style={styles.connectionRowHeader}>
+                            <Text style={styles.connectionRowLabel}>{label}</Text>
+                            {isConnected && (
+                              <View style={styles.connectionStatusChip}>
+                                <View style={styles.connectionStatusDot} />
+                                <Text style={styles.connectionStatusText}>Connected</Text>
+                              </View>
+                            )}
+                            {!isConnected && isRecommended && (
+                              <View style={styles.connectionRecommendedChip}>
+                                <Text style={styles.connectionRecommendedText}>Recommended</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.connectionRowDescription}>{description}</Text>
+                          {isConnected && (
+                            <Text style={styles.connectionLastSynced}>Last synced today</Text>
+                          )}
+                        </View>
                       </View>
-                      <View style={styles.connectionRowText}>
-                        <Text style={styles.connectionRowLabel}>{label}</Text>
-                        <Text style={styles.connectionRowDescription}>{description}</Text>
+                      <View style={styles.connectionRowActions}>
+                        {isConnected ? (
+                          <>
+                            <TouchableOpacity
+                              style={styles.connectionManageButton}
+                              onPress={() => {
+                                toast.push('Connection settings coming soon for this provider', 'info');
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.connectionManageButtonText}>Manage</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.connectionDisconnectButton}
+                              onPress={() => handleDisconnectProvider(key)}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.connectionDisconnectButtonText}>Disconnect</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <TouchableOpacity
+                            style={[
+                              styles.connectionConnectButton,
+                              isBusy && styles.connectionConnectButtonDisabled,
+                            ]}
+                            onPress={() => handleConnectProvider(key)}
+                            disabled={isBusy}
+                            {...(Platform.OS === 'web' && {
+                              cursor: isBusy ? 'not-allowed' : 'pointer',
+                            })}
+                          >
+                            {isBusy ? (
+                              <ActivityIndicator size="small" color="#887DEE" />
+                            ) : (
+                              <Text style={styles.connectionConnectButtonText}>Connect</Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
                       </View>
                     </View>
-                    <View style={styles.connectionRowActions}>
-                      <TouchableOpacity
-                        style={[
-                          styles.connectionPillButton,
-                          isConnected && styles.connectionPillButtonConnected,
-                          hoveredConnectionKey === key && styles.connectionPillButtonHovered,
-                          isBusy && styles.connectionPillButtonDisabled,
-                        ]}
-                        onPress={() => {
-                          if (isConnected) {
-                            toast.push('Connection settings coming soon for this provider', 'info');
-                          } else {
-                            handleConnectProvider(key);
-                          }
-                        }}
-                        disabled={isBusy}
-                        {...(Platform.OS === 'web' && {
-                          cursor: isBusy ? 'not-allowed' : 'pointer',
-                          onMouseEnter: () => setHoveredConnectionKey(key),
-                          onMouseLeave: () => setHoveredConnectionKey(null),
-                        })}
-                      >
-                        <Text style={[
-                          styles.connectionPillButtonText,
-                          hoveredConnectionKey === key && styles.connectionPillButtonTextHovered,
-                        ]}>
-                          {isBusy
-                            ? 'Connecting...'
-                            : isConnected
-                            ? 'Connected'
-                            : 'Connect'}
-                        </Text>
-                      </TouchableOpacity>
-                      {isConnected && (
-                        <TouchableOpacity
-                          style={styles.connectionSecondaryButton}
-                          onPress={() => handleDisconnectProvider(key)}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.connectionSecondaryButtonText}>Disconnect</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
+                    {index < array.length - 1 && <View style={styles.connectionRowDivider} />}
+                  </React.Fragment>
                 );
               })}
             </View>
 
-            <Text style={[styles.subsectionTitle, { marginTop: 32 }]}>Learning platforms</Text>
-            <View style={styles.subsectionDivider} />
+            <Text style={styles.connectionsSectionTitle}>Learning platforms</Text>
+            <View style={styles.connectionsSectionDivider} />
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
-                ['youtube', 'khan_academy'].includes(p.key)
-              ).map(({ key, label, description, image }) => {
+                ['khan_academy', 'youtube'].includes(p.key)
+              ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
+                const isHovered = hoveredConnectionKey === key;
 
                 return (
-                  <View key={key} style={styles.connectionRow}>
-                    <View style={styles.connectionRowLeft}>
-                      <View style={styles.connectionRowIcon}>
-                        <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                  <React.Fragment key={key}>
+                    <View 
+                      style={[
+                        styles.connectionCardRow,
+                        isHovered && styles.connectionCardRowHovered,
+                      ]}
+                      {...(Platform.OS === 'web' && {
+                        onMouseEnter: () => setHoveredConnectionKey(key),
+                        onMouseLeave: () => setHoveredConnectionKey(null),
+                      })}
+                    >
+                      <View style={styles.connectionRowLeft}>
+                        <View style={styles.connectionRowIconContainer}>
+                          <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                        </View>
+                        <View style={styles.connectionRowText}>
+                          <View style={styles.connectionRowHeader}>
+                            <Text style={styles.connectionRowLabel}>{label}</Text>
+                            {isConnected && (
+                              <View style={styles.connectionStatusChip}>
+                                <View style={styles.connectionStatusDot} />
+                                <Text style={styles.connectionStatusText}>Connected</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.connectionRowDescription}>{description}</Text>
+                          {isConnected && (
+                            <Text style={styles.connectionLastSynced}>Last synced today</Text>
+                          )}
+                        </View>
                       </View>
-                      <View style={styles.connectionRowText}>
-                        <Text style={styles.connectionRowLabel}>{label}</Text>
-                        <Text style={styles.connectionRowDescription}>{description}</Text>
+                      <View style={styles.connectionRowActions}>
+                        {isConnected ? (
+                          <>
+                            <TouchableOpacity
+                              style={styles.connectionManageButton}
+                              onPress={() => {
+                                toast.push('Connection settings coming soon for this provider', 'info');
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.connectionManageButtonText}>Manage</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.connectionDisconnectButton}
+                              onPress={() => handleDisconnectProvider(key)}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.connectionDisconnectButtonText}>Disconnect</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <TouchableOpacity
+                            style={[
+                              styles.connectionConnectButton,
+                              isBusy && styles.connectionConnectButtonDisabled,
+                            ]}
+                            onPress={() => handleConnectProvider(key)}
+                            disabled={isBusy}
+                            {...(Platform.OS === 'web' && {
+                              cursor: isBusy ? 'not-allowed' : 'pointer',
+                            })}
+                          >
+                            {isBusy ? (
+                              <ActivityIndicator size="small" color="#887DEE" />
+                            ) : (
+                              <Text style={styles.connectionConnectButtonText}>Connect</Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
                       </View>
                     </View>
-                    <View style={styles.connectionRowActions}>
-                      <TouchableOpacity
-                        style={[
-                          styles.connectionPillButton,
-                          isConnected && styles.connectionPillButtonConnected,
-                          hoveredConnectionKey === key && styles.connectionPillButtonHovered,
-                          isBusy && styles.connectionPillButtonDisabled,
-                        ]}
-                        onPress={() => {
-                          if (isConnected) {
-                            toast.push('Connection settings coming soon for this provider', 'info');
-                          } else {
-                            handleConnectProvider(key);
-                          }
-                        }}
-                        disabled={isBusy}
-                        {...(Platform.OS === 'web' && {
-                          cursor: isBusy ? 'not-allowed' : 'pointer',
-                          onMouseEnter: () => setHoveredConnectionKey(key),
-                          onMouseLeave: () => setHoveredConnectionKey(null),
-                        })}
-                      >
-                        <Text style={[
-                          styles.connectionPillButtonText,
-                          hoveredConnectionKey === key && styles.connectionPillButtonTextHovered,
-                        ]}>
-                          {isBusy
-                            ? 'Connecting...'
-                            : isConnected
-                            ? 'Connected'
-                            : 'Connect'}
-                        </Text>
-                      </TouchableOpacity>
-                      {isConnected && (
-                        <TouchableOpacity
-                          style={styles.connectionSecondaryButton}
-                          onPress={() => handleDisconnectProvider(key)}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.connectionSecondaryButtonText}>Disconnect</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
+                    {index < array.length - 1 && <View style={styles.connectionRowDivider} />}
+                  </React.Fragment>
                 );
               })}
             </View>
@@ -1038,7 +1244,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
               >
                 {resettingPassword ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
+                  <ActivityIndicator size="small" color="#887DEE" />
                 ) : (
                   <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
                 )}
@@ -1049,21 +1255,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             
             {/* Data & Account Actions */}
-            <View style={styles.profileActionsSection}>
+            <View style={styles.dangerZoneActions}>
               <TouchableOpacity
-                style={styles.profileActionButton}
+                style={styles.dangerZoneExportButton}
                 onPress={() => setActiveSection('datavault')}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={styles.profileActionButtonText}>EXPORT MY DATA</Text>
+                <Text style={styles.dangerZoneExportButtonText}>EXPORT MY DATA</Text>
               </TouchableOpacity>
               
               <TouchableOpacity
-                style={styles.profileActionButton}
+                style={styles.dangerZoneDeleteButton}
                 onPress={() => setActiveSection('datavault')}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={styles.profileActionButtonTextDanger}>DELETE MY ACCOUNT</Text>
+                <Text style={styles.dangerZoneDeleteButtonText}>DELETE MY ACCOUNT</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1089,10 +1295,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             {/* General Section */}
             <View style={styles.notifSection}>
-              <View style={styles.notifSectionHeader}>
-                <Text style={styles.notifSectionTitle}>General</Text>
-                <Text style={styles.notifSectionHeaderLabel}>Email</Text>
-              </View>
+              <Text style={styles.subsectionTitle}>General</Text>
+              <View style={styles.subsectionDivider} />
               
               <NotificationCheckbox
                 value={notifDailyUpdates}
@@ -1135,7 +1339,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'members':
         return (
-          <View style={styles.mainContentInner}>
+          <View style={[styles.mainContentInner, styles.mainContentCard]}>
             <Text style={styles.mainContentTitle}>Family Members</Text>
             
             {/* Parents Section */}
@@ -1144,18 +1348,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               {parents.length < 2 && (
                 <TouchableOpacity 
                   style={styles.membersInviteButton} 
-                  onPress={async () => {
-                    if (Platform.OS === 'web') {
-                      const email = window.prompt('Enter parent email address:');
-                      if (email && email.trim()) {
-                        try {
-                          const { data, error: err } = await inviteTutor({ email: email.trim(), role: 'parent', child_ids: [] });
-                          if (err) throw err;
-                          toast.push('Parent invite sent successfully!', 'success');
-                          if (data?.invite_url) { await navigator.clipboard.writeText(data.invite_url); toast.push('Invite link copied to clipboard', 'success'); }
-                        } catch (err) { toast.push(err.message || 'Failed to invite parent', 'error'); }
-                      }
-                    }
+                  onPress={() => {
+                    setShowParentInviteModal(true);
+                    setParentInviteEmail('');
+                    setError(null);
                   }} 
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
@@ -1190,19 +1386,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={styles.membersInviteButton} 
-                  onPress={async () => {
-                    const email = window.prompt('Enter child email to invite:');
-                    if (email && email.trim()) {
-                      try {
-                        const { data, error: err } = await inviteTutor({ email: email.trim(), role: 'child', child_ids: [] });
-                        if (err) throw err;
-                        toast.push('Child invite sent successfully!', 'success');
-                        if (onFamilyUpdate) onFamilyUpdate();
-                      } catch (error) {
-                        toast.push('Failed to send invite: ' + error.message, 'error');
-                      }
-                    }
-                  }}
+                  onPress={handleOpenChildInviteModal}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Plus size={16} color="#887DEE" />
@@ -1227,38 +1411,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     >
                       <Edit size={18} color="#887DEE" />
                     </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={styles.memberRowActionButton} 
-                      onPress={() => {
-                        if (Platform.OS === 'web') {
-                          if (window.confirm(`Are you sure you want to delete ${childName}?`)) {
-                            (async () => {
-                              try {
-                                await supabase.from('children').delete().eq('id', child.id);
-                                toast.push('Child deleted successfully', 'success');
-                                const { data } = await getFamilyMembers();
-                                if (data) { setFamily(data); if (onFamilyUpdate) onFamilyUpdate(data); }
-                              } catch (err) { toast.push('Failed to delete child', 'error'); }
-                            })();
-                          }
-                        } else {
-                          Alert.alert('Delete Child', `Are you sure you want to delete ${childName}?`, [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Delete', style: 'destructive', onPress: async () => {
-                              try {
-                                await supabase.from('children').delete().eq('id', child.id);
-                                toast.push('Child deleted successfully', 'success');
-                                const { data } = await getFamilyMembers();
-                                if (data) { setFamily(data); if (onFamilyUpdate) onFamilyUpdate(data); }
-                              } catch (err) { toast.push('Failed to delete child', 'error'); }
-                            }}
-                          ]);
-                        }
-                      }} 
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Trash2 size={18} color="#ef4444" />
-                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -1269,18 +1421,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={styles.subsectionTitle}>Tutors</Text>
               <TouchableOpacity 
                 style={styles.membersInviteButton} 
-                onPress={async () => {
-                  if (Platform.OS === 'web') {
-                    const email = window.prompt('Enter tutor email address:');
-                    if (email && email.trim()) {
-                      try {
-                        const { data, error: err } = await inviteTutor({ email: email.trim(), role: 'tutor', child_ids: children.map(c => c.id) });
-                        if (err) throw err;
-                        toast.push('Tutor invite sent successfully!', 'success');
-                        if (data?.invite_url) { await navigator.clipboard.writeText(data.invite_url); toast.push('Invite link copied to clipboard', 'success'); }
-                      } catch (err) { toast.push(err.message || 'Failed to invite tutor', 'error'); }
-                    }
-                  }
+                onPress={() => {
+                  setShowTutorInviteModal(true);
+                  setTutorInviteEmail('');
+                  setError(null);
                 }} 
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
@@ -1302,19 +1446,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'courses':
         return (
-          <View style={styles.mainContentInner}>
+          <View style={[styles.mainContentInner, styles.mainContentCard]}>
             <View style={styles.coursesHeader}>
               <View>
                 <Text style={styles.mainContentTitle}>Courses</Text>
-                <Text style={styles.sectionSubtitle}>Manage your family's subjects and courses</Text>
+                <Text style={styles.coursesIntroText}>
+                  Manage your family's subjects, assignments, and learning structure.
+                </Text>
               </View>
               <TouchableOpacity
-                style={styles.membersInviteButton}
+                style={styles.coursesAddButton}
                 onPress={() => setShowAddSubjectModal(true)}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Plus size={16} color="#887DEE" />
-                <Text style={styles.membersInviteButtonText}>Add Subject</Text>
+                <Text style={styles.coursesAddButtonText}>Add Subject</Text>
               </TouchableOpacity>
             </View>
             
@@ -1324,95 +1470,115 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <Text style={styles.loadingText}>Loading subjects...</Text>
               </View>
             ) : subjects.length === 0 ? (
-              <View style={styles.infoCard}>
-                <Text style={styles.emptyText}>No subjects yet. Add subjects from the Subjects page.</Text>
+              <View style={styles.coursesEmptyState}>
+                <Text style={styles.coursesEmptyTitle}>No subjects yet</Text>
+                <Text style={styles.coursesEmptyDescription}>
+                  Create subjects to organize learning, assignments, and progress.
+                </Text>
+                <TouchableOpacity
+                  style={styles.coursesAddButton}
+                  onPress={() => setShowAddSubjectModal(true)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color="#887DEE" />
+                  <Text style={styles.coursesAddButtonText}>Add Subject</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.subjectsList}>
-                {subjects.map((subject) => (
-                  <View key={subject.id} style={styles.subjectCard}>
-                    {editingSubject?.id === subject.id ? (
-                      // Edit mode
-                      <View style={styles.subjectEditForm}>
-                        <Text style={styles.subjectEditLabel}>Subject Name</Text>
-                        <TextInput
-                          style={styles.subjectEditInput}
-                          value={editSubjectName}
-                          onChangeText={setEditSubjectName}
-                          placeholder="Subject name"
-                          placeholderTextColor="#9ca3af"
-                        />
-                        <Text style={[styles.subjectEditLabel, { marginTop: 12 }]}>Notes</Text>
-                        <TextInput
-                          style={[styles.subjectEditInput, styles.subjectEditTextarea]}
-                          value={editSubjectNotes}
-                          onChangeText={setEditSubjectNotes}
-                          placeholder="Optional notes about this subject"
-                          placeholderTextColor="#9ca3af"
-                          multiline
-                          numberOfLines={3}
-                        />
-                        <View style={styles.subjectEditActions}>
-                          <TouchableOpacity
-                            style={styles.subjectEditCancelButton}
-                            onPress={() => setEditingSubject(null)}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={styles.subjectEditCancelText}>Cancel</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.subjectEditSaveButton, savingSubject && styles.buttonDisabled]}
-                            onPress={handleSaveSubject}
-                            disabled={savingSubject || !editSubjectName.trim()}
-                            {...(Platform.OS === 'web' && { cursor: savingSubject ? 'not-allowed' : 'pointer' })}
-                          >
-                            {savingSubject ? (
-                              <ActivityIndicator size="small" color="#ffffff" />
-                            ) : (
-                              <Text style={styles.subjectEditSaveText}>Save</Text>
-                            )}
-                          </TouchableOpacity>
+                {subjects.map((subject, index) => {
+                  const isHovered = hoveredSubjectId === subject.id;
+                  const lastActivity = getSubjectLastActivity(subject);
+                  const childNames = getSubjectChildNames(subject);
+                  
+                  return (
+                    <React.Fragment key={subject.id}>
+                      {index > 0 && <View style={styles.subjectDivider} />}
+                      <View 
+                        style={[
+                          styles.subjectItem,
+                          isHovered && styles.subjectItemHovered,
+                        ]}
+                        {...(Platform.OS === 'web' && {
+                          onMouseEnter: () => setHoveredSubjectId(subject.id),
+                          onMouseLeave: () => setHoveredSubjectId(null),
+                        })}
+                      >
+                      {editingSubject?.id === subject.id ? (
+                        // Edit mode
+                        <View style={styles.subjectEditForm}>
+                          <Text style={styles.subjectEditLabel}>Subject Name</Text>
+                          <TextInput
+                            style={styles.subjectEditInput}
+                            value={editSubjectName}
+                            onChangeText={setEditSubjectName}
+                            placeholder="Subject name"
+                            placeholderTextColor="#9ca3af"
+                          />
+                          <Text style={[styles.subjectEditLabel, { marginTop: 12 }]}>Notes</Text>
+                          <TextInput
+                            style={[styles.subjectEditInput, styles.subjectEditTextarea]}
+                            value={editSubjectNotes}
+                            onChangeText={setEditSubjectNotes}
+                            placeholder="Optional notes about this subject"
+                            placeholderTextColor="#9ca3af"
+                            multiline
+                            numberOfLines={3}
+                          />
+                          <View style={styles.subjectEditActions}>
+                            <TouchableOpacity
+                              style={styles.subjectEditCancelButton}
+                              onPress={() => setEditingSubject(null)}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.subjectEditCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.subjectEditSaveButton, savingSubject && styles.buttonDisabled]}
+                              onPress={handleSaveSubject}
+                              disabled={savingSubject || !editSubjectName.trim()}
+                              {...(Platform.OS === 'web' && { cursor: savingSubject ? 'not-allowed' : 'pointer' })}
+                            >
+                              {savingSubject ? (
+                                <ActivityIndicator size="small" color="#ffffff" />
+                              ) : (
+                                <Text style={styles.subjectEditSaveText}>Save</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
                         </View>
+                      ) : (
+                        // View mode
+                        <>
+                          <View style={styles.subjectCardHeader}>
+                            <View style={styles.subjectCardInfo}>
+                              <Text style={styles.subjectCardName}>{subject.name}</Text>
+                              <View style={styles.subjectCardMeta}>
+                                <Text style={styles.subjectCardChildren}>
+                                  {childNames !== 'All children' && childNames !== 'No children' ? `Students: ${childNames}` : childNames}
+                                </Text>
+                                <Text style={styles.subjectCardActivity}> · {lastActivity}</Text>
+                              </View>
+                            </View>
+                            <View style={styles.subjectCardActions}>
+                              <TouchableOpacity
+                                style={[
+                                  styles.subjectActionButton,
+                                  isHovered && styles.subjectActionButtonHovered,
+                                ]}
+                                onPress={() => handleEditSubject(subject)}
+                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                              >
+                                <Pencil size={16} color="#887DEE" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        </>
+                      )}
                       </View>
-                    ) : (
-                      // View mode
-                      <>
-                        <View style={styles.subjectCardHeader}>
-                          <View style={styles.subjectCardInfo}>
-                            <Text style={styles.subjectCardName}>{subject.name}</Text>
-                            <Text style={styles.subjectCardChildren}>{getSubjectChildNames(subject)}</Text>
-                            {subject.notes && (
-                              <Text style={styles.subjectCardNotes}>{subject.notes}</Text>
-                            )}
-                          </View>
-                          <View style={styles.subjectCardActions}>
-                            <TouchableOpacity
-                              style={styles.subjectActionButton}
-                              onPress={() => handleEditSubject(subject)}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Pencil size={18} color="#887DEE" />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.subjectActionButton}
-                              onPress={() => handleResetSubject(subject)}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <X size={18} color="#f59e0b" />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.subjectActionButton}
-                              onPress={() => handleDeleteSubject(subject)}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Trash2 size={18} color="#ef4444" />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </>
-                    )}
-                  </View>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
               </View>
             )}
           </View>
@@ -2636,41 +2802,62 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           {/* Account Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Account</Text>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
-            </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Users size={18} color={activeSection === 'members' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <BookOpen size={18} color={activeSection === 'courses' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]} onPress={() => setActiveSection('connections')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Link2 size={18} color={activeSection === 'connections' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>Connected accounts</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'preferences' && styles.sidebarButtonActive]} onPress={() => setActiveSection('preferences')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <SlidersHorizontal size={18} color={activeSection === 'preferences' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'preferences' && styles.sidebarButtonTextActive]}>Preferences</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]} onPress={() => setActiveSection('notifications')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Bell size={18} color={activeSection === 'notifications' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>Notifications</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <User size={18} color={activeSection === 'profile' ? '#887DEE' : '#6b7280'} />
+              <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
             </TouchableOpacity>
           </View>
 
           {/* Subscription Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Subscription</Text>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'doodlemax' && styles.sidebarButtonActive]} onPress={() => setActiveSection('doodlemax')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'doodlemax' && styles.sidebarButtonTextActive]}>DoodleMax</Text>
-            </TouchableOpacity>
+            <View style={styles.sidebarSubscriptionContent}>
+              <View style={styles.sidebarSubscriptionInfo}>
+                <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
+                <View style={styles.sidebarSubscriptionStatusChip}>
+                  <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+                </View>
+                <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
+              </View>
+              <TouchableOpacity 
+                style={styles.sidebarSubscriptionManage}
+                onPress={() => setActiveSection('doodlemax')}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.sidebarSubscriptionManageText}>Manage plan</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Support Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Support</Text>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'help' && styles.sidebarButtonActive]} onPress={() => setActiveSection('help')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <HelpCircle size={18} color={activeSection === 'help' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'help' && styles.sidebarButtonTextActive]}>Help</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'feedback' && styles.sidebarButtonActive]} onPress={() => setActiveSection('feedback')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <MessageSquare size={18} color={activeSection === 'feedback' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'feedback' && styles.sidebarButtonTextActive]}>Feedback</Text>
             </TouchableOpacity>
           </View>
@@ -2775,10 +2962,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
       <AddSubjectModal 
         visible={showAddSubjectModal} 
-        onClose={() => setShowAddSubjectModal(false)} 
+        onClose={() => {
+          setShowAddSubjectModal(false);
+          setEditingSubjectInModal(null);
+        }} 
         familyId={family?.id || familyId}
+        subject={editingSubjectInModal}
+        children={family?.children || []}
         onSubjectAdded={() => {
           loadSubjects();
+          setEditingSubjectInModal(null);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('subjectCreated'));
           }
@@ -2786,6 +2979,356 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       />
       <AddMaterialModal visible={showAddMaterialModal} onClose={() => setShowAddMaterialModal(false)} familyId={family?.id || familyId} />
       <TaskCreateModal visible={showTaskModal} onClose={() => setShowTaskModal(false)} familyId={family?.id || familyId} />
+
+      {/* Child Invite Modal */}
+      <Modal
+        visible={showChildInviteModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setShowChildInviteModal(false);
+          setChildInviteStep('select');
+          setSelectedChildForInvite(null);
+          setChildInviteEmail('');
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.childInviteModal}>
+            <View style={styles.childInviteModalHeader}>
+              <Text style={styles.childInviteModalTitle}>
+                {childInviteStep === 'select' ? 'Select Child' : 'Enter Email'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowChildInviteModal(false);
+                  setChildInviteStep('select');
+                  setSelectedChildForInvite(null);
+                  setChildInviteEmail('');
+                }}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            {childInviteStep === 'select' ? (
+              <>
+                <Text style={styles.inviteUrlModalDescription}>
+                  Select which child to invite:
+                </Text>
+                <ScrollView style={styles.childInviteList} contentContainerStyle={styles.childInviteListContent}>
+                  {children.map((child) => (
+                    <TouchableOpacity
+                      key={child.id}
+                      style={styles.childInviteItem}
+                      onPress={() => handleSelectChildForInvite(child.id)}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.childInviteItemName}>
+                        {child.name || child.first_name || 'Child'}
+                      </Text>
+                      <ChevronRight size={20} color="#6b7280" />
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            ) : (
+              <>
+                <Text style={styles.inviteUrlModalDescription}>
+                  Enter email address for {children.find(c => c.id === selectedChildForInvite)?.name || children.find(c => c.id === selectedChildForInvite)?.first_name || 'this child'}:
+                </Text>
+                <TextInput
+                  style={styles.childInviteEmailInput}
+                  placeholder="email@example.com"
+                  placeholderTextColor="#9ca3af"
+                  value={childInviteEmail}
+                  onChangeText={setChildInviteEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {error && (
+                  <Text style={styles.childInviteError}>{error}</Text>
+                )}
+                <View style={styles.inviteUrlModalActions}>
+                  <TouchableOpacity
+                    style={styles.inviteUrlDoneButton}
+                    onPress={() => {
+                      setChildInviteStep('select');
+                      setChildInviteEmail('');
+                      setError(null);
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.inviteUrlDoneButtonText}>Back</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.inviteUrlCopyButton, (invitingChild || !childInviteEmail.trim()) && styles.inviteUrlCopyButtonDisabled]}
+                    onPress={handleInviteChild}
+                    disabled={invitingChild || !childInviteEmail.trim()}
+                    {...(Platform.OS === 'web' && { cursor: (invitingChild || !childInviteEmail.trim()) ? 'not-allowed' : 'pointer' })}
+                  >
+                    {invitingChild ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <>
+                        <Send size={16} color="#ffffff" />
+                        <Text style={styles.inviteUrlCopyButtonText}>Send Invite</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Invite URL Success Modal */}
+      <Modal
+        visible={showInviteUrlModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowInviteUrlModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.inviteUrlModal}>
+            <View style={styles.inviteUrlModalHeader}>
+              <Text style={styles.inviteUrlModalTitle}>Invite Sent Successfully!</Text>
+              <TouchableOpacity
+                onPress={() => setShowInviteUrlModal(false)}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+            
+            <Text style={styles.inviteUrlModalDescription}>
+              Share this invite link with the person you're inviting:
+            </Text>
+            
+            <View style={styles.inviteUrlContainer}>
+              {Platform.OS === 'web' ? (
+                <TextInput
+                  style={styles.inviteUrlInput}
+                  value={inviteUrlToShow || ''}
+                  editable={false}
+                  selectTextOnFocus={true}
+                  multiline={true}
+                  data-invite-url-input={true}
+                />
+              ) : (
+                <TextInput
+                  style={styles.inviteUrlInput}
+                  value={inviteUrlToShow || ''}
+                  editable={false}
+                  selectTextOnFocus={true}
+                  multiline={true}
+                />
+              )}
+            </View>
+            
+            <View style={styles.inviteUrlModalActions}>
+              <TouchableOpacity
+                style={[styles.inviteUrlCopyButton, inviteUrlCopied && styles.inviteUrlCopyButtonSuccess]}
+                onPress={async () => {
+                  if (inviteUrlToShow) {
+                    const success = await copyToClipboard(inviteUrlToShow, 'Invite link');
+                    if (!success && Platform.OS === 'web') {
+                      // If clipboard fails, select text so user can manually copy
+                      setTimeout(() => {
+                        const input = document.querySelector('[data-invite-url-input]');
+                        if (input) {
+                          input.focus();
+                          input.select();
+                          if (input.setSelectionRange) {
+                            input.setSelectionRange(0, 99999);
+                          }
+                        }
+                      }, 100);
+                    }
+                  }
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                {inviteUrlCopied ? (
+                  <>
+                    <Check size={16} color="#ffffff" />
+                    <Text style={styles.inviteUrlCopyButtonText}>Copied!</Text>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={16} color="#ffffff" />
+                    <Text style={styles.inviteUrlCopyButtonText}>Copy Link</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.inviteUrlDoneButton}
+                onPress={() => setShowInviteUrlModal(false)}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.inviteUrlDoneButtonText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Parent Invite Modal */}
+      <Modal
+        visible={showParentInviteModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setShowParentInviteModal(false);
+          setParentInviteEmail('');
+          setError(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.childInviteModal}>
+            <View style={styles.childInviteModalHeader}>
+              <Text style={styles.childInviteModalTitle}>Invite Parent</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowParentInviteModal(false);
+                  setParentInviteEmail('');
+                  setError(null);
+                }}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inviteUrlModalDescription}>
+              Enter the email address of the parent you'd like to invite:
+            </Text>
+            <TextInput
+              style={styles.childInviteEmailInput}
+              placeholder="email@example.com"
+              placeholderTextColor="#9ca3af"
+              value={parentInviteEmail}
+              onChangeText={setParentInviteEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {error && (
+              <Text style={styles.childInviteError}>{error}</Text>
+            )}
+            <View style={styles.inviteUrlModalActions}>
+              <TouchableOpacity
+                style={styles.inviteUrlDoneButton}
+                onPress={() => {
+                  setShowParentInviteModal(false);
+                  setParentInviteEmail('');
+                  setError(null);
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.inviteUrlCopyButton, (invitingParent || !parentInviteEmail.trim()) && styles.inviteUrlCopyButtonDisabled]}
+                onPress={handleInviteParent}
+                disabled={invitingParent || !parentInviteEmail.trim()}
+                {...(Platform.OS === 'web' && { cursor: (invitingParent || !parentInviteEmail.trim()) ? 'not-allowed' : 'pointer' })}
+              >
+                {invitingParent ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Send size={16} color="#ffffff" />
+                    <Text style={styles.inviteUrlCopyButtonText}>Send Invite</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Tutor Invite Modal */}
+      <Modal
+        visible={showTutorInviteModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setShowTutorInviteModal(false);
+          setTutorInviteEmail('');
+          setError(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.childInviteModal}>
+            <View style={styles.childInviteModalHeader}>
+              <Text style={styles.childInviteModalTitle}>Invite Tutor</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowTutorInviteModal(false);
+                  setTutorInviteEmail('');
+                  setError(null);
+                }}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inviteUrlModalDescription}>
+              Enter the email address of the tutor you'd like to invite:
+            </Text>
+            <TextInput
+              style={styles.childInviteEmailInput}
+              placeholder="email@example.com"
+              placeholderTextColor="#9ca3af"
+              value={tutorInviteEmail}
+              onChangeText={setTutorInviteEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {error && (
+              <Text style={styles.childInviteError}>{error}</Text>
+            )}
+            <View style={styles.inviteUrlModalActions}>
+              <TouchableOpacity
+                style={styles.inviteUrlDoneButton}
+                onPress={() => {
+                  setShowTutorInviteModal(false);
+                  setTutorInviteEmail('');
+                  setError(null);
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.inviteUrlCopyButton, (invitingTutor || !tutorInviteEmail.trim()) && styles.inviteUrlCopyButtonDisabled]}
+                onPress={handleInviteTutorFromModal}
+                disabled={invitingTutor || !tutorInviteEmail.trim()}
+                {...(Platform.OS === 'web' && { cursor: (invitingTutor || !tutorInviteEmail.trim()) ? 'not-allowed' : 'pointer' })}
+              >
+                {invitingTutor ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Send size={16} color="#ffffff" />
+                    <Text style={styles.inviteUrlCopyButtonText}>Send Invite</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </View>
   );
@@ -2797,7 +3340,7 @@ function createStyles(tokens) {
       flex: 1,
       width: '100%',
       height: '100%',
-      backgroundColor: '#f9fafb',
+      backgroundColor: '#f3f4f5',
     },
     twoColumnLayout: {
       flex: 1,
@@ -2821,6 +3364,11 @@ function createStyles(tokens) {
       padding: 32,
       paddingRight: 16,
     },
+    mainContentCard: {
+      backgroundColor: '#ffffff',
+      borderRadius: 16,
+      padding: 32,
+    },
     mainContentContainerAbout: {
       padding: 32,
       paddingRight: 32,
@@ -2830,19 +3378,28 @@ function createStyles(tokens) {
       width: '100%',
     },
     mainContentTitle: {
-      fontSize: 28,
-      fontWeight: '700',
+      fontSize: 36,
+      fontWeight: '800',
       color: '#111827',
-      marginBottom: 32,
+      marginBottom: 8,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    sectionSubtitle: {
+      fontSize: 15,
+      color: '#6b7280',
+      marginBottom: 32,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     subsectionTitle: {
       fontSize: 18,
       fontWeight: '600',
       color: '#374151',
-      marginBottom: 8,
+      marginTop: 24,
+      marginBottom: 12,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -2857,6 +3414,7 @@ function createStyles(tokens) {
       justifyContent: 'space-between',
       alignItems: 'center',
       marginBottom: 12,
+      marginTop: 0,
     },
     coursesHeader: {
       flexDirection: 'row',
@@ -2893,7 +3451,15 @@ function createStyles(tokens) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingVertical: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 4,
+      borderRadius: 8,
+      ...(Platform.OS === 'web' && {
+        transition: 'background-color 0.2s ease',
+      }),
+    },
+    memberRowHovered: {
+      backgroundColor: '#f9fafb',
     },
     memberRowName: {
       fontSize: 16,
@@ -2958,58 +3524,117 @@ function createStyles(tokens) {
     },
     sidebarCard: {
       backgroundColor: '#ffffff',
-      borderRadius: 12,
+      borderRadius: 16,
       borderWidth: 1,
       borderColor: '#e5e7eb',
-      padding: 16,
-      marginBottom: 16,
+      paddingTop: 20,
+      paddingBottom: 20,
+      paddingHorizontal: 20,
+      marginBottom: 18,
     },
     sidebarCardTitle: {
-      fontSize: 16,
+      fontSize: 14,
       fontWeight: '700',
       color: '#111827',
-      marginBottom: 12,
+      marginBottom: 10,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     sidebarButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
       paddingVertical: 10,
       paddingHorizontal: 12,
       borderRadius: 8,
-      marginBottom: 4,
+      marginBottom: 6,
+      position: 'relative',
     },
     sidebarButtonActive: {
-      backgroundColor: '#eff6ff',
+      backgroundColor: 'rgba(136, 125, 238, 0.06)',
     },
     sidebarButtonText: {
-      fontSize: 18,
+      fontSize: 15,
       fontWeight: '500',
       color: '#374151',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     sidebarButtonTextActive: {
-      color: '#60a5fa',
+      color: '#887DEE',
+      fontWeight: '600',
+    },
+    sidebarSubscriptionContent: {
+      marginTop: 4,
+    },
+    sidebarSubscriptionInfo: {
+      marginBottom: 10,
+    },
+    sidebarSubscriptionPlan: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: '#111827',
+      marginBottom: 8,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    sidebarSubscriptionStatusChip: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+      backgroundColor: '#ecfdf3',
+      marginBottom: 6,
+    },
+    sidebarSubscriptionStatusChipText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#059669',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    sidebarSubscriptionRenewal: {
+      fontSize: 13,
+      color: '#9ca3af',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    sidebarSubscriptionManage: {
+      marginTop: 8,
+    },
+    sidebarSubscriptionManageText: {
+      fontSize: 13,
+      color: '#887DEE',
       fontWeight: '500',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        cursor: 'pointer',
+      }),
     },
     logoutButtonSidebar: {
       borderWidth: 1,
       borderColor: '#e5e7eb',
       borderRadius: 12,
-      paddingVertical: 14,
+      paddingVertical: 12,
       alignItems: 'center',
-      backgroundColor: '#ffffff',
+      backgroundColor: 'transparent',
+      marginTop: 12,
     },
     logoutButtonSidebarHovered: {
-      backgroundColor: '#eff6ff',
-      borderColor: '#60a5fa',
+      backgroundColor: '#fef2f2',
+      borderColor: '#ef4444',
     },
     logoutButtonText: {
       fontSize: 16,
       fontWeight: '700',
-      color: '#60a5fa',
+      color: '#ef4444',
       letterSpacing: 0.5,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -3020,8 +3645,8 @@ function createStyles(tokens) {
       flexWrap: 'wrap',
       justifyContent: 'center',
       gap: 12,
-      marginTop: 16,
-      paddingTop: 16,
+      marginTop: 14,
+      paddingTop: 14,
       borderTopWidth: 1,
       borderTopColor: '#e5e7eb',
     },
@@ -3118,50 +3743,78 @@ function createStyles(tokens) {
       color: '#6b7280',
       marginBottom: 0,
     },
-    connectionsIntro: {
-      fontSize: 14,
-      color: '#4b5563',
-      lineHeight: 20,
-      marginBottom: 24,
+    connectionsIntroText: {
+      fontSize: 15,
+      color: '#6b7280',
+      lineHeight: 22,
+      marginBottom: 32,
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
-    connectionsList: {
-      borderTopWidth: 0,
+    connectionsSectionTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: '#111827',
+      marginTop: 32,
+      marginBottom: 12,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
     },
-    connectionRow: {
+    connectionsSectionDivider: {
+      height: 1,
+      backgroundColor: '#e5e7eb',
+      marginBottom: 20,
+    },
+    connectionsList: {
+      marginBottom: 8,
+    },
+    connectionCardRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: 16,
-      borderBottomWidth: 1,
-      borderBottomColor: '#e5e7eb',
+      paddingVertical: 20,
+      paddingHorizontal: 4,
+      borderRadius: 12,
+      ...(Platform.OS === 'web' && {
+        transition: 'background-color 0.2s ease',
+      }),
+    },
+    connectionCardRowHovered: {
+      backgroundColor: '#f9fafb',
     },
     connectionRowLeft: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       flex: 1,
-      paddingRight: 12,
+      paddingRight: 16,
     },
-    connectionRowIcon: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      backgroundColor: '#eff6ff',
+    connectionRowIconContainer: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: '#f3f4f6',
       alignItems: 'center',
       justifyContent: 'center',
-      marginRight: 12,
+      marginRight: 16,
     },
     connectionRowImage: {
-      width: 22,
-      height: 22,
+      width: 28,
+      height: 28,
     },
     connectionRowText: {
       flex: 1,
     },
+    connectionRowHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+      flexWrap: 'wrap',
+    },
     connectionRowLabel: {
-      fontSize: 15,
+      fontSize: 16,
       fontWeight: '600',
       color: '#111827',
       ...(Platform.OS === 'web' && {
@@ -3169,63 +3822,137 @@ function createStyles(tokens) {
       }),
     },
     connectionRowDescription: {
-      fontSize: 13,
+      fontSize: 14,
       color: '#6b7280',
+      lineHeight: 20,
       marginTop: 2,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionStatusChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: '#ecfdf3',
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    connectionStatusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#10b981',
+    },
+    connectionStatusText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#059669',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionRecommendedChip: {
+      backgroundColor: '#fef3c7',
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    connectionRecommendedText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#d97706',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionLastSynced: {
+      fontSize: 12,
+      color: '#9ca3af',
+      marginTop: 6,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionRowDivider: {
+      height: 1,
+      backgroundColor: '#e5e7eb',
+      marginLeft: 64,
     },
     connectionRowActions: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
     },
-    connectionPillButton: {
+    connectionConnectButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: 10,
-      paddingHorizontal: 16,
-      borderRadius: 999,
-      backgroundColor: '#F9FAFB',
+      paddingHorizontal: 18,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#887DEE',
+      backgroundColor: 'transparent',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      }),
+    },
+    connectionConnectButtonDisabled: {
+      opacity: 0.5,
+    },
+    connectionConnectButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#887DEE',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionManageButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      borderRadius: 8,
+      backgroundColor: '#f3f4f6',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
         transition: 'background-color 0.2s ease',
       }),
     },
-    connectionPillButtonHovered: {
-      backgroundColor: '#EFF6FF',
-    },
-    connectionPillButtonConnected: {
-      backgroundColor: '#E0F2FE',
-    },
-    connectionPillButtonDisabled: {
-      opacity: 0.7,
-    },
-    connectionPillButtonText: {
-      fontSize: 13,
-      fontWeight: '500',
+    connectionManageButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
       color: '#374151',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        transition: 'font-weight 0.2s ease',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
-    connectionPillButtonTextHovered: {
-      fontWeight: '600',
-    },
-    connectionSecondaryButton: {
-      paddingVertical: 9,
-      paddingHorizontal: 14,
-      borderRadius: 999,
+    connectionDisconnectButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      borderRadius: 8,
       borderWidth: 1,
       borderColor: '#d1d5db',
-      backgroundColor: '#ffffff',
-    },
-    connectionSecondaryButtonText: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: '#4b5563',
+      backgroundColor: 'transparent',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      }),
+    },
+    connectionDisconnectButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#6b7280',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     contentWrapper: {
@@ -3294,15 +4021,15 @@ function createStyles(tokens) {
       alignItems: 'center',
     },
     profileFieldGroup: {
-      marginBottom: 32,
+      marginBottom: 24,
     },
     profileFieldLabel: {
       fontSize: 15,
-      fontWeight: '600',
+      fontWeight: '700',
       color: '#111827',
-      marginBottom: 8,
+      marginBottom: 16,
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     profileDarkInput: {
@@ -3316,11 +4043,11 @@ function createStyles(tokens) {
       borderColor: '#e5e7eb',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        outlineWidth: 0,
       }),
     },
     profileEmailInputContainer: {
       position: 'relative',
+      marginBottom: 4,
     },
     profileEmailInput: {
       paddingRight: 50,
@@ -3372,14 +4099,14 @@ function createStyles(tokens) {
     profileEmailSaveHint: {
       fontSize: 13,
       color: '#60a5fa',
-      marginTop: 8,
+      marginTop: 10,
       lineHeight: 18,
       fontWeight: '500',
     },
     profileEmailHint: {
       fontSize: 13,
       color: '#6b7280',
-      marginTop: 10,
+      marginTop: 12,
       lineHeight: 20,
       marginBottom: 0,
     },
@@ -3406,17 +4133,23 @@ function createStyles(tokens) {
       }),
     },
     profileResetPasswordButton: {
-      backgroundColor: '#60a5fa',
-      paddingVertical: 12,
+      borderWidth: 1,
+      borderColor: '#887DEE',
+      backgroundColor: 'transparent',
+      paddingVertical: 10,
       paddingHorizontal: 20,
       borderRadius: 8,
       alignItems: 'center',
       alignSelf: 'flex-start',
+      marginTop: 4,
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
     },
     profileResetPasswordButtonText: {
       fontSize: 14,
       fontWeight: '600',
-      color: '#ffffff',
+      color: '#887DEE',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -3424,26 +4157,39 @@ function createStyles(tokens) {
     profileResetPasswordHint: {
       fontSize: 13,
       color: '#6b7280',
-      marginTop: 10,
+      marginTop: 12,
       lineHeight: 20,
     },
-    profileActionsSection: {
+    dangerZoneActions: {
+      gap: 12,
       marginTop: 48,
-      gap: 16,
     },
-    profileActionButton: {
-      paddingVertical: 8,
+    dangerZoneExportButton: {
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      alignSelf: 'flex-start',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
     },
-    profileActionButtonText: {
+    dangerZoneExportButtonText: {
       fontSize: 14,
       fontWeight: '700',
-      color: '#6b7280',
+      color: '#887DEE',
       letterSpacing: 0.5,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
-    profileActionButtonTextDanger: {
+    dangerZoneDeleteButton: {
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      alignSelf: 'flex-start',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
+    },
+    dangerZoneDeleteButtonText: {
       fontSize: 14,
       fontWeight: '700',
       color: '#ef4444',
@@ -3675,10 +4421,11 @@ function createStyles(tokens) {
     },
     notifSectionTitle: {
       fontSize: 18,
-      fontWeight: '700',
-      color: '#111827',
+      fontWeight: '600',
+      color: '#374151',
+      marginBottom: 8,
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     notifSectionHeaderLabel: {
@@ -4693,15 +5440,83 @@ function createStyles(tokens) {
       }),
     },
     // Subjects/Courses styles
-    subjectsList: {
-      gap: 12,
+    coursesIntroText: {
+      fontSize: 15,
+      color: '#6b7280',
+      lineHeight: 22,
+      marginTop: 8,
+      marginBottom: 0,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
     },
-    subjectCard: {
-      backgroundColor: '#ffffff',
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: '#e5e7eb',
-      padding: 16,
+    coursesAddButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 8,
+      borderWidth: 1.5,
+      borderColor: '#887DEE',
+      backgroundColor: 'transparent',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      }),
+    },
+    coursesAddButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#887DEE',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    coursesEmptyState: {
+      paddingVertical: 48,
+      paddingHorizontal: 24,
+      alignItems: 'center',
+      textAlign: 'center',
+    },
+    coursesEmptyTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: '#111827',
+      marginBottom: 8,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    coursesEmptyDescription: {
+      fontSize: 14,
+      color: '#6b7280',
+      lineHeight: 20,
+      marginBottom: 24,
+      textAlign: 'center',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    subjectsList: {
+      // No gap needed - dividers handle spacing
+    },
+    subjectDivider: {
+      height: 1,
+      backgroundColor: '#e5e7eb',
+      marginVertical: 0,
+    },
+    subjectItem: {
+      paddingVertical: 18,
+      paddingHorizontal: 4,
+      borderRadius: 8,
+      ...(Platform.OS === 'web' && {
+        transition: 'background-color 0.2s ease',
+        cursor: 'default',
+      }),
+    },
+    subjectItemHovered: {
+      backgroundColor: '#f9fafb',
     },
     subjectCardHeader: {
       flexDirection: 'row',
@@ -4710,21 +5525,59 @@ function createStyles(tokens) {
     },
     subjectCardInfo: {
       flex: 1,
-      marginRight: 12,
+      marginRight: 16,
+    },
+    subjectCardNameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
     },
     subjectCardName: {
-      fontSize: 17,
+      fontSize: 18,
       fontWeight: '600',
       color: '#111827',
-      marginBottom: 4,
+      marginBottom: 6,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
+    subjectCardMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+    },
+    subjectCardChildrenContainer: {
+      marginTop: 2,
+    },
+    subjectCardChildrenRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+    },
+    subjectCardChildItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginRight: 4,
+    },
+    subjectCardChildDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      marginRight: 6,
+    },
     subjectCardChildren: {
       fontSize: 14,
-      fontWeight: '500',
+      fontWeight: '400',
       color: '#6b7280',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    subjectCardActivity: {
+      fontSize: 14,
+      fontWeight: '400',
+      color: '#9ca3af',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -4742,11 +5595,23 @@ function createStyles(tokens) {
     subjectCardActions: {
       flexDirection: 'row',
       gap: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     subjectActionButton: {
-      padding: 8,
-      borderRadius: 8,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       backgroundColor: '#f9fafb',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...(Platform.OS === 'web' && {
+        transition: 'all 0.2s ease',
+        cursor: 'pointer',
+      }),
+    },
+    subjectActionButtonHovered: {
+      backgroundColor: '#f3f4f6',
     },
     subjectEditForm: {
       gap: 4,
@@ -4771,7 +5636,6 @@ function createStyles(tokens) {
       backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        outline: 'none',
       }),
     },
     subjectEditTextarea: {
@@ -4896,7 +5760,6 @@ function createStyles(tokens) {
       color: '#111827',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        outlineWidth: 0,
       }),
     },
     feedbackTextArea: {
@@ -5190,6 +6053,199 @@ function createStyles(tokens) {
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
+    },
+    // Invite URL Modal styles
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    inviteUrlModal: {
+      backgroundColor: '#ffffff',
+      borderRadius: 16,
+      width: '100%',
+      maxWidth: 500,
+      padding: 24,
+      ...(Platform.OS === 'web' && {
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+      }),
+    },
+    inviteUrlModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    inviteUrlModalTitle: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: '#111827',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    inviteUrlModalClose: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: '#f3f4f6',
+      justifyContent: 'center',
+      alignItems: 'center',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
+    },
+    inviteUrlModalDescription: {
+      fontSize: 14,
+      color: '#6b7280',
+      marginBottom: 16,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    inviteUrlContainer: {
+      marginBottom: 20,
+    },
+    inviteUrlInput: {
+      backgroundColor: '#f9fafb',
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      borderRadius: 8,
+      padding: 12,
+      fontSize: 13,
+      color: '#111827',
+      minHeight: 60,
+      textAlignVertical: 'top',
+      ...(Platform.OS === 'web' && {
+        fontFamily: 'monospace, "Courier New", monospace',
+        wordBreak: 'break-all',
+      }),
+    },
+    inviteUrlModalActions: {
+      flexDirection: 'row',
+      gap: 12,
+      justifyContent: 'flex-end',
+    },
+    inviteUrlCopyButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: '#887DEE',
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 8,
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
+    },
+    inviteUrlCopyButtonSuccess: {
+      backgroundColor: '#10b981',
+    },
+    inviteUrlCopyButtonText: {
+      color: '#ffffff',
+      fontSize: 14,
+      fontWeight: '600',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    inviteUrlDoneButton: {
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 8,
+      backgroundColor: '#f3f4f6',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
+    },
+    inviteUrlDoneButtonText: {
+      color: '#374151',
+      fontSize: 14,
+      fontWeight: '600',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    // Child Invite Modal styles
+    childInviteModal: {
+      backgroundColor: '#ffffff',
+      borderRadius: 16,
+      width: '100%',
+      maxWidth: 500,
+      maxHeight: '80%',
+      padding: 24,
+      ...(Platform.OS === 'web' && {
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+      }),
+    },
+    childInviteModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    childInviteModalTitle: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: '#111827',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    childInviteList: {
+      maxHeight: 300,
+      marginTop: 8,
+    },
+    childInviteListContent: {
+      gap: 8,
+    },
+    childInviteItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: '#f9fafb',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
+    },
+    childInviteItemName: {
+      fontSize: 15,
+      fontWeight: '500',
+      color: '#111827',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    childInviteEmailInput: {
+      backgroundColor: '#f9fafb',
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      borderRadius: 8,
+      padding: 12,
+      fontSize: 15,
+      color: '#111827',
+      marginTop: 8,
+      marginBottom: 12,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    childInviteError: {
+      fontSize: 13,
+      color: '#ef4444',
+      marginBottom: 12,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    inviteUrlCopyButtonDisabled: {
+      opacity: 0.5,
     },
   });
 }

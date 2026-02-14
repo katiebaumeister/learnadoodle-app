@@ -137,45 +137,78 @@ BEGIN
       updated_at = now()
   WHERE id = p_user_id;
 
+  -- Get child_id from invite if it exists (for child invites)
+  IF v_invite.role = 'child' THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'invites' AND column_name = 'child_id'
+    ) THEN
+      SELECT child_id INTO v_child_id
+      FROM invites
+      WHERE id = v_invite.id;
+    END IF;
+    
+    -- If child_id not found but child_scope has one element, use that
+    IF v_child_id IS NULL AND array_length(v_invite.child_scope, 1) = 1 THEN
+      v_child_id := v_invite.child_scope[1];
+    END IF;
+  END IF;
+
   -- Create or update family_members entry
+  -- Include child_id if it exists and role is child/student
   INSERT INTO family_members (
     family_id,
     user_id,
     member_role,
-    child_scope
+    child_scope,
+    child_id
   )
   VALUES (
     v_invite.family_id,
     p_user_id,
     v_invite.role,
-    v_invite.child_scope
+    v_invite.child_scope,
+    CASE WHEN v_invite.role IN ('child', 'student') THEN v_child_id ELSE NULL END
   )
   ON CONFLICT (family_id, user_id) 
   DO UPDATE SET
     member_role = EXCLUDED.member_role,
     child_scope = EXCLUDED.child_scope,
+    child_id = CASE WHEN v_invite.role IN ('child', 'student') THEN COALESCE(EXCLUDED.child_id, v_child_id) ELSE family_members.child_id END,
     updated_at = now();
 
   -- If role is 'child', ensure child_scope contains the actual child record
   -- For children, the invite's child_scope should already contain the child_id
   -- If not set, try to find a child record matching the invite email or user
   IF v_invite.role = 'child' THEN
-    -- If child_scope is empty, try to find child record by email or user
-    IF array_length(v_invite.child_scope, 1) IS NULL OR array_length(v_invite.child_scope, 1) = 0 THEN
+    -- First, try to get child_id from invite if it exists
+    -- (invites table may have child_id column from child_invites migration)
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'invites' AND column_name = 'child_id'
+    ) THEN
+      SELECT child_id INTO v_child_id
+      FROM invites
+      WHERE id = v_invite.id;
+    END IF;
+    
+    -- If child_scope is empty or child_id not found, try to find child record by email or user
+    IF (v_child_id IS NULL) AND (array_length(v_invite.child_scope, 1) IS NULL OR array_length(v_invite.child_scope, 1) = 0) THEN
       -- Try to find child record for this email or user
       SELECT id INTO v_child_id
       FROM children
       WHERE family_id = v_invite.family_id
         AND (email = v_invite.email OR user_id = p_user_id)
       LIMIT 1;
-
-      -- If child record found, update child_scope
-      IF v_child_id IS NOT NULL THEN
-        UPDATE family_members
-        SET child_scope = ARRAY[v_child_id]
-        WHERE family_id = v_invite.family_id
-          AND user_id = p_user_id;
-      END IF;
+    END IF;
+    
+    -- If we found a child_id, update both child_scope and child_id in family_members
+    IF v_child_id IS NOT NULL THEN
+      UPDATE family_members
+      SET child_scope = ARRAY[v_child_id],
+          child_id = v_child_id  -- Also set child_id if column exists
+      WHERE family_id = v_invite.family_id
+        AND user_id = p_user_id;
     END IF;
   END IF;
 

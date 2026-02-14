@@ -14,6 +14,7 @@ from auth import get_current_user, rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family
 from logger import log_event
 from supabase_client import get_admin_client
+from email_service import send_invite_email
 
 router = APIRouter(prefix="/api/auth/child", tags=["child-auth"])
 
@@ -248,11 +249,13 @@ async def accept_child_invite(
             )
         
         # Link user to family_members with child role
+        # Set both child_id (explicit link) and child_scope (for get_accessible_children function)
         member_res = supabase.table("family_members").insert({
             "family_id": family_id,
             "user_id": user_id,
             "member_role": "child",
-            "child_id": child_id  # Link to child record
+            "child_id": child_id,  # Explicit link to child record
+            "child_scope": [child_id]  # Array for get_accessible_children function
         }).execute()
         
         # Update profile if exists

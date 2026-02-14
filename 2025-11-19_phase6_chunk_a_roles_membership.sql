@@ -155,13 +155,13 @@ AS $$
   
   UNION
   
-  -- If user is a child, return only themselves
-  SELECT DISTINCT c.id AS child_id, c.family_id
-  FROM children c
-  JOIN family_members fm ON fm.family_id = c.family_id
+  -- If user is a child/student, return only themselves
+  -- Use child_id if available, otherwise fall back to child_scope
+  SELECT DISTINCT COALESCE(fm.child_id, fm.child_scope[1]) AS child_id, fm.family_id
+  FROM family_members fm
   WHERE fm.user_id = _user_id
-    AND fm.member_role = 'child'
-    AND c.id = ANY(fm.child_scope)
+    AND fm.member_role IN ('child', 'student')
+    AND (fm.child_id IS NOT NULL OR array_length(fm.child_scope, 1) > 0)
   
   -- Fallback: if no family_members entry, check profiles.family_id (backward compatibility)
   UNION
@@ -201,18 +201,22 @@ SELECT
    ORDER BY g.created_at DESC 
    LIMIT 1) AS latest_grade,
   -- Total credits (per subject)
+  -- Credits are stored on the subject table, not grades
+  COALESCE(s.credits, 0) AS total_credits,
+  -- Portfolio materials count (per subject)
+  -- Note: uploads table was consolidated into materials table
+  -- Materials are linked to children via material_children junction table
   COALESCE((
-    SELECT SUM(COALESCE(g.credits, 0))
-    FROM grades g
-    WHERE g.child_id = c.id AND g.subject_id = s.id
-  ), 0) AS total_credits,
-  -- Portfolio uploads count (per subject)
-  COUNT(DISTINCT CASE WHEN u.subject_id = s.id THEN u.id END) AS portfolio_count
+    SELECT COUNT(DISTINCT m.id)
+    FROM materials m
+    JOIN material_children mc ON mc.material_id = m.id AND mc.child_id = c.id
+    WHERE m.subject_id = s.id
+      AND m.deleted_at IS NULL
+  ), 0) AS portfolio_count
 FROM children c
 CROSS JOIN subject s
 LEFT JOIN events e ON e.child_id = c.id
 LEFT JOIN event_outcomes eo ON eo.event_id = e.id
-LEFT JOIN uploads u ON u.child_id = c.id
 GROUP BY c.id, c.family_id, c.first_name, s.id, s.name;
 
 -- Grant access to the view

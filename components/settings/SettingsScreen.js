@@ -3,11 +3,11 @@ import { View, StyleSheet, Platform } from 'react-native';
 import FamilyPanel from './FamilyPanel';
 import AppContainer from '../ui/AppContainer';
 
-export default function SettingsScreen({ user, family = null, familyId = null, onFamilyUpdate = null, profile = null }) {
+export default function SettingsScreen({ user, family = null, familyId = null, onFamilyUpdate = null, profile = null, preloadedSubjects = null }) {
   return (
     <AppContainer fullWidth noPadding>
       <View style={styles.container}>
-        <FamilyPanel user={user} family={family} familyId={familyId} onFamilyUpdate={onFamilyUpdate} profile={profile} />
+        <FamilyPanel user={user} family={family} familyId={familyId} onFamilyUpdate={onFamilyUpdate} profile={profile} preloadedSubjects={preloadedSubjects} />
       </View>
     </AppContainer>
   );

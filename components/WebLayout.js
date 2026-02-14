@@ -81,6 +81,8 @@ export default function WebLayout({ navigation, routeParams }) {
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [subjectsLoaded, setSubjectsLoaded] = useState(false); // Cache flag for subjects
+  const [fullSubjects, setFullSubjects] = useState([]); // Full subject data for FamilyPanel courses section
+  const [fullSubjectsLoaded, setFullSubjectsLoaded] = useState(false); // Cache flag for full subjects
   const [familyId, setFamilyId] = useState(null);
   const [family, setFamily] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -1135,6 +1137,24 @@ export default function WebLayout({ navigation, routeParams }) {
               setSubjectsLoaded(true); // Mark as loaded even on error to prevent retry loops
             }
           }
+          
+          // Also fetch full subject data for FamilyPanel courses section (only if not already loaded)
+          // Preload this on initial app load to avoid loading delay when visiting courses section
+          if (!fullSubjectsLoaded) {
+            try {
+              const { data: fullSubjectsData } = await supabase
+                .from('subject')
+                .select('id, name, child_id, grade, notes, created_at, updated_at')
+                .eq('family_id', profileData.family_id)
+                .order('name');
+              setFullSubjects(fullSubjectsData || []);
+              setFullSubjectsLoaded(true); // Mark as loaded so we don't reload
+            } catch (fullSubjectsErr) {
+              console.warn('[WebLayout] Error fetching full subjects:', fullSubjectsErr);
+              setFullSubjects([]);
+              setFullSubjectsLoaded(true); // Mark as loaded even on error to prevent retry loops
+            }
+          }
         } catch (err) {
           console.warn('[WebLayout] Exception fetching children:', err);
           setChildren([]);
@@ -1146,7 +1166,7 @@ export default function WebLayout({ navigation, routeParams }) {
       console.error('[WebLayout] Unable to load family children', error);
       setChildren([]);
     }
-  }, [user, subjectsLoaded]);
+  }, [user, subjectsLoaded, fullSubjectsLoaded]);
 
   const fetchFamilyData = useCallback(async () => {
     if (!user) return;
@@ -2802,6 +2822,7 @@ export default function WebLayout({ navigation, routeParams }) {
             onSelectedEventTypesChange={setSelectedEventTypes}
             onCurrentMonthChange={setCurrentMonth}
             subjects={subjects}
+            fullSubjects={fullSubjects}
             familyId={familyId}
             children={children}
             family={family}

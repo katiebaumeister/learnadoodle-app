@@ -622,7 +622,7 @@ import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -6418,6 +6418,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               preloadedSubjectDetailCache={subjectDetailCache}
               onSubjectsUpdate={handleSubjectsOverviewUpdate}
               onSubjectDetailUpdate={handleSubjectDetailUpdate}
+              userRole={userRole}
+              accessibleChildren={accessibleChildren}
               onAddSubject={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
@@ -6553,7 +6555,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'settings':
         // Get initial section from subtab or default to 'profile'
         const settingsSection = activeSubtab || 'profile';
-        return <SettingsScreen user={user} initialSection={settingsSection} family={propFamily} familyId={propFamilyId} onFamilyUpdate={onFamilyUpdate} profile={propProfile} />
+        return <SettingsScreen user={user} initialSection={settingsSection} family={propFamily} familyId={propFamilyId} onFamilyUpdate={onFamilyUpdate} profile={propProfile} preloadedSubjects={propFullSubjects} />
       case 'templates':
         // Route to Records with templates subtab
         if (onSubtabChange) onSubtabChange('templates');
@@ -13021,7 +13023,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                               onChange={(e) => setNewEventFormData({...newEventFormData, scheduledTime: e.target.value})}
                               style={{ 
                                 border: 'none',
-                                outline: 'none',
                                 fontSize: 12,
                                 color: '#111827',
                                 backgroundColor: 'transparent',
@@ -13071,7 +13072,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                               onChange={(e) => setNewEventFormData({...newEventFormData, finishTime: e.target.value})}
                       style={{
                                 border: 'none',
-                                outline: 'none',
                                 fontSize: 12,
                                 color: '#111827',
                                 backgroundColor: 'transparent',
@@ -13517,7 +13517,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                                     onChange={(e) => setTempScheduledTime(e.target.value)}
                               style={{ 
                                       border: 'none',
-                                      outline: 'none',
                                       fontSize: 12,
                                       color: '#111827',
                                       backgroundColor: 'transparent',
@@ -13564,7 +13563,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                                     onChange={(e) => setTempFinishTime(e.target.value)}
                                     style={{
                                       border: 'none',
-                                      outline: 'none',
                                       fontSize: 12,
                                 color: '#111827', 
                                       backgroundColor: 'transparent',

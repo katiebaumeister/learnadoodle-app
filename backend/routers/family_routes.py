@@ -21,6 +21,7 @@ from auth import get_current_user, rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family
 from logger import log_event
 from supabase_client import get_admin_client
+from email_service import send_invite_email
 
 router = APIRouter(prefix="/api/family", tags=["family"])
 
@@ -428,7 +429,40 @@ async def invite_tutor(
         frontend_url = os.environ.get("FRONTEND_URL", "https://app.learnadoodle.com")
         invite_url = f"{frontend_url}/invite/{token}"
 
-        log_event("family.invite_tutor.success", user_id=user["id"], invite_id=invite.get("id"))
+        # Get inviter's name for email
+        inviter_name = None
+        try:
+            inviter_profile = supabase.table("profiles").select("first_name, name").eq("id", user["id"]).single().execute()
+            if inviter_profile.data:
+                inviter_name = inviter_profile.data.get("first_name") or inviter_profile.data.get("name")
+        except:
+            pass
+
+        # Get child name if this is a child invite
+        child_name = None
+        if body.role == "child" and body.child_ids and len(body.child_ids) > 0:
+            try:
+                child_res = supabase.table("children").select("first_name, name").eq("id", body.child_ids[0]).single().execute()
+                if child_res.data:
+                    child_name = child_res.data.get("first_name") or child_res.data.get("name")
+            except:
+                pass
+
+        # Send invite email via Postmark
+        email_sent = send_invite_email(
+            to_email=body.email,
+            invite_url=invite_url,
+            role=body.role,
+            inviter_name=inviter_name,
+            child_name=child_name,
+        )
+
+        log_event(
+            "family.invite_tutor.success",
+            user_id=user["id"],
+            invite_id=invite.get("id"),
+            email_sent=email_sent,
+        )
 
         return InviteTutorOut(
             invite_code=token,
