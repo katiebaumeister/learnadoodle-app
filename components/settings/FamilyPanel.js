@@ -1526,7 +1526,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   onPress={() => setActiveSection('datavault')}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={styles.dangerZoneExportButtonText}>EXPORT MY DATA</Text>
+                  <Text style={styles.dangerZoneExportButtonText}>Export my data</Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -1534,7 +1534,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   onPress={() => setActiveSection('datavault')}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={styles.dangerZoneDeleteButtonText}>DELETE MY ACCOUNT</Text>
+                  <Text style={styles.dangerZoneDeleteButtonText}>Delete my account</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -3815,7 +3815,6 @@ function createStyles(tokens) {
       }),
     },
     sidebarContent: {
-      flex: 1,
       display: 'flex',
       flexDirection: 'column',
       gap: 16,
@@ -3933,7 +3932,7 @@ function createStyles(tokens) {
       paddingVertical: 12,
       alignItems: 'center',
       backgroundColor: 'transparent',
-      marginTop: 0,
+      marginTop: 16,
       flexShrink: 0,
     },
     logoutButtonSidebarHovered: {
@@ -4379,7 +4378,7 @@ function createStyles(tokens) {
       fontSize: 15,
       paddingHorizontal: 16,
       paddingVertical: 14,
-      borderRadius: 10,
+      borderRadius: 20,
       backgroundColor: '#f9fafb',
       color: '#111827',
       borderWidth: 1,
@@ -4531,8 +4530,8 @@ function createStyles(tokens) {
     },
     dangerZoneExportButtonText: {
       fontSize: 14,
-      fontWeight: '700',
-      color: '#60a5fa',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -4555,8 +4554,8 @@ function createStyles(tokens) {
     },
     dangerZoneDeleteButtonText: {
       fontSize: 14,
-      fontWeight: '700',
-      color: '#ef4444',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
