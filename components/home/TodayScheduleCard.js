@@ -13,6 +13,7 @@ export default function TodayScheduleCard({
   suggestedRhythms = [],
   onAddSuggestedRhythm,
   noCard = false,
+  onTabChange, // Optional: for direct tab navigation
 }) {
 
   const formatTime = (timeString) => {
@@ -59,26 +60,57 @@ export default function TodayScheduleCard({
       {!noCard && (
         <View style={styles.header}>
           <Text style={styles.title}>Today's schedule</Text>
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => {
-              if (onAddBlock) {
-                onAddBlock();
-              } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                // Dispatch openTaskModal event to open the add event modal
-                window.dispatchEvent(new CustomEvent('openTaskModal', {
-                  detail: {
-                    date: new Date(),
-                    placement: 'calendar',
+          <View style={styles.headerButtons}>
+            {(onOpenPlanner || onTabChange) && (
+              <TouchableOpacity
+                style={styles.viewTodosButton}
+                onPress={() => {
+                  // Navigate to planner with today's tab in list view (tasks view)
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    const today = new Date();
+                    const todayStr = today.toISOString().split('T')[0];
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', 'planner');
+                    url.searchParams.set('view', 'tasks');
+                    url.searchParams.set('section', 'today');
+                    url.searchParams.set('date', todayStr);
+                    window.history.replaceState({}, '', url.toString());
+                    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
+                    window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
                   }
-                }));
-              }
-            }}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={16} color="#6B7280" />
-            <Text style={styles.addButtonText}>Add event</Text>
-          </TouchableOpacity>
+                  // Use onTabChange if available, otherwise fall back to onOpenPlanner
+                  if (onTabChange) {
+                    onTabChange('planner');
+                  } else if (onOpenPlanner) {
+                    onOpenPlanner();
+                  }
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.viewTodosButtonText}>View To-Dos</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => {
+                if (onAddBlock) {
+                  onAddBlock();
+                } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  // Dispatch openTaskModal event to open the add event modal
+                  window.dispatchEvent(new CustomEvent('openTaskModal', {
+                    detail: {
+                      date: new Date(),
+                      placement: 'calendar',
+                    }
+                  }));
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color="#6B7280" />
+              <Text style={styles.addButtonText}>Add event</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -190,6 +222,31 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  viewTodosButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  viewTodosButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   title: {
     fontSize: 16,
@@ -327,8 +384,10 @@ const styles = StyleSheet.create({
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
+    position: 'relative',
+    minHeight: 200, // Ensure minimum height for visibility
     ...(Platform.OS === 'web' && {
-      minHeight: 0,
+      minHeight: 200,
     }),
   },
   emptyState: {

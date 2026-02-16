@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FileText, HelpCircle, RotateCcw, User, Clock, ChevronRight, Plus } from 'lucide-react';
+import { FileText, HelpCircle, Calendar, User, Clock, ChevronRight, Plus } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
@@ -18,13 +18,14 @@ import { colors } from '../../theme/colors';
 const SECTIONS = [
   { id: 'submissions', label: 'Submissions', icon: FileText },
   { id: 'help_requests', label: 'Help', icon: HelpCircle },
-  { id: 'needs_revision', label: 'Revision', icon: RotateCcw },
+  { id: 'needs_revision', label: 'Coming up', icon: Calendar },
 ];
 
 export default function EmbeddedNotificationCenter({ familyId, limit = 5, onViewAll }) {
   const session = useSession();
   const [loading, setLoading] = useState(false); // Start as false - no loading state
   const [assignments, setAssignments] = useState([]);
+  const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [children, setChildren] = useState([]);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
@@ -44,6 +45,7 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     try {
       await Promise.all([
         loadAssignments(),
+        loadUpcomingEvents(),
         loadChildren(),
       ]);
     } catch (error) {
@@ -102,6 +104,70 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     }
   };
 
+  const loadUpcomingEvents = async () => {
+    try {
+      const now = new Date();
+      const sevenDaysLater = new Date(now);
+      sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
+      sevenDaysLater.setHours(23, 59, 59, 999);
+
+      const { data, error } = await supabase
+        .from('events')
+        .select(`
+          id,
+          title,
+          description,
+          start_ts,
+          end_ts,
+          child_id,
+          subject_id,
+          status,
+          child:child_id (id, first_name, avatar)
+        `)
+        .eq('family_id', familyId)
+        .gte('start_ts', now.toISOString())
+        .lte('start_ts', sevenDaysLater.toISOString())
+        .in('status', ['scheduled', 'in_progress'])
+        .is('deleted_at', null)
+        .order('start_ts', { ascending: true })
+        .limit(50);
+
+      if (error) {
+        console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
+        setUpcomingEvents([]);
+        return;
+      }
+
+      // Fetch subject names separately if needed
+      const subjectIds = [...new Set((data || []).map(e => e.subject_id).filter(Boolean))];
+      let subjectsMap = {};
+      if (subjectIds.length > 0) {
+        const { data: subjectsData } = await supabase
+          .from('subject')
+          .select('id, name')
+          .in('id', subjectIds);
+        
+        if (subjectsData) {
+          subjectsMap = subjectsData.reduce((acc, sub) => {
+            acc[sub.id] = sub;
+            return acc;
+          }, {});
+        }
+      }
+
+      // Attach subject data to events
+      const eventsWithSubjects = (data || []).map(event => ({
+        ...event,
+        subject: event.subject_id ? subjectsMap[event.subject_id] : null,
+      }));
+
+      setUpcomingEvents(eventsWithSubjects);
+    } catch (error) {
+      console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
+      setUpcomingEvents([]);
+    }
+  };
+
   const loadChildren = async () => {
     try {
       const { data, error } = await supabase
@@ -118,7 +184,7 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     }
   };
 
-  const filterAssignments = () => {
+  const filterItems = () => {
     switch (selectedSection) {
       case 'submissions':
         return assignments.filter(a => 
@@ -129,13 +195,13 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
       case 'help_requests':
         return assignments.filter(a => a.need_help === true).slice(0, limit);
       case 'needs_revision':
-        return assignments.filter(a => a.review_status === 'needs_revision').slice(0, limit);
+        return upcomingEvents.slice(0, limit);
       default:
         return [];
     }
   };
 
-  const filteredAssignments = filterAssignments();
+  const filteredItems = filterItems();
 
   const getSectionCount = (sectionId) => {
     switch (sectionId) {
@@ -148,10 +214,33 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
       case 'help_requests':
         return assignments.filter(a => a.need_help === true).length;
       case 'needs_revision':
-        return assignments.filter(a => a.review_status === 'needs_revision').length;
+        return upcomingEvents.length;
       default:
         return 0;
     }
+  };
+
+  const formatEventDate = (dateString) => {
+    const date = new Date(dateString);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const eventDate = new Date(date);
+    eventDate.setHours(0, 0, 0, 0);
+
+    if (eventDate.getTime() === today.getTime()) {
+      return 'Today';
+    } else if (eventDate.getTime() === tomorrow.getTime()) {
+      return 'Tomorrow';
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+  };
+
+  const formatEventTime = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
   const getChildName = (childId) => {
@@ -218,60 +307,101 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
         </View>
 
         {/* List */}
-        {filteredAssignments.length === 0 ? (
+        {filteredItems.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>All caught up</Text>
+            <Text style={styles.emptyText}>
+              {selectedSection === 'needs_revision' ? 'No upcoming events' : 'All caught up - Assign new tasks for children to complete'}
+            </Text>
           </View>
         ) : (
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-            {filteredAssignments.map((assignment) => {
-              const childName = getChildName(assignment.child_id);
-              const childColor = getChildColor(assignment.child_id);
-              const subjectName = assignment.subject?.name || null;
-              
-              // Determine icon and type based on assignment
-              let IconComponent = FileText;
-              let iconColor = colors.primary;
-              if (assignment.need_help) {
-                IconComponent = HelpCircle;
-                iconColor = colors.orangeBold;
-              } else if (assignment.review_status === 'needs_revision') {
-                IconComponent = RotateCcw;
-                iconColor = colors.yellowBold;
-              }
+            {filteredItems.map((item) => {
+              if (selectedSection === 'needs_revision') {
+                // Render event
+                const event = item;
+                const childName = getChildName(event.child_id);
+                const childColor = getChildColor(event.child_id);
+                const subjectName = event.subject?.name || null;
+                const eventDate = formatEventDate(event.start_ts);
+                const eventTime = formatEventTime(event.start_ts);
 
-              return (
-                <TouchableOpacity
-                  key={assignment.id}
-                  style={styles.item}
-                  onPress={() => handleReview(assignment)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.itemLeft}>
-                    <View style={[styles.itemIconContainer, { backgroundColor: iconColor + '15' }]}>
-                      <IconComponent size={14} color={iconColor} />
-                    </View>
-                    <View style={styles.itemContent}>
-                      <View style={styles.itemHeader}>
-                        <View style={[styles.childDot, { backgroundColor: childColor }]} />
-                        <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
-                        {subjectName && (
-                          <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
-                        )}
+                return (
+                  <TouchableOpacity
+                    key={event.id}
+                    style={styles.item}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.itemLeft}>
+                      <View style={[styles.itemIconContainer, { backgroundColor: colors.blueBold + '15' }]}>
+                        <Calendar size={14} color={colors.blueBold} />
                       </View>
-                      <Text style={styles.itemTitle} numberOfLines={2}>{assignment.title}</Text>
-                      <View style={styles.itemFooter}>
-                        <Text style={styles.itemDate}>
-                          {assignment.updated_at 
-                            ? new Date(assignment.updated_at).toLocaleDateString()
-                            : 'Recently'}
-                        </Text>
+                      <View style={styles.itemContent}>
+                        <View style={styles.itemHeader}>
+                          <View style={[styles.childDot, { backgroundColor: childColor }]} />
+                          <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
+                          {subjectName && (
+                            <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
+                          )}
+                        </View>
+                        <Text style={styles.itemTitle} numberOfLines={2}>{event.title}</Text>
+                        <View style={styles.itemFooter}>
+                          <Text style={styles.itemDate}>
+                            {eventDate} · {eventTime}
+                          </Text>
+                        </View>
                       </View>
                     </View>
-                  </View>
-                  <ChevronRight size={14} color={colors.textSecondary} />
-                </TouchableOpacity>
-              );
+                    <ChevronRight size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                );
+              } else {
+                // Render assignment
+                const assignment = item;
+                const childName = getChildName(assignment.child_id);
+                const childColor = getChildColor(assignment.child_id);
+                const subjectName = assignment.subject?.name || null;
+                
+                // Determine icon and type based on assignment
+                let IconComponent = FileText;
+                let iconColor = colors.primary;
+                if (assignment.need_help) {
+                  IconComponent = HelpCircle;
+                  iconColor = colors.orangeBold;
+                }
+
+                return (
+                  <TouchableOpacity
+                    key={assignment.id}
+                    style={styles.item}
+                    onPress={() => handleReview(assignment)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.itemLeft}>
+                      <View style={[styles.itemIconContainer, { backgroundColor: iconColor + '15' }]}>
+                        <IconComponent size={14} color={iconColor} />
+                      </View>
+                      <View style={styles.itemContent}>
+                        <View style={styles.itemHeader}>
+                          <View style={[styles.childDot, { backgroundColor: childColor }]} />
+                          <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
+                          {subjectName && (
+                            <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
+                          )}
+                        </View>
+                        <Text style={styles.itemTitle} numberOfLines={2}>{assignment.title}</Text>
+                        <View style={styles.itemFooter}>
+                          <Text style={styles.itemDate}>
+                            {assignment.updated_at 
+                              ? new Date(assignment.updated_at).toLocaleDateString()
+                              : 'Recently'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <ChevronRight size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                );
+              }
             })}
           </ScrollView>
         )}

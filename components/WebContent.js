@@ -7581,6 +7581,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               }
               onTabChange('planner');
             }}
+            onTabChange={onTabChange}
             onAddBlock={() => {
               setTaskModalDate(validSelectedDate);
               setTaskModalDefaultPlacement('calendar');
