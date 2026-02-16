@@ -6,6 +6,7 @@ export default function ParentDigestModal({
   visible,
   onClose,
   todayBlocks,
+  backlogCount,
   overdueCount,
   mostActiveSubject,
   suggestedAction,
@@ -37,7 +38,12 @@ export default function ParentDigestModal({
             </View>
 
             <View style={styles.statRow}>
-              <Text style={styles.statLabel}>Overdue count</Text>
+              <Text style={styles.statLabel}>Backlog</Text>
+              <Text style={styles.statValue}>{backlogCount}</Text>
+            </View>
+
+            <View style={styles.statRow}>
+              <Text style={styles.statLabel}>Overdue</Text>
               <Text style={styles.statValue}>{overdueCount}</Text>
             </View>
 

@@ -8,17 +8,19 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Platform, ActivityIndicator, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, Platform, ActivityIndicator, ScrollView, TouchableOpacity } from 'react-native';
+import { Plus, Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import RoleHomeShell from './RoleHomeShell';
 import HomeHeroCard from './HomeHeroCard';
-import QuickAddRow from './QuickAddRow';
 import TodayScheduleCard from './TodayScheduleCard';
 import BacklogCard from './BacklogCard';
 import AssignmentsNeedingAttentionCard from './AssignmentsNeedingAttentionCard';
 import EmptyStateCard from './EmptyStateCard';
 import EmbeddedNotificationCenter from '../parent/EmbeddedNotificationCenter';
+import ParentDigestModal from './ParentDigestModal';
+import NextRecommendedActionRow from './NextRecommendedActionRow';
 import { colors } from '../../theme/colors';
 
 export default function ParentHomeScreen({
@@ -31,19 +33,93 @@ export default function ParentHomeScreen({
   onAddChild,
 }) {
   const session = useSession();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start as false - check cache first
   const [homeData, setHomeData] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
+  const [showParentDigest, setShowParentDigest] = useState(false);
 
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;
 
+  // Cache helpers (matching WebContent pattern)
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const getHomeDataCacheKey = (familyId, date) => {
+    return `home_data_${familyId}_${date}`;
+  };
+
+  const loadHomeDataFromCache = (familyId, date) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+    try {
+      const cacheKey = getHomeDataCacheKey(familyId, date);
+      const cached = localStorage.getItem(cacheKey);
+      if (!cached) return null;
+      
+      const { data, timestamp } = JSON.parse(cached);
+      const age = Date.now() - timestamp;
+      
+      if (age < CACHE_TTL_MS) {
+        return data;
+      } else {
+        localStorage.removeItem(cacheKey);
+        return null;
+      }
+    } catch (err) {
+      console.error('[ParentHomeScreen] Error reading cache:', err);
+      return null;
+    }
+  };
+
+  const saveHomeDataToCache = (familyId, date, data) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      const cacheKey = getHomeDataCacheKey(familyId, date);
+      localStorage.setItem(cacheKey, JSON.stringify({
+        data: data,
+        timestamp: Date.now()
+      }));
+    } catch (err) {
+      console.error('[ParentHomeScreen] Error saving cache:', err);
+    }
+  };
+
   useEffect(() => {
     // Wait for session to be ready and familyId to be available
     if (session && !session.loading && familyId && !session.error) {
-      loadData();
+      // Check cache first - if available, use it immediately without loading state
+      const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
+        ? selectedDate
+        : new Date();
+      validDate.setHours(0, 0, 0, 0);
+      const dateStr = validDate.toISOString().split('T')[0];
+      
+      const cachedData = loadHomeDataFromCache(familyId, dateStr);
+      if (cachedData) {
+        // Use cached data immediately - no loading state
+        setHomeData(cachedData);
+        setLoading(false);
+        setError(null);
+        // Load notification count in background
+        loadNotificationCount();
+        // Refresh data in background without showing loading
+        loadData(true); // Pass true to indicate silent refresh
+        return;
+      }
+      
+      // No cache - set empty data immediately (no loading state) and load in background
+      setHomeData({
+        learning: [],
+        tasks: [],
+        children: [],
+        subjects: [],
+      });
+      setLoading(false);
+      setError(null);
+      // Load data in background silently
+      loadData(true);
+      // Load notification count in background
+      loadNotificationCount();
     } else if (session && session.error) {
       // If session has error, set loading to false to show error state
       setLoading(false);
@@ -67,10 +143,12 @@ export default function ParentHomeScreen({
     }
   }, [session, familyId, selectedDate]);
 
-  const loadData = async () => {
+  const loadData = async (silent = false) => {
     if (!familyId) return;
 
-    setLoading(true);
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
         ? selectedDate
@@ -87,14 +165,17 @@ export default function ParentHomeScreen({
 
       if (error) {
         console.error('[ParentHomeScreen] RPC error:', error);
-        setError(error);
+        if (!silent) {
+          setError(error);
+        }
         // Set empty data structure to prevent infinite loading
-        setHomeData({
+        const emptyData = {
           learning: [],
           tasks: [],
           children: [],
           subjects: [],
-        });
+        };
+        setHomeData(emptyData);
         // Still try to load notification count even if RPC fails
         try {
           await loadNotificationCount();
@@ -104,19 +185,26 @@ export default function ParentHomeScreen({
         return;
       }
       
-      setError(null);
-      setHomeData(data || {
+      const homeDataResult = data || {
         learning: [],
         tasks: [],
         children: [],
         subjects: [],
-      });
+      };
+      
+      setError(null);
+      setHomeData(homeDataResult);
+      
+      // Save to cache
+      saveHomeDataToCache(familyId, dateStr, homeDataResult);
 
       // Load notification count
       await loadNotificationCount();
     } catch (error) {
       console.error('[ParentHomeScreen] Error loading data:', error);
-      setError(error);
+      if (!silent) {
+        setError(error);
+      }
       // Set empty data to prevent infinite loading
       setHomeData({
         learning: [],
@@ -125,7 +213,9 @@ export default function ParentHomeScreen({
         subjects: [],
       });
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -186,98 +276,144 @@ export default function ParentHomeScreen({
   const backlogCount = (homeData.tasks || []).filter(t => !t.start_ts || t.status === 'backlog').length;
   const overdueCount = (homeData.tasks || []).filter(t => t.due_time === 'Overdue').length;
   const children = homeData.children || [];
+
+  // Calculate which students have activity today
+  const studentsWithActivity = children.map(child => {
+    const childEvents = filteredLearning.filter(event => {
+      const eventChildIds = event.child_ids || (event.child_id ? [event.child_id] : []);
+      return eventChildIds.includes(child.id) || event.child_id === child.id;
+    });
+    return {
+      ...child,
+      activityCount: childEvents.length,
+    };
+  }).filter(student => student.activityCount > 0);
+
+  // Calculate "ready" items (items ready to start - not overdue, not backlog)
+  const readyCount = blockCount; // Items scheduled for today are "ready"
+
+  // Calculate items due today or tomorrow (Assignment or Project)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const dayAfterTomorrow = new Date(tomorrow);
+  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
+
+  const dueTodayOrTomorrow = (homeData.learning || []).filter(event => {
+    if (!event.start_ts && !event.start) return false;
+    const eventType = event.event_type || event.type || '';
+    if (eventType !== 'Assignment' && eventType !== 'Project') return false;
+    
+    const eventDate = new Date(event.start_ts || event.start);
+    eventDate.setHours(0, 0, 0, 0);
+    
+    return (eventDate.getTime() === today.getTime() || eventDate.getTime() === tomorrow.getTime());
+  }).length;
+
   
   // Get first child name for contextual message
   const firstChildName = children.length > 0 
     ? (children[0].first_name || children[0].name || 'your child')
     : null;
 
-  let weatherStatus = 'light';
-  let weatherMessage = "Open day — good opportunity for gentle review or exploration.";
-
-  // Enhanced contextual logic
-  if (blockCount === 0 && backlogCount > 0) {
-    weatherStatus = 'light';
-    weatherMessage = backlogCount === 1
-      ? `Only one item waiting — a great day to explore or review.`
-      : `${backlogCount} items waiting — good time to catch up.`;
-  } else if (blockCount === 0 && backlogCount === 0) {
-    weatherStatus = 'light';
-    weatherMessage = "Open day — good opportunity for gentle review or exploration.";
-  } else if (blockCount >= 1 && blockCount <= 3) {
-    weatherStatus = 'light';
-    if (firstChildName && blockCount === 1) {
-      weatherMessage = `${firstChildName} has one activity planned.`;
-    } else if (firstChildName) {
-      weatherMessage = `${firstChildName} has ${blockCount} activities planned.`;
-    } else {
-      weatherMessage = "Light day — good opportunity for gentle review or exploration.";
-    }
-  } else if (blockCount >= 4 && blockCount <= 5) {
-    weatherStatus = 'moderate';
-    weatherMessage = "Steady day — balanced schedule ahead.";
-  } else if (blockCount >= 6 || overdueCount > 0) {
-    weatherStatus = overdueCount > 0 ? 'catch-up' : 'heavy';
-    weatherMessage = overdueCount > 0
-      ? "Time to catch up — focus on overdue items first."
-      : "Heavy day — pace yourself and take breaks.";
+  // Determine poodle pose based on urgency
+  // calm → no urgency (light, no overdue)
+  // attentive → items ready (moderate, or ready items exist)
+  // alert → overdue exists
+  let poodlePose = 'calm';
+  if (overdueCount > 0) {
+    poodlePose = 'alert';
+  } else if (blockCount > 0 || backlogCount > 0) {
+    poodlePose = 'attentive';
   }
 
-  const weatherLabels = {
-    light: "Today is light.",
-    moderate: "Today is steady.",
-    heavy: "Today is heavy.",
-    'catch-up': "Time to catch up.",
+  // Determine weather status for poodle image
+  let weatherStatus = 'light';
+  if (overdueCount > 0) {
+    weatherStatus = 'catch-up'; // Use heavy image for alert
+  } else if (blockCount >= 6) {
+    weatherStatus = 'heavy';
+  } else if (blockCount >= 4) {
+    weatherStatus = 'moderate';
+  }
+
+
+  const getTimeBasedGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) {
+      return 'Good morning';
+    } else if (hour >= 12 && hour < 17) {
+      return 'Good afternoon';
+    } else {
+      return 'Good evening';
+    }
   };
 
-  const heroProps = {
-    date: selectedDate,
-    title: weatherLabels[weatherStatus] || "Today is light.",
-    subtitle: weatherMessage,
-    chips: [
-      { label: 'blocks', value: blockCount, onClick: () => {} },
-      { label: 'backlog', value: backlogCount, onClick: () => onNavigate?.('planner') },
-      { label: 'overdue', value: overdueCount, onClick: () => onNavigate?.('planner') },
-    ],
-    statusBadges: {
-      notifications: notificationCount,
-      rewards: 0, // TODO: Implement streak/rewards
-      premium: false, // TODO: Check subscription status
-    },
-    onNotificationPress: () => onNavigate?.('review-inbox'),
+  const formatDate = (date) => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const dayName = days[date.getDay()];
+    const month = months[date.getMonth()];
+    const day = date.getDate();
+    const year = date.getFullYear();
+    return `${dayName}, ${month} ${day}, ${year}`;
+  };
+
+  const handleViewTodaysTodo = () => {
+    // Navigate to planner focused on today, or scroll to today's schedule section
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.href = '/planner?date=' + new Date().toISOString().split('T')[0];
+    } else if (onNavigate) {
+      onNavigate('planner');
+    }
   };
 
   const mainContent = (
-    <View style={styles.mainContent}>
-      <QuickAddRow
-        onAddEvent={onAddEvent}
-        onAddGrade={onAddGrade}
-        onAddMaterial={onAddMaterial}
-        onAddSubject={onAddSubject}
-        onAddChild={onAddChild}
-      />
+    <View style={styles.mainSurface}>
+      {/* Header Row */}
+      <View style={styles.headerRow}>
+        <View style={styles.headerLeft}>
+          <Text style={styles.greetingText}>{getTimeBasedGreeting()}, Doodle Family!</Text>
+          <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.viewTodosButton}
+          onPress={handleViewTodaysTodo}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Calendar size={16} color="#6B7280" />
+          <Text style={styles.viewTodosButtonText}>View To-Dos</Text>
+        </TouchableOpacity>
+      </View>
 
-      <TodayScheduleCard
-        events={filteredLearning}
-        children={homeData.children || []}
-        subjects={homeData.subjects || []}
-        onOpenPlanner={() => onNavigate?.('planner')}
-        onAddBlock={onAddEvent}
-        suggestedRhythms={[]}
-        onAddSuggestedRhythm={() => {}}
-      />
+      {/* Divider */}
+      <View style={styles.divider} />
 
-      <AssignmentsNeedingAttentionCard
-        familyId={familyId}
-        limit={3}
-      />
-
-      <BacklogCard
-        backlogItems={(homeData.tasks || []).slice(0, 3)}
-        backlogCount={backlogCount}
-        children={homeData.children || []}
-        onViewBacklog={() => onNavigate?.('planner')}
-      />
+      {/* Today's Schedule Section */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionLabel}>Today's schedule</Text>
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={onAddEvent}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={16} color="#6B7280" />
+            <Text style={styles.addButtonText}>Add event</Text>
+          </TouchableOpacity>
+        </View>
+        <TodayScheduleCard
+          events={filteredLearning}
+          children={homeData.children || []}
+          subjects={homeData.subjects || []}
+          onOpenPlanner={() => onNavigate?.('planner')}
+          onAddBlock={onAddEvent}
+          suggestedRhythms={[]}
+          onAddSuggestedRhythm={() => {}}
+          noCard={true}
+        />
+      </View>
     </View>
   );
 
@@ -288,38 +424,39 @@ export default function ParentHomeScreen({
         limit={5}
         onViewAll={() => onNavigate?.('review-inbox')}
       />
-
-      {/* Rewards card with poodle */}
-      <View style={styles.rewardsCard}>
-        <View style={styles.rewardsHeader}>
-          <Image
-            source={require('../../assets/poodle-icon.png')}
-            style={styles.rewardsPoodle}
-            resizeMode="contain"
-          />
-          <Text style={styles.rewardsTitle}>Rewards</Text>
-        </View>
-        <Text style={styles.rewardsText}>Keep up the great work!</Text>
-      </View>
-
-      {/* Subscription card placeholder - only show if not premium */}
-      {!heroProps.statusBadges.premium && (
-        <View style={styles.subscriptionCard}>
-          <Text style={styles.subscriptionTitle}>Try Premium</Text>
-          <Text style={styles.subscriptionText}>
-            Unlock deeper weekly digest, auto-reschedule, and multi-year planning.
-          </Text>
-        </View>
-      )}
     </View>
   );
 
+  // Calculate most active subject for digest
+  const subjectCounts = {};
+  (homeData.learning || []).forEach(event => {
+    if (event.subject_id) {
+      const subject = (homeData.subjects || []).find(s => s.id === event.subject_id);
+      if (subject) {
+        subjectCounts[subject.name] = (subjectCounts[subject.name] || 0) + 1;
+      }
+    }
+  });
+  const mostActiveSubject = Object.keys(subjectCounts).length > 0
+    ? Object.entries(subjectCounts).sort((a, b) => b[1] - a[1])[0][0]
+    : null;
+
   return (
-    <RoleHomeShell
-      heroProps={heroProps}
-      main={mainContent}
-      rail={railContent}
-    />
+    <>
+      <RoleHomeShell
+        main={mainContent}
+        rail={railContent}
+      />
+      <ParentDigestModal
+        visible={showParentDigest}
+        onClose={() => setShowParentDigest(false)}
+        todayBlocks={blockCount}
+        backlogCount={backlogCount}
+        overdueCount={overdueCount}
+        mostActiveSubject={mostActiveSubject}
+        suggestedAction={null}
+      />
+    </>
   );
 }
 
@@ -354,75 +491,132 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  rewardsCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
+  mainSurface: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
+    borderColor: '#E5E7EB',
+    padding: 24,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 1,
+      height: '100%',
+      minHeight: 0,
     }),
   },
-  rewardsHeader: {
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  headerLeft: {
+    flexDirection: 'column',
+    gap: 4,
+  },
+  headerLeft: {
+    flexDirection: 'column',
+    gap: 4,
+  },
+  greetingText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dateText: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  viewTodosButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  rewardsPoodle: {
-    width: 24,
-    height: 24,
-    opacity: 0.7,
-  },
-  rewardsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  rewardsText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subscriptionCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
     }),
   },
-  subscriptionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 8,
+  viewTodosButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  subscriptionText: {
+  divider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginBottom: 16,
+  },
+  section: {
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+    }),
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionLabel: {
     fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'none',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  addButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   mainContent: {
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      gap: '20px',
       width: '100%',
+      height: '100%',
+      flex: 1,
+      minHeight: 0,
     }),
     ...(Platform.OS !== 'web' && {
       gap: 20,
@@ -432,8 +626,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      gap: '20px',
       width: '100%',
+      height: '100%',
+      alignSelf: 'stretch',
     }),
     ...(Platform.OS !== 'web' && {
       gap: 20,

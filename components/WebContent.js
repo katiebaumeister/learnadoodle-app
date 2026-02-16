@@ -1017,7 +1017,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       setTaskModalChildId(primaryChildId);
       setTaskModalDefaultSubjectId(subjectId);
       setTaskModalDefaultEventType(detail.eventType || null);
-      setTaskModalDefaultPlacement('calendar'); // Ensure placement is set
+      setTaskModalDefaultPlacement(detail.placement || 'calendar'); // Use placement from event detail, default to 'calendar'
       setShowTaskModal(true);
       
       console.log('[WebContent] Task modal state set - showTaskModal: true, date:', date, 'childId:', childId);

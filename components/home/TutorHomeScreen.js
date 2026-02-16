@@ -181,11 +181,6 @@ export default function TutorHomeScreen({ familyId, onNavigate }) {
       { label: 'students', value: children.length, onClick: () => {} },
       { label: 'assignments', value: assignments.length, onClick: () => {} },
     ],
-    statusBadges: {
-      notifications: needsFeedbackCount,
-      rewards: 0,
-      premium: false,
-    },
   };
 
   const mainContent = (

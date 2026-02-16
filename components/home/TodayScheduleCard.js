@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { Clock, Plus, ChevronRight, ChevronDown } from 'lucide-react';
+import { Plus, ChevronRight, FileText } from 'lucide-react';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { colors } from '../../theme/colors';
 
 export default function TodayScheduleCard({
   events = [],
@@ -11,8 +12,8 @@ export default function TodayScheduleCard({
   onAddBlock,
   suggestedRhythms = [],
   onAddSuggestedRhythm,
+  noCard = false,
 }) {
-  const [showSuggestedRhythms, setShowSuggestedRhythms] = useState(false);
 
   const formatTime = (timeString) => {
     if (!timeString) return '';
@@ -52,115 +53,111 @@ export default function TodayScheduleCard({
   };
 
   const hasEvents = events && events.length > 0;
-  const [isHovered, setIsHovered] = useState(false);
 
   return (
-    <View 
-      style={[
-        styles.container,
-        Platform.OS === 'web' && isHovered && styles.containerHovered
-      ]}
-      {...(Platform.OS === 'web' && {
-        onMouseEnter: () => setIsHovered(true),
-        onMouseLeave: () => setIsHovered(false),
-      })}
-    >
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
+    <View style={noCard ? styles.contentOnly : styles.container}>
+      {!noCard && (
+        <View style={styles.header}>
           <Text style={styles.title}>Today's schedule</Text>
-          {onAddBlock && (
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={onAddBlock}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={16} color="#64748b" />
-              <Text style={styles.addButtonText}>Add event</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        {onOpenPlanner && (
           <TouchableOpacity
-            style={styles.plannerLink}
-            onPress={onOpenPlanner}
+            style={styles.addButton}
+            onPress={() => {
+              if (onAddBlock) {
+                onAddBlock();
+              } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                // Dispatch openTaskModal event to open the add event modal
+                window.dispatchEvent(new CustomEvent('openTaskModal', {
+                  detail: {
+                    date: new Date(),
+                    placement: 'calendar',
+                  }
+                }));
+              }
+            }}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.plannerLinkText}>Open Planner</Text>
-            <ChevronRight size={16} color="#64748b" />
+            <Plus size={16} color="#6B7280" />
+            <Text style={styles.addButtonText}>Add event</Text>
           </TouchableOpacity>
-        )}
-      </View>
-
-      {hasEvents ? (
-        <View style={styles.eventsList}>
-          {events.map((event) => (
-            <View key={event.id} style={styles.eventRow}>
-              <View style={styles.timeColumn}>
-                <Text style={styles.timeText}>{formatTime(event.start_local || event.start_ts)}</Text>
-              </View>
-              <View style={styles.contentColumn}>
-                <Text style={styles.eventTitle}>{event.title}</Text>
-                <View style={styles.pillsRow}>
-                  {event.child_id && (
-                    <View style={[styles.pill, { backgroundColor: getChildColor(event.child_id) + '20' }]}>
-                      <Text style={[styles.pillText, { color: getChildColor(event.child_id) }]}>
-                        {getChildName(event.child_id)}
-                      </Text>
-                    </View>
-                  )}
-                  {event.subject_id && (
-                    <View style={[styles.pill, { backgroundColor: getSubjectColor(event.subject_id) + '20' }]}>
-                      <Text style={[styles.pillText, { color: getSubjectColor(event.subject_id) }]}>
-                        {getSubjectName(event.subject_id)}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>Plan today</Text>
-          <Text style={styles.emptySubtext}>Start with suggested rhythms</Text>
         </View>
       )}
 
-      {!hasEvents && (
-        <View style={styles.suggestedSection}>
-          <TouchableOpacity
-            style={styles.suggestedHeader}
-            onPress={() => setShowSuggestedRhythms(!showSuggestedRhythms)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={styles.suggestedTitle}>Need inspiration? Suggested rhythms</Text>
-            {showSuggestedRhythms ? (
-              <ChevronDown size={16} color="#64748b" />
-            ) : (
-              <ChevronRight size={16} color="#64748b" />
-            )}
-          </TouchableOpacity>
-
-          {showSuggestedRhythms && suggestedRhythms && suggestedRhythms.length > 0 && (
-            <View style={styles.suggestedList}>
-              {suggestedRhythms.slice(0, 4).map((rhythm, index) => (
-                <View key={index} style={styles.suggestedItem}>
-                  <View style={styles.suggestedItemContent}>
-                    <Clock size={14} color="#64748b" />
-                    <Text style={styles.suggestedItemText}>{rhythm.time} {rhythm.title}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.suggestedAddButton}
-                    onPress={() => onAddSuggestedRhythm && onAddSuggestedRhythm(rhythm)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.suggestedAddButtonText}>Add</Text>
-                  </TouchableOpacity>
+      {hasEvents ? (
+        <ScrollView 
+          style={styles.eventsListContainer}
+          contentContainerStyle={styles.eventsList}
+          showsVerticalScrollIndicator={false}
+        >
+          {events.map((event) => {
+            const startTime = formatTime(event.start_local || event.start_ts);
+            const endTime = event.end_ts || event.end_local ? formatTime(event.end_ts || event.end_local) : null;
+            const timeRange = endTime ? `${startTime} - ${endTime}` : startTime;
+            const isAssignment = (event.event_type || event.type || '').toLowerCase() === 'assignment';
+            
+            return (
+              <TouchableOpacity
+                key={event.id}
+                style={styles.eventRow}
+                onPress={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openEventModal', {
+                      detail: {
+                        eventId: event.id,
+                        initialEvent: event,
+                      }
+                    }));
+                  }
+                }}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <View style={styles.timeColumn}>
+                  <Text style={styles.timeText}>{timeRange}</Text>
                 </View>
-              ))}
-            </View>
-          )}
+                <View style={styles.contentColumn}>
+                  <View style={styles.eventHeader}>
+                    {event.subject_id && (
+                      <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
+                    )}
+                    {event.child_id && (
+                      <View style={[styles.childAvatar, { backgroundColor: getChildColor(event.child_id) + '20' }]}>
+                        <Text style={[styles.childInitials, { color: getChildColor(event.child_id) }]}>
+                          {getChildName(event.child_id).charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+                    {isAssignment && (
+                      <FileText size={12} color={colors.textSecondary} />
+                    )}
+                  </View>
+                  <Text style={styles.eventTitle}>{event.title}</Text>
+                  <View style={styles.pillsRow}>
+                    {event.child_id && (
+                      <View style={[styles.pill, { backgroundColor: getChildColor(event.child_id) + '20' }]}>
+                        <Text style={[styles.pillText, { color: getChildColor(event.child_id) }]}>
+                          {getChildName(event.child_id)}
+                        </Text>
+                      </View>
+                    )}
+                    {event.subject_id && (
+                      <View style={[styles.pill, { backgroundColor: getSubjectColor(event.subject_id) + '20' }]}>
+                        <Text style={[styles.pillText, { color: getSubjectColor(event.subject_id) }]}>
+                          {getSubjectName(event.subject_id)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      ) : (
+        <View style={styles.emptyStateContainer}>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No events scheduled</Text>
+            <Text style={styles.emptySubtext}>Assignments still appear here when scheduled</Text>
+          </View>
         </View>
       )}
     </View>
@@ -171,32 +168,28 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 24,
-    marginBottom: 20,
+    padding: 20,
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.06)',
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
       transition: 'all 0.2s ease',
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 1,
+      height: '100%',
+      minHeight: 0,
+      marginBottom: 0,
     } : {
       elevation: 2,
-    }),
-  },
-  containerHovered: {
-    ...(Platform.OS === 'web' && {
-      transform: [{ translateY: -1 }],
-      boxShadow: '0 2px 6px rgba(0, 0, 0, 0.08)',
+      marginBottom: 20,
     }),
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-  },
-  headerLeft: {
-    flexDirection: 'column',
-    gap: 8,
+    alignItems: 'center',
+    marginBottom: 16,
   },
   title: {
     fontSize: 16,
@@ -210,20 +203,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+      transition: 'all 0.2s ease',
     }),
   },
   addButtonText: {
-    fontSize: 13,
-    color: '#64748b',
+    fontSize: 14,
     fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   plannerLink: {
@@ -244,12 +240,47 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  eventsListContainer: {
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      minHeight: 0,
+    }),
+  },
   eventsList: {
     gap: 16,
   },
   eventRow: {
     flexDirection: 'row',
     gap: 16,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && {
+      transition: 'background-color 0.2s ease',
+      '&:hover': {
+        backgroundColor: colors.bgSubtle,
+      },
+    }),
+  },
+  eventHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  subjectDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  childAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  childInitials: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   timeColumn: {
     width: 80,
@@ -291,15 +322,30 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  emptyStateContainer: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      minHeight: 0,
+    }),
+  },
   emptyState: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 20,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#0f172a',
-    marginBottom: 4,
+    marginBottom: 6,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -307,6 +353,28 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: 13,
     color: '#64748b',
+    marginBottom: 16,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  emptyAddButtonText: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -365,9 +433,19 @@ const styles = StyleSheet.create({
     }),
   },
   suggestedSection: {
-    marginTop: 20,
     paddingTop: 0,
     borderTopWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    ...(Platform.OS === 'web' && {
+      flexShrink: 0,
+    }),
+  },
+  suggestedListContainer: {
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      minHeight: 0,
+    }),
   },
   suggestedHeader: {
     flexDirection: 'row',

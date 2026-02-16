@@ -6,14 +6,14 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
-import { FileText, HelpCircle, RotateCcw, User, Clock, ChevronRight } from 'lucide-react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { FileText, HelpCircle, RotateCcw, User, Clock, ChevronRight, Plus } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
-import ReviewInboxModal from './ReviewInboxModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { colors } from '../../theme/colors';
+
 
 const SECTIONS = [
   { id: 'submissions', label: 'Submissions', icon: FileText },
@@ -23,17 +23,16 @@ const SECTIONS = [
 
 export default function EmbeddedNotificationCenter({ familyId, limit = 5, onViewAll }) {
   const session = useSession();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start as false - no loading state
   const [assignments, setAssignments] = useState([]);
   const [children, setChildren] = useState([]);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
-  const [showInboxModal, setShowInboxModal] = useState(false);
-  const [inboxModalSection, setInboxModalSection] = useState('submissions');
 
   useEffect(() => {
     if (session && !session.loading && familyId) {
+      // Load data in background without showing loading state
       loadData();
     }
   }, [session, familyId]);
@@ -41,7 +40,7 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
   const loadData = async () => {
     if (!familyId) return;
 
-    setLoading(true);
+    // Don't set loading state - load silently in background
     try {
       await Promise.all([
         loadAssignments(),
@@ -49,8 +48,6 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
       ]);
     } catch (error) {
       console.error('[EmbeddedNotificationCenter] Error loading data:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -185,24 +182,18 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     <>
       <View style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>Notifications</Text>
-          <TouchableOpacity
-            onPress={() => {
-              setInboxModalSection(selectedSection);
-              setShowInboxModal(true);
-            }}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={styles.viewAllText}>View all</Text>
-          </TouchableOpacity>
+          <Text style={styles.title}>Needs attention</Text>
         </View>
 
         {/* Tabs */}
         <View style={styles.tabs}>
           {SECTIONS.map(section => {
-            const Icon = section.icon;
             const isActive = selectedSection === section.id;
             const count = getSectionCount(section.id);
+
+            const webProps = Platform.OS === 'web' ? {
+              cursor: 'pointer',
+            } : {};
 
             return (
               <TouchableOpacity
@@ -210,12 +201,12 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
                 style={[styles.tab, isActive && styles.tabActive]}
                 onPress={() => {
                   setSelectedSection(section.id);
-                  setInboxModalSection(section.id);
-                  setShowInboxModal(true);
                 }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                {...webProps}
               >
-                <Icon size={14} color={isActive ? colors.primary : colors.textSecondary} />
+                <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                  {section.label}
+                </Text>
                 {count > 0 && (
                   <View style={styles.countBadge}>
                     <Text style={styles.countText}>{count > 99 ? '99+' : count}</Text>
@@ -227,13 +218,9 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
         </View>
 
         {/* List */}
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={colors.primary} />
-          </View>
-        ) : filteredAssignments.length === 0 ? (
+        {filteredAssignments.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>Nothing here</Text>
+            <Text style={styles.emptyText}>All caught up</Text>
           </View>
         ) : (
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
@@ -298,33 +285,35 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
           onReviewed={handleReviewComplete}
         />
       )}
-
-      <ReviewInboxModal
-        visible={showInboxModal}
-        onClose={() => setShowInboxModal(false)}
-        familyId={familyId}
-        initialSection={inboxModalSection}
-      />
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#E5E7EB',
     padding: 16,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      minHeight: 0,
+      transition: 'all 0.2s ease',
     }),
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
+  },
+  viewAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   title: {
     fontSize: 16,
@@ -346,7 +335,7 @@ const styles = StyleSheet.create({
   tabs: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   tab: {
     flex: 1,
@@ -356,19 +345,34 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: colors.bgSubtle,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     position: 'relative',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease-in-out',
       '&:hover': {
-        backgroundColor: colors.border,
+        backgroundColor: '#F9FAFB',
       },
     }),
   },
   tabActive: {
-    backgroundColor: colors.primarySoft,
+    borderColor: '#60a5fa',
+    backgroundColor: '#eff6ff',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  tabTextActive: {
+    color: '#60a5fa',
+    fontWeight: '600',
   },
   countBadge: {
     minWidth: 18,
@@ -387,10 +391,6 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  loadingContainer: {
-    padding: 20,
-    alignItems: 'center',
-  },
   emptyState: {
     padding: 20,
     alignItems: 'center',
@@ -403,7 +403,10 @@ const styles = StyleSheet.create({
     }),
   },
   list: {
-    maxHeight: 400,
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      minHeight: 0,
+    }),
   },
   item: {
     flexDirection: 'row',

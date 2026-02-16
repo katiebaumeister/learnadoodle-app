@@ -59,15 +59,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [motivationalMessagesEnabled, setMotivationalMessagesEnabled] = useState(true);
   const [darkMode, setDarkMode] = useState('off'); // 'on', 'off', 'system'
   
-  // Connected accounts (integrations) state - UI only for now; wire to real APIs later
+  // Connected accounts (integrations) state
   const [connectedProviders, setConnectedProviders] = useState({
     google: false,
     dropbox: false,
+    notion: false,
     youtube: false,
-    khan_academy: false,
+    quizlet: false,
+    vimeo: false,
+    canvas: false,
   });
   const [connectingProvider, setConnectingProvider] = useState(null);
   const [hoveredConnectionKey, setHoveredConnectionKey] = useState(null);
+  const [googleAccountEmail, setGoogleAccountEmail] = useState(null);
+  const [loadingConnections, setLoadingConnections] = useState(false);
   const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
   // Active section for sidebar navigation
@@ -180,8 +185,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Provider logo assets (PNG)
   const googleLogo = require('../../assets/google.png');
   const dropboxLogo = require('../../assets/dropbox.png');
+  const notionLogo = require('../../assets/notion.png');
   const youtubeLogo = require('../../assets/youtube.png');
-  const khanLogo = require('../../assets/khan.png');
+  const quizletLogo = require('../../assets/quizlet.png');
+  const vimeoLogo = require('../../assets/vimeo.png');
+  const canvasLogo = require('../../assets/canvas.png');
 
   // Update local state when prop changes
   useEffect(() => {
@@ -878,16 +886,34 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       image: dropboxLogo,
     },
     {
+      key: 'notion',
+      label: 'Notion',
+      description: 'Sync your Notion workspace pages and databases with your learning library.',
+      image: notionLogo,
+    },
+    {
       key: 'youtube',
       label: 'YouTube',
       description: 'Save favorite learning videos and channels into your library.',
       image: youtubeLogo,
     },
     {
-      key: 'khan_academy',
-      label: 'Khan Academy',
-      description: 'Bring in practice sets and courses from Khan Academy for each learner.',
-      image: khanLogo,
+      key: 'quizlet',
+      label: 'Quizlet',
+      description: 'Import study sets and flashcards from Quizlet for each learner.',
+      image: quizletLogo,
+    },
+    {
+      key: 'vimeo',
+      label: 'Vimeo',
+      description: 'Access educational videos and courses from your Vimeo account.',
+      image: vimeoLogo,
+    },
+    {
+      key: 'canvas',
+      label: 'Canvas',
+      description: 'Sync assignments, courses, and materials from Canvas LMS.',
+      image: canvasLogo,
     },
   ];
 
@@ -898,22 +924,252 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }));
   };
 
-  const handleConnectProvider = (providerKey) => {
+  // Load connection status from API
+  const loadConnectionStatus = async (useCache = true, showLoading = false) => {
+    if (!user || !familyId) return;
+    
+    // Try to load from cache first if useCache is true
+    if (useCache && Platform.OS === 'web' && typeof window !== 'undefined') {
+      const cacheKey = `connection_status_${familyId}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const { data: statusData, timestamp } = JSON.parse(cached);
+          const age = Date.now() - timestamp;
+          const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+          
+          if (age < CACHE_TTL_MS && statusData) {
+            // Use cached data immediately (no loading state)
+            statusData.forEach((integration) => {
+              if (integration.provider === 'google') {
+                setProviderConnection('google', integration.connected);
+                if (integration.account_email) {
+                  setGoogleAccountEmail(integration.account_email);
+                }
+              } else if (integration.provider === 'youtube') {
+                setProviderConnection('youtube', integration.connected);
+              }
+            });
+            
+            // Refresh in background if cache is older than 1 minute
+            if (age > 60 * 1000) {
+              loadConnectionStatus(false, false); // Refresh without using cache, no loading state
+            }
+            return;
+          }
+        } catch (err) {
+          console.warn('Failed to parse cached connection status:', err);
+        }
+      }
+    }
+    
+    // If no cache or cache expired, fetch from API (only show loading if explicitly requested)
+    if (showLoading) {
+      setLoadingConnections(true);
+    }
+    try {
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // Get integration status
+      const statusRes = await fetch(`${apiBase}/api/integrations/status`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        
+        // Cache the data
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const cacheKey = `connection_status_${familyId}`;
+          localStorage.setItem(cacheKey, JSON.stringify({
+            data: statusData,
+            timestamp: Date.now()
+          }));
+        }
+        
+        // Update connection status for each provider
+        statusData.forEach((integration) => {
+          if (integration.provider === 'google') {
+            setProviderConnection('google', integration.connected);
+            if (integration.account_email) {
+              setGoogleAccountEmail(integration.account_email);
+            }
+          } else if (integration.provider === 'youtube') {
+            setProviderConnection('youtube', integration.connected);
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load connection status:', error);
+    } finally {
+      if (showLoading) {
+        setLoadingConnections(false);
+      }
+    }
+  };
+
+  // Load connection status on mount (use cache first, no loading state)
+  useEffect(() => {
+    if (user && familyId) {
+      loadConnectionStatus(true); // Use cache first, load immediately
+    }
+  }, [user, familyId]);
+
+  // Refresh connection status when connections section becomes active (if needed)
+  useEffect(() => {
+    if (activeSection === 'connections' && user && familyId) {
+      // Only refresh if cache is stale (background refresh)
+      loadConnectionStatus(false); // Force refresh in background
+    }
+  }, [activeSection, user, familyId]);
+
+  // Listen for OAuth callback messages (for Google)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handleMessage = (event) => {
+      // Listen for OAuth completion messages
+      if (event.data && event.data.type === 'GOOGLE_OAUTH_SUCCESS') {
+        loadConnectionStatus();
+        toast.push('Google account connected successfully', 'success');
+      } else if (event.data && event.data.type === 'GOOGLE_OAUTH_ERROR') {
+        toast.push('Failed to connect Google account', 'error');
+        setConnectingProvider(null);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const handleConnectProvider = async (providerKey) => {
     if (connectingProvider) return;
     setConnectingProvider(providerKey);
+    
     try {
-      setProviderConnection(providerKey, true);
-      toast.push('Connected account (preview only - no data shared yet)', 'success');
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.push('Please sign in to connect accounts', 'error');
+        setConnectingProvider(null);
+        return;
+      }
+
+      if (providerKey === 'google') {
+        // Start Google OAuth flow
+        const res = await fetch(`${apiBase}/api/google/calendar/oauth/start?family_id=${familyId}`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to start Google OAuth');
+        }
+
+        const data = await res.json();
+
+        // Open OAuth URL in new window/tab
+        if (Platform.OS === 'web' && data.auth_url) {
+          const popup = window.open(
+            data.auth_url,
+            'Google OAuth',
+            'width=600,height=700,scrollbars=yes,resizable=yes'
+          );
+
+          // Poll for popup closure (user may have completed OAuth)
+          const checkClosed = setInterval(() => {
+            if (popup.closed) {
+              clearInterval(checkClosed);
+              // Reload connection status after a short delay
+              setTimeout(() => {
+                loadConnectionStatus();
+                setConnectingProvider(null);
+              }, 1000);
+            }
+          }, 500);
+
+          toast.push('Complete Google connection in the popup window', 'info');
+        } else {
+          throw new Error('OAuth popup not supported on this platform');
+        }
+      } else if (providerKey === 'youtube') {
+        // YouTube uses API key, not OAuth - just check if it's configured
+        const res = await fetch(`${apiBase}/api/integrations/status`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (res.ok) {
+          const statusData = await res.json();
+          const youtubeIntegration = statusData.find(i => i.provider === 'youtube');
+          
+          if (youtubeIntegration && youtubeIntegration.connected) {
+            setProviderConnection('youtube', true);
+            toast.push('YouTube API is configured and ready to use', 'success');
+          } else {
+            toast.push('YouTube API key is not configured. Please contact support.', 'error');
+          }
+        } else {
+          throw new Error('Failed to check YouTube status');
+        }
+        setConnectingProvider(null);
+      } else {
+        // Other providers - placeholder for now
+        toast.push(`${providerKey} connection coming soon`, 'info');
+        setConnectingProvider(null);
+      }
     } catch (err) {
+      console.error('Connection error:', err);
       toast.push(err.message || 'Failed to connect account', 'error');
-    } finally {
       setConnectingProvider(null);
     }
   };
 
-  const handleDisconnectProvider = (providerKey) => {
-    setProviderConnection(providerKey, false);
-    toast.push('Disconnected account', 'success');
+  const handleDisconnectProvider = async (providerKey) => {
+    try {
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.push('Please sign in to disconnect accounts', 'error');
+        return;
+      }
+
+      if (providerKey === 'google') {
+        // Disconnect Google Calendar
+        const res = await fetch(`${apiBase}/api/google/calendar/credential`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to disconnect Google account');
+        }
+
+        setProviderConnection('google', false);
+        setGoogleAccountEmail(null);
+        toast.push('Google account disconnected', 'success');
+      } else if (providerKey === 'youtube') {
+        // YouTube uses API key, can't be "disconnected" per se
+        toast.push('YouTube API key is configured at the system level and cannot be disconnected here', 'info');
+      } else {
+        // Other providers
+        setProviderConnection(providerKey, false);
+        toast.push(`${providerKey} account disconnected`, 'success');
+      }
+    } catch (err) {
+      console.error('Disconnection error:', err);
+      toast.push(err.message || 'Failed to disconnect account', 'error');
+    }
   };
 
   // Render content based on active section
@@ -921,18 +1177,15 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     switch (activeSection) {
       case 'connections':
         return (
-          <View style={[styles.mainContentInner, styles.mainContentCard]}>
+          <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Connected accounts</Text>
-            <Text style={styles.connectionsIntroText}>
-              Connect tools you already use to automatically sync learning materials, videos, and coursework.
-            </Text>
 
             <Text style={styles.connectionsSectionTitle}>Cloud storage & docs</Text>
             <View style={styles.connectionsSectionDivider} />
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
-                ['google', 'dropbox'].includes(p.key)
+                ['google', 'dropbox', 'notion'].includes(p.key)
               ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
@@ -971,7 +1224,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             )}
                           </View>
                           <Text style={styles.connectionRowDescription}>{description}</Text>
-                          {isConnected && (
+                          {isConnected && key === 'google' && googleAccountEmail && (
+                            <Text style={styles.connectionAccountEmail}>Connected as: {googleAccountEmail}</Text>
+                          )}
+                          {isConnected && key !== 'google' && (
                             <Text style={styles.connectionLastSynced}>Last synced today</Text>
                           )}
                         </View>
@@ -1028,7 +1284,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
-                ['khan_academy', 'youtube'].includes(p.key)
+                ['youtube', 'quizlet', 'vimeo', 'canvas'].includes(p.key)
               ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
@@ -1158,7 +1414,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               />
             </View>
             
-            <Text style={[styles.subsectionTitle, { marginTop: 32 }]}>Appearance</Text>
+            <Text style={styles.subsectionTitle}>Appearance</Text>
             <View style={styles.subsectionDivider} />
             
             <View style={styles.preferenceRow}>
@@ -1178,8 +1434,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Profile</Text>
             
-            {/* Email Field */}
-            <View style={styles.profileFieldGroup}>
+            {/* Account Management Section */}
+            <View style={styles.profileAccountSection}>
+              <Text style={styles.subsectionTitle}>Account management</Text>
+              <View style={styles.subsectionDivider} />
+              
+              {/* Email Field */}
+              <View style={styles.profileFieldGroup}>
               <Text style={styles.profileFieldLabel}>Email</Text>
               <View style={styles.profileEmailInputContainer}>
                 <TextInput
@@ -1244,7 +1505,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
               >
                 {resettingPassword ? (
-                  <ActivityIndicator size="small" color="#887DEE" />
+                  <ActivityIndicator size="small" color="#374151" />
                 ) : (
                   <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
                 )}
@@ -1253,24 +1514,29 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 We'll send you an email with a link to reset your password.
               </Text>
             </View>
+            </View>
             
             {/* Data & Account Actions */}
-            <View style={styles.dangerZoneActions}>
-              <TouchableOpacity
-                style={styles.dangerZoneExportButton}
-                onPress={() => setActiveSection('datavault')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.dangerZoneExportButtonText}>EXPORT MY DATA</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.dangerZoneDeleteButton}
-                onPress={() => setActiveSection('datavault')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.dangerZoneDeleteButtonText}>DELETE MY ACCOUNT</Text>
-              </TouchableOpacity>
+            <View style={styles.dangerZoneSection}>
+              <Text style={styles.subsectionTitle}>Data controls</Text>
+              <View style={styles.subsectionDivider} />
+              <View style={styles.dangerZoneActions}>
+                <TouchableOpacity
+                  style={styles.dangerZoneExportButton}
+                  onPress={() => setActiveSection('datavault')}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.dangerZoneExportButtonText}>EXPORT MY DATA</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.dangerZoneDeleteButton}
+                  onPress={() => setActiveSection('datavault')}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.dangerZoneDeleteButtonText}>DELETE MY ACCOUNT</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         );
@@ -1339,7 +1605,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'members':
         return (
-          <View style={[styles.mainContentInner, styles.mainContentCard]}>
+          <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Family Members</Text>
             
             {/* Parents Section */}
@@ -1355,7 +1621,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   }} 
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#887DEE" />
+                  <Plus size={16} color="#374151" />
                   <Text style={styles.membersInviteButtonText}>Invite Parent</Text>
                 </TouchableOpacity>
               )}
@@ -1381,7 +1647,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   onPress={() => setShowAddChildModal(true)} 
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#887DEE" />
+                  <Plus size={16} color="#374151" />
                   <Text style={styles.membersInviteButtonText}>Add Child</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
@@ -1389,7 +1655,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   onPress={handleOpenChildInviteModal}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#887DEE" />
+                  <Plus size={16} color="#374151" />
                   <Text style={styles.membersInviteButtonText}>Invite Child</Text>
                 </TouchableOpacity>
               </View>
@@ -1400,16 +1666,27 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={styles.membersEmptyText}>No children added yet</Text>
             ) : children.map((child) => {
               const childName = child.name || child.first_name || 'Child';
+              const isHovered = hoveredChildId === child.id;
               return (
-                <View key={child.id} style={styles.memberRow}>
+                <View 
+                  key={child.id} 
+                  style={styles.memberRow}
+                  {...(Platform.OS === 'web' && {
+                    onMouseEnter: () => setHoveredChildId(child.id),
+                    onMouseLeave: () => setHoveredChildId(null),
+                  })}
+                >
                   <Text style={styles.memberRowName}>{childName}{child.archived && ' (Archived)'}</Text>
                   <View style={styles.memberRowActions}>
                     <TouchableOpacity 
-                      style={styles.memberRowActionButton} 
+                      style={[
+                        styles.memberRowActionButton,
+                        isHovered && styles.memberRowActionButtonHovered,
+                      ]} 
                       onPress={() => { setEditingChild(child); setShowEditChildModal(true); }} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Edit size={18} color="#887DEE" />
+                      <Pencil size={16} color="#374151" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1428,7 +1705,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 }} 
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Plus size={16} color="#887DEE" />
+                <Plus size={16} color="#374151" />
                 <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
               </TouchableOpacity>
             </View>
@@ -1446,20 +1723,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'courses':
         return (
-          <View style={[styles.mainContentInner, styles.mainContentCard]}>
+          <View style={styles.mainContentInner}>
             <View style={styles.coursesHeader}>
-              <View>
-                <Text style={styles.mainContentTitle}>Courses</Text>
-                <Text style={styles.coursesIntroText}>
-                  Manage your family's subjects, assignments, and learning structure.
-                </Text>
+              <View style={styles.coursesTitleContainer}>
+                <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Courses</Text>
               </View>
               <TouchableOpacity
                 style={styles.coursesAddButton}
                 onPress={() => setShowAddSubjectModal(true)}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Plus size={16} color="#887DEE" />
+                <Plus size={16} color="#374151" />
                 <Text style={styles.coursesAddButtonText}>Add Subject</Text>
               </TouchableOpacity>
             </View>
@@ -1480,7 +1754,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   onPress={() => setShowAddSubjectModal(true)}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#887DEE" />
+                  <Plus size={16} color="#374151" />
                   <Text style={styles.coursesAddButtonText}>Add Subject</Text>
                 </TouchableOpacity>
               </View>
@@ -1569,7 +1843,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                 onPress={() => handleEditSubject(subject)}
                                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                               >
-                                <Pencil size={16} color="#887DEE" />
+                                <Pencil size={16} color="#374151" />
                               </TouchableOpacity>
                             </View>
                           </View>
@@ -2799,31 +3073,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         {/* Right: Fixed sidebar - hidden on About, Terms, and Privacy pages */}
         {activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
           <View style={styles.sidebar}>
+          <View style={styles.sidebarContent}>
           {/* Account Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Account</Text>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Users size={18} color={activeSection === 'members' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <BookOpen size={18} color={activeSection === 'courses' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]} onPress={() => setActiveSection('connections')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Link2 size={18} color={activeSection === 'connections' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>Connected accounts</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'preferences' && styles.sidebarButtonActive]} onPress={() => setActiveSection('preferences')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <SlidersHorizontal size={18} color={activeSection === 'preferences' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'preferences' && styles.sidebarButtonTextActive]}>Preferences</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]} onPress={() => setActiveSection('notifications')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Bell size={18} color={activeSection === 'notifications' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>Notifications</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <User size={18} color={activeSection === 'profile' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
             </TouchableOpacity>
           </View>
@@ -2833,19 +3102,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <Text style={styles.sidebarCardTitle}>Subscription</Text>
             <View style={styles.sidebarSubscriptionContent}>
               <View style={styles.sidebarSubscriptionInfo}>
-                <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
-                <View style={styles.sidebarSubscriptionStatusChip}>
-                  <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+                <TouchableOpacity 
+                  onPress={() => setActiveSection('doodlemax')}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
+                </TouchableOpacity>
+                <View style={styles.sidebarSubscriptionStatusRow}>
+                  <View style={styles.sidebarSubscriptionStatusChip}>
+                    <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+                  </View>
+                  <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
                 </View>
-                <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
               </View>
-              <TouchableOpacity 
-                style={styles.sidebarSubscriptionManage}
-                onPress={() => setActiveSection('doodlemax')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.sidebarSubscriptionManageText}>Manage plan</Text>
-              </TouchableOpacity>
             </View>
           </View>
 
@@ -2853,13 +3122,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Support</Text>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'help' && styles.sidebarButtonActive]} onPress={() => setActiveSection('help')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <HelpCircle size={18} color={activeSection === 'help' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'help' && styles.sidebarButtonTextActive]}>Help</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'feedback' && styles.sidebarButtonActive]} onPress={() => setActiveSection('feedback')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <MessageSquare size={18} color={activeSection === 'feedback' ? '#887DEE' : '#6b7280'} />
               <Text style={[styles.sidebarButtonText, activeSection === 'feedback' && styles.sidebarButtonTextActive]}>Feedback</Text>
             </TouchableOpacity>
+          </View>
           </View>
 
           {/* Log Out Button */}
@@ -3381,7 +3649,7 @@ function createStyles(tokens) {
       fontSize: 36,
       fontWeight: '800',
       color: '#111827',
-      marginBottom: 8,
+      marginBottom: 32,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -3398,7 +3666,7 @@ function createStyles(tokens) {
       fontSize: 18,
       fontWeight: '600',
       color: '#374151',
-      marginTop: 24,
+      marginTop: 0,
       marginBottom: 12,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -3407,7 +3675,7 @@ function createStyles(tokens) {
     subsectionDivider: {
       height: 1,
       backgroundColor: '#e5e7eb',
-      marginBottom: 16,
+      marginBottom: 20,
     },
     membersSectionRow: {
       flexDirection: 'row',
@@ -3421,6 +3689,13 @@ function createStyles(tokens) {
       justifyContent: 'space-between',
       alignItems: 'flex-start',
       marginBottom: 24,
+      marginTop: 0,
+    },
+    coursesTitleContainer: {
+      marginBottom: 0,
+    },
+    coursesTitle: {
+      marginBottom: 0,
     },
     membersInviteButton: {
       flexDirection: 'row',
@@ -3428,7 +3703,7 @@ function createStyles(tokens) {
       gap: 6,
       paddingVertical: 6,
       paddingHorizontal: 12,
-      borderRadius: 8,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: '#e5e7eb',
       backgroundColor: '#ffffff',
@@ -3475,6 +3750,21 @@ function createStyles(tokens) {
       gap: 12,
     },
     memberRowActionButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: '#f9fafb',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...(Platform.OS === 'web' && {
+        transition: 'all 0.2s ease',
+        cursor: 'pointer',
+      }),
+    },
+    memberRowActionButtonHovered: {
+      backgroundColor: '#f3f4f6',
+    },
+    memberRowActionButtonOld: {
       padding: 6,
     },
     preferenceRow: {
@@ -3515,11 +3805,23 @@ function createStyles(tokens) {
       width: 280,
       padding: 16,
       backgroundColor: '#ffffff',
+      display: 'flex',
+      flexDirection: 'column',
       ...(Platform.OS === 'web' && {
         position: 'sticky',
         top: 0,
         height: '100vh',
         overflowY: 'auto',
+      }),
+    },
+    sidebarContent: {
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 16,
+      ...(Platform.OS === 'web' && {
+        minHeight: 0,
+        marginBottom: 0,
       }),
     },
     sidebarCard: {
@@ -3530,7 +3832,7 @@ function createStyles(tokens) {
       paddingTop: 20,
       paddingBottom: 20,
       paddingHorizontal: 20,
-      marginBottom: 18,
+      flexShrink: 0,
     },
     sidebarCardTitle: {
       fontSize: 14,
@@ -3554,7 +3856,7 @@ function createStyles(tokens) {
       position: 'relative',
     },
     sidebarButtonActive: {
-      backgroundColor: 'rgba(136, 125, 238, 0.06)',
+      backgroundColor: '#f3f4f6',
     },
     sidebarButtonText: {
       fontSize: 15,
@@ -3565,11 +3867,12 @@ function createStyles(tokens) {
       }),
     },
     sidebarButtonTextActive: {
-      color: '#887DEE',
+      color: '#111827',
       fontWeight: '600',
     },
     sidebarSubscriptionContent: {
       marginTop: 4,
+      paddingLeft: 12,
     },
     sidebarSubscriptionInfo: {
       marginBottom: 10,
@@ -3583,13 +3886,18 @@ function createStyles(tokens) {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
+    sidebarSubscriptionStatusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginTop: 8,
+    },
     sidebarSubscriptionStatusChip: {
       alignSelf: 'flex-start',
       paddingHorizontal: 8,
       paddingVertical: 4,
       borderRadius: 12,
       backgroundColor: '#ecfdf3',
-      marginBottom: 6,
     },
     sidebarSubscriptionStatusChipText: {
       fontSize: 12,
@@ -3611,7 +3919,7 @@ function createStyles(tokens) {
     },
     sidebarSubscriptionManageText: {
       fontSize: 13,
-      color: '#887DEE',
+      color: '#000000',
       fontWeight: '500',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -3625,7 +3933,8 @@ function createStyles(tokens) {
       paddingVertical: 12,
       alignItems: 'center',
       backgroundColor: 'transparent',
-      marginTop: 12,
+      marginTop: 0,
+      flexShrink: 0,
     },
     logoutButtonSidebarHovered: {
       backgroundColor: '#fef2f2',
@@ -3645,10 +3954,11 @@ function createStyles(tokens) {
       flexWrap: 'wrap',
       justifyContent: 'center',
       gap: 12,
-      marginTop: 14,
-      paddingTop: 14,
+      marginTop: 12,
+      paddingTop: 12,
       borderTopWidth: 1,
       borderTopColor: '#e5e7eb',
+      flexShrink: 0,
     },
     footerLink: {
       paddingVertical: 4,
@@ -3756,7 +4066,7 @@ function createStyles(tokens) {
       fontSize: 20,
       fontWeight: '700',
       color: '#111827',
-      marginTop: 32,
+      marginTop: 0,
       marginBottom: 12,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -3875,6 +4185,33 @@ function createStyles(tokens) {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
+    connectionAccountEmail: {
+      fontSize: 12,
+      color: '#6b7280',
+      marginTop: 6,
+      fontStyle: 'italic',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionsLoadingContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 16,
+      marginBottom: 16,
+      backgroundColor: '#f9fafb',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+    },
+    connectionsLoadingText: {
+      fontSize: 14,
+      color: '#6b7280',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
     connectionRowDivider: {
       height: 1,
       backgroundColor: '#e5e7eb',
@@ -3889,12 +4226,12 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 10,
-      paddingHorizontal: 18,
-      borderRadius: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
       borderWidth: 1,
-      borderColor: '#887DEE',
-      backgroundColor: 'transparent',
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
         transition: 'all 0.2s ease',
@@ -3905,43 +4242,45 @@ function createStyles(tokens) {
     },
     connectionConnectButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#887DEE',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     connectionManageButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 10,
-      paddingHorizontal: 18,
-      borderRadius: 8,
-      backgroundColor: '#f3f4f6',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
-        transition: 'background-color 0.2s ease',
+        transition: 'all 0.2s ease',
       }),
     },
     connectionManageButtonText: {
       fontSize: 14,
-      fontWeight: '600',
+      fontWeight: '500',
       color: '#374151',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     connectionDisconnectButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 10,
-      paddingHorizontal: 18,
-      borderRadius: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
       borderWidth: 1,
-      borderColor: '#d1d5db',
-      backgroundColor: 'transparent',
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
         transition: 'all 0.2s ease',
@@ -3949,10 +4288,10 @@ function createStyles(tokens) {
     },
     connectionDisconnectButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#6b7280',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     contentWrapper: {
@@ -4020,8 +4359,12 @@ function createStyles(tokens) {
       justifyContent: 'center',
       alignItems: 'center',
     },
+    profileAccountSection: {
+      marginTop: 0,
+    },
     profileFieldGroup: {
-      marginBottom: 24,
+      marginTop: 0,
+      marginBottom: 32,
     },
     profileFieldLabel: {
       fontSize: 15,
@@ -4133,23 +4476,26 @@ function createStyles(tokens) {
       }),
     },
     profileResetPasswordButton: {
-      borderWidth: 1,
-      borderColor: '#887DEE',
-      backgroundColor: 'transparent',
-      paddingVertical: 10,
-      paddingHorizontal: 20,
-      borderRadius: 8,
+      flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       alignSelf: 'flex-start',
       marginTop: 4,
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
+        transition: 'all 0.2s ease',
       }),
     },
     profileResetPasswordButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#887DEE',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -4160,40 +4506,57 @@ function createStyles(tokens) {
       marginTop: 12,
       lineHeight: 20,
     },
+    dangerZoneSection: {
+      marginTop: 40,
+    },
     dangerZoneActions: {
       gap: 12,
-      marginTop: 48,
+      marginTop: 20,
     },
     dangerZoneExportButton: {
-      paddingVertical: 10,
-      paddingHorizontal: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       alignSelf: 'flex-start',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
+        transition: 'all 0.2s ease',
       }),
     },
     dangerZoneExportButtonText: {
       fontSize: 14,
       fontWeight: '700',
-      color: '#887DEE',
-      letterSpacing: 0.5,
+      color: '#60a5fa',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dangerZoneDeleteButton: {
-      paddingVertical: 10,
-      paddingHorizontal: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       alignSelf: 'flex-start',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
+        transition: 'all 0.2s ease',
       }),
     },
     dangerZoneDeleteButtonText: {
       fontSize: 14,
       fontWeight: '700',
       color: '#ef4444',
-      letterSpacing: 0.5,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -5454,12 +5817,12 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: 8,
-      borderWidth: 1.5,
-      borderColor: '#887DEE',
-      backgroundColor: 'transparent',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
         transition: 'all 0.2s ease',
@@ -5467,10 +5830,10 @@ function createStyles(tokens) {
     },
     coursesAddButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#887DEE',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     coursesEmptyState: {

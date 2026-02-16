@@ -7,26 +7,18 @@
 
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
-import HomeHeroCard from './HomeHeroCard';
 
-export default function RoleHomeShell({ heroProps, main, rail }) {
+export default function RoleHomeShell({ main, rail }) {
   return (
     <View style={styles.container}>
-      {/* Top: Full-width hero */}
-      {heroProps && (
-        <View style={styles.heroContainer}>
-          <HomeHeroCard {...heroProps} />
-        </View>
-      )}
-
-      {/* Below: Responsive grid */}
+      {/* Responsive grid */}
       <View style={styles.gridContainer}>
-        {/* Main column */}
-        <View style={styles.mainColumn}>
+        {/* Left: Main column */}
+        <View style={styles.leftSection}>
           {main}
         </View>
 
-        {/* Right rail (desktop only) */}
+        {/* Right rail (desktop only) - spans full height */}
         {rail && (
           <View style={styles.railColumn}>
             {rail}
@@ -54,34 +46,37 @@ const styles = StyleSheet.create({
       paddingBottom: 24,
     }),
   },
-  heroContainer: {
-    marginBottom: 24,
-    ...(Platform.OS !== 'web' && {
-      marginBottom: 20,
-    }),
-  },
   gridContainer: {
     flexDirection: 'column',
+    flex: 1,
+    gap: 16,
     ...(Platform.OS === 'web' && {
       flexDirection: 'row',
-      alignItems: 'flex-start',
+      alignItems: 'stretch',
       display: 'flex',
+      minHeight: 0,
+      gap: 16,
     }),
   },
-  mainColumn: {
+  leftSection: {
     flex: 1,
     ...(Platform.OS === 'web' && {
       flex: 2,
       minWidth: 0,
-      marginRight: 24,
-      maxWidth: 'calc(66.666% - 12px)',
+      maxWidth: 'calc(66.666% - 8px)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignSelf: 'stretch',
     }),
   },
   railColumn: {
     ...(Platform.OS === 'web' && {
       flex: 1,
       minWidth: 280,
-      maxWidth: 'calc(33.333% - 12px)',
+      maxWidth: 'calc(33.333% - 8px)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignSelf: 'stretch',
     }),
   },
 });

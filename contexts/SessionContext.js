@@ -15,6 +15,7 @@
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
@@ -162,6 +163,17 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         role_flags: roleFlags,
         legacyMode: isLegacy,
       });
+
+      // Preload home data in background (non-blocking)
+      if (activeFamilyId && Platform.OS === 'web') {
+        preloadHomeData(activeFamilyId).catch(err => {
+          console.warn('[SessionContext] Error preloading home data:', err);
+        });
+        // Preload connection status in background (non-blocking)
+        preloadConnectionStatus(activeFamilyId).catch(err => {
+          console.warn('[SessionContext] Error preloading connection status:', err);
+        });
+      }
     } catch (error) {
       console.error('[SessionContext] Error loading session:', error);
       setSession({
@@ -182,6 +194,91 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       setLoading(false);
     }
   }, [user, propFamilyId]);
+
+  // Preload home data in background
+  const preloadHomeData = useCallback(async (familyId) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const dateStr = today.toISOString().split('T')[0];
+      
+      // Check if already cached
+      const cacheKey = `home_data_${familyId}_${dateStr}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { timestamp } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+        const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+        if (age < CACHE_TTL_MS) {
+          // Cache is still valid, no need to preload
+          return;
+        }
+      }
+      
+      // Fetch and cache home data
+      const { data, error } = await supabase.rpc('get_home_data', {
+        _family_id: familyId,
+        _date: dateStr,
+        _horizon_days: 14,
+      });
+      
+      if (!error && data) {
+        localStorage.setItem(cacheKey, JSON.stringify({
+          data: data,
+          timestamp: Date.now()
+        }));
+        console.log('[SessionContext] Home data preloaded');
+      }
+    } catch (err) {
+      // Silently fail - this is just a preload
+      console.warn('[SessionContext] Preload failed:', err);
+    }
+  }, []);
+
+  // Preload connection status in background
+  const preloadConnectionStatus = useCallback(async (familyId) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    
+    try {
+      // Check if already cached
+      const cacheKey = `connection_status_${familyId}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { timestamp } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+        const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+        if (age < CACHE_TTL_MS) {
+          // Cache is still valid, no need to preload
+          return;
+        }
+      }
+      
+      // Fetch and cache connection status
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      
+      const statusRes = await fetch(`${apiBase}/api/integrations/status`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+      
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        localStorage.setItem(cacheKey, JSON.stringify({
+          data: statusData,
+          timestamp: Date.now()
+        }));
+        console.log('[SessionContext] Connection status preloaded');
+      }
+    } catch (err) {
+      // Silently fail - this is just a preload
+      console.warn('[SessionContext] Connection status preload failed:', err);
+    }
+  }, []);
 
   // Load session when user or familyId changes
   useEffect(() => {

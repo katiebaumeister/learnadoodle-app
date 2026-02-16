@@ -88,6 +88,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalChildIds, setTaskModalChildIds] = useState([]);
   const [taskModalDefaultSubjectId, setTaskModalDefaultSubjectId] = useState(null);
   const [taskModalDefaultEventType, setTaskModalDefaultEventType] = useState(null);
+  const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -1363,6 +1364,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setTaskModalChildId(primaryChildId);
       setTaskModalDefaultSubjectId(detail.subjectId || null);
       setTaskModalDefaultEventType(detail.eventType || null);
+      setTaskModalDefaultPlacement(detail.placement || 'calendar'); // Use placement from event detail, default to 'calendar'
       setShowTaskModal(true);
     };
     
@@ -2897,12 +2899,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setTaskModalChildIds([]);
             setTaskModalDefaultSubjectId(null);
             setTaskModalDefaultEventType(null);
+            setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
           defaultChildIds={taskModalChildIds}
           defaultSubjectId={taskModalDefaultSubjectId}
           defaultEventType={taskModalDefaultEventType}
+          defaultPlacement={taskModalDefaultPlacement}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,

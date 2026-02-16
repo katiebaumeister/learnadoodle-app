@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 
 export default function BacklogCard({
@@ -8,6 +8,7 @@ export default function BacklogCard({
   backlogCount = 0,
   children = [],
   onViewBacklog,
+  onAddBacklogItem,
 }) {
   const getChildName = (childId) => {
     const child = children.find(c => String(c.id) === String(childId));
@@ -41,9 +42,19 @@ export default function BacklogCard({
       })}
     >
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerLeft}>
           <Text style={styles.title}>Backlog</Text>
           <Text style={styles.subtitle}>{displayCount} waiting</Text>
+          {onAddBacklogItem && (
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={onAddBacklogItem}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color="#64748b" />
+              <Text style={styles.addButtonText}>Add backlog item</Text>
+            </TouchableOpacity>
+          )}
         </View>
         {onViewBacklog && (
           <TouchableOpacity
@@ -113,6 +124,9 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 16,
   },
+  headerLeft: {
+    flex: 1,
+  },
   title: {
     fontSize: 16,
     fontWeight: '600',
@@ -124,6 +138,33 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 13,
+    color: '#64748b',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+      '&:hover': {
+        backgroundColor: '#e2e8f0',
+      },
+    }),
+  },
+  addButtonText: {
+    fontSize: 13,
+    fontWeight: '500',
     color: '#64748b',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

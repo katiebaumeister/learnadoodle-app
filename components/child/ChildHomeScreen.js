@@ -221,11 +221,6 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
       { label: 'events', value: todayEvents.length, onClick: () => {} },
       { label: 'assignments', value: assignments.length, onClick: () => onNavigate?.('assignments') },
     ],
-    statusBadges: {
-      notifications: assignmentCount,
-      rewards: 0, // TODO: Implement streak
-      premium: false,
-    },
   };
 
   const mainContent = (

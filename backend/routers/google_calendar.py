@@ -170,6 +170,16 @@ async def oauth_callback(state: str, code: Optional[str] = None, error: Optional
       <body style=\"font-family: sans-serif; text-align: center; margin-top: 80px;\">
         <h1>Google Calendar Connected</h1>
         <p>You can close this window and return to Learnadoodle.</p>
+        <script>
+          // Notify parent window of successful connection
+          if (window.opener) {
+            window.opener.postMessage({ type: 'GOOGLE_OAUTH_SUCCESS' }, '*');
+            // Close window after a short delay
+            setTimeout(function() {
+              window.close();
+            }, 1500);
+          }
+        </script>
       </body>
     </html>
     """
