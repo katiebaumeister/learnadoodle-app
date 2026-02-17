@@ -5,6 +5,7 @@ import { useSensoryMode } from '../contexts/SensoryModeContext';
 import { useGlobalSearch } from '../contexts/GlobalSearchContext';
 import { getModeTokens, spacing, radius } from '../theme/pastelDesignTokens';
 import { sensoryModes } from '../theme/pastelDesignTokens';
+import { safeImageUri } from '../lib/safeImageUri';
 
 const avatarSources = {
   prof1: require('../assets/prof1.png'),
@@ -240,12 +241,11 @@ export default function TopNav({
             accessibilityRole="button"
             accessibilityLabel="Account and settings"
           >
-            {user.avatar_url && (user.avatar_url.startsWith('http://') || user.avatar_url.startsWith('https://') || user.avatar_url.startsWith('data:')) ? (
+            {safeImageUri(user.avatar_url) ? (
               <Image
-                source={{ uri: user.avatar_url }}
+                source={{ uri: safeImageUri(user.avatar_url) }}
                 style={[styles.avatar, { borderColor: tokens.border }]}
                 onError={(e) => {
-                  // Suppress 404 errors for missing avatars - they're harmless
                   if (Platform.OS === 'web' && e.nativeEvent) {
                     e.preventDefault?.();
                   }

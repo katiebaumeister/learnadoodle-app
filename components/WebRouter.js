@@ -6,7 +6,6 @@ import WebLayout from './WebLayout';
 import InviteAcceptancePage from './InviteAcceptancePage';
 import ChildInvitePage from './auth/ChildInvitePage';
 import ContinueLearningPage from './ContinueLearningPage';
-import OnboardingStepper from './OnboardingStepper';
 import TermsPage from './TermsPage';
 import PrivacyPage from './PrivacyPage';
 import AboutPage from './AboutPage';
@@ -19,15 +18,12 @@ import BlogAllPage from './blog/BlogAllPage';
 import { useAuth } from '../contexts/AuthContext';
 import { SessionProvider } from '../contexts/SessionContext';
 import RoleGate from './navigation/RoleGate';
-import { supabase } from '../lib/supabase';
 
 export default function WebRouter() {
   const { user, loading, session } = useAuth();
   const [currentPath, setCurrentPath] = useState('/');
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
   const [resetFlowStartTime, setResetFlowStartTime] = useState(null);
-  const [needsOnboarding, setNeedsOnboarding] = useState(null);
-  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
   useEffect(() => {
     // Update path when URL changes
@@ -40,6 +36,22 @@ export default function WebRouter() {
     
     // Initial path
     updatePath();
+
+    // Handle email verification tokens in URL hash
+    // Supabase automatically processes these, but we should clean up the URL
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const type = hashParams.get('type');
+      
+      // If we have email verification tokens, clean up the URL hash
+      // Supabase client will automatically process these via onAuthStateChange
+      if (accessToken && type === 'email') {
+        // Clean up the URL hash without reloading
+        const cleanUrl = window.location.origin + window.location.pathname + (window.location.search || '');
+        window.history.replaceState({}, typeof document !== 'undefined' ? document.title : '', cleanUrl);
+      }
+    }
 
     // Check if we're in a password reset flow
     const checkPasswordResetFlow = () => {
@@ -70,7 +82,7 @@ export default function WebRouter() {
             // Try to trigger the auth state change by updating the URL and reloading
             // This should allow Supabase to process the tokens properly
             const cleanUrl = window.location.origin + '/';
-            window.history.replaceState({}, document.title, cleanUrl);
+            window.history.replaceState({}, typeof document !== 'undefined' ? document.title : '', cleanUrl);
             
             // Force a reload to trigger auth state re-evaluation
             setTimeout(() => {
@@ -114,17 +126,8 @@ export default function WebRouter() {
     }
   }, [isPasswordResetFlow, resetFlowStartTime, user]);
 
-  // Show loading screen while auth is initializing
-  if (loading) {
-    return null; // Let the parent handle loading
-  }
-
   // If we're in a password reset flow, wait for auth to be ready
   if (isPasswordResetFlow) {
-    // Wait for auth to be fully loaded and check if user is now authenticated
-    if (loading) {
-      return null; // Still loading auth state
-    }
     
     // Debug: Log the current state
 
@@ -222,59 +225,6 @@ export default function WebRouter() {
     );
   }
 
-  // Check if authenticated user needs onboarding
-  useEffect(() => {
-    const checkOnboardingStatus = async () => {
-      if (!user) {
-        setNeedsOnboarding(false);
-        setCheckingOnboarding(false);
-        return;
-      }
-
-      try {
-        // Get user's profile and family
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('family_id')
-          .eq('id', user.id)
-          .single();
-
-        if (!profile?.family_id) {
-          // No family yet, needs onboarding
-          setNeedsOnboarding(true);
-          setCheckingOnboarding(false);
-          return;
-        }
-
-        // Check if family has completed onboarding
-        const { data: family, error: familyError } = await supabase
-          .from('family')
-          .select('has_completed_onboarding')
-          .eq('id', profile.family_id)
-          .single();
-
-        if (familyError) {
-          console.error('Error checking family onboarding status:', familyError);
-          // If error, check children as fallback
-          const { count } = await supabase
-            .from('children')
-            .select('*', { count: 'exact', head: true })
-            .eq('family_id', profile.family_id);
-          setNeedsOnboarding(count === 0);
-        } else {
-          // Use the has_completed_onboarding flag
-          setNeedsOnboarding(!family?.has_completed_onboarding);
-        }
-      } catch (err) {
-        console.error('Error checking onboarding status:', err);
-        setNeedsOnboarding(false);
-      } finally {
-        setCheckingOnboarding(false);
-      }
-    };
-
-    checkOnboardingStatus();
-  }, [user]);
 
   // Handle public pages (terms, privacy, about) - accessible without authentication
   if (currentPath === '/terms') {
@@ -447,26 +397,7 @@ export default function WebRouter() {
     return <WebAuthScreen />;
   }
 
-  // Show loading while checking onboarding status
-  if (checkingOnboarding) {
-    return null; // Let parent handle loading
-  }
-
-  // If user needs onboarding, show onboarding stepper
-  if (needsOnboarding) {
-    // Check if user just verified email (has session but no children)
-    const shouldStartAtStep2 = user && !checkingOnboarding;
-    return <OnboardingStepper 
-      startAtStep={shouldStartAtStep2 ? 2 : 1}
-      onComplete={() => {
-        setNeedsOnboarding(false);
-        // Reload to refresh data
-        window.location.href = '/';
-      }} 
-    />;
-  }
-
-  // User is authenticated and has completed onboarding, show main app
+  // User is authenticated, show main app
   // Wrap with SessionProvider for role-based access control
   // RoleGate will choose the appropriate navigator based on role
   return (

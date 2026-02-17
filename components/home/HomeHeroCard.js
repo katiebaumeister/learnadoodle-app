@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
-      background: 'linear-gradient(180deg, #F8FBFF 0%, #EEF6FF 100%)',
+      backgroundImage: 'linear-gradient(180deg, #F8FBFF 0%, #EEF6FF 100%)',
       display: 'flex',
     }),
     ...(Platform.OS !== 'web' && {

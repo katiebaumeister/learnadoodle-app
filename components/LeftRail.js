@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
 import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircle, Settings, MessageSquare } from 'lucide-react';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
+import { safeImageUri } from '../lib/safeImageUri';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 
@@ -157,13 +158,13 @@ export default function LeftRail({
   };
 
   const renderChildAvatar = (child) => {
-    if (child.avatar_url && isValidAvatarUrl(child.avatar_url)) {
+    const avatarUri = safeImageUri(child.avatar_url || child.avatar);
+    if (avatarUri) {
       return (
         <Image 
-          source={{ uri: child.avatar_url }} 
+          source={{ uri: avatarUri }} 
           style={styles.childAvatar}
           onError={(e) => {
-            // Suppress 404 errors for missing avatars - they're harmless
             if (Platform.OS === 'web' && e.nativeEvent) {
               e.preventDefault?.();
             }
@@ -171,7 +172,6 @@ export default function LeftRail({
         />
       );
     }
-
     const source = resolveAvatarSource(child.avatar);
     return <Image source={source} style={styles.childAvatar} />;
   };

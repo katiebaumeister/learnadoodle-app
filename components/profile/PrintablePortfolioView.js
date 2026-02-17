@@ -16,6 +16,7 @@ import PlanYearWizard from '../year/PlanYearWizard';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import ProgressForecastModal from '../planner/modals/ProgressForecastModal';
 import ComplianceDashboard from '../compliance/ComplianceDashboard';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 // Simple cache for ProfileOverview data (keyed by childId-familyId)
 const profileOverviewCache = new Map();
@@ -39,9 +40,9 @@ const avatarSources = {
 };
 
 const resolveAvatarSource = (avatarKey) => {
-  if (!avatarKey) {
-    return avatarSources.prof1;
-  }
+  if (!avatarKey) return avatarSources.prof1;
+  const uri = safeImageUri(avatarKey);
+  if (uri) return { uri };
   const normalized = String(avatarKey)
     .toLowerCase()
     .replace(/.*\//, '')

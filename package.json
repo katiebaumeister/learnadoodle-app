@@ -9,8 +9,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test:openai": "expo start --web --port 19006",
-    "build": "npx expo export --platform web",
-    "vercel-build": "npx expo export --platform web"
+    "web:no-404": "node scripts/dev-server-web.js",
+    "build": "npx expo export --platform web && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true",
+    "vercel-build": "npx expo export --platform web && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true"
   },
   "dependencies": {
     "@expo/metro-config": "~54.0.0",

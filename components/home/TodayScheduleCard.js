@@ -187,8 +187,8 @@ export default function TodayScheduleCard({
       ) : (
         <View style={styles.emptyStateContainer}>
           <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No events scheduled</Text>
-            <Text style={styles.emptySubtext}>Assignments still appear here when scheduled</Text>
+            <Text style={styles.emptyTitle}>Nothing scheduled</Text>
+            <Text style={styles.emptySubtext}>Add an event to get started</Text>
           </View>
         </View>
       )}

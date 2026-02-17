@@ -4,22 +4,7 @@ import { Bell, HelpCircle, User, Search } from 'lucide-react';
 import { Breadcrumb } from './ui/Breadcrumb';
 import { colors } from '../theme/colors';
 import { designTokens } from '../theme/designTokens';
-
-// Helper to validate if avatar is a valid URL (not just a UUID)
-const isValidAvatarUrl = (url) => {
-  if (!url || typeof url !== 'string') return false;
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  
-  // Check if it's just a UUID (invalid URL format)
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidPattern.test(trimmed)) {
-    return false; // It's just a UUID, not a valid URL
-  }
-  
-  // Valid URLs must start with http://, https://, or data:
-  return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:');
-};
+import { safeImageUri } from '../lib/safeImageUri';
 
 const styles = StyleSheet.create({
   bar: {
@@ -164,12 +149,11 @@ export default function TopBar({
           accessibilityRole="button"
           accessibilityLabel="Account and settings"
         >
-          {user?.avatar && isValidAvatarUrl(user.avatar) ? (
+          {safeImageUri(user?.avatar) ? (
             <Image 
-              source={{ uri: user.avatar }} 
+              source={{ uri: safeImageUri(user.avatar) }} 
               style={styles.avatarImage}
               onError={(e) => {
-                // Suppress 404 errors for missing avatars - they're harmless
                 if (Platform.OS === 'web' && e.nativeEvent) {
                   e.preventDefault?.();
                 }

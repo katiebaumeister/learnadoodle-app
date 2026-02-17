@@ -8,28 +8,12 @@ import { BookOpen, Users, Star } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 // Helper function to check if a URL is from Supabase storage
 const isSupabaseStorageUrl = (url) => {
   if (!url || typeof url !== 'string') return false;
-  // Check if URL contains Supabase storage path patterns
   return url.includes('/storage/v1/object/') || url.includes('supabase.co/storage/');
-};
-
-// Helper function to check if a string is just a UUID (not a valid URL)
-const isUUID = (str) => {
-  if (!str || typeof str !== 'string') return false;
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidPattern.test(str.trim());
-};
-
-// Helper function to check if a URL is valid for use as an image source
-const isValidImageUrl = (url) => {
-  if (!url || typeof url !== 'string') return false;
-  // Reject if it's just a UUID (not a valid URL)
-  if (isUUID(url)) return false;
-  // Must start with http://, https://, or data:
-  return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:');
 };
 
 const TYPE_LABELS = {
@@ -76,9 +60,9 @@ export default function MaterialCard({ material, onPress, children = [], seconda
     >
       {/* Cover Image */}
       <View style={styles.coverContainer}>
-        {material.cover_image_url && isValidImageUrl(material.cover_image_url) && isSupabaseStorageUrl(material.cover_image_url) ? (
+        {safeImageUri(material.cover_image_url) && isSupabaseStorageUrl(material.cover_image_url) ? (
           <Image
-            source={{ uri: material.cover_image_url }}
+            source={{ uri: safeImageUri(material.cover_image_url) }}
             style={styles.coverImage}
             resizeMode="cover"
             onError={(e) => {

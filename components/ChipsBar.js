@@ -2,22 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
 import { COMMON_LABELS } from '../lib/toolTypes';
 import { User, Package, FileText, BookOpen } from 'lucide-react';
-
-// Helper to validate if avatar is a valid URL (not just a UUID)
-const isValidAvatarUrl = (url) => {
-  if (!url || typeof url !== 'string') return false;
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  
-  // Check if it's just a UUID (invalid URL format)
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidPattern.test(trimmed)) {
-    return false; // It's just a UUID, not a valid URL
-  }
-  
-  // Valid URLs must start with http://, https://, or data:
-  return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:');
-};
+import { safeImageUri } from '../lib/safeImageUri';
 
 const LABEL_ICONS = {
   projects: Package,
@@ -125,12 +110,11 @@ export default function ChipsBar({
                   className: 'chip'
                 } : {})}
               >
-                {child.avatar && isValidAvatarUrl(child.avatar) ? (
+                {safeImageUri(child.avatar) ? (
                   <Image 
-                    source={{ uri: child.avatar }} 
+                    source={{ uri: safeImageUri(child.avatar) }} 
                     style={[styles.avatar, styles.avatarImage, isActive && { borderColor: borderColor }]}
                     onError={(e) => {
-                      // Suppress 404 errors for missing avatars - they're harmless
                       if (Platform.OS === 'web' && e.nativeEvent) {
                         e.preventDefault?.();
                       }

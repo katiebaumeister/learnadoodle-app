@@ -5,7 +5,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { UserCircle, ArrowRight } from 'lucide-react';
-import { colors, shadows } from '../../theme/colors';
+import { colors, getShadow } from '../../theme/colors';
 
 export default function ChildMicroSummary({
   child,
@@ -42,16 +42,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E8E8E8',
-    ...(Platform.OS === 'web' 
-      ? { boxShadow: shadows.sm.boxShadow }
-      : {
-          shadowColor: shadows.sm.shadowColor,
-          shadowOffset: shadows.sm.shadowOffset,
-          shadowOpacity: shadows.sm.shadowOpacity,
-          shadowRadius: shadows.sm.shadowRadius,
-          elevation: shadows.sm.elevation,
-        }
-    ),
+    ...getShadow('sm'),
   },
   header: {
     flexDirection: 'row',

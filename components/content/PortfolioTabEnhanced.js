@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
 import { colors } from '../../theme/colors';
 import { apiRequest } from '../../lib/apiClient';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 /**
  * Enhanced Portfolio Tab with voice notes, standards linking, and export
@@ -240,9 +241,9 @@ export default function PortfolioTabEnhanced({ child, familyId }) {
   const renderItem = (item) => {
     return (
       <View key={item.id} style={styles.itemCard}>
-        {item.thumbnailUrl ? (
+        {safeImageUri(item.thumbnailUrl) ? (
           <Image 
-            source={{ uri: item.thumbnailUrl }} 
+            source={{ uri: safeImageUri(item.thumbnailUrl) }} 
             style={styles.thumbnail}
             onError={(e) => {
               // Suppress 404 errors for missing images - they're harmless

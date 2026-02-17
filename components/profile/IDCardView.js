@@ -4,6 +4,7 @@ import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
 import { supabase } from '../../lib/supabase';
 import GeistCard from '../GeistCard';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 export default function IDCardView({ child, familyId }) {
   const { mode } = useSensoryMode();
@@ -50,12 +51,11 @@ export default function IDCardView({ child, familyId }) {
           {/* ID Card Body */}
           <View style={styles.idBody}>
             <View style={styles.idLeft}>
-              {child.avatar_url && (child.avatar_url.startsWith('http://') || child.avatar_url.startsWith('https://') || child.avatar_url.startsWith('data:')) ? (
+              {safeImageUri(child.avatar_url) ? (
                 <Image 
-                  source={{ uri: child.avatar_url }} 
+                  source={{ uri: safeImageUri(child.avatar_url) }} 
                   style={styles.avatar}
                   onError={(e) => {
-                    // Suppress 404 errors for missing avatars - they're harmless
                     if (Platform.OS === 'web' && e.nativeEvent) {
                       e.preventDefault?.();
                     }

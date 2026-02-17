@@ -31,6 +31,41 @@ function AppContent() {
   }
 
   // Mobile layout with React Navigation
+  // Show auth screen if user is not logged in
+  if (!user) {
+    return (
+      <NavigationContainer>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            cardStyleInterpolator: () => ({
+              cardStyle: {
+                transform: [{ translateX: 0 }],
+              },
+            }),
+            transitionSpec: {
+              open: {
+                animation: 'timing',
+                config: {
+                  duration: 0,
+                },
+              },
+              close: {
+                animation: 'timing',
+                config: {
+                  duration: 0,
+                },
+              },
+            },
+          }}
+        >
+          <Stack.Screen name="Auth" component={AuthScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  }
+
+  // User is logged in, show main app screens
   return (
     <NavigationContainer>
       <Stack.Navigator

@@ -29,9 +29,13 @@ export default function StudentDetailsModal({ visible, student, onClose, onDelet
     prof10: require('../assets/prof10.png'),
   };
 
-  // Helper function to safely get avatar source
+  const { safeImageUri } = require('../lib/safeImageUri');
+
+  // Helper function to safely get avatar source (never pass UUID as uri)
   const getAvatarSource = (avatarKey) => {
     try {
+      const uri = safeImageUri(avatarKey);
+      if (uri) return { uri };
       return avatarSources[avatarKey] || avatarSources.prof1;
     } catch (error) {
       return avatarSources.prof1;

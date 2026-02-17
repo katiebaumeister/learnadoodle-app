@@ -309,9 +309,14 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
         {/* List */}
         {filteredItems.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>
-              {selectedSection === 'needs_revision' ? 'No upcoming events' : 'All caught up - Assign new tasks for children to complete'}
-            </Text>
+            {selectedSection === 'needs_revision' ? (
+              <Text style={styles.emptyText}>No upcoming events</Text>
+            ) : (
+              <>
+                <Text style={styles.emptyTitle}>All caught up</Text>
+                <Text style={styles.emptySubtext}>Assign new tasks for children to complete</Text>
+              </>
+            )}
           </View>
         ) : (
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
@@ -524,10 +529,30 @@ const styles = StyleSheet.create({
   emptyState: {
     padding: 20,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 6,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptySubtext: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyText: {
     fontSize: 13,
     color: colors.textSecondary,
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

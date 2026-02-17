@@ -67,26 +67,38 @@ async def get_family_members(
     """
     Get family members and children for the current user's family.
     Returns family name, children list, and all members (parents, tutors, children).
+    Resilient: never returns 500; returns empty data if a table is missing or query fails.
     """
     log_event("family.get_members.start", user_id=user["id"])
 
     try:
         family_id = get_family_id_for_user(user["id"])
-        if not family_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Family not found"
-            )
+    except Exception as e:
+        log_event("family.get_members.get_family_id_error", user_id=user["id"], error=str(e))
+        family_id = None
 
-        supabase = get_admin_client()
+    if not family_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Family not found"
+        )
 
-        # Get family name (if available)
-        family_res = supabase.table("family").select("name").eq("id", family_id).single().execute()
-        family_name = family_res.data.get("name") if family_res.data else None
+    supabase = get_admin_client()
+    family_name = None
+    children = []
+    members = []
 
-        # Get children
+    # Get family name (if available) - use maybe_single to avoid error when row missing
+    try:
+        family_res = supabase.table("family").select("name").eq("id", family_id).maybe_single().execute()
+        if family_res.data:
+            family_name = family_res.data.get("name")
+    except Exception as e:
+        log_event("family.get_members.family_table_error", user_id=user["id"], error=str(e))
+
+    # Get children
+    try:
         children_res = supabase.table("children").select("id, first_name").eq("family_id", family_id).eq("archived", False).execute()
-        children = []
         for child in (children_res.data or []):
             first_name = child.get("first_name") or "Child"
             children.append(ChildOut(
@@ -94,50 +106,49 @@ async def get_family_members(
                 name=first_name,
                 first_name=first_name
             ))
+    except Exception as e:
+        log_event("family.get_members.children_table_error", user_id=user["id"], error=str(e))
 
-        # Get family members
+    # Get family members - table may not exist or RLS/migration not applied
+    members_data = []
+    try:
         members_res = supabase.table("family_members").select(
             "id, user_id, member_role, child_scope"
         ).eq("family_id", family_id).execute()
+        members_data = list(members_res.data or [])
+    except Exception as e:
+        log_event("family.get_members.family_members_table_error", user_id=user["id"], error=str(e))
 
-        # Batch fetch all profile emails
-        user_ids = [m.get("user_id") for m in (members_res.data or []) if m.get("user_id")]
-        profiles_map = {}
-        if user_ids:
+    # Batch fetch profile emails
+    user_ids = [m.get("user_id") for m in members_data if m.get("user_id")]
+    profiles_map = {}
+    if user_ids:
+        try:
             profiles_res = supabase.table("profiles").select("id, email").in_("id", user_ids).execute()
             for profile in (profiles_res.data or []):
                 profiles_map[profile["id"]] = profile.get("email")
+        except Exception as e:
+            log_event("family.get_members.profiles_table_error", user_id=user["id"], error=str(e))
 
-        members = []
-        for member in (members_res.data or []):
-            email = profiles_map.get(member.get("user_id")) if member.get("user_id") else None
-            name = email or None
-            
-            members.append(MemberOut(
-                id=member["id"],
-                name=name,
-                email=email,
-                role=member.get("member_role", "parent"),
-                member_role=member.get("member_role"),
-                child_scope=member.get("child_scope", []) or []
-            ))
+    for member in members_data:
+        email = profiles_map.get(member.get("user_id")) if member.get("user_id") else None
+        name = email or None
+        members.append(MemberOut(
+            id=member["id"],
+            name=name,
+            email=email,
+            role=member.get("member_role", "parent"),
+            member_role=member.get("member_role"),
+            child_scope=member.get("child_scope", []) or []
+        ))
 
-        log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
+    log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
 
-        return FamilyMembersOut(
-            family_name=family_name,
-            children=children,
-            members=members
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_event("family.get_members.error", user_id=user["id"], error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch family members: {str(e)}"
-        )
+    return FamilyMembersOut(
+        family_name=family_name,
+        children=children,
+        members=members
+    )
 
 @router.post("/invite", response_model=InviteTutorOut)
 async def invite_tutor(
@@ -521,18 +532,36 @@ async def update_tutor_scope(
 
         supabase = get_admin_client()
 
-        # Verify current user is a parent
-        current_member_res = supabase.table("family_members").select("member_role").eq("user_id", user["id"]).eq("family_id", family_id).single().execute()
-        if not current_member_res.data or current_member_res.data.get("member_role") != 'parent':
-            profile_res = supabase.table("profiles").select("role").eq("id", user["id"]).single().execute()
-            if not profile_res.data or profile_res.data.get("role") != 'parent':
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only parents can update tutor access"
-                )
+        # Verify current user is a parent (family_members or profiles fallback)
+        is_parent = False
+        try:
+            current_member_res = supabase.table("family_members").select("member_role").eq("user_id", user["id"]).eq("family_id", family_id).maybe_single().execute()
+            if current_member_res.data and current_member_res.data.get("member_role") == 'parent':
+                is_parent = True
+        except Exception:
+            pass
+        if not is_parent:
+            try:
+                profile_res = supabase.table("profiles").select("role").eq("id", user["id"]).maybe_single().execute()
+                if profile_res.data and profile_res.data.get("role") == 'parent':
+                    is_parent = True
+            except Exception:
+                pass
+        if not is_parent:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only parents can update tutor access"
+            )
 
         # Verify member exists and is a tutor in this family
-        member_res = supabase.table("family_members").select("*").eq("id", member_id).eq("family_id", family_id).single().execute()
+        try:
+            member_res = supabase.table("family_members").select("*").eq("id", member_id).eq("family_id", family_id).maybe_single().execute()
+        except Exception as e:
+            log_event("family.update_tutor_scope.family_members_error", user_id=user["id"], error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tutor member not found"
+            )
         if not member_res.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

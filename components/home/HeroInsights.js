@@ -5,7 +5,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Sparkles, ArrowRight, Heart, Target, Lightbulb } from 'lucide-react';
-import { colors, shadows } from '../../theme/colors';
+import { colors, getShadow } from '../../theme/colors';
 
 export default function HeroInsights({
   primary,
@@ -96,16 +96,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: '#E9D5FF',
-    ...(Platform.OS === 'web' 
-      ? { boxShadow: shadows.md.boxShadow }
-      : {
-          shadowColor: shadows.md.shadowColor,
-          shadowOffset: shadows.md.shadowOffset,
-          shadowOpacity: shadows.md.shadowOpacity,
-          shadowRadius: shadows.md.shadowRadius,
-          elevation: shadows.md.elevation,
-        }
-    ),
+    ...getShadow('md'),
   },
   heroHeader: {
     flexDirection: 'row',
@@ -154,16 +145,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
-    ...(Platform.OS === 'web' 
-      ? { boxShadow: shadows.sm.boxShadow }
-      : {
-          shadowColor: shadows.sm.shadowColor,
-          shadowOffset: shadows.sm.shadowOffset,
-          shadowOpacity: shadows.sm.shadowOpacity,
-          shadowRadius: shadows.sm.shadowRadius,
-          elevation: shadows.sm.elevation,
-        }
-    ),
+    ...getShadow('sm'),
   },
   emotionalLayer: {
     backgroundColor: '#FFF1F2',

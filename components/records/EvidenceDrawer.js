@@ -12,6 +12,7 @@ import NoteEditorModal from './NoteEditorModal';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import { reviewAssignment } from '../../lib/services/assignmentsClient';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 export default function EvidenceDrawer({
   isOpen,
@@ -235,9 +236,9 @@ export default function EvidenceDrawer({
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Preview</Text>
               <View style={styles.previewCard}>
-                {imageUrl && evidence.mime_type?.startsWith('image/') ? (
+                {safeImageUri(imageUrl) && evidence.mime_type?.startsWith('image/') ? (
                   <RNImage
-                    source={{ uri: imageUrl }}
+                    source={{ uri: safeImageUri(imageUrl) }}
                     style={styles.previewImage}
                     resizeMode="cover"
                   />

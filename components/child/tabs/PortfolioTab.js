@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { shouldSuppressError } from '../../../lib/apiClient';
 import { colors } from '../../../theme/colors';
+import { safeImageUri } from '../../../lib/safeImageUri';
 
 export default function PortfolioTab({ child }) {
   const [items, setItems] = useState([]);
@@ -118,9 +119,9 @@ export default function PortfolioTab({ child }) {
         <View style={styles.itemsGrid}>
           {items.map((item) => (
             <View key={item.id} style={styles.itemCard}>
-              {item.thumbnailUrl ? (
+              {safeImageUri(item.thumbnailUrl) ? (
                 <Image 
-                  source={{ uri: item.thumbnailUrl }} 
+                  source={{ uri: safeImageUri(item.thumbnailUrl) }} 
                   style={styles.thumbnail}
                   onError={(e) => {
                     // Suppress 404 errors for missing images - they're harmless

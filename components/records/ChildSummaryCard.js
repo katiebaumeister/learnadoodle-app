@@ -7,6 +7,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { Calendar, Award, FileText, ArrowRight, BarChart3 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColor, getTextColorForBackground } from '../../utils/avatarColors';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 const avatarSources = {
   prof1: require('../../assets/prof1.png'),
@@ -22,9 +23,9 @@ const avatarSources = {
 };
 
 const resolveAvatarSource = (avatarKey) => {
-  if (!avatarKey) {
-    return avatarSources.prof1;
-  }
+  if (!avatarKey) return avatarSources.prof1;
+  const uri = safeImageUri(avatarKey);
+  if (uri) return { uri };
   const normalized = String(avatarKey)
     .toLowerCase()
     .replace(/.*\//, '')

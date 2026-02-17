@@ -6,6 +6,12 @@ import CompletionRing from './CompletionRing';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
 
 export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
+  // Holidays should not be clickable, movable, or show time
+  const isHoliday = ev?.type === 'holiday' || ev?.event_type === 'holiday';
+  const effectiveHideTime = hideTime || isHoliday;
+  const effectiveOnPress = isHoliday ? undefined : onPress;
+  const effectiveDisableTouchable = disableTouchable || isHoliday;
+  
   // Get color based on event type, fallback to ev.color, then default to gray
   const getEventTypeColor = () => {
     const eventType = ev.event_type || ev.type || '';
@@ -144,16 +150,16 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   // Format time so display always matches actual scheduled local time
   const formatTime = () => {
     // Debug logging for the specific event we're tracking
-    if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
-      console.log('[EventChip] formatTime called for fd8afe0d-ffc8-4753-9ea6-32835b52fcb6:', {
-        start_local: ev.start_local,
-        start_ts: ev.start_ts,
-        start: ev.start,
-        time: ev.time,
-        data_start_local: ev.data?.start_local,
-        data_start_ts: ev.data?.start_ts,
-      });
-    }
+    // if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
+    //   console.log('[EventChip] formatTime called for fd8afe0d-ffc8-4753-9ea6-32835b52fcb6:', {
+    //     start_local: ev.start_local,
+    //     start_ts: ev.start_ts,
+    //     start: ev.start,
+    //     time: ev.time,
+    //     data_start_local: ev.data?.start_local,
+    //     data_start_ts: ev.data?.start_ts,
+    //   });
+    // }
     
     // 1) Prefer start_local (time-only or timestamp) as the single source of truth
     if (typeof ev.start_local === 'string') {
@@ -166,9 +172,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         if (periodRaw) {
           const period = periodRaw.toUpperCase();
           const result = minutes === '00' ? `${hours} ${period}` : `${hours}:${minutes} ${period}`;
-          if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
-            console.log('[EventChip] formatTime result (with period):', result, 'from start_local:', ev.start_local);
-          }
+          // if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
+          //   console.log('[EventChip] formatTime result (with period):', result, 'from start_local:', ev.start_local);
+          // }
           return result;
         }
 
@@ -176,9 +182,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         if (hours > 12) hours -= 12;
         else if (hours === 0) hours = 12;
         const result = minutes === '00' ? `${hours} ${derivedPeriod}` : `${hours}:${minutes} ${derivedPeriod}`;
-        if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
-          console.log('[EventChip] formatTime result (derived period):', result, 'from start_local:', ev.start_local, 'hours:', parseInt(match[1], 10));
-        }
+        // if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
+        //   console.log('[EventChip] formatTime result (derived period):', result, 'from start_local:', ev.start_local, 'hours:', parseInt(match[1], 10));
+        // }
         return result;
       }
       // Log only if start_local exists but doesn't match expected format (potential issue)
@@ -362,7 +368,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     const style = {
       ...baseStyle,
       ...(Platform.OS === 'web' && {
-        cursor: onPress || onRightClick ? 'pointer' : 'default',
+        cursor: (effectiveOnPress || onRightClick) && !effectiveDisableTouchable ? 'pointer' : 'default',
         outline: 'none',
         borderWidth: baseStyle.borderWidth !== undefined ? baseStyle.borderWidth : 0,
         borderColor: 'transparent',
@@ -371,12 +377,12 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       }),
     };
 
-    if ((onPress || onRightClick) && !disableTouchable) {
+    if ((effectiveOnPress || onRightClick) && !effectiveDisableTouchable) {
       return (
         <TouchableOpacity 
           style={style} 
           activeOpacity={0.85} 
-          onPress={onPress}
+          onPress={effectiveOnPress}
           {...(Platform.OS === 'web' && {
             onMouseEnter: (e) => {
               setIsHovered(true);
@@ -606,7 +612,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {displayTime && !hideTime && (
+                {displayTime && !hideTime && !isHoliday && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title
@@ -699,7 +705,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {displayTime && !hideTime && (
+                {displayTime && !hideTime && !isHoliday && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title

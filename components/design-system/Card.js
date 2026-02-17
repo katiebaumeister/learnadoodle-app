@@ -37,34 +37,23 @@ export function Card({
       borderRadius: variant === 'floating' ? 20 : 16,
       borderWidth: mode === 'contrast' ? 2 : 1,
       borderColor: tokens.border,
-      ...(variant === 'floating' && {
-        shadowColor: mode === 'contrast' ? tokens.border : 'transparent',
-        ...Platform.select({
-          web: {
-            boxShadow: tokens.shadow.floating,
-          },
-          default: {
+      ...(variant === 'floating' && (Platform.OS === 'web'
+        ? { boxShadow: tokens.shadow.floating }
+        : {
+            shadowColor: mode === 'contrast' ? tokens.border : 'transparent',
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: mode === 'contrast' ? 1 : 0.1,
             shadowRadius: 12,
             elevation: 8,
-          },
-        }),
-      }),
-      ...(variant === 'default' && {
-        ...Platform.select({
-          web: {
-            boxShadow: tokens.shadow.card,
-            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-          },
-          default: {
+          })),
+      ...(variant === 'default' && (Platform.OS === 'web'
+        ? { boxShadow: tokens.shadow.card, transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)' }
+        : {
             shadowOffset: { width: 0, height: 2 },
             shadowOpacity: 0.06,
             shadowRadius: 8,
             elevation: 2,
-          },
-        }),
-      }),
+          })),
       padding: padding === 'lg' ? 20 : padding === 'md' ? 16 : padding === 'sm' ? 12 : padding,
     },
     style,

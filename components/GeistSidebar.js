@@ -4,6 +4,7 @@ import { Plus, Home, CalendarDays, Search, Compass, FileText, BookOpen, Brain, U
 import { useSensoryMode } from '../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../theme/pastelDesignTokens';
 import FeedbackChip from './FeedbackChip';
+import { safeImageUri } from '../lib/safeImageUri';
 
 const avatarSources = {
   prof1: require('../assets/prof1.png'),
@@ -115,13 +116,13 @@ export default function GeistSidebar({
   };
 
   const renderChildAvatar = (child) => {
-    if (child.avatar_url && isValidAvatarUrl(child.avatar_url)) {
+    const avatarUri = safeImageUri(child.avatar_url || child.avatar);
+    if (avatarUri) {
       return (
         <Image 
-          source={{ uri: child.avatar_url }} 
+          source={{ uri: avatarUri }} 
           style={styles.childAvatar}
           onError={(e) => {
-            // Suppress 404 errors for missing avatars - they're harmless
             if (Platform.OS === 'web' && e.nativeEvent) {
               e.preventDefault?.();
             }

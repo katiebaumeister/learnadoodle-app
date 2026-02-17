@@ -1122,7 +1122,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               const cleaned = (allData || []).map(child => ({
                 ...child,
                 avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
-                avatar: validateAvatarUrl(child.avatar) || child.avatar
+                avatar: validateAvatarUrl(child.avatar) ?? null
               }));
               setChildren(cleaned);
             } else {
@@ -1134,7 +1134,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             const cleaned = (childrenData || []).map(child => ({
               ...child,
               avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
-              avatar: validateAvatarUrl(child.avatar) || child.avatar
+              avatar: validateAvatarUrl(child.avatar) ?? null
             }));
             setChildren(cleaned);
           }

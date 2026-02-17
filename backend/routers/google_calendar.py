@@ -51,6 +51,18 @@ def _build_state(user_id: str, family_id: str) -> str:
     return state
 
 
+@router.get("/debug/redirect-uri")
+async def get_redirect_uri_debug(user=Depends(get_current_user), _: None = Depends(rate_limiter)):
+    """Debug endpoint to check what redirect URI is configured"""
+    try:
+        _, _, redirect_uri = _get_google_client()
+        return {
+            "redirect_uri": redirect_uri,
+            "message": "This is the redirect URI that will be sent to Google. Make sure it matches exactly in Google Cloud Console."
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @router.get("/status")
 async def get_status(user=Depends(get_current_user), _: None = Depends(rate_limiter)):
     family_id = get_family_id_for_user(user["id"])

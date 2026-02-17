@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Image } from 'react-native';
 import { Flame, Clock, BookOpen, Award } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 const avatarSources = {
   prof1: require('../../assets/prof1.png'),
@@ -17,9 +18,9 @@ const avatarSources = {
 };
 
 const resolveAvatarSource = (avatarKey) => {
-  if (!avatarKey) {
-    return avatarSources.prof1;
-  }
+  if (!avatarKey) return avatarSources.prof1;
+  const uri = safeImageUri(avatarKey);
+  if (uri) return { uri };
   const normalized = String(avatarKey)
     .toLowerCase()
     .replace(/.*\//, '')

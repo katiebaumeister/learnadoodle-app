@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
 import { colors, shadows } from '../../theme/colors';
 import { createFileMaterial } from '../../lib/services/materialsClient';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 export default function Uploads({ familyId, initialChildren = [] }) {
   const [items, setItems] = useState([]);
@@ -331,12 +332,17 @@ function SignedImage({ path }) {
     );
   }
 
-  return (
+  const safeUrl = safeImageUri(url);
+  return safeUrl ? (
     <Image
-      source={{ uri: url }}
+      source={{ uri: safeUrl }}
       style={styles.imagePreview}
       resizeMode="cover"
     />
+  ) : (
+    <View style={styles.imagePlaceholder}>
+      <Text style={styles.placeholderText}>Image unavailable</Text>
+    </View>
   );
 }
 

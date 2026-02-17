@@ -144,11 +144,10 @@ export default function TopBar({
           accessibilityRole="button"
           accessibilityLabel="Account and settings"
         >
-          {user?.avatar ? (
-            <Image source={{ uri: user.avatar }} style={styles.avatarImage} />
-          ) : (
-            <User size={16} color={colors.muted} />
-          )}
+          {(() => {
+            const uri = require('../../lib/safeImageUri').safeImageUri(user?.avatar);
+            return uri ? <Image source={{ uri }} style={styles.avatarImage} /> : <User size={16} color={colors.muted} />;
+          })()}
         </TouchableOpacity>
       </View>
     </View>

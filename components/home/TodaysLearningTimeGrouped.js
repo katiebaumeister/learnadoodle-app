@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Platform, Image } from 'react
 import { Clock, BookOpen, ArrowRight, CheckCircle, Check, FileText, Plus, Calculator, FlaskConical, Globe, Palette, Music, Dumbbell, Code, Pencil, Circle } from 'lucide-react';
 import { colors, shadows, getCategoryColor } from '../../theme/colors';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 // Avatar sources
 const avatarSources = {
@@ -20,6 +21,8 @@ const avatarSources = {
 
 const resolveAvatarSource = (avatarKey) => {
   if (!avatarKey) return avatarSources.prof1;
+  const uri = safeImageUri(avatarKey);
+  if (uri) return { uri };
   const normalized = String(avatarKey)
     .toLowerCase()
     .replace(/.*\//, '')

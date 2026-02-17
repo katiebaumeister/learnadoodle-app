@@ -316,7 +316,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             const cleaned = (allData || []).map(child => ({
               ...child,
               avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
-              avatar: validateAvatarUrl(child.avatar) || child.avatar
+              avatar: validateAvatarUrl(child.avatar) ?? null
             }));
             setChildrenWithAvatars(cleaned);
           } else {
@@ -328,7 +328,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           const cleaned = (childrenData || []).map(child => ({
             ...child,
             avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
-            avatar: validateAvatarUrl(child.avatar) || child.avatar
+            avatar: validateAvatarUrl(child.avatar) ?? null
           }));
           setChildrenWithAvatars(cleaned);
         }

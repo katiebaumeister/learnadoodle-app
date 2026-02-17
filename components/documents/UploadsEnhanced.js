@@ -8,6 +8,7 @@ import { autoCaptionOnUpload } from '../../lib/services/autoCaptionService';
 import { createFileMaterial } from '../../lib/services/materialsClient';
 import PDFViewer from '../content/PDFViewer';
 import MagicExtract from '../content/MagicExtract';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 const TYPE_FILTERS = [
   { key: 'image', label: 'Images' },
@@ -710,9 +711,9 @@ function UploadCard({ item, index, selected, onToggleSelect, onAssign, familyId 
     <View style={[styles.card, selected && styles.cardSelected]}>
       {/* Preview */}
       <View style={styles.cardPreview}>
-        {item.kind === 'image' && signedUrl ? (
+        {item.kind === 'image' && safeImageUri(signedUrl) ? (
           <Image 
-            source={{ uri: signedUrl }} 
+            source={{ uri: safeImageUri(signedUrl) }} 
             style={styles.cardImage} 
             resizeMode="cover"
             onError={(e) => {

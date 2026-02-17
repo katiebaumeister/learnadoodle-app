@@ -1,4 +1,8 @@
-// Must be imported first for React Navigation
+// Must run first: block UUID image URIs at DOM layer (no deps), then React/ImageLoader
+import './lib/patchImageLoaderWebDom';
+import './lib/patchImageLoaderWeb';
+
+// Must be imported early for React Navigation
 import 'react-native-gesture-handler';
 
 import { registerRootComponent } from 'expo';

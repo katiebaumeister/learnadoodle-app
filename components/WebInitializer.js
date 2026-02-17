@@ -70,6 +70,65 @@ if (typeof window !== 'undefined') {
       console.warn('[WebInitializer] Failed to intercept console.warn:', e);
     }
 
+    // Intercept fetch() so we never request URLs that are just a UUID (prevents 404s and console noise)
+    try {
+      const originalFetch = window.fetch;
+      if (typeof originalFetch === 'function') {
+        window.fetch = function (input, init) {
+          try {
+            let urlToCheck = typeof input === 'string' ? input : (input && input.url);
+            if (urlToCheck) {
+              const trimmed = String(urlToCheck).trim();
+              if (uuidPattern.test(trimmed) || uuidWithSuffixPattern.test(trimmed)) {
+                return Promise.resolve(new Response(null, { status: 404, statusText: 'Not Found' }));
+              }
+              try {
+                const parsed = new URL(trimmed, window.location.origin);
+                const pathSegment = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] || '';
+                if (pathSegment && (uuidPattern.test(pathSegment) || uuidWithSuffixPattern.test(pathSegment))) {
+                  return Promise.resolve(new Response(null, { status: 404, statusText: 'Not Found' }));
+                }
+              } catch (_) {
+                // Not a valid URL, ignore
+              }
+            }
+          } catch (_) {
+            // Ignore
+          }
+          return originalFetch.apply(this, arguments);
+        };
+      }
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to intercept fetch:', e);
+    }
+
+    // Intercept XMLHttpRequest.open so we never request UUID-only URLs
+    try {
+      const XHROpen = XMLHttpRequest.prototype.open;
+      if (typeof XHROpen === 'function') {
+        XMLHttpRequest.prototype.open = function (method, url) {
+          try {
+            const trimmed = String(url).trim();
+            if (uuidPattern.test(trimmed) || uuidWithSuffixPattern.test(trimmed)) {
+              this._blockedUuidUrl = true;
+              return XHROpen.call(this, method, 'about:blank');
+            }
+            const parsed = new URL(trimmed, window.location.origin);
+            const pathSegment = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] || '';
+            if (pathSegment && (uuidPattern.test(pathSegment) || uuidWithSuffixPattern.test(pathSegment))) {
+              this._blockedUuidUrl = true;
+              return XHROpen.call(this, method, 'about:blank');
+            }
+          } catch (_) {
+            // Ignore
+          }
+          return XHROpen.apply(this, arguments);
+        };
+      }
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to intercept XMLHttpRequest.open:', e);
+    }
+
     // Intercept HTMLImageElement.prototype.src at the prototype level (runs immediately)
     try {
       if (typeof HTMLImageElement !== 'undefined') {
@@ -163,8 +222,37 @@ if (typeof window !== 'undefined') {
       console.warn('[WebInitializer] Failed to intercept HTMLIFrameElement.prototype.src:', e);
     }
 
-    // Note: We're NOT intercepting fetch or XMLHttpRequest as they might be needed for legitimate API calls
-    // The image/iframe interception should be sufficient to prevent most 404 errors
+    // Patch setAttribute on img/iframe so src is never set to a UUID (catches React/setAttribute code paths)
+    try {
+      if (typeof HTMLImageElement !== 'undefined') {
+        const imgSetAttribute = HTMLImageElement.prototype.setAttribute;
+        if (typeof imgSetAttribute === 'function') {
+          HTMLImageElement.prototype.setAttribute = function (name, value) {
+            if (name === 'src' && value != null && typeof value === 'string' && isJustUuid(value)) {
+              imgSetAttribute.call(this, 'data-blocked-uuid', 'true');
+              if (this.style) this.style.display = 'none';
+              return;
+            }
+            return imgSetAttribute.call(this, name, value);
+          };
+        }
+      }
+      if (typeof HTMLIFrameElement !== 'undefined') {
+        const iframeSetAttribute = HTMLIFrameElement.prototype.setAttribute;
+        if (typeof iframeSetAttribute === 'function') {
+          HTMLIFrameElement.prototype.setAttribute = function (name, value) {
+            if (name === 'src' && value != null && typeof value === 'string' && isJustUuid(value)) {
+              iframeSetAttribute.call(this, 'data-blocked-uuid', 'true');
+              if (this.style) this.style.display = 'none';
+              return;
+            }
+            return iframeSetAttribute.call(this, name, value);
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[WebInitializer] Failed to patch setAttribute for img/iframe:', e);
+    }
   } catch (e) {
     console.error('[WebInitializer] Error setting up interceptors:', e);
     // Don't throw - allow app to continue loading
@@ -247,6 +335,9 @@ export default function WebInitializer({ children }) {
 
     // Load Cooper Hewitt font family (all weights), League Spartan for sidebar, and JetBrains Mono for code
     const loadFonts = () => {
+      // Guard against mobile environments
+      if (typeof document === 'undefined') return;
+      
       // Note: Cooper Hewitt is loaded via @font-face in CSS or from local files
       // The font-family references in designTokens.js will use Cooper Hewitt
       // No need to load from Google Fonts as Cooper Hewitt is not available there
@@ -282,6 +373,9 @@ export default function WebInitializer({ children }) {
     // Web-specific initialization
     const applyDesignTokens = () => {
       try {
+        // Guard against mobile environments
+        if (typeof document === 'undefined') return;
+        
         // Load fonts first
         loadFonts();
 
@@ -318,10 +412,12 @@ export default function WebInitializer({ children }) {
     // Run cleanup after a short delay to avoid interfering with initialization
     // Don't run cleanup immediately - let the app load first
     const cleanupTimeout = setTimeout(() => {
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', cleanupInvalidUrls);
-      } else {
-        cleanupInvalidUrls();
+      if (typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', cleanupInvalidUrls);
+        } else {
+          cleanupInvalidUrls();
+        }
       }
     }, 1000);
     

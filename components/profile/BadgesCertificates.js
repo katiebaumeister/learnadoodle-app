@@ -7,6 +7,7 @@ import { designTokens } from '../../theme/designTokens';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import GeistCard from '../GeistCard';
+import { safeImageUri } from '../../lib/safeImageUri';
 
 export default function BadgesCertificates({ childId, familyId }) {
   const { mode } = useSensoryMode();
@@ -237,7 +238,7 @@ export default function BadgesCertificates({ childId, familyId }) {
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgeScroll}>
             {badges.map((badge) => {
-              const imageUrl = getFileUrl(badge);
+              const imageUrl = safeImageUri(getFileUrl(badge));
               return (
                 <GeistCard key={badge.id} variant="small" hoverable style={styles.badgeCard}>
                   <View style={styles.badgeContent}>
@@ -295,7 +296,7 @@ export default function BadgesCertificates({ childId, familyId }) {
         ) : (
           <View style={styles.certificatesGrid}>
             {certificates.map((cert) => {
-              const imageUrl = getFileUrl(cert);
+              const imageUrl = safeImageUri(getFileUrl(cert));
               return (
                 <GeistCard key={cert.id} variant="medium" hoverable style={styles.certCard}>
                   <View style={styles.certContent}>
