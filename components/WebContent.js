@@ -15,6 +15,7 @@ import {
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
+import { getHolidaysForRange } from '../lib/services/academicYearClient'
 
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
@@ -514,6 +515,7 @@ import TodayNotificationCard from './home/TodayNotificationCard'
 import MicroNotificationCard from './home/MicroNotificationCard'
 import HeroMoodCard from './home/HeroMoodCard'
 import FamilyOverviewCards from './home/FamilyOverviewCards'
+import FamilyPanel from './settings/FamilyPanel'
 import ChildMicroWorldCard from './home/ChildMicroWorldCard'
 import ParentCoachingCards from './home/ParentCoachingCards'
 import CollapsedInsightsSection from './home/CollapsedInsightsSection'
@@ -3181,6 +3183,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [calendarDataCache, setCalendarDataCache] = useState({})
   const [calendarEvents, setCalendarEvents] = useState({}) // dateKey -> events[] (optimistic + merged)
   const [calendarBlackoutDates, setCalendarBlackoutDates] = useState({})
+  const [plannerHolidaysCache, setPlannerHolidaysCache] = useState({}) // monthKey -> [{ date, name, type }]
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   const [calendarDataLoading, setCalendarDataLoading] = useState(false)
   // Planner view date (synced from WebLayout via plannerMonthChange)
@@ -3381,6 +3384,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       refreshCalendarData(plannerDate).catch((err) => console.error('[WebContent] Initial planner load failed:', err));
     }
   }, [activeTab, familyId, plannerDate, calendarDataCache, refreshCalendarData]);
+
+  // Fetch holidays for planner visible month (from global holiday table + custom)
+  useEffect(() => {
+    if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
+    if (!familyId) return;
+    const year = plannerDate.getFullYear();
+    const month = plannerDate.getMonth();
+    const monthKey = `${year}-${month}`;
+    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    getHolidaysForRange(familyId, start, end).then(({ data, error }) => {
+      if (error) return;
+      setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: (data?.holidays || []) }));
+    });
+  }, [activeTab, familyId, plannerDate]);
   
   // Home Page Modal State
   const [showHomeEventModal, setShowHomeEventModal] = useState(false);
@@ -6222,7 +6241,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     setShowSyllabusModal(false)
   }
 
-  // Build events array for planner: use calendarDataCache for visible month, overlay calendarEvents (optimistic)
+  // Build events array for planner: use calendarDataCache for visible month, overlay calendarEvents (optimistic), add holidays
   const plannerEventsForMonth = useMemo(() => {
     const year = plannerDate.getFullYear();
     const month = plannerDate.getMonth();
@@ -6237,8 +6256,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         merged[dateKey] = fromState;
       }
     });
-    return Object.entries(merged).flatMap(([, evts]) => (Array.isArray(evts) ? evts : []));
-  }, [plannerDate, calendarDataCache, calendarEvents]);
+    const calendarEventList = Object.entries(merged).flatMap(([, evts]) => (Array.isArray(evts) ? evts : []));
+    const holidays = plannerHolidaysCache[monthKey] || [];
+    const holidayEvents = holidays.map((h) => ({
+      id: `holiday-${h.date}-${(h.name || '').replace(/\s+/g, '-').slice(0, 30)}`,
+      date_local: h.date,
+      title: h.name,
+      type: 'holiday',
+      event_type: 'holiday',
+      status: null,
+    }));
+    return [...calendarEventList, ...holidayEvents];
+  }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache]);
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
@@ -6678,6 +6707,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             </View>
           );
         }
+      case 'profile':
+      case 'children-list':
+        return (
+          <View style={{ flex: 1, minHeight: 0 }}>
+            <FamilyPanel
+              user={user}
+              family={propFamily}
+              familyId={familyId}
+              onFamilyUpdate={onFamilyUpdate}
+              profile={propProfile}
+              preloadedSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
+            />
+          </View>
+        );
       default:
         return null;
     }

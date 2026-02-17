@@ -123,8 +123,7 @@ export default function LeftRail({
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'subjects', label: 'Subjects', icon: Brain },
         { key: 'materials', label: 'Library', icon: BookOpen },
-        { key: 'new', label: 'Family', icon: null },
-        // { key: 'profile', label: 'Family', icon: UserCircle }, // Hidden for now
+        { key: 'profile', label: 'Family', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
         // { key: 'subjects', label: 'Subjects', icon: null }, // Hidden from sidebar

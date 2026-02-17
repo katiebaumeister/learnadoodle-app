@@ -701,3 +701,92 @@ async def get_academic_year(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get academic year: {str(e)}"
         )
+
+
+@router.get("/holidays_for_range")
+async def get_holidays_for_range(
+    family_id: str = Query(..., description="Family ID"),
+    start: str = Query(..., description="Start date YYYY-MM-DD"),
+    end: str = Query(..., description="End date YYYY-MM-DD"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Get all holidays (from global holiday table + custom) for a family in a date range.
+    Used by the planner to show holidays on month/week views.
+    """
+    try:
+        family_id_user = get_family_id_for_user(user["id"])
+        if not family_id_user or family_id_user != family_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Family ID mismatch"
+            )
+        start_date = date.fromisoformat(start[:10])
+        end_date = date.fromisoformat(end[:10])
+        if start_date > end_date:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start must be <= end")
+
+        supabase = get_admin_client()
+        # Find academic years that overlap [start, end]
+        years_resp = supabase.table("academic_years").select("id, start_date, end_date").eq(
+            "family_id", family_id
+        ).execute()
+        if not years_resp.data:
+            return {"holidays": []}
+
+        def _parse_date(v):
+            if v is None:
+                return None
+            s = (v.isoformat() if hasattr(v, "isoformat") else str(v))[:10]
+            return date.fromisoformat(s)
+
+        seen = set()  # (date_str, name) for dedupe
+        result = []
+        for row in years_resp.data:
+            ay_start = _parse_date(row.get("start_date"))
+            ay_end = _parse_date(row.get("end_date"))
+            if ay_start is None or ay_end is None:
+                continue
+            if ay_end < start_date or ay_start > end_date:
+                continue
+            try:
+                # Use limit(1) instead of maybe_single() - Supabase Python maybe_single() throws on 0 rows
+                settings_resp = supabase.table("academic_year_holiday_settings").select("*").eq(
+                    "academic_year_id", row["id"]
+                ).limit(1).execute()
+                holiday_settings = (settings_resp.data[0] if settings_resp.data and len(settings_resp.data) > 0 else None)
+                include_global = holiday_settings.get("follow_global_holidays", False) if holiday_settings else False
+                country_code = holiday_settings.get("holiday_country_code") if holiday_settings else None
+                region = holiday_settings.get("holiday_region") if holiday_settings else None
+                provider = (holiday_settings.get("provider") or "NAGER_DATE") if holiday_settings else "NAGER_DATE"
+                holidays = get_holidays_for_year(
+                    supabase,
+                    row["id"],
+                    include_global=include_global,
+                    country_code=country_code,
+                    region=region,
+                    provider=provider,
+                )
+            except Exception as year_err:
+                log_event("academic_year.holidays_for_range.year_error", user_id=user["id"], academic_year_id=row["id"], error=str(year_err))
+                holidays = []
+            for h in holidays:
+                raw = h.get("date")
+                if raw is None:
+                    continue
+                d = date.fromisoformat(str(raw)[:10]) if isinstance(raw, str) else (raw if hasattr(raw, "year") else date.fromisoformat(str(raw)[:10]))
+                date_str = str(raw)[:10] if isinstance(raw, str) else (raw.isoformat() if hasattr(raw, "isoformat") else str(raw)[:10])
+                if start_date <= d <= end_date:
+                    key = (date_str, h.get("name", ""))
+                    if key not in seen:
+                        seen.add(key)
+                        result.append({"date": date_str, "name": h.get("name", ""), "type": h.get("type", "CUSTOM_HOLIDAY")})
+        result.sort(key=lambda x: (x["date"], x["name"]))
+        return {"holidays": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("academic_year.holidays_for_range.error", user_id=user.get("id"), error=str(e))
+        # Return empty holidays so the planner never breaks; fix backend and restart to get holidays
+        return {"holidays": []}

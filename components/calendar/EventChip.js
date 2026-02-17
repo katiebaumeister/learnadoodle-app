@@ -23,6 +23,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     if (eventTypeLower === 'assignment') return 'assignment';
     if (eventTypeLower === 'schedule block') return 'schedule_block';
     if (eventTypeLower === 'appointment') return 'appointment';
+    if (eventTypeLower === 'holiday') return 'holiday';
     
     // Fallback to ev.color if set, otherwise default to appointment (gray)
     return ev.color ?? 'appointment';
@@ -65,6 +66,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#FFE8D1'; // Soft Orange / Peach
       case 'appointment':
         return '#F2F4F7'; // Warm Gray
+      case 'holiday':
+        return '#FEF3C7'; // Soft Amber (day off)
       default:
         return '#F2F4F7'; // Default Warm Gray
     }
@@ -83,6 +86,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#FFD9B3'; // More saturated Soft Orange / Peach
       case 'appointment':
         return '#E5E7EB'; // More saturated Warm Gray
+      case 'holiday':
+        return '#FDE68A'; // More saturated Amber
       default:
         return '#E5E7EB'; // Default more saturated Warm Gray
     }
@@ -101,6 +106,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#E08A3C'; // Soft Orange / Peach accent
       case 'appointment':
         return '#6B7280'; // Warm Gray accent
+      case 'holiday':
+        return '#B45309'; // Amber accent
       default:
         return '#111827'; // Default dark text
     }
