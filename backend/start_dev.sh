@@ -51,10 +51,10 @@ if ! python -c "import fastapi" &> /dev/null; then
 fi
 
 # Start server
-echo "✅ Starting server on http://localhost:8000"
-echo "📚 API docs available at http://localhost:8000/docs"
+echo "✅ Starting server on http://localhost:8001"
+echo "📚 API docs available at http://localhost:8001/docs"
 echo "🛑 Press Ctrl+C to stop"
 echo ""
 
-python -m uvicorn main:app --reload --port 8000 --log-level warning --no-access-log --timeout-keep-alive 360
+python -m uvicorn main:app --reload --port 8001 --log-level warning --no-access-log --timeout-keep-alive 360
 

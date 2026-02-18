@@ -694,10 +694,14 @@ async def apply_ai_plan_changes(
                 adds += 1
                 
             elif change_type == "move":
-                supa.table("events").update({
-                    "start_ts": payload["to_start"],
-                    "end_ts": payload["to_end"]
-                }).eq("id", payload["event_id"]).execute()
+                event_id = payload.get("event_id")
+                ev_res = supa.table("events").select("is_placeholder, generated_by, generation_batch_id, academic_year_id").eq("id", event_id).execute()
+                ev = ev_res.data[0] if ev_res.data else {}
+                from helpers import get_placeholder_conversion_fields
+                update_payload = {"start_ts": payload["to_start"], "end_ts": payload["to_end"]}
+                conv_fields, _ = get_placeholder_conversion_fields(ev)
+                update_payload.update(conv_fields)
+                supa.table("events").update(update_payload).eq("id", event_id).execute()
                 moves += 1
                 
             elif change_type == "delete":

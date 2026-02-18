@@ -28,7 +28,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user, child_belongs_to_family
+from helpers import get_family_id_for_user, child_belongs_to_family, get_placeholder_conversion_fields
 from logger import log_event
 from supabase_client import get_admin_client
 
@@ -289,6 +289,10 @@ async def reschedule_event(
             "reschedule_origin": body.origin or "manual",
             "reschedule_reason": body.reason or f"Rescheduled to {new_start_dt.date()}"
         }
+        conv_fields, did_convert = get_placeholder_conversion_fields(event)
+        update_data.update(conv_fields)
+        if did_convert:
+            log_event("placeholder_converted", action="reschedule", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
         supabase.table("events").update(update_data).eq("id", event_id).execute()
         updated_event.update(update_data)
         
@@ -352,10 +356,12 @@ async def update_event_status(
         
         supabase = get_admin_client()
         
-        # Update event status
-        update_res = supabase.table("events").update({
-            "status": body.status
-        }).eq("id", event_id).execute()
+        status_update = {"status": body.status}
+        conv_fields, did_convert = get_placeholder_conversion_fields(event)
+        status_update.update(conv_fields)
+        if did_convert:
+            log_event("placeholder_converted", action="status_update", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
+        update_res = supabase.table("events").update(status_update).eq("id", event_id).execute()
         
         if not update_res.data:
             raise HTTPException(
@@ -584,6 +590,7 @@ async def auto_schedule_course(
                                     "status": "scheduled",
                                     "source": "syllabus",
                                     "source_section_id": section.get("id"),
+                                    "counts_toward_plan": True,
                                 }
                                 
                                 event_res = supabase.table("events").insert(event_data).execute()
@@ -620,6 +627,7 @@ async def auto_schedule_course(
                         "status": "scheduled",
                         "source": "syllabus",
                         "source_section_id": section.get("id"),
+                        "counts_toward_plan": True,
                     }
                     
                     event_res = supabase.table("events").insert(event_data).execute()
@@ -1571,12 +1579,19 @@ async def apply_quick_reschedule(
             
             if event_id and new_start and new_end:
                 try:
-                    update_res = supabase.table("events").update({
+                    ev_res = supabase.table("events").select("is_placeholder, generated_by, generation_batch_id, academic_year_id").eq("id", event_id).eq("family_id", family_id).execute()
+                    ev = ev_res.data[0] if ev_res.data else {}
+                    update_payload = {
                         "start_ts": new_start,
                         "end_ts": new_end,
                         "reschedule_origin": "quick_reschedule",
-                        "reschedule_reason": change.get("reason", "Quick reschedule")
-                    }).eq("id", event_id).eq("family_id", family_id).execute()
+                        "reschedule_reason": change.get("reason", "Quick reschedule"),
+                    }
+                    conv_fields, did_convert = get_placeholder_conversion_fields(ev)
+                    update_payload.update(conv_fields)
+                    if did_convert:
+                        log_event("placeholder_converted", action="quick_reschedule_apply", event_id=event_id, academic_year_id=ev.get("academic_year_id"), user_id=user["id"], old_batch_id=ev.get("generation_batch_id"))
+                    update_res = supabase.table("events").update(update_payload).eq("id", event_id).eq("family_id", family_id).execute()
                     
                     if update_res.data:
                         applied_count += 1
@@ -1828,6 +1843,7 @@ async def apply_plan_week(
                         "status": "scheduled",
                         "source": "ai_plan",
                         "event_type": item.get("type", "lesson"),
+                        "counts_toward_plan": True,
                     }
                     
                     # Add metadata if available
@@ -1846,14 +1862,18 @@ async def apply_plan_week(
                 event_id = item.get("event_id")
                 if not event_id:
                     continue
-                
+                ev_res = supabase.table("events").select("is_placeholder, generated_by, generation_batch_id, academic_year_id").eq("id", event_id).eq("family_id", family_id).execute()
+                ev = ev_res.data[0] if ev_res.data else {}
                 update_data = {
                     "start_ts": item.get("new_start") or item.get("to", {}).get("start_at"),
                     "end_ts": item.get("new_end") or item.get("to", {}).get("end_at"),
                     "reschedule_origin": "plan_week",
-                    "reschedule_reason": item.get("reason", "Weekly plan")
+                    "reschedule_reason": item.get("reason", "Weekly plan"),
                 }
-                
+                conv_fields, did_convert = get_placeholder_conversion_fields(ev)
+                update_data.update(conv_fields)
+                if did_convert:
+                    log_event("placeholder_converted", action="plan_week_move", event_id=event_id, academic_year_id=ev.get("academic_year_id"), user_id=user["id"], old_batch_id=ev.get("generation_batch_id"))
                 update_res = supabase.table("events").update(update_data).eq(
                     "id", event_id
                 ).eq("family_id", family_id).execute()
@@ -1869,8 +1889,14 @@ async def apply_plan_week(
                 event_id = item.get("event_id")
                 if not event_id:
                     continue
-                
-                update_res = supabase.table("events").update(item.get("updates", {})).eq(
+                ev_res = supabase.table("events").select("is_placeholder, generated_by, generation_batch_id, academic_year_id").eq("id", event_id).eq("family_id", family_id).execute()
+                ev = ev_res.data[0] if ev_res.data else {}
+                updates = dict(item.get("updates", {}))
+                conv_fields, did_convert = get_placeholder_conversion_fields(ev)
+                updates.update(conv_fields)
+                if did_convert:
+                    log_event("placeholder_converted", action="plan_week_update", event_id=event_id, academic_year_id=ev.get("academic_year_id"), user_id=user["id"], old_batch_id=ev.get("generation_batch_id"))
+                update_res = supabase.table("events").update(updates).eq(
                     "id", event_id
                 ).eq("family_id", family_id).execute()
                 
@@ -2280,12 +2306,19 @@ async def apply_resolve_conflicts(
                     new_end = to.get("end_at")
                     
                     if new_start and new_end:
-                        update_res = supabase.table("events").update({
+                        ev_res = supabase.table("events").select("is_placeholder, generated_by, generation_batch_id, academic_year_id").eq("id", event_id).eq("family_id", family_id).execute()
+                        ev = ev_res.data[0] if ev_res.data else {}
+                        update_payload = {
                             "start_ts": new_start,
                             "end_ts": new_end,
                             "reschedule_origin": "resolve_conflicts",
-                            "reschedule_reason": change.get("rationale", "Conflict resolution")
-                        }).eq("id", event_id).eq("family_id", family_id).execute()
+                            "reschedule_reason": change.get("rationale", "Conflict resolution"),
+                        }
+                        conv_fields, did_convert = get_placeholder_conversion_fields(ev)
+                        update_payload.update(conv_fields)
+                        if did_convert:
+                            log_event("placeholder_converted", action="resolve_conflicts_move", event_id=event_id, academic_year_id=ev.get("academic_year_id"), user_id=user["id"], old_batch_id=ev.get("generation_batch_id"))
+                        update_res = supabase.table("events").update(update_payload).eq("id", event_id).eq("family_id", family_id).execute()
                         
                         if update_res.data:
                             applied_count += 1

@@ -94,6 +94,40 @@ def count_instructional_days(
     return count
 
 
+def get_instructional_dates_list(
+    start_date: date,
+    end_date: date,
+    allowed_weekdays: List[int],
+    holiday_dates: Set[date],
+    limit: Optional[int] = None,
+) -> List[date]:
+    """
+    Return ordered list of instructional dates in range.
+    Optionally limit to first N dates (e.g. first 180 for plan year).
+
+    Args:
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+        allowed_weekdays: List of weekday numbers (0=Sunday, 6=Saturday)
+        holiday_dates: Set of holiday dates
+        limit: If set, return at most this many dates (first N in order)
+
+    Returns:
+        List of date objects in chronological order
+    """
+    result: List[date] = []
+    current_date = start_date
+
+    while current_date <= end_date:
+        if is_instructional_day(current_date, allowed_weekdays, holiday_dates):
+            result.append(current_date)
+            if limit is not None and len(result) >= limit:
+                break
+        current_date += timedelta(days=1)
+
+    return result
+
+
 def compute_end_date(
     start_date: date,
     target_days: int,

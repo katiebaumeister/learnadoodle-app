@@ -576,6 +576,7 @@ export default function TaskCreateModal({
   const [recurrenceEndDate, setRecurrenceEndDate] = useState(null); // End date
   
   const toast = useToast();
+  const session = useSession();
 
   // Sync calendar view month when due date changes externally
   useEffect(() => {
@@ -787,9 +788,9 @@ export default function TaskCreateModal({
     } finally {
       setLoadingMaterials(false);
     }
-  }, [familyId, toast]);
+  }, [familyId, session, toast]);
 
-  // Fetch subjects and subject goals when modal opens
+  // Fetch subjects and subject goals when modal opens (intentionally omit fetchSubjects/loadMaterials from deps to avoid infinite loop)
   useEffect(() => {
     if (visible && familyId) {
       fetchSubjects();
@@ -798,7 +799,8 @@ export default function TaskCreateModal({
         fetchSubjectGoals(assigneeIds[0]); // Fetch goals for first selected child
       }
     }
-  }, [visible, familyId, assigneeIds, loadMaterials]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, familyId, assigneeIds]);
 
   useEffect(() => {
     if (visible) {

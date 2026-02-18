@@ -22,7 +22,8 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user, child_belongs_to_family
+from helpers import get_family_id_for_user, child_belongs_to_family, get_placeholder_conversion_fields
+from logger import log_event
 from supabase_client import get_admin_client
 
 router = APIRouter(prefix="/api/schedule", tags=["scheduling-assistant"])
@@ -543,7 +544,11 @@ async def confirm_hold(
         elif backlog_event.get("subject_id"):
             update_data["subject_id"] = backlog_event["subject_id"]
         
-        # Update the event (convert from backlog to scheduled)
+        conv_fields, did_convert = get_placeholder_conversion_fields(backlog_event)
+        update_data.update(conv_fields)
+        if did_convert:
+            log_event("placeholder_converted", action="scheduling_assistant_confirm", event_id=body.event_id, academic_year_id=backlog_event.get("academic_year_id"), user_id=user["id"], old_batch_id=backlog_event.get("generation_batch_id"))
+        
         updated_res = supabase.table("events").update(update_data).eq("id", body.event_id).execute()
         
         if not updated_res.data:

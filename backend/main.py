@@ -173,6 +173,13 @@ else:
         max_age=600,
     )
 
+# Log every request to academic_year GET so we can confirm the backend receives it
+@app.middleware("http")
+async def log_academic_year_requests(request, call_next):
+    if request.method == "GET" and "/api/academic_year/" in str(request.url.path) and request.url.path != "/api/academic_year/plan_health" and "holidays_for_range" not in request.url.path:
+        print(f"[BACKEND] Received GET {request.url.path}", flush=True)
+    return await call_next(request)
+
 # Add request logging middleware for debugging (after CORS)
 # Only logs if LOG_LEVEL=debug
 # Note: _LOG_LEVEL is defined earlier in the file

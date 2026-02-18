@@ -687,6 +687,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         materials_attachment_ids: event.materials_attachment_ids || null,
         source_link: event.source_link || null,
         resume_position: event.resume_position || null,
+        counts_toward_plan: ((event.event_type || '').toLowerCase() === 'lesson') ? true : undefined,
       };
       
       const { data: rpcData, error: rpcError } = await createEventWithOffline(eventData, familyId);
@@ -761,6 +762,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         materials_attachment_ids: event.materials_attachment_ids || null,
         source_link: event.source_link || null,
         resume_position: event.resume_position || null,
+        counts_toward_plan: ((event.event_type || '').toLowerCase() === 'lesson') ? true : undefined,
       };
       
       const { data: rpcData, error: rpcError } = await createEventWithOffline(eventData, familyId);

@@ -371,7 +371,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     setShowConflictTooltip(false);
   };
 
-  const renderWrapper = (baseStyle, children) => {
+  const renderWrapper = (baseStyle, children, webProps = {}) => {
     const style = {
       ...baseStyle,
       ...(Platform.OS === 'web' && {
@@ -387,6 +387,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     if ((effectiveOnPress || onRightClick) && !effectiveDisableTouchable) {
       return (
         <TouchableOpacity 
+          {...(Platform.OS === 'web' && webProps)}
           style={style} 
           activeOpacity={0.85} 
           onPress={effectiveOnPress}
@@ -438,6 +439,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     }
     return (
       <View 
+        {...(Platform.OS === 'web' && webProps)}
         style={style}
         {...(Platform.OS === 'web' && {
           onMouseEnter: (e) => {
@@ -463,6 +465,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const shouldShowDoneStyling = isDone && !hideDoneStyling;
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
+  const isPlaceholder = ev?.is_placeholder === true;
+  // Lesson that does not count toward 180-day/hour requirement (show muted + tooltip)
+  const isExcludedFromPlan = ((ev?.event_type || ev?.type || '').toLowerCase() === 'lesson') && ev?.counts_toward_plan === false;
 
   // Get accent color values for styling (used for borders, text accents, etc.)
   const getAccentColor = (colorName) => {
@@ -490,7 +495,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       paddingHorizontal: 4,
       paddingVertical: 4,
       width: '100%',
-      opacity: shouldShowLighterText ? 0.5 : 1,
+      opacity: isExcludedFromPlan ? 0.78 : (shouldShowLighterText ? 0.5 : 1),
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
       }),
@@ -599,8 +604,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                   style={{
                     fontSize: titleFontSize,
                     lineHeight: titleFontSize + 4,
-                    color: '#111827', // High contrast black
-                    fontWeight: '500', // Medium weight - less bold than before
+                    color: isPlaceholder ? '#6B7280' : '#111827',
+                    fontWeight: '500',
                     textAlign: 'left',
                     textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
                     opacity: shouldShowLighterText ? 0.5 : 1,
@@ -619,6 +624,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
+                {isPlaceholder && (
+                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+                    <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+                  </View>
+                )}
+                {isExcludedFromPlan && (
+                  <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
+                )}
                 {displayTime && !hideTime && !isHoliday && (
                   <Text style={{ 
                     opacity: 1,
@@ -712,6 +725,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
+                {isPlaceholder && (
+                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+                    <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+                  </View>
+                )}
+                {isExcludedFromPlan && (
+                  <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
+                )}
                 {displayTime && !hideTime && !isHoliday && (
                   <Text style={{ 
                     opacity: 1,
@@ -780,7 +801,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       </View>
     );
 
-    return renderWrapper(baseStyle, content);
+    return renderWrapper(baseStyle, content, (Platform.OS === 'web' && isExcludedFromPlan) ? { title: 'Excluded from instructional requirement' } : {});
   }
 
   if (compact) {
@@ -791,7 +812,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       paddingHorizontal: 6,
       paddingVertical: 3,
       maxWidth: '100%',
-      opacity: shouldShowLighterText ? 0.5 : 1,
+      opacity: isExcludedFromPlan ? 0.78 : (shouldShowLighterText ? 0.5 : 1),
     };
 
     const { IconComponent: SubjectIcon, iconColor: subjectIconColor } = getSubjectIcon();
@@ -896,15 +917,15 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             style={{
               fontSize: 12,
               lineHeight: 16,
-              color: '#111827', // High contrast black
-              fontWeight: '600', // Editorial weight
+              color: isPlaceholder ? '#6B7280' : '#111827',
+              fontWeight: '600',
               textAlign: 'left',
               textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
               opacity: shouldShowDoneStyling ? 0.5 : 1,
               flex: 1,
               ...(Platform.OS === 'web' && {
                 fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                letterSpacing: '-0.006em', // Tighter, more editorial
+                letterSpacing: '-0.006em',
                 ...(isDone && {
                   textDecorationThickness: '0.5px',
                   textDecorationColor: 'rgba(17, 24, 39, 0.4)',
@@ -916,6 +937,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           >
             {ev.title || 'Untitled Event'}
           </Text>
+          {isPlaceholder && (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+              <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+            </View>
+          )}
+          {isExcludedFromPlan && (
+            <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
+          )}
           {displayTime && !hideTime && (
             <Text style={{ 
               opacity: 1,
@@ -970,7 +999,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
     return (
       <>
-        {renderWrapper(baseStyle, content)}
+        {renderWrapper(baseStyle, content, (Platform.OS === 'web' && isExcludedFromPlan) ? { title: 'Excluded from instructional requirement' } : {})}
         {/* Conflict Tooltip */}
         {Platform.OS === 'web' && showConflictTooltip && conflictInfo && (() => {
           let ReactDOM;
@@ -1023,7 +1052,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     backgroundColor: getBackgroundColor(),
     paddingHorizontal: 0,
     paddingVertical: 2, // Significantly reduced spacing
-    opacity: shouldShowLighterText ? 0.5 : 1,
+    opacity: isExcludedFromPlan ? 0.78 : (shouldShowLighterText ? 0.5 : 1),
   };
 
   const { IconComponent: SubjectIcon, iconColor: subjectIconColor } = getSubjectIcon();
@@ -1158,15 +1187,15 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           style={{ 
             fontSize: 12,
             lineHeight: 16,
-            color: '#111827', // High contrast black
-            fontWeight: '600', // Editorial weight
+            color: isPlaceholder ? '#6B7280' : '#111827',
+            fontWeight: '600',
             textAlign: 'left',
             textDecorationLine: isDone ? 'line-through' : 'none',
             opacity: shouldShowDoneStyling ? 0.5 : 1,
             flex: 1,
             ...(Platform.OS === 'web' && {
               fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              letterSpacing: '-0.006em', // Tighter, more editorial
+              letterSpacing: '-0.006em',
               ...(isDone && {
                 textDecorationThickness: '0.5px',
                 textDecorationColor: 'rgba(17, 24, 39, 0.4)',
@@ -1178,6 +1207,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         >
           {ev.title || 'Untitled Event'}
         </Text>
+        {isPlaceholder && (
+          <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+            <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+          </View>
+        )}
+        {isExcludedFromPlan && (
+          <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
+        )}
         {displayTime && !hideTime && (
             <Text style={{ 
               opacity: 1,
@@ -1247,7 +1284,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   return (
     <>
-      {renderWrapper(baseStyle, content)}
+      {renderWrapper(baseStyle, content, (Platform.OS === 'web' && isExcludedFromPlan) ? { title: 'Excluded from instructional requirement' } : {})}
       {/* Conflict Tooltip */}
       {Platform.OS === 'web' && showConflictTooltip && conflictInfo && (() => {
         let ReactDOM;

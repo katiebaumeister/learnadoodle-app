@@ -15,7 +15,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user
+from helpers import get_family_id_for_user, get_placeholder_conversion_fields
 from logger import log_event
 from supabase_client import get_admin_client
 
@@ -104,13 +104,12 @@ async def complete_event(
         duration = end_ts - start_ts
         minutes = body.minutes_override if body.minutes_override is not None else int(duration.total_seconds() / 60)
         
-        # Update event status to 'done'
-        # Note: There may be a database trigger that tries to update subject_credit_ledger
-        # If that trigger fails due to missing columns, the update will still fail
-        # Run the SQL migration 2025-11-18_fix_event_credit_trigger.sql to fix this
-        update_res = supabase.table("events").update({
-            "status": "done"
-        }).eq("id", event_id).execute()
+        status_update = {"status": "done"}
+        conv_fields, did_convert = get_placeholder_conversion_fields(event)
+        status_update.update(conv_fields)
+        if did_convert:
+            log_event("placeholder_converted", action="attendance_complete", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
+        update_res = supabase.table("events").update(status_update).eq("id", event_id).execute()
         
         if not update_res.data:
             raise HTTPException(

@@ -23,6 +23,7 @@ import AppShell from './layout/AppShell.js';
 import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
 import EventModal from './events/EventModal';
+import AddChildModal from './AddChildModal';
 import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
 import PlanYearWizard from './year/PlanYearWizard';
@@ -51,6 +52,7 @@ import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import RebalanceModal from './planner/modals/RebalanceModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
+import PlanHealthIcon from './planner/PlanHealthIcon';
 
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user } = useAuth();
@@ -106,6 +108,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showSummarizeProgressModal, setShowSummarizeProgressModal] = useState(false);
   const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
   const [showPlanYearModal, setShowPlanYearModal] = useState(false);
+  const [planYearInitialAcademicYearId, setPlanYearInitialAcademicYearId] = useState(null);
+  const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -1205,7 +1209,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     fetchFamilyMembers();
     fetchFamilyData();
-  }, [fetchFamilyMembers, fetchFamilyData]);
+  }, [fetchFamilyData, fetchFamilyMembers]);
 
   // Listen for children refresh events
   useEffect(() => {
@@ -1218,7 +1222,28 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener('refreshChildren', handleRefreshChildren);
     };
-  }, [fetchFamilyData]);
+  }, [fetchFamilyData, fetchFamilyMembers]);
+
+  // Listen for subjects refresh (e.g. after adding from Plan Year)
+  const refetchSubjects = useCallback(async () => {
+    if (!familyId) return;
+    try {
+      const { data: subjectsData } = await supabase
+        .from('subject')
+        .select('id, name')
+        .eq('family_id', familyId)
+        .order('name');
+      setSubjects(subjectsData || []);
+    } catch (err) {
+      console.warn('[WebLayout] Error refetching subjects:', err);
+    }
+  }, [familyId]);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handleRefreshSubjects = () => refetchSubjects();
+    window.addEventListener('refreshSubjects', handleRefreshSubjects);
+    return () => window.removeEventListener('refreshSubjects', handleRefreshSubjects);
+  }, [refetchSubjects]);
 
   // Handle URL-based routing for subject detail pages
   useEffect(() => {
@@ -1324,7 +1349,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, []);
 
   // Listen for openTaskModal event to open the global TaskCreateModal
-  // Only open on family screen (profile/child-* tabs), not on planner
+  // Available from any screen (family, planner, home, calendar, etc.)
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     
@@ -1336,35 +1361,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         : (detail.childId ? [detail.childId] : []);
       const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
       
-      // Check if we're on the family screen (profile or child-* tabs)
-      // Don't open if we're on planner, home, calendar, etc.
-      const isFamilyScreen = activeTab === 'profile' || 
-                            (activeTab && typeof activeTab === 'string' && activeTab.startsWith('child-')) ||
-                            (activeTab && typeof activeTab === 'string' && activeTab.startsWith('notes-pages-')) ||
-                            activeTab === 'children-list';
-      
-      if (!isFamilyScreen) {
-        console.log('[WebLayout] openTaskModal event ignored - not on family screen, current tab:', activeTab, 'isFamilyScreen:', isFamilyScreen);
-        return;
-      }
-      
-      console.log('[WebLayout] openTaskModal approved - on family screen:', activeTab);
-      
-      console.log('[WebLayout] openTaskModal event received on family screen:', { 
-        date, 
-        childIds: incomingChildIds,
-        primaryChildId,
-        eventType: detail.eventType, 
-        subjectId: detail.subjectId,
-        activeTab 
-      });
-      
       setTaskModalDate(date);
       setTaskModalChildIds(incomingChildIds);
       setTaskModalChildId(primaryChildId);
       setTaskModalDefaultSubjectId(detail.subjectId || null);
       setTaskModalDefaultEventType(detail.eventType || null);
-      setTaskModalDefaultPlacement(detail.placement || 'calendar'); // Use placement from event detail, default to 'calendar'
+      setTaskModalDefaultPlacement(detail.placement || 'calendar');
       setShowTaskModal(true);
     };
     
@@ -1373,7 +1375,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener('openTaskModal', handleOpenTaskModal);
     };
-  }, [activeTab]);
+  }, []);
 
   // Listen for openEventModal event to open the global EventModal
   // Available from any screen (family, planner, etc.)
@@ -1449,6 +1451,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('openYearWizard', handler);
     return () => window.removeEventListener('openYearWizard', handler);
   }, [navigateToIntelligence]);
+
+  // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (event) => {
+      const from = event && event.detail && event.detail.from;
+      const yearIdFromEvent = event && event.detail && event.detail.academicYearId;
+      console.log('[WebLayout] openPlanYearModal event', { from, yearIdFromEvent });
+      setPlanYearHighlightFromHealth(from === 'plan_health_over');
+      if (yearIdFromEvent) {
+        setPlanYearInitialAcademicYearId(yearIdFromEvent);
+      }
+      setShowPlanYearModal(true);
+    };
+    window.addEventListener('openPlanYearModal', handler);
+    return () => window.removeEventListener('openPlanYearModal', handler);
+  }, []);
 
   // Listen for openScheduleRules event
   useEffect(() => {
@@ -2316,10 +2335,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     )}
                   </View>
                   
-                  {/* Plan & Optimize (Smart Tools) */}
+                  {/* Plan & Optimize (Smart Tools) + Plan health notification icon */}
                   <View style={{ 
                     flexShrink: 0,
                     position: 'relative',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
                   }}>
                     <TouchableOpacity
                       ref={planOptimizeButtonRef}
@@ -2358,7 +2380,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       </Text>
                       <ChevronDown size={13} color="rgba(15, 23, 42, 0.7)" />
                     </TouchableOpacity>
-                    
+                    <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} />
                     {showPlanOptimizeDropdown && Platform.OS === 'web' && (
                       <View
                         ref={planOptimizeDropdownRef}
@@ -2809,6 +2831,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           <WebContent
             activeTab={activeTab}
             activeSubtab={activeSubtab}
+            plannerView={currentView}
             activeChildSection={activeChildSection}
             user={user}
             onChildAdded={handleChildAdded}
@@ -2885,14 +2908,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       {/* Year Planning Wizard - Now handled by IntelligenceHub */}
       {/* Removed: PlanYearWizard instance - use IntelligenceHub → Planner AI → Plan the Year */}
 
-      {/* Global Task Create Modal - only shown on family screen, not planner */}
-      {/* Only render if we're on the family screen (profile/child-* tabs) */}
-      {(activeTab === 'profile' || 
-        (activeTab && activeTab.startsWith('child-')) ||
-        (activeTab && activeTab.startsWith('notes-pages-')) ||
-        activeTab === 'children-list') && (
-        <TaskCreateModal
-          visible={showTaskModal}
+      {/* Global Task Create Modal - available from any screen (planner, home, family, etc.) */}
+      <TaskCreateModal
+        visible={showTaskModal}
           onClose={() => {
             setShowTaskModal(false);
             setTaskModalChildId(null);
@@ -2931,7 +2949,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             }
           }}
         />
-      )}
 
       {/* Global Event Modal - available from any screen (family, planner, etc.) */}
       <EventModal
@@ -3075,12 +3092,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       <PlanYearModal
         visible={showPlanYearModal}
-        onClose={() => setShowPlanYearModal(false)}
+        onClose={() => {
+          setShowPlanYearModal(false);
+          setPlanYearHighlightFromHealth(false);
+          setPlanYearInitialAcademicYearId(null);
+        }}
         familyId={familyId}
         children={children}
+        subjects={subjects}
+        fullSubjects={fullSubjects}
+        initialAcademicYearId={planYearInitialAcademicYearId}
+        highlightFromPlanHealth={planYearHighlightFromHealth}
         onComplete={() => {
           setShowPlanYearModal(false);
-          // Optionally refresh data or show success message
+          setPlanYearHighlightFromHealth(false);
+          setPlanYearInitialAcademicYearId(null);
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        }}
+      />
+
+      {/* Global Add Child Modal - so Plan Year and other screens can open it */}
+      <AddChildModal
+        visible={showAddChildModal}
+        onClose={() => setShowAddChildModal(false)}
+        familyId={familyId}
+        onChildAdded={() => {
+          fetchFamilyData();
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshChildren'));
         }}
       />
 

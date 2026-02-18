@@ -625,10 +625,11 @@ import { processDoodleMessage, executeTool } from '../lib/doodleAssistant.js'
 import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
+import PlanHealthBanner from './planner/PlanHealthBanner'
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -6272,7 +6273,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
     return (
-      <CenterPane
+      <View style={{ flex: 1 }}>
+        <PlanHealthBanner familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} />
+        <CenterPane
         date={date}
         events={plannerEventsForMonth}
         selectedDate={date}
@@ -6309,7 +6312,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onChildFilterChange={onSelectedCalendarChildrenChange}
         blackoutDates={calendarBlackoutDates[`${plannerDate.getFullYear()}-${plannerDate.getMonth()}`] || []}
         familyId={familyId}
+        viewMode={propPlannerView}
       />
+      </View>
     );
   };
 
