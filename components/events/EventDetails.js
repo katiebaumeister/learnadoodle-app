@@ -564,6 +564,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // Academic and location fields
   const [subjectId, setSubjectId] = useState(null);
   const [countsTowardPlan, setCountsTowardPlan] = useState(true);
+  const [academicYearId, setAcademicYearId] = useState(null);
+  const [academicYears, setAcademicYears] = useState([]);
+  const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
   const [unit, setUnit] = useState('');
   const [grade, setGrade] = useState('');
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
@@ -684,6 +687,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     
     if (assigneeIds.length === 0) {
       errors.assignee = 'At least one assignee is required';
+    }
+    if (countsTowardPlan && !academicYearId && academicYears.length > 0) {
+      errors.instructional = 'Select which plan this counts toward.';
     }
     
     setValidationErrors(errors);
@@ -1078,6 +1084,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // Academic fields
     setSubjectId(event.subject_id || null);
     setCountsTowardPlan(event.counts_toward_plan !== false);
+    setAcademicYearId(event.academic_year_id || null);
+    setInstructionalMinutesOverride(event.instructional_minutes != null ? String(event.instructional_minutes) : '');
     setUnit(event.unit || '');
     setGrade(event.grade || '');
     setPercentOfTotalGrade(event.percent_of_total_grade ? event.percent_of_total_grade.toString() : '');
@@ -1147,6 +1155,31 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
     }
   }, [familyId, event?.id, assigneeIds]);
+
+  // Load academic years for Instructional accounting (Counts toward year plan → Plan dropdown)
+  useEffect(() => {
+    if (!familyId) {
+      setAcademicYears([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('academic_years')
+        .select('id, start_date, end_date')
+        .eq('family_id', familyId)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+      if (cancelled) return;
+      if (error) {
+        setAcademicYears([]);
+        return;
+      }
+      const list = data || [];
+      setAcademicYears(list);
+    })();
+    return () => { cancelled = true; };
+  }, [familyId]);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes (for editing)
   useEffect(() => {
@@ -2057,6 +2090,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
         counts_toward_plan: countsTowardPlan,
+        academic_year_id: countsTowardPlan ? (academicYearId || null) : null,
+        instructional_status: countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE',
+        instructional_minutes: instructionalMinutesOverride.trim() ? (() => {
+          const n = parseInt(instructionalMinutesOverride.trim(), 10);
+          return (n != null && !Number.isNaN(n)) ? n : null;
+        })() : null,
       };
       
       // Log assigneeIds state before save
@@ -2279,6 +2318,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               fallbackUpdate.is_placeholder = false;
             }
             fallbackUpdate.counts_toward_plan = countsTowardPlan;
+            fallbackUpdate.academic_year_id = countsTowardPlan ? academicYearId : null;
+            fallbackUpdate.instructional_status = countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE';
+            const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
+            fallbackUpdate.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
 
             const fallbackResult = await supabase
               .from('events')
@@ -3738,6 +3781,83 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </>
           )}
         </SafeView>
+
+        {/* Instructional accounting — Counts toward year plan, Plan, Instructional minutes */}
+        {(academicYears.length > 0 || event?.academic_year_id) && (
+          <SafeView style={styles.academicSection}>
+            <Text style={[styles.sectionLabel, { marginBottom: 8 }]}>Instructional accounting</Text>
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>Counts toward year plan</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                <TouchableOpacity
+                  onPress={() => setCountsTowardPlan(true)}
+                  style={[styles.radioOption, countsTowardPlan && styles.radioOptionActive]}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={[styles.radioLabel, countsTowardPlan && styles.radioLabelActive]}>ON</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setCountsTowardPlan(false)}
+                  style={[styles.radioOption, !countsTowardPlan && styles.radioOptionActive]}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={[styles.radioLabel, !countsTowardPlan && styles.radioLabelActive]}>OFF</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            {countsTowardPlan && (
+              <>
+                <View style={[styles.fieldRow, { marginTop: 8 }]}>
+                  <Text style={styles.fieldLabel}>Plan</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                    {academicYears.map((ay) => {
+                      const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                      const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                      const label = start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : (ay.id?.slice(0, 8) || 'Plan');
+                      const isSelected = academicYearId === ay.id;
+                      return (
+                        <TouchableOpacity
+                          key={ay.id}
+                          onPress={() => {
+                            setAcademicYearId(ay.id);
+                            if (validationErrors.instructional) {
+                              setValidationErrors({ ...validationErrors, instructional: null });
+                            }
+                          }}
+                          style={[styles.chipOption, isSelected && styles.chipOptionActive]}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {validationErrors.instructional && (
+                    <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
+                  )}
+                </View>
+                <View style={[styles.fieldRow, { marginTop: 8 }]}>
+                  <Text style={styles.fieldLabel}>Instructional minutes</Text>
+                  <TextInput
+                    placeholder="Auto from duration"
+                    placeholderTextColor={MUTED}
+                    value={instructionalMinutesOverride}
+                    onChangeText={setInstructionalMinutesOverride}
+                    keyboardType="number-pad"
+                    style={[styles.input, { maxWidth: 120 }]}
+                  />
+                  <Text style={[styles.mutedText, { fontSize: 11, marginTop: 4 }]}>
+                    Leave blank to use event duration. Counts toward this plan&apos;s days/hours progress.
+                  </Text>
+                </View>
+              </>
+            )}
+          </SafeView>
+        )}
 
         {/* Academic Details Section - after Schedule time */}
         <SafeView style={styles.academicSection}>

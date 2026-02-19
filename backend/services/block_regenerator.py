@@ -184,6 +184,7 @@ def regenerate_block(
                     "generation_batch_id": generation_batch_id,
                     "source_block_id": block_id,
                     "counts_toward_plan": True,
+                    "instructional_status": "PLAN_PLACEHOLDER",
                 })
 
     for (d, cid), e in existing_by_key.items():

@@ -224,6 +224,13 @@ export default function TaskCreateModal({
   // Standards state
   const [attachedStandards, setAttachedStandards] = useState([]);
   const [showStandardsModal, setShowStandardsModal] = useState(false);
+
+  // Counts toward year plan (instructional accounting)
+  const [countsTowardPlan, setCountsTowardPlan] = useState(false);
+  const [academicYears, setAcademicYears] = useState([]);
+  const [selectedAcademicYearId, setSelectedAcademicYearId] = useState(null);
+  const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
+  const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
   
   // Handle standards selection from modal
   const handleStandardsSelect = useCallback((selectedStandards) => {
@@ -307,6 +314,37 @@ export default function TaskCreateModal({
   const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false); // Flag for "Adjust automatically"
   const [suggestedChange, setSuggestedChange] = useState(null); // { newStart: Date, newEnd: Date, message: "..." }
   const [changeAccepted, setChangeAccepted] = useState(false); // Track if the suggested change was accepted
+
+  // Load academic years when modal opens (for "Counts toward year plan" dropdown)
+  useEffect(() => {
+    if (!visible || !familyId) {
+      setAcademicYears([]);
+      setSelectedAcademicYearId(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingAcademicYears(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from('academic_years')
+        .select('id, start_date, end_date')
+        .eq('family_id', familyId)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+      if (cancelled) return;
+      setLoadingAcademicYears(false);
+      if (error) {
+        setAcademicYears([]);
+        return;
+      }
+      const list = data || [];
+      setAcademicYears(list);
+      if (list.length > 0) {
+        setSelectedAcademicYearId((prev) => (prev && list.some((y) => y.id === prev)) ? prev : list[0].id);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, familyId]);
 
   // Detect conflicts when date/time/child changes
   useEffect(() => {
@@ -1350,7 +1388,16 @@ export default function TaskCreateModal({
       toast.push('Please fill in all required fields', 'error');
       return;
     }
-    
+
+    if (countsTowardPlan && assigneeIds.length > 1) {
+      toast.push('Choose one child so this event counts toward that child\'s plan.', 'error');
+      return;
+    }
+    if (countsTowardPlan && !selectedAcademicYearId) {
+      toast.push('Select which plan this counts toward.', 'error');
+      return;
+    }
+
     // Store allowOverlaps in a variable that will be used in the RPC call
     const shouldAllowOverlaps = allowOverlaps || (skipConflictValidation && conflictWarning !== null);
 
@@ -1791,6 +1838,28 @@ export default function TaskCreateModal({
         return;
       }
 
+      // If "Counts toward year plan" was enabled, set academic_year_id and counts_toward_plan (instructional accounting)
+      if (data?.id && countsTowardPlan && selectedAcademicYearId && placement === 'calendar') {
+        const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
+        await supabase
+          .from('events')
+          .update({
+            academic_year_id: selectedAcademicYearId,
+            counts_toward_plan: true,
+            instructional_status: 'MANUAL_COUNTS',
+            instructional_minutes: (mins != null && !Number.isNaN(mins)) ? mins : null,
+          })
+          .eq('id', data.id)
+          .then(({ error: updateErr }) => {
+            if (updateErr) {
+              console.warn('[TaskCreateModal] Failed to set counts_toward_plan:', updateErr);
+            }
+          });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        }
+      }
+
       // Log event creation action
       if (data?.id && placement !== 'backlog') {
         try {
@@ -2173,6 +2242,74 @@ export default function TaskCreateModal({
             {/* Labels chip */}
             {/* Labels section removed - no longer used */}
           </ScrollView>
+
+          {/* Counts toward year plan — show for learning-ish types when a plan exists */}
+          {placement === 'calendar' &&
+            ['Lesson', 'Assignment', 'Project'].includes(eventType) &&
+            (academicYears.length > 0 || loadingAcademicYears) && (
+            <View style={[styles.inputGroup, { marginTop: 16, marginBottom: 8 }]}>
+              <Text style={styles.fieldLabel}>Counts toward year plan</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
+                <Switch
+                  value={countsTowardPlan}
+                  onValueChange={setCountsTowardPlan}
+                  trackColor={{ false: BORDER, true: ACCENT }}
+                  thumbColor={BG}
+                />
+              </View>
+              {countsTowardPlan && (
+                <>
+                  {assigneeIds.length > 1 && (
+                    <Text style={[styles.errorTextSmall, { marginBottom: 8 }]}>
+                      Choose one child for counted events so progress is clear per child.
+                    </Text>
+                  )}
+                  {loadingAcademicYears ? (
+                    <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
+                  ) : (
+                    <>
+                      <Text style={[styles.fieldLabel, { marginTop: 4 }]}>Which plan?</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                        {academicYears.map((ay) => {
+                          const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                          const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                          const label = start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
+                          const isSelected = selectedAcademicYearId === ay.id;
+                          return (
+                            <TouchableOpacity
+                              key={ay.id}
+                              onPress={() => setSelectedAcademicYearId(ay.id)}
+                              style={[
+                                styles.chipOption,
+                                isSelected && styles.chipOptionActive,
+                              ]}
+                            >
+                              <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
+                                {label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      <Text style={[styles.fieldLabel, { marginTop: 0 }]}>Instructional minutes (optional)</Text>
+                      <TextInput
+                        placeholder="Auto from duration"
+                        placeholderTextColor={MUTED}
+                        value={instructionalMinutesOverride}
+                        onChangeText={setInstructionalMinutesOverride}
+                        keyboardType="number-pad"
+                        style={[styles.titleInput, { marginBottom: 4 }]}
+                      />
+                      <Text style={{ fontSize: 12, color: MUTED }}>
+                        Counts toward this plan&apos;s days/hours progress. Leave minutes blank to use event duration.
+                      </Text>
+                    </>
+                  )}
+                </>
+              )}
+            </View>
+          )}
 
           {/* End date picker - shown below start date for multi-day events */}
           {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (

@@ -19,7 +19,7 @@ if str(backend_dir) not in sys.path:
   sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user
-from helpers import get_family_id_for_user, child_belongs_to_family
+from helpers import get_family_id_for_user, child_belongs_to_family, require_onboarding_complete
 from logger import log_event
 
 try:
@@ -96,7 +96,7 @@ async def schedule_from_suggestion(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Family not found",
     )
-
+  require_onboarding_complete(family_id)
   if not child_belongs_to_family(child_id, family_id):
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
@@ -184,7 +184,7 @@ async def todo_from_suggestion(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Family not found",
     )
-
+  require_onboarding_complete(family_id)
   if not child_belongs_to_family(child_id, family_id):
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,

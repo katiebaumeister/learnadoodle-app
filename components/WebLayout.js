@@ -32,7 +32,7 @@ import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
 import AIModal from './AIModal';
-import { proposeReschedule, getFamilyMembers } from '../lib/apiClient';
+import { proposeReschedule, getFamilyMembers, getOnboardingStatus } from '../lib/apiClient';
 import AnalyticsDashboard from './analytics/AnalyticsDashboard';
 import ProgressReport from './analytics/ProgressReport';
 import ScheduleSettingsModal from './modals/ScheduleSettingsModal';
@@ -53,6 +53,7 @@ import RebalanceModal from './planner/modals/RebalanceModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 import PlanHealthIcon from './planner/PlanHealthIcon';
+import OnboardingModal from './onboarding/OnboardingModal';
 
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user } = useAuth();
@@ -100,6 +101,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [familyId, setFamilyId] = useState(null);
   const [family, setFamily] = useState(null);
   const [profile, setProfile] = useState(null);
+  // Onboarding: resolve status before first paint so we never flash landing without modal
+  const [onboardingCheckDone, setOnboardingCheckDone] = useState(false);
+  const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
+  const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
   const [activeRightTool, setActiveRightTool] = useState(null);
   const prevActiveTabRef = useRef(null);
   // AI Tool Modals
@@ -1211,6 +1216,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     fetchFamilyData();
   }, [fetchFamilyData, fetchFamilyMembers]);
 
+  // Resolve onboarding status before showing main content so we never flash landing without modal
+  useEffect(() => {
+    if (!user || !session) {
+      setOnboardingCheckDone(true);
+      setInitialOnboardingBlocked(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getOnboardingStatus();
+        const data = res?.data ?? res;
+        if (cancelled) return;
+        setOnboardingCheckDone(true);
+        setInitialOnboardingBlocked(!data?.onboarding_completed);
+      } catch (_) {
+        if (!cancelled) {
+          setOnboardingCheckDone(true);
+          setInitialOnboardingBlocked(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, session]);
+
   // Listen for children refresh events
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -1224,7 +1254,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [fetchFamilyData, fetchFamilyMembers]);
 
-  // Listen for subjects refresh (e.g. after adding from Plan Year)
+  // Listen for subjects refresh (e.g. after onboarding, adding from Plan Year)
   const refetchSubjects = useCallback(async () => {
     if (!familyId) return;
     try {
@@ -1234,6 +1264,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         .eq('family_id', familyId)
         .order('name');
       setSubjects(subjectsData || []);
+      // Also refetch full subject data (including child_id) so Courses tab shows correct per-child assignments
+      const { data: fullSubjectsData } = await supabase
+        .from('subject')
+        .select('id, name, child_id, grade, notes, created_at, updated_at')
+        .eq('family_id', familyId)
+        .order('name');
+      setFullSubjects(fullSubjectsData || []);
     } catch (err) {
       console.warn('[WebLayout] Error refetching subjects:', err);
     }
@@ -1244,6 +1281,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('refreshSubjects', handleRefreshSubjects);
     return () => window.removeEventListener('refreshSubjects', handleRefreshSubjects);
   }, [refetchSubjects]);
+
+  // When onboarding completes (modal or event), close modal optimistically and refresh family/calendar/children/subjects
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleOnboardingCompleted = () => {
+      setOnboardingJustCompleted(true);
+      setInitialOnboardingBlocked(false);
+      fetchFamilyData();
+      fetchFamilyMembers();
+      window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      window.dispatchEvent(new CustomEvent('refreshChildren'));
+      window.dispatchEvent(new CustomEvent('refreshSubjects'));
+    };
+    window.addEventListener('onboardingCompleted', handleOnboardingCompleted);
+    return () => window.removeEventListener('onboardingCompleted', handleOnboardingCompleted);
+  }, [fetchFamilyData, fetchFamilyMembers]);
 
   // Handle URL-based routing for subject detail pages
   useEffect(() => {
@@ -1765,11 +1818,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, []);
 
+  // Onboarding gating: only close modal when user has reached "You're all set" and clicked Finish (onboarding_completed)
+  // onboardingJustCompleted: close immediately when complete API succeeds (avoids depending on follow-up family fetch, e.g. 429)
+  const onboardingBlocked = !!(
+    session &&
+    !onboardingJustCompleted &&
+    (initialOnboardingBlocked || (family && !family.onboarding_completed))
+  );
+
+  // Don't show main content until onboarding status is known (avoids flash of landing without modal)
+  if (user && session && !onboardingCheckDone) {
+    return <View style={styles.onboardingCheckContainer} />;
+  }
+
   return (
     <ToastProvider>
       <FiltersProvider>
         <PlannerDiffProvider>
         <AppShell
+          disabled={onboardingBlocked}
           flushToEdge={activeTopNav === 'planner'}
           sidebar={{
             topActive: activeTopNav,
@@ -2402,7 +2469,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           { id: 'buildCurriculum', label: 'Build Curriculum', icon: BookOpen },
                           { id: 'rebalance', label: 'Rebalance', icon: RefreshCw },
                           { id: 'schedulingAssistant', label: 'Scheduling Assistant', icon: Clock },
-                          { id: 'planYear', label: 'Plan My Year', icon: Calendar },
+                          ...(family?.default_planning_mode !== 'NONE'
+                            ? [{ id: 'planYear', label: 'Plan My Year', icon: Calendar }]
+                            : []),
                         ].map((action) => {
                           const ActionIcon = action.icon;
                           return (
@@ -2883,6 +2952,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           />
         </AppShell>
 
+      <OnboardingModal
+        visible={onboardingBlocked}
+        familyId={familyId}
+        initialPlanningMode={family?.default_planning_mode ?? null}
+        onCompleted={async () => {
+          await fetchFamilyData();
+          if (Platform.OS === 'web') {
+            window.dispatchEvent(new CustomEvent('refreshChildren'));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }}
+      />
 
       {/* Doodle bot search modal - only opened via floating icon */}
       {showDoodleSearchModal && (
@@ -3417,5 +3498,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  onboardingCheckContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
   },
 });

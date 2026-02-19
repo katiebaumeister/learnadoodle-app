@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
@@ -106,6 +106,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Data Vault state
   const [dataExportRequested, setDataExportRequested] = useState(false);
   const [dataDeleteRequested, setDataDeleteRequested] = useState(false);
+  const [resetFamilyDataInProgress, setResetFamilyDataInProgress] = useState(false);
   
   // Tutor invite state
   const [inviteEmail, setInviteEmail] = useState('');
@@ -480,19 +481,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  // Helper to get child names for a subject
+  // Helper to get child names for a subject (child_id can be single UUID or semicolon-separated)
   const getSubjectChildNames = (subject) => {
-    if (!subject.child_id || subject.child_id === '') {
+    if (subject.child_id == null || String(subject.child_id).trim() === '') {
       return 'All children';
     }
-    // Use childrenWithAvatars which has full data, fallback to family.children
     const availableChildren = childrenWithAvatars.length > 0 ? childrenWithAvatars : (family?.children || []);
-    const childIds = subject.child_id.split(';').map(id => id.trim()).filter(Boolean);
+    const childIds = String(subject.child_id).split(';').map(id => id.trim()).filter(Boolean);
+    if (childIds.length === 0) return 'All children';
     const childNames = childIds.map(id => {
       const child = availableChildren.find(c => String(c.id) === String(id));
       return child ? (child.name || child.first_name || 'Child') : null;
     }).filter(Boolean);
-    return childNames.length > 0 ? childNames.join(', ') : 'All children';
+    if (childNames.length > 0) return childNames.join(', ');
+    return childIds.length === 1 ? '1 student' : `${childIds.length} students`;
   };
 
   // Helper to get last activity text for a subject
@@ -1521,6 +1523,62 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={styles.subsectionTitle}>Data controls</Text>
               <View style={styles.subsectionDivider} />
               <View style={styles.dangerZoneActions}>
+                <TouchableOpacity
+                  style={[styles.dangerZoneExportButton, resetFamilyDataInProgress && styles.dangerZoneButtonDisabled]}
+                  onPress={() => {
+                    const runReset = async () => {
+                      setResetFamilyDataInProgress(true);
+                      try {
+                        const res = await resetFamilyData();
+                        if (res?.error) {
+                          const msg = res.error?.message || res.error?.detail || String(res.error);
+                          throw new Error(msg);
+                        }
+                        if (toast?.push) toast.push('Family data reset. Refreshing…', 'success');
+                        if (onFamilyUpdate) {
+                          const { data } = await getFamilyMembers();
+                          if (data) onFamilyUpdate(data);
+                        }
+                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('refreshChildren'));
+                          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                          window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                          setTimeout(() => window.location.reload(), 800);
+                        }
+                      } catch (e) {
+                        const msg = e?.message || 'Reset failed';
+                        const hint = (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('load') || msg.toLowerCase().includes('network'))
+                          ? ' Is the backend running (e.g. localhost:8001)?'
+                          : '';
+                        if (toast?.push) toast.push(msg + hint, 'error');
+                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                          window.alert(msg + hint);
+                        }
+                      } finally {
+                        setResetFamilyDataInProgress(false);
+                      }
+                    };
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      const ok = window.confirm('Reset all family data? This will remove all events, children, subjects, materials, and plans so you can re-run onboarding. Your account stays. Cannot be undone.');
+                      if (ok) runReset();
+                    } else {
+                      Alert.alert(
+                        'Reset all family data?',
+                        'This will remove all events, children, subjects, materials, and plans so you can re-run onboarding. Your account and family membership stay. Cannot be undone.',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Reset all data', style: 'destructive', onPress: runReset },
+                        ]
+                      );
+                    }
+                  }}
+                  disabled={resetFamilyDataInProgress}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.dangerZoneExportButtonText}>
+                    {resetFamilyDataInProgress ? 'Resetting…' : 'Reset all family data'}
+                  </Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.dangerZoneExportButton}
                   onPress={() => setActiveSection('datavault')}
@@ -4511,6 +4569,9 @@ function createStyles(tokens) {
     dangerZoneActions: {
       gap: 12,
       marginTop: 20,
+    },
+    dangerZoneButtonDisabled: {
+      opacity: 0.6,
     },
     dangerZoneExportButton: {
       flexDirection: 'row',

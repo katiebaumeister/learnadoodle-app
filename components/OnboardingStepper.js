@@ -106,9 +106,8 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
   };
 
   const canAddChild = () => {
-    return childName.trim() && 
-           childAge.trim() && 
-           childStandardsState && 
+    return childName.trim() &&
+           childAge.trim() &&
            childAvatar;
   };
 
@@ -141,10 +140,6 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
     const age = parseInt(childAge);
     if (isNaN(age) || age < 0 || age > 25) {
       Alert.alert('Invalid Age', 'Age must be between 0 and 25');
-      return false;
-    }
-    if (!childStandardsState) {
-      Alert.alert('Required', 'Please select a state for standards');
       return false;
     }
     if (!childAvatar) {
@@ -496,23 +491,6 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
 
       <View style={styles.formGroup}>
         <Text style={styles.label}>
-          Follow State Standards?<Text style={styles.requiredAsterisk}> *</Text>
-        </Text>
-        <View style={styles.chipsWrap}>
-          {STATES.map(s => (
-            <TouchableOpacity
-              key={s}
-              style={[styles.chip, childStandardsState === s && styles.chipSelected]}
-              onPress={() => setChildStandardsState(s)}
-            >
-              <Text style={[styles.chipText, childStandardsState === s && styles.chipTextSelected]}>{s}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.formGroup}>
-        <Text style={styles.label}>
           Choose Avatar<Text style={styles.requiredAsterisk}> *</Text>
         </Text>
         <View style={styles.avatarsWrap}>
@@ -547,6 +525,21 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
 
         {showOptionalFields && (
           <View style={styles.accordionContent}>
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Follow State Standards? (Optional)</Text>
+              <View style={styles.chipsWrap}>
+                {STATES.map(s => (
+                  <TouchableOpacity
+                    key={s}
+                    style={[styles.chip, childStandardsState === s && styles.chipSelected]}
+                    onPress={() => setChildStandardsState(s)}
+                  >
+                    <Text style={[styles.chipText, childStandardsState === s && styles.chipTextSelected]}>{s}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
             <View style={styles.formGroup}>
               <Text style={styles.label}>Grade (Optional)</Text>
               <View style={styles.chipsWrap}>

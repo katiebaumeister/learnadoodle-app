@@ -1,5 +1,6 @@
 from typing import Optional, Tuple
 
+from fastapi import HTTPException, status
 from supabase_client import get_admin_client
 
 
@@ -27,3 +28,42 @@ def child_belongs_to_family(child_id: str, family_id: str) -> bool:
     supabase = get_admin_client()
     resp = supabase.table("children").select("id").eq("id", child_id).eq("family_id", family_id).limit(1).execute()
     return bool(resp.data)
+
+
+def require_onboarding_complete(family_id: str) -> None:
+    """
+    Raise HTTP 400 if family has not completed onboarding (default_planning_mode set,
+    at least one child, at least one subject). Use before plan creation / apply_to_calendar.
+    """
+    supabase = get_admin_client()
+    try:
+        family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
+        row = family_res.data or {}
+        planning_mode = row.get("default_planning_mode")
+        completed = row.get("onboarding_completed") or row.get("has_completed_onboarding")
+        if not planning_mode:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Complete setup first: choose a planning mode in Quick setup.",
+            )
+        if completed:
+            return  # Trust the flag if set
+        children_res = supabase.table("children").select("id").eq("family_id", family_id).limit(1).execute()
+        if not children_res.data or len(children_res.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Complete setup first: add at least one child in Quick setup.",
+            )
+        subjects_res = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
+        if not subjects_res.data or len(subjects_res.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Complete setup first: add at least one subject in Quick setup.",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not verify setup. Please complete Quick setup first.",
+        )

@@ -105,7 +105,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
     else setList([...list, value]);
   };
 
-  const canSubmit = name.trim() && age && grade && standardsState && avatar;
+  const canSubmit = name.trim() && age && grade && avatar;
 
   // Notify parent of validation changes
   useEffect(() => {
@@ -203,21 +203,6 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
         </View>
 
         <View style={styles.field}> 
-          <Text style={styles.label}>Follow State Standards?<Text style={styles.required}> *</Text></Text>
-          <View style={styles.chipsWrap}>
-            {STATES.map(s => (
-              <TouchableOpacity 
-                key={s} 
-                style={[styles.chip, standardsState === s && styles.chipSelected]} 
-                onPress={() => setStandardsState(s)}
-              >
-                <Text style={[styles.chipText, standardsState === s && styles.chipTextSelected]}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        <View style={styles.field}> 
           <Text style={styles.label}>Choose Avatar<Text style={styles.required}> *</Text></Text>
           <View style={styles.avatarsWrap}>
             {AVATAR_KEYS.map(key => (
@@ -253,6 +238,21 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       <View style={[styles.section, styles.sectionLast]}>
         <Text style={styles.sectionTitle}>Learning Profile & Supports</Text>
         <Text style={styles.sectionSubtitle}>(Optional)</Text>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Follow State Standards?</Text>
+          <View style={styles.chipsWrap}>
+            {STATES.map(s => (
+              <TouchableOpacity
+                key={s}
+                style={[styles.chip, standardsState === s && styles.chipSelected]}
+                onPress={() => setStandardsState(s)}
+              >
+                <Text style={[styles.chipText, standardsState === s && styles.chipTextSelected]}>{s}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
 
         {/* Learning & processing needs */}
         <View style={styles.field}>

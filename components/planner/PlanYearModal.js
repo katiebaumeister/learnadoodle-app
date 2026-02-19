@@ -44,6 +44,7 @@ import {
   clearPlaceholders,
   syncGlobalHolidays,
   getAcademicYear,
+  getPlanHealth,
   computeSchedulePotential,
 } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
@@ -182,7 +183,10 @@ export default function PlanYearModal({
   const [flexSuggestion, setFlexSuggestion] = useState(null);
   const [computingFlexSuggestion, setComputingFlexSuggestion] = useState(false);
   const flexSuggestionTimeoutRef = useRef(null);
-  
+
+  // Plan health (includes manual counted events for "Manual instructional events counted" panel)
+  const [planHealth, setPlanHealth] = useState(null);
+
   const recalculateTimeoutRef = useRef(null);
   const scrollRef = useRef(null);
   const scheduleSectionYRef = useRef(0);
@@ -387,6 +391,7 @@ export default function PlanYearModal({
       }
       setComputingPotential(true);
       try {
+        const planChildrenIds = planForChildId ? [planForChildId] : (children || []).map((c) => c.id).filter(Boolean);
         const { data, error } = await computeSchedulePotential({
           family_id: familyId,
           start_date: startDate,
@@ -404,6 +409,8 @@ export default function PlanYearModal({
           custom_breaks: (customBreaks || []).map((b) => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
           target_days: planConstraintMode === 'days' ? (parseInt(planTargetDays, 10) || null) : null,
           target_hours: planConstraintMode === 'hours' ? (parseFloat(planTargetHours) || null) : null,
+          plan_children_ids: planChildrenIds.length > 0 ? planChildrenIds : undefined,
+          subject_targets: planHealth?.subject_targets ?? undefined,
         });
         if (!error && data) setSchedulePotential(data);
         else setSchedulePotential(null);
@@ -413,7 +420,7 @@ export default function PlanYearModal({
         setComputingPotential(false);
       }
     }, 400);
-  }, [familyId, startDate, endDate, blocks, customHolidays, customBreaks, planConstraintMode, planTargetDays, planTargetHours]);
+  }, [familyId, startDate, endDate, blocks, customHolidays, customBreaks, planConstraintMode, planTargetDays, planTargetHours, planForChildId, children, planHealth?.subject_targets]);
 
   useEffect(() => {
     if (visible && blocks.length > 0 && startDate && endDate) {
@@ -505,6 +512,22 @@ export default function PlanYearModal({
       setFlexSuggestion(null);
     }
   }, [flexSuggestion]);
+
+  // Fetch plan health when modal is open (for manual counted events panel)
+  useEffect(() => {
+    if (!visible || !familyId) {
+      setPlanHealth(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await getPlanHealth(familyId);
+      if (cancelled) return;
+      if (!error && data) setPlanHealth(data);
+      else setPlanHealth(null);
+    })();
+    return () => { cancelled = true; };
+  }, [visible, familyId]);
 
   // Fetch existing placeholder count when we have an academic year id
   useEffect(() => {
@@ -671,6 +694,7 @@ export default function PlanYearModal({
           end_time: b.end_time || '10:00',
           all_day: b.all_day || false,
         })) : [],
+        subject_targets: planHealth?.subject_targets ?? undefined,
       };
 
       const { data, error: applyError } = await applyToCalendar(payload);
@@ -1041,8 +1065,110 @@ export default function PlanYearModal({
                     Plan created: {planCreatedAt ? new Date(planCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                     {' · '}
                     Last updated: {planUpdatedAt ? new Date(planUpdatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                </Text>
+                  </Text>
                 )}
+                {/* Descriptive overage: overall per-child target; subject is explanatory. "Max is 4 days over the plan target (12 vs 8). Cats accounts for 12 of those days—try trimming end date to Mar 15." */}
+                {planHealth?.delta_days != null &&
+                  planHealth.delta_days > 0 &&
+                  planHealth.per_child &&
+                  (() => {
+                    const targetDaysVal = (planHealth.target_days ?? parseInt(planTargetDays, 10)) || 0;
+                    const subjectList = baseSubjectList || [];
+                    if (!targetDaysVal || targetDaysVal <= 0) return null;
+                    // Pick child with largest overall delta_days (over target)
+                    const perChild = planHealth.per_child || {};
+                    let worstChildId = null;
+                    let worstDelta = 0;
+                    for (const cid of Object.keys(perChild)) {
+                      const ch = perChild[cid];
+                      const delta = ch?.delta_days ?? 0;
+                      if (delta > worstDelta) {
+                        worstDelta = delta;
+                        worstChildId = cid;
+                      }
+                    }
+                    if (!worstChildId || worstDelta <= 0) return null;
+                    const actualDays = perChild[worstChildId]?.planned_days ?? 0;
+                    const bySubject = planHealth.per_child_subject?.[worstChildId] || {};
+                    // Subject with largest planned_days as explanation
+                    let topSubjectId = null;
+                    let topSubjectDays = 0;
+                    for (const sid of Object.keys(bySubject)) {
+                      const d = bySubject[sid]?.planned_days ?? 0;
+                      if (d > topSubjectDays) {
+                        topSubjectDays = d;
+                        topSubjectId = sid;
+                      }
+                    }
+                    const child = (children || []).find((c) => String(c.id) === String(worstChildId));
+                    const subject = subjectList.find((s) => String(s.id) === String(topSubjectId));
+                    const childName = child?.first_name || child?.name || 'This child';
+                    const subjectName = subject?.name || 'this subject';
+                    // Child-aware suggested end date (only show if it would trim toward target)
+                    const childSuggested = schedulePotential?.per_child?.[worstChildId]?.suggested_end_date;
+                    const suggestedDisplay =
+                      childSuggested && endDate && childSuggested <= endDate
+                        ? new Date(childSuggested + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : null;
+                    return (
+                      <View style={{ marginBottom: 12, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: HIGHLIGHT_BG, borderRadius: 8, borderLeftWidth: 3, borderLeftColor: HIGHLIGHT_BORDER }}>
+                        <Text style={{ fontSize: 13, color: FG }}>
+                          {childName} is {worstDelta} day{worstDelta !== 1 ? 's' : ''} over the plan target ({actualDays} vs {targetDaysVal}).
+                          {topSubjectId ? ` ${subjectName} accounts for ${topSubjectDays} of those days` : ''}
+                          —{suggestedDisplay ? ` try trimming the end date to ${suggestedDisplay} to hit the target.` : ' reduce days or times in Schedule Blocks (section 2) to fix.'}
+                        </Text>
+                      </View>
+                    );
+                  })()}
+                {/* Subject goals: planned vs target per subject when subject_targets exist */}
+                {planHealth?.per_child_subject &&
+                  (() => {
+                    const subjectList = baseSubjectList || [];
+                    const childIds = planForChildId ? [planForChildId] : Object.keys(planHealth.per_child_subject || {});
+                    const rows = [];
+                    for (const cid of childIds) {
+                      const bySubject = planHealth.per_child_subject[cid] || {};
+                      for (const sid of Object.keys(bySubject)) {
+                        const s = bySubject[sid];
+                        const targetDays = s?.subject_target_days;
+                        const targetHours = s?.subject_target_hours;
+                        if (targetDays == null && targetHours == null) continue;
+                        const plannedDays = s?.planned_days ?? 0;
+                        const plannedHours = s?.planned_hours ?? 0;
+                        const deltaDays = s?.subject_delta_days;
+                        const deltaHours = s?.subject_delta_hours;
+                        const subject = subjectList.find((x) => String(x.id) === String(sid));
+                        const name = subject?.name || 'Subject';
+                        const child = (children || []).find((c) => String(c.id) === String(cid));
+                        const childLabel = planForChildId && child ? `${child?.first_name || child?.name || 'Child'}: ` : '';
+                        let status = '';
+                        if (targetDays != null && deltaDays != null) {
+                          status = deltaDays > 0 ? ` (+${deltaDays})` : deltaDays < 0 ? ` (${deltaDays})` : ' ✓';
+                        } else if (targetHours != null && deltaHours != null) {
+                          status = deltaHours > 0 ? ` (+${Number(deltaHours).toFixed(0)}h)` : deltaHours < 0 ? ` (${Number(deltaHours).toFixed(0)}h)` : ' ✓';
+                        }
+                        const unit = targetDays != null ? ' days' : ' hours';
+                        const plannedVal = targetDays != null ? plannedDays : Number(plannedHours);
+                        const targetVal = targetDays != null ? targetDays : Number(targetHours);
+                        rows.push({ key: `${cid}-${sid}`, label: `${childLabel}${name}`, plannedVal, targetVal, unit, isHours: targetHours != null, status });
+                      }
+                    }
+                    if (rows.length === 0) return null;
+                    return (
+                      <View style={[styles.inputGroup, { marginBottom: 12 }]}>
+                        <Text style={[styles.sectionTitle, { marginTop: 0, marginBottom: 8 }]}>Subject goals</Text>
+                        {rows.map((r) => (
+                          <View key={r.key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                            <Text style={{ fontSize: 13, color: FG, flex: 1 }}>{r.label}</Text>
+                            <Text style={{ fontSize: 13, color: SUB }}>
+                              {r.isHours ? Number(r.plannedVal).toFixed(0) : r.plannedVal} / {r.isHours ? Number(r.targetVal).toFixed(0) : r.targetVal}{r.unit}
+                            </Text>
+                            {r.status ? <Text style={{ fontSize: 13, marginLeft: 6, color: r.status.includes('✓') ? SUCCESS : r.status.startsWith('+') ? ERROR : MUTED }}>{r.status}</Text> : null}
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })()}
                 <Text style={[styles.sectionTitle, { marginTop: 0 }]}>1. WHO & SUBJECTS</Text>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Who are we planning for?</Text>
@@ -1742,6 +1868,30 @@ export default function PlanYearModal({
                             ) : null}
                           </View>
                         )}
+                        {/* Manual instructional events counted (plan health input) */}
+                        {(planHealth?.manual_events_days != null && planHealth.manual_events_days > 0) ||
+                         (planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0) ? (
+                          <View style={[styles.inputGroup, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: BORDER }]}>
+                            <Text style={[styles.mutedText, { marginBottom: 6 }]}>
+                              Manual instructional events counted this term: {planHealth.manual_events_days ?? 0} days
+                              {(planHealth.manual_events_hours != null && planHealth.manual_events_hours > 0)
+                                ? `, ${Number(planHealth.manual_events_hours).toFixed(0)} hours`
+                                : ''}
+                            </Text>
+                            {typeof window !== 'undefined' && (
+                              <TouchableOpacity
+                                style={[styles.addButton, { alignSelf: 'flex-start' }]}
+                                onPress={() => {
+                                  window.dispatchEvent(new CustomEvent('viewCountedEvents', {
+                                    detail: { academic_year_id: planHealth?.academic_year_id },
+                                  }));
+                                }}
+                              >
+                                <Text style={{ color: ACCENT, fontWeight: '600' }}>View counted events</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        ) : null}
                       </View>
                     )}
                   </View>

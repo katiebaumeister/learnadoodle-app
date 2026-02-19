@@ -151,13 +151,6 @@ export default function TodayScheduleCard({
                     {event.subject_id && (
                       <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
                     )}
-                    {event.child_id && (
-                      <View style={[styles.childAvatar, { backgroundColor: getChildColor(event.child_id) + '20' }]}>
-                        <Text style={[styles.childInitials, { color: getChildColor(event.child_id) }]}>
-                          {getChildName(event.child_id).charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                    )}
                     {isAssignment && (
                       <FileText size={12} color={colors.textSecondary} />
                     )}
@@ -165,10 +158,9 @@ export default function TodayScheduleCard({
                   <Text style={styles.eventTitle}>{event.title}</Text>
                   <View style={styles.pillsRow}>
                     {event.child_id && (
-                      <View style={[styles.pill, { backgroundColor: getChildColor(event.child_id) + '20' }]}>
-                        <Text style={[styles.pillText, { color: getChildColor(event.child_id) }]}>
-                          {getChildName(event.child_id)}
-                        </Text>
+                      <View style={styles.childLabel}>
+                        <View style={[styles.childDot, { backgroundColor: getChildColor(event.child_id) }]} />
+                        <Text style={styles.childLabelText}>{getChildName(event.child_id)}</Text>
                       </View>
                     )}
                     {event.subject_id && (
@@ -328,16 +320,23 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-  childAvatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  childLabel: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
   },
-  childInitials: {
-    fontSize: 10,
-    fontWeight: '600',
+  childDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  childLabelText: {
+    fontSize: 13,
+    color: '#374151',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timeColumn: {
     width: 80,

@@ -81,11 +81,27 @@ class FamilySetupIn(BaseModel):
     timezone: Optional[str] = None
 
 
+class SetPlanningModeIn(BaseModel):
+    family_id: str
+    planning_mode: str  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
+
+
+class CreateSubjectIn(BaseModel):
+    family_id: str
+    name: str
+    color: Optional[str] = None
+    child_id: Optional[str] = None  # UUID of child; subject is linked to this child (onboarding per-child step)
+    summary: Optional[str] = None
+    grade: Optional[str] = None
+    credits: Optional[float] = None
+    notes: Optional[str] = None
+
+
 class AddChildIn(BaseModel):
     family_id: str
     name: str
     nickname: Optional[str] = None
-    age: int
+    age: Optional[int] = None
     grade_label: Optional[str] = None
     follow_standards: bool = False
     standards_state: Optional[str] = None
@@ -184,6 +200,130 @@ async def family_setup(
         )
 
 
+@router.post("/set_planning_mode")
+async def set_planning_mode(
+    body: SetPlanningModeIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Set family default_planning_mode (onboarding step 1)."""
+    if body.planning_mode not in ("HOMESCHOOL_COMPLIANCE", "AFTERSCHOOL_GOALS", "NONE"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid planning_mode")
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Family ID mismatch")
+    supabase = get_admin_client()
+    try:
+        update_data = {"default_planning_mode": body.planning_mode, "updated_at": datetime.utcnow().isoformat()}
+        supabase.table("family").update(update_data).eq("id", family_id).execute()
+    except Exception as e:
+        log_event("onboarding.set_planning_mode.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    log_event("onboarding.set_planning_mode.success", user_id=user["id"], family_id=family_id)
+    return {"success": True}
+
+
+# Deterministic subject color palette (cycle by family subject count)
+SUBJECT_COLOR_PALETTE = [
+    "#8B5CF6", "#06B6D4", "#10B981", "#F59E0B", "#EF4444", "#EC4899",
+    "#6366F1", "#14B8A6", "#84CC16", "#F97316",
+]
+
+
+@router.post("/create_subject")
+async def create_subject(
+    body: CreateSubjectIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Create one subject for the family (onboarding step 3). Returns subject_id. Assigns color from palette if not provided. Optional child_id links subject to that child."""
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Family ID mismatch")
+    if body.child_id and not child_belongs_to_family(body.child_id, family_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Child does not belong to your family")
+    supabase = get_admin_client()
+    insert_data = {"family_id": family_id, "name": body.name.strip()}
+    if body.child_id:
+        insert_data["child_id"] = body.child_id
+    if body.summary is not None:
+        insert_data["summary"] = body.summary.strip() or None
+    if body.grade is not None:
+        insert_data["grade"] = body.grade.strip() or None
+    if body.credits is not None:
+        insert_data["credits"] = body.credits
+    if body.notes is not None:
+        insert_data["notes"] = body.notes.strip() or None
+    if body.color:
+        insert_data["color"] = body.color
+    else:
+        try:
+            existing = supabase.table("subject").select("id").eq("family_id", family_id).execute()
+            count = len(existing.data or [])
+            insert_data["color"] = SUBJECT_COLOR_PALETTE[count % len(SUBJECT_COLOR_PALETTE)]
+        except Exception:
+            insert_data["color"] = SUBJECT_COLOR_PALETTE[0]
+    try:
+        resp = supabase.table("subject").insert(insert_data).execute()
+    except Exception as e:
+        log_event("onboarding.create_subject.error", user_id=user["id"], error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    if not resp.data or len(resp.data) == 0:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create subject")
+    subject_id = resp.data[0]["id"]
+    log_event("onboarding.create_subject.success", user_id=user["id"], family_id=family_id, subject_id=subject_id)
+    return {"subject_id": subject_id}
+
+
+@router.get("/status")
+async def onboarding_status(
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Return onboarding state for resume support."""
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        return {
+            "onboarding_completed": False,
+            "has_children": False,
+            "has_subjects": False,
+            "default_planning_mode": None,
+        }
+    supabase = get_admin_client()
+    try:
+        family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
+        row = family_res.data or {}
+        completed = row.get("onboarding_completed")
+        if completed is None:
+            completed = row.get("has_completed_onboarding") or False
+        default_planning_mode = row.get("default_planning_mode")
+    except Exception:
+        completed = False
+        default_planning_mode = None
+    try:
+        children_res = supabase.table("children").select("id").eq("family_id", family_id).limit(1).execute()
+        has_children = bool(children_res.data and len(children_res.data) > 0)
+    except Exception:
+        has_children = False
+    try:
+        subjects_res = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
+        has_subjects = bool(subjects_res.data and len(subjects_res.data) > 0)
+    except Exception:
+        has_subjects = False
+    onboarding_is_valid = bool(
+        default_planning_mode
+        and has_children
+        and has_subjects
+    )
+    return {
+        "onboarding_completed": bool(completed),
+        "onboarding_is_valid": onboarding_is_valid,
+        "has_children": has_children,
+        "has_subjects": has_subjects,
+        "default_planning_mode": default_planning_mode,
+    }
+
+
 @router.post("/add_child")
 async def add_child(
     body: AddChildIn,
@@ -192,11 +332,17 @@ async def add_child(
 ):
     """
     Add or edit a child profile.
-    Accepts full payload with all child fields.
+    Accepts full payload with all child fields. For onboarding: name required, at least one of grade_label or age.
     """
     log_event("onboarding.add_child.start", user_id=user["id"], child_name=body.name[:50])
     
     try:
+        # Validate: at least one of grade or age for onboarding
+        if not body.grade_label and body.age is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide at least one of grade or age"
+            )
         # Validate family access
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
@@ -213,8 +359,12 @@ async def add_child(
         insert_data = {
             "family_id": body.family_id,
             "first_name": body.name,  # Database column is first_name
-            "age": body.age,
         }
+        if body.age is not None:
+            insert_data["age"] = body.age
+        elif body.grade_label:
+            # Some DBs require age; use a sentinel when only grade provided
+            insert_data["age"] = 0
         
         # Optional fields - map to actual database columns
         if body.nickname:
@@ -424,13 +574,13 @@ async def get_children(
         )
 
 
-@router.get("/complete")
+@router.post("/complete")
 async def complete_onboarding(
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
     """
-    Mark onboarding as finished (sets flag in family).
+    Mark onboarding as finished. Sets onboarding_completed = TRUE on family.
     """
     try:
         family_id = get_family_id_for_user(user["id"])
@@ -439,27 +589,19 @@ async def complete_onboarding(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Family not found"
             )
-        
         supabase = get_admin_client()
-        
-        resp = supabase.table("family").update({
-            "has_completed_onboarding": True,
-            "updated_at": datetime.utcnow().isoformat()
-        }).eq("id", family_id).execute()
-        
+        update_payload = {
+            "onboarding_completed": True,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        resp = supabase.table("family").update(update_payload).eq("id", family_id).execute()
         if not resp.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Family record not found"
             )
-        
         log_event("onboarding.complete", user_id=user["id"], family_id=family_id)
-        
-        return {
-            "success": True,
-            "message": "Onboarding completed successfully"
-        }
-        
+        return {"success": True, "message": "Onboarding completed successfully"}
     except HTTPException:
         raise
     except Exception as e:

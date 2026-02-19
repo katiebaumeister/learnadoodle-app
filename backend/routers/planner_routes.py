@@ -28,7 +28,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user, child_belongs_to_family, get_placeholder_conversion_fields
+from helpers import get_family_id_for_user, child_belongs_to_family, get_placeholder_conversion_fields, require_onboarding_complete
 from logger import log_event
 from supabase_client import get_admin_client
 
@@ -1815,7 +1815,7 @@ async def apply_plan_week(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-        
+        require_onboarding_complete(family_id)
         supabase = get_admin_client()
         
         patch = body.patch

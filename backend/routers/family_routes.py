@@ -41,7 +41,11 @@ class MemberOut(BaseModel):
     child_scope: List[str] = Field(default_factory=list)
 
 class FamilyMembersOut(BaseModel):
+    id: Optional[str] = None
     family_name: Optional[str] = None
+    onboarding_completed: Optional[bool] = False  # stored flag (convenience only)
+    onboarding_is_valid: Optional[bool] = False  # derived: default_planning_mode + has_children + has_subjects
+    default_planning_mode: Optional[str] = None  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
     children: List[ChildOut] = Field(default_factory=list)
     members: List[MemberOut] = Field(default_factory=list)
 
@@ -88,11 +92,18 @@ async def get_family_members(
     children = []
     members = []
 
-    # Get family name (if available) - use maybe_single to avoid error when row missing
+    # Get family row (name, onboarding_completed, default_planning_mode)
+    onboarding_completed = False
+    default_planning_mode = None
     try:
-        family_res = supabase.table("family").select("name").eq("id", family_id).maybe_single().execute()
+        family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
         if family_res.data:
             family_name = family_res.data.get("name")
+            # Prefer onboarding_completed; fallback to legacy has_completed_onboarding
+            onboarding_completed = family_res.data.get("onboarding_completed")
+            if onboarding_completed is None and family_res.data.get("has_completed_onboarding") is True:
+                onboarding_completed = True
+            default_planning_mode = family_res.data.get("default_planning_mode")
     except Exception as e:
         log_event("family.get_members.family_table_error", user_id=user["id"], error=str(e))
 
@@ -108,6 +119,21 @@ async def get_family_members(
             ))
     except Exception as e:
         log_event("family.get_members.children_table_error", user_id=user["id"], error=str(e))
+
+    # Derived onboarding validity (avoids stale onboarding_completed)
+    has_children = len(children) > 0
+    has_subjects = False
+    try:
+        subj_res = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
+        has_subjects = bool(subj_res.data and len(subj_res.data) > 0)
+    except Exception as e:
+        log_event("family.get_members.subjects_check_error", user_id=user["id"], error=str(e))
+    onboarding_is_valid = bool(
+        default_planning_mode is not None
+        and default_planning_mode != ""
+        and has_children
+        and has_subjects
+    )
 
     # Get family members - table may not exist or RLS/migration not applied
     members_data = []
@@ -145,10 +171,97 @@ async def get_family_members(
     log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
 
     return FamilyMembersOut(
+        id=family_id,
         family_name=family_name,
+        onboarding_completed=onboarding_completed,
+        onboarding_is_valid=onboarding_is_valid,
+        default_planning_mode=default_planning_mode,
         children=children,
         members=members
     )
+
+
+@router.post("/reset_data")
+async def reset_family_data(
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Delete all family-scoped data (events, children, subjects, materials, plans, etc.)
+    and reset onboarding so the onboarding flow can be re-run. For testing only.
+    Keeps the family and family_members; removes calendar/children/subjects/events.
+    """
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family not found")
+    supabase = get_admin_client()
+
+    def _delete(table: str, column: str, value: str):
+        try:
+            supabase.table(table).delete().eq(column, value).execute()
+        except Exception as e:
+            log_event("family.reset_data.delete_error", table=table, error=str(e))
+
+    def _delete_in(table: str, column: str, values: list):
+        if not values:
+            return
+        try:
+            supabase.table(table).delete().in_(column, values).execute()
+        except Exception as e:
+            log_event("family.reset_data.delete_in_error", table=table, error=str(e))
+
+    # Get IDs before deleting parents
+    try:
+        ay_res = supabase.table("academic_years").select("id").eq("family_id", family_id).execute()
+        ay_ids = [r["id"] for r in (ay_res.data or [])]
+    except Exception:
+        ay_ids = []
+    try:
+        child_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
+        child_ids = [r["id"] for r in (child_res.data or [])]
+    except Exception:
+        child_ids = []
+    try:
+        subj_res = supabase.table("subject").select("id").eq("family_id", family_id).execute()
+        subject_ids = [r["id"] for r in (subj_res.data or [])]
+    except Exception:
+        subject_ids = []
+
+    # Delete in dependency order
+    _delete("events", "family_id", family_id)
+    _delete("academic_year_plan", "family_id", family_id)
+    for ay_id in ay_ids:
+        _delete("academic_year_holiday_settings", "academic_year_id", ay_id)
+    _delete("academic_years", "family_id", family_id)
+    _delete_in("child_support_profiles", "child_id", child_ids)
+    _delete("children", "family_id", family_id)
+    _delete("subject_track", "family_id", family_id)
+    if subject_ids:
+        _delete_in("materials", "subject_id", subject_ids)
+    _delete("subject", "family_id", family_id)
+    try:
+        supabase.table("calendar_days").delete().eq("family_id", family_id).execute()
+    except Exception:
+        pass
+    try:
+        supabase.table("family_teaching_days").delete().eq("family_id", family_id).execute()
+    except Exception:
+        pass
+    try:
+        supabase.table("family_years").delete().eq("family_id", family_id).execute()
+    except Exception:
+        pass
+
+    # Reset onboarding so modal shows again
+    supabase.table("family").update({
+        "onboarding_completed": False,
+        "default_planning_mode": None,
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("id", family_id).execute()
+
+    log_event("family.reset_data.success", user_id=user["id"], family_id=family_id)
+    return {"success": True, "message": "Family data reset. Refresh the page to see the onboarding flow."}
+
 
 @router.post("/invite", response_model=InviteTutorOut)
 async def invite_tutor(

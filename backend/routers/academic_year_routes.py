@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timedelta
+from collections import defaultdict
 import math
 import json
 import sys
@@ -24,7 +25,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user
+from helpers import get_family_id_for_user, require_onboarding_complete
 from logger import log_event
 from supabase_client import get_admin_client
 from services.year_calculator import recalculate_year, get_instructional_dates_list, CalculationMode
@@ -115,6 +116,7 @@ class ApplyToCalendarInput(BaseModel):
     constraint_mode: Optional[str] = None  # 'days' | 'hours'
     target_days: Optional[int] = None
     target_hours: Optional[float] = None
+    subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # { subject_id: { target_days, target_hours } }; validated on write
 
 
 class BlockRegenResult(BaseModel):
@@ -142,6 +144,8 @@ class SchedulePotentialInput(BaseModel):
     custom_breaks: List[CustomBreakEntry] = []
     target_days: Optional[int] = None
     target_hours: Optional[float] = None
+    plan_children_ids: Optional[List[str]] = None  # for whole-family blocks: attribute to these children (child-aware suggested_end_date)
+    subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # { subject_id: { target_days, target_hours } } for suggested_end_date_for_subject_target
 
 
 class SchedulePotentialOutput(BaseModel):
@@ -151,6 +155,9 @@ class SchedulePotentialOutput(BaseModel):
     target_hours: Optional[float] = None
     delta_days: Optional[int] = None
     delta_hours: Optional[float] = None
+    per_subject: Optional[Dict[str, Dict[str, Any]]] = None  # subject_id -> { projected_days, suggested_end_date, ... }
+    per_child: Optional[Dict[str, Dict[str, Any]]] = None  # child_id -> { projected_days, suggested_end_date } (child-aware)
+    per_child_subject: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None  # child_id -> subject_id -> { projected_days, occurrence_dates_sorted }
 
 
 class PlanHealthOutput(BaseModel):
@@ -164,6 +171,12 @@ class PlanHealthOutput(BaseModel):
     target_days: Optional[int] = None
     target_hours: Optional[float] = None
     academic_year_id: Optional[str] = None
+    manual_events_days: Optional[int] = None
+    manual_events_hours: Optional[float] = None
+    per_child: Optional[Dict[str, Dict[str, Any]]] = None
+    per_child_subject: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None  # child_id -> subject_id -> { planned_days, subject_target_days, subject_delta_days, ... }
+    subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # subject_id -> { target_days, target_hours } for client/schedule potential
+    planning_mode: Optional[str] = None  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
 
 
 class ApplyFixSuggestionInput(BaseModel):
@@ -203,6 +216,49 @@ class AcademicYearResponse(BaseModel):
 # ============================================================
 # Helper Functions
 # ============================================================
+
+def validate_subject_targets(
+    supabase,
+    family_id: str,
+    subject_targets: Dict[str, Dict[str, Any]],
+) -> None:
+    """
+    Validate subject_targets before persist. Raises HTTPException if invalid.
+    - Each subject_id must exist in subject table for this family.
+    - target_days must be >= 0 when present.
+    - target_hours must be >= 0 when present.
+    """
+    if not subject_targets or not isinstance(subject_targets, dict):
+        return
+    subject_ids = list(subject_targets.keys())
+    if not subject_ids:
+        return
+    sub_resp = supabase.table("subject").select("id").eq("family_id", family_id).in_("id", subject_ids).execute()
+    valid_ids = {str(r["id"]) for r in (sub_resp.data or [])}
+    for sid, st in subject_targets.items():
+        if not sid or not isinstance(st, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="subject_targets: each key must be a subject_id with value { target_days?, target_hours? }.",
+            )
+        if sid not in valid_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"subject_targets: subject_id {sid} not found or not in this family.",
+            )
+        td = st.get("target_days")
+        if td is not None and (not isinstance(td, (int, float)) or int(td) < 0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"subject_targets: target_days for {sid} must be >= 0.",
+            )
+        th = st.get("target_hours")
+        if th is not None and (not isinstance(th, (int, float)) or float(th) < 0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"subject_targets: target_hours for {sid} must be >= 0.",
+            )
+
 
 def get_holidays_for_year(
     supabase,
@@ -288,7 +344,7 @@ async def create_default_academic_year(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden: Family ID mismatch"
             )
-        
+        require_onboarding_complete(family_id)
         supabase = get_admin_client()
         
         # Calculate default dates (current or next academic year)
@@ -650,7 +706,8 @@ async def get_plan_health(
     Uses academic_year_plan for the family's most recent academic year.
     Stores result in health_cache for instant UI.
     """
-    from services.plan_health import compute_plan_health_from_events
+    from services.plan_health import compute_plan_health_from_attributions
+    from services.instructional_attribution import get_instructional_attributions
 
     try:
         family_id_user = get_family_id_for_user(user["id"])
@@ -658,18 +715,40 @@ async def get_plan_health(
             raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
         supabase = get_admin_client()
 
-        plan_resp = (
-            supabase.table("academic_year_plan")
-            .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours")
-            .eq("family_id", family_id)
-            .order("updated_at", desc=True)
-            .limit(1)
-            .execute()
-        )
+        # planning_mode / subject_targets may not exist yet (migration order). Be resilient in dev.
+        try:
+            plan_resp = (
+                supabase.table("academic_year_plan")
+                .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets")
+                .eq("family_id", family_id)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            try:
+                plan_resp = (
+                    supabase.table("academic_year_plan")
+                    .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode")
+                    .eq("family_id", family_id)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception:
+                plan_resp = (
+                    supabase.table("academic_year_plan")
+                    .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours")
+                    .eq("family_id", family_id)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
         if not plan_resp.data or len(plan_resp.data) == 0:
             return PlanHealthOutput(plan_exists=False)
 
         plan = plan_resp.data[0]
+        subject_targets = plan.get("subject_targets")  # optional { subject_id: { target_days, target_hours } }
         academic_year_id = plan["academic_year_id"]
         start_date_obj = date.fromisoformat(plan["start_date"][:10])
         end_date_obj = date.fromisoformat(plan["end_date"][:10])
@@ -678,19 +757,46 @@ async def get_plan_health(
         target_hours = float(plan["target_hours"]) if plan.get("target_hours") is not None else None
 
         end_next = (end_date_obj + timedelta(days=1)).isoformat()
-        ev_resp = (
-            supabase.table("events")
-            .select("id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan")
-            .eq("family_id", family_id)
-            .is_("deleted_at", None)
-            .gte("start_ts", plan["start_date"] + "T00:00:00")
-            .lt("start_ts", end_next + "T00:00:00")
-            .execute()
-        )
+        # Some columns (instructional_status/instructional_day_credit) may not exist until migrations run.
+        # Prefer the full projection, but fall back to a minimal one in dev.
+        try:
+            ev_resp = (
+                supabase.table("events")
+                .select(
+                    "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, instructional_status, "
+                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, instructional_day_credit, is_placeholder"
+                )
+                .eq("family_id", family_id)
+                .eq("academic_year_id", academic_year_id)
+                .is_("deleted_at", None)
+                .gte("start_ts", plan["start_date"] + "T00:00:00")
+                .lt("start_ts", end_next + "T00:00:00")
+                .execute()
+            )
+        except Exception:
+            ev_resp = (
+                supabase.table("events")
+                .select(
+                    "id, start_ts, end_ts, status, deleted_at, counts_toward_plan, "
+                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
+                )
+                .eq("family_id", family_id)
+                .eq("academic_year_id", academic_year_id)
+                .is_("deleted_at", None)
+                .gte("start_ts", plan["start_date"] + "T00:00:00")
+                .lt("start_ts", end_next + "T00:00:00")
+                .execute()
+            )
         events = ev_resp.data or []
-
-        result = compute_plan_health_from_events(
-            events, start_date_obj, end_date_obj, constraint_mode, target_days, target_hours
+        attributions = get_instructional_attributions(events)
+        result = compute_plan_health_from_attributions(
+            attributions,
+            start_date_obj,
+            end_date_obj,
+            constraint_mode,
+            target_days,
+            target_hours,
+            subject_targets=subject_targets,
         )
         health_cache = {
             **result,
@@ -712,11 +818,133 @@ async def get_plan_health(
             target_days=target_days,
             target_hours=target_hours,
             academic_year_id=academic_year_id,
+            manual_events_days=result.get("manual_events_days"),
+            manual_events_hours=result.get("manual_events_hours"),
+            per_child=result.get("per_child"),
+            per_child_subject=result.get("per_child_subject"),
+            subject_targets=subject_targets,
+            planning_mode=plan.get("planning_mode"),
         )
     except HTTPException:
         raise
     except Exception as e:
         log_event("academic_year.plan_health.error", user_id=user.get("id"), error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/instructional_attributions")
+async def get_instructional_attributions_debug(
+    academic_year_id: str = Query(..., description="Academic year ID"),
+    family_id: str = Query(..., description="Family ID"),
+    sample_size: int = Query(50, ge=1, le=500, description="Max attribution rows to return in sample"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Debug endpoint: return instructional attribution rows and aggregated totals for an academic year.
+    Response: sample of attribution rows, totals per child, totals per child-subject (days/hours).
+    """
+    from services.instructional_attribution import get_instructional_attributions
+    from services.plan_health import _parse_ts_to_date
+
+    try:
+        family_id_user = get_family_id_for_user(user["id"])
+        if not family_id_user or family_id_user != family_id:
+            raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
+        supabase = get_admin_client()
+        ay = supabase.table("academic_years").select("id, family_id, start_date, end_date").eq("id", academic_year_id).execute()
+        if not ay.data or len(ay.data) == 0:
+            raise HTTPException(status_code=404, detail="Academic year not found")
+        if ay.data[0].get("family_id") != family_id:
+            raise HTTPException(status_code=403, detail="Academic year does not belong to this family")
+
+        start_date = ay.data[0]["start_date"][:10]
+        end_date = ay.data[0]["end_date"][:10]
+        end_next = (date.fromisoformat(end_date) + timedelta(days=1)).isoformat()
+        try:
+            ev_resp = (
+                supabase.table("events")
+                .select(
+                    "id, start_ts, end_ts, status, deleted_at, counts_toward_plan, instructional_status, "
+                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
+                )
+                .eq("family_id", family_id)
+                .eq("academic_year_id", academic_year_id)
+                .is_("deleted_at", None)
+                .gte("start_ts", start_date + "T00:00:00")
+                .lt("start_ts", end_next + "T00:00:00")
+                .execute()
+            )
+        except Exception:
+            ev_resp = (
+                supabase.table("events")
+                .select("id, start_ts, end_ts, status, deleted_at, counts_toward_plan, academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder")
+                .eq("family_id", family_id)
+                .eq("academic_year_id", academic_year_id)
+                .is_("deleted_at", None)
+                .gte("start_ts", start_date + "T00:00:00")
+                .lt("start_ts", end_next + "T00:00:00")
+                .execute()
+            )
+        events = ev_resp.data or []
+        attributions = get_instructional_attributions(events)
+
+        # Aggregates: per child (distinct dates, total minutes), per child-subject (distinct dates, total minutes)
+        per_child_dates: Dict[str, set] = defaultdict(set)
+        per_child_minutes: Dict[str, int] = defaultdict(int)
+        per_child_subject_dates: Dict[tuple, set] = defaultdict(set)
+        per_child_subject_minutes: Dict[tuple, int] = defaultdict(int)
+        start_date_obj = date.fromisoformat(start_date)
+        end_date_obj = date.fromisoformat(end_date)
+        for row in attributions:
+            start_ts = row.get("start_ts")
+            d = _parse_ts_to_date(start_ts) if start_ts else None
+            if d is None or d < start_date_obj or d > end_date_obj:
+                continue
+            minutes = row.get("instructional_minutes") or 0
+            if minutes <= 0:
+                continue
+            child_id = str(row.get("child_id") or "")
+            if not child_id:
+                continue
+            per_child_dates[child_id].add(d)
+            per_child_minutes[child_id] += minutes
+            subject_id = row.get("subject_id")
+            if subject_id:
+                key = (child_id, str(subject_id))
+                per_child_subject_dates[key].add(d)
+                per_child_subject_minutes[key] += minutes
+
+        by_child = {}
+        for cid in per_child_dates:
+            by_child[cid] = {
+                "instructional_days": len(per_child_dates[cid]),
+                "instructional_hours": round(per_child_minutes[cid] / 60.0, 2),
+            }
+        by_child_subject = {}
+        for (cid, sid), dates_set in per_child_subject_dates.items():
+            if cid not in by_child_subject:
+                by_child_subject[cid] = {}
+            by_child_subject[cid][sid] = {
+                "instructional_days": len(dates_set),
+                "instructional_hours": round(per_child_subject_minutes.get((cid, sid), 0) / 60.0, 2),
+            }
+
+        sample = attributions[:sample_size]
+        return {
+            "academic_year_id": academic_year_id,
+            "events_count": len(events),
+            "attributions_count": len(attributions),
+            "sample": sample,
+            "aggregates": {
+                "per_child": by_child,
+                "per_child_subject": by_child_subject,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("academic_year.instructional_attributions.error", user_id=user.get("id"), error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -733,7 +961,7 @@ async def apply_fix_suggestion(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
-
+        require_onboarding_complete(family_id)
         supabase = get_admin_client()
         plan_resp = (
             supabase.table("academic_year_plan")
@@ -1055,7 +1283,13 @@ async def schedule_potential(
             blocks_dict.append(block)
 
         result = compute_schedule_potential(
-            blocks_dict, start_date_obj, end_date_obj, exclusion_ranges
+            blocks_dict,
+            start_date_obj,
+            end_date_obj,
+            exclusion_ranges,
+            target_days=body.target_days,
+            plan_children_ids=body.plan_children_ids,
+            subject_targets=body.subject_targets,
         )
         projected_days = result["projected_days"]
         projected_hours = result["projected_hours"]
@@ -1074,6 +1308,9 @@ async def schedule_potential(
             target_hours=body.target_hours,
             delta_days=delta_days,
             delta_hours=delta_hours,
+            per_subject=result.get("per_subject"),
+            per_child=result.get("per_child"),
+            per_child_subject=result.get("per_child_subject"),
         )
     except HTTPException:
         raise
@@ -1417,6 +1654,7 @@ async def apply_to_calendar(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Family ID mismatch")
+        require_onboarding_complete(family_id)
         supabase = get_admin_client()
         start_date_obj = date.fromisoformat(body.start_date)
         end_date_obj = date.fromisoformat(body.end_date)
@@ -1585,6 +1823,7 @@ async def apply_to_calendar(
                         "academic_year_id": academic_year_id,
                         "generation_batch_id": generation_batch_id,
                         "counts_toward_plan": True,
+                        "instructional_status": "PLAN_PLACEHOLDER",
                     }
                     events_to_insert.append(ev)
 
@@ -1611,6 +1850,8 @@ async def apply_to_calendar(
 
         # Phase 3: Upsert academic_year_plan when using blocks (store constraint mode + target)
         if use_blocks and academic_year_id:
+            if body.subject_targets is not None:
+                validate_subject_targets(supabase, body.family_id, body.subject_targets)
             constraint_mode = body.constraint_mode if body.constraint_mode in ("days", "hours") else "days"
             plan_data = {
                 "academic_year_id": academic_year_id,
@@ -1624,6 +1865,8 @@ async def apply_to_calendar(
                 "current_generation_id": generation_batch_id,
                 "updated_at": datetime.now().isoformat(),
             }
+            if body.subject_targets is not None:
+                plan_data["subject_targets"] = body.subject_targets
             supabase.table("academic_year_plan").upsert(plan_data, on_conflict="academic_year_id").execute()
             # Persist allowed_weekdays derived from blocks so GET /academic_year counts stay consistent
             supabase.table("academic_years").update({"allowed_weekdays": allowed_weekdays_for_persist}).eq("id", academic_year_id).execute()

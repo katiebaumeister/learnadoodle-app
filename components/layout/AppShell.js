@@ -1,22 +1,13 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import Sidebar from './Sidebar';
 
 /**
  * AppShell - Global layout wrapper with liquid glass styling
  * 
- * Structure:
- * - Outer glass frame (rounded, with backdrop blur)
- * - Left sidebar (connected to frame)
- * - Center main surface (white, rounded, with border)
- * 
- * Design tokens:
- * - App background: #F6F7FB
- * - Surface white: #FFFFFF
- * - Glass border: rgba(15, 23, 42, 0.08)
- * - Glass highlight: rgba(255, 255, 255, 0.6)
- * - Blur: backdrop-filter: blur(14px)
- * - Radii: outer frame 24px, inner surface 20px
+ * When disabled=true (onboarding incomplete): main content has pointer-events none
+ * and a sticky "Finish setup to begin planning" banner is shown. OnboardingModal
+ * is rendered by WebLayout and blocks until setup is complete.
  */
 export default function AppShell({ 
   sidebar, 
@@ -24,6 +15,7 @@ export default function AppShell({
   onOpenSettings,
   onOpenFeedback,
   flushToEdge = false, // For planner: keeps border but removes padding inside
+  disabled = false,   // When true, block interaction and show setup banner
 }) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
@@ -61,7 +53,32 @@ export default function AppShell({
             ]}
             {...(Platform.OS === 'web' ? { className: 'glass-surface' } : {})}
           >
-            {children}
+            {disabled && (
+              <View style={styles.setupBanner} pointerEvents="box-none">
+                <Text style={styles.setupBannerText}>Finish setup to begin planning</Text>
+                <Text style={styles.setupBannerHint}>Complete the quick setup above to use the planner, add events, and track progress.</Text>
+              </View>
+            )}
+            <View style={styles.mainContentWrap}>
+              {disabled && (
+                <View
+                  style={styles.focusOverlay}
+                  pointerEvents="auto"
+                  {...(Platform.OS === 'web' && {
+                    tabIndex: 0,
+                    'aria-hidden': false,
+                    nativeID: 'onboarding-block-overlay',
+                  })}
+                />
+              )}
+              <View
+                style={[styles.contentInner, disabled && styles.mainContentWrapDisabled]}
+                pointerEvents={disabled ? 'none' : 'auto'}
+                {...(disabled && Platform.OS === 'web' && { 'aria-hidden': true })}
+              >
+                {children}
+              </View>
+            </View>
           </View>
         </View>
       </View>
@@ -122,6 +139,47 @@ const styles = StyleSheet.create({
       position: 'relative', // Ensure stacking context
       zIndex: 0, // Below dropdown menu
     }),
+  },
+  setupBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(139, 92, 246, 0.15)',
+    flexShrink: 0,
+  },
+  setupBannerText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#5B21B6',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  },
+  setupBannerHint: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 4,
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
+  focusOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    zIndex: 5,
+    backgroundColor: 'transparent',
+  },
+  mainContentWrap: {
+    flex: 1,
+    position: 'relative',
+    ...(Platform.OS === 'web' && { minHeight: 0 }),
+  },
+  contentInner: {
+    flex: 1,
+    ...(Platform.OS === 'web' && { minHeight: 0 }),
+  },
+  mainContentWrapDisabled: {
+    opacity: 0.85,
   },
   mainSurfaceFlush: {
     // Keep border and borderRadius for liquid glass effect
