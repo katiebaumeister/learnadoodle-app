@@ -36,7 +36,8 @@ import {
   Clock,
   Target,
   AlertTriangle,
-  Check
+  Check,
+  Info
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import {
@@ -68,6 +69,11 @@ const PRIMARY_BTN = '#85C4F2';
 const CHIP_SELECTED_BG = 'rgba(133,196,242,0.2)';
 const CHIP_SELECTED_BORDER = '#6BB3E8';
 const CHIP_SELECTED_TEXT = '#6BB3E8';
+const CHIP_BG_OPAQUE = '#d0e8f7'; // same hue as chip blue, lighter opaque tone
+const ELIGIBILITY_CARD_BG = '#F7FBFF';
+const ELIGIBILITY_CARD_BORDER = '#DDEAF5';
+const ACCENT_BAR = '#81C1E1';
+const SECONDARY_BTN_BORDER = '#CFE3F4';
 const CARD_PADDING = 20;
 const SECTION_SPACING = 16;
 const LABEL_INPUT_GAP = 6;
@@ -85,6 +91,18 @@ function formatDateDisplay(ymd) {
   if (!ymd) return '';
   const d = dateStringToDate(ymd);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** Parse year_name into card lines; if " · " separated use as scope / subjects / date, else title + date. */
+function parsePlanCardLines(ay) {
+  const name = ay.year_name || 'Academic year';
+  const dateRange = ay.start_date && ay.end_date
+    ? `${formatDateDisplay(ay.start_date)} – ${formatDateDisplay(ay.end_date)}`
+    : '';
+  const parts = name.split(' · ').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 3) return { line1: parts[0], line2: parts[1], line3: parts[2] };
+  if (parts.length === 2) return { line1: parts[0], line2: null, line3: parts[1] };
+  return { line1: name, line2: null, line3: dateRange };
 }
 
 /** Build display name for plan: "Student Name · Subject Name · Date range" */
@@ -148,8 +166,8 @@ function getBlockConflicts(blocks, children, baseSubjectList) {
       const childIdsB = (b.child_ids && b.child_ids.length) ? b.child_ids : (children || []).map((c) => c.id).filter(Boolean);
       const sharedChildren = childIdsA.filter((cid) => childIdsB.includes(cid));
       if (sharedChildren.length === 0) continue;
-      const weekdaysA = a.weekdays || [1, 2, 3, 4, 5];
-      const weekdaysB = b.weekdays || [1, 2, 3, 4, 5];
+      const weekdaysA = a.weekdays || [];
+      const weekdaysB = b.weekdays || [];
       const sharedDays = weekdaysA.filter((d) => weekdaysB.includes(d));
       if (sharedDays.length === 0) continue;
       const startA = timeToMinutes(a.start_time || '09:00');
@@ -200,6 +218,16 @@ function subjectMatchesChild(subject, childId) {
   return ids.some((id) => String(id) === String(childId));
 }
 
+/** True if subject applies to every child in the family (whole-family plan). Empty/null child_id = all; else subject's child_id list must include every family child id. */
+function subjectAppliesToAllChildren(subject, children) {
+  const familyChildIds = (children || []).map((c) => c?.id).filter(Boolean);
+  if (familyChildIds.length === 0) return true;
+  const cid = subject.child_id;
+  if (cid == null || cid === '') return true;
+  const subjectChildIds = new Set(String(cid).split(';').map((id) => id.trim()).filter(Boolean));
+  return familyChildIds.every((id) => subjectChildIds.has(id));
+}
+
 export default function PlanYearModal({
   visible,
   familyId,
@@ -209,6 +237,7 @@ export default function PlanYearModal({
   onClose,
   onComplete,
   initialAcademicYearId = null,
+  openForNewPlan = false,
   highlightFromPlanHealth = false,
 }) {
   const [loading, setLoading] = useState(false);
@@ -271,7 +300,7 @@ export default function PlanYearModal({
   const [acceptedExtendDate, setAcceptedExtendDate] = useState(null); // freeze suggested date when user accepts
 
   // Phase 3: constraint mode + target (I need X days | X hours)
-  const [planConstraintMode, setPlanConstraintMode] = useState('days');
+  const [planConstraintMode, setPlanConstraintMode] = useState('none');
   const [planTargetDays, setPlanTargetDays] = useState('180');
   const [planTargetHours, setPlanTargetHours] = useState('1000');
 
@@ -305,7 +334,7 @@ export default function PlanYearModal({
   const subjectsForCurrentSelection =
     planForChildId
       ? baseSubjectList.filter((s) => subjectMatchesChild(s, planForChildId))
-      : baseSubjectList;
+      : baseSubjectList.filter((s) => subjectAppliesToAllChildren(s, children));
   const effectiveSubjectIds =
     useAllSubjects
       ? subjectsForCurrentSelection.map((s) => s.id)
@@ -316,9 +345,9 @@ export default function PlanYearModal({
     [blocks, children, baseSubjectList]
   );
 
-  // When modal opens (without an explicit academic year id), load latest academic year so "Apply again" replaces instead of duplicating
+  // When modal opens (without an explicit academic year id), load latest academic year so "Apply again" replaces instead of duplicating — unless openForNewPlan (header button: create new)
   useEffect(() => {
-    if (!visible || !familyId) return;
+    if (!visible || !familyId || openForNewPlan) return;
     if (academicYearId || initialAcademicYearId) return;
     let cancelled = false;
     (async () => {
@@ -331,7 +360,16 @@ export default function PlanYearModal({
       if (!cancelled && rows?.length > 0) setAcademicYearId(rows[0].id);
     })();
     return () => { cancelled = true; };
-  }, [visible, familyId]);
+  }, [visible, familyId, openForNewPlan]);
+
+  // When opening for "new plan" (header button), clear academic year so form starts empty
+  useEffect(() => {
+    if (visible && openForNewPlan && !initialAcademicYearId) {
+      setAcademicYearId(null);
+      setLoadError(null);
+      loadedYearIdRef.current = null;
+    }
+  }, [visible, openForNewPlan, initialAcademicYearId]);
 
   // When opening from banner (Edit plan), sync passed academic year id and clear stale data so we only show "Loading plan…" until load completes
   useEffect(() => {
@@ -344,6 +382,52 @@ export default function PlanYearModal({
       setBlocks([]);
     }
   }, [visible, initialAcademicYearId]);
+
+  // When true, user chose "Create new plan" from picker — show full form even with no plan selected
+  const [startCreatingNew, setStartCreatingNew] = useState(false);
+
+  // Fetch list of plans (academic years that have an academic_year_plan) for "Edit plan" picker
+  const [previousPlans, setPreviousPlans] = useState([]);
+  const [previousPlansLoading, setPreviousPlansLoading] = useState(true); // true so we don't skip to "create new" before fetch completes
+  useEffect(() => {
+    if (!visible || !openForNewPlan || !familyId) return;
+    let cancelled = false;
+    setPreviousPlansLoading(true);
+    (async () => {
+      const { data: planRows, error: planErr } = await supabase
+        .from('academic_year_plan')
+        .select('academic_year_id')
+        .eq('family_id', familyId);
+      if (cancelled || planErr || !planRows?.length) {
+        if (!cancelled) {
+          setPreviousPlansLoading(false);
+          setPreviousPlans([]);
+        }
+        return;
+      }
+      const yearIds = planRows.map((r) => r.academic_year_id).filter(Boolean);
+      const { data: rows, error: err } = await supabase
+        .from('academic_years')
+        .select('id, year_name, start_date, end_date, updated_at')
+        .eq('family_id', familyId)
+        .in('id', yearIds)
+        .order('start_date', { ascending: false })
+        .limit(20);
+      if (!cancelled) {
+        setPreviousPlansLoading(false);
+        if (err) setPreviousPlans([]);
+        else setPreviousPlans(Array.isArray(rows) ? rows : []);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, openForNewPlan, familyId]);
+
+  // When no plan exists, open straight to the new plan form (skip the "No previous plans" picker screen)
+  useEffect(() => {
+    if (visible && openForNewPlan && !academicYearId && !previousPlansLoading && previousPlans.length === 0) {
+      setStartCreatingNew(true);
+    }
+  }, [visible, openForNewPlan, academicYearId, previousPlansLoading, previousPlans.length]);
 
   // When we have academicYearId, load full year + plan to populate form (for "Edit plan" from banner)
   const loadedYearIdRef = useRef(null);
@@ -390,7 +474,7 @@ export default function PlanYearModal({
         const p = data.plan;
         setStartDate(p.start_date || data.start_date || '');
         setEndDate(p.end_date || data.end_date || '');
-        setPlanConstraintMode(p.constraint_mode === 'hours' ? 'hours' : 'days');
+        setPlanConstraintMode(p.constraint_mode === 'hours' ? 'hours' : p.constraint_mode === 'days' ? 'days' : 'none');
         setPlanTargetDays(p.target_days != null ? String(p.target_days) : '180');
         setPlanTargetHours(p.target_hours != null ? String(p.target_hours) : '1000');
         const planBlocks = Array.isArray(p.blocks) ? p.blocks : [];
@@ -425,7 +509,7 @@ export default function PlanYearModal({
             block_id: b.block_id || (crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${b.subject_id}`),
             subject_id: b.subject_id,
             child_ids: Array.isArray(b.child_ids) ? b.child_ids : [],
-            weekdays: Array.isArray(b.weekdays) ? b.weekdays : [1, 2, 3, 4, 5],
+            weekdays: Array.isArray(b.weekdays) ? b.weekdays : [],
             start_time: b.start_time || '09:00',
             end_time: b.end_time || '10:00',
             all_day: !!b.all_day,
@@ -442,6 +526,8 @@ export default function PlanYearModal({
       setPlanCreatedAt(null);
       setPlanUpdatedAt(null);
       setYearLoadInProgress(false);
+      setStartCreatingNew(false);
+      setPreviousPlansLoading(true); // so next open shows loading until plans are fetched (avoids "add new" right after creating a plan)
     }
   }, [visible]);
 
@@ -476,7 +562,7 @@ export default function PlanYearModal({
 
   // Auto-sync blocks to required subjects: one block per effective subject (require all)
   const effectiveSubjectIdsKey = effectiveSubjectIds.slice().sort().join(',');
-  useEffect(() => {
+  const syncBlocksFromEffectiveSubjects = useCallback(() => {
     if (effectiveSubjectIds.length === 0) {
       setBlocks([]);
       return;
@@ -495,7 +581,7 @@ export default function PlanYearModal({
           block_id: crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${subjectId}`,
           subject_id: subjectId,
           child_ids: childIds,
-          weekdays: [1, 2, 3, 4, 5],
+          weekdays: [],
           start_time: '09:00',
           end_time: '10:00',
           all_day: false,
@@ -503,6 +589,19 @@ export default function PlanYearModal({
       });
     });
   }, [effectiveSubjectIdsKey, effectiveSubjectIds.length, planForChildId]);
+
+  useEffect(() => {
+    syncBlocksFromEffectiveSubjects();
+  }, [syncBlocksFromEffectiveSubjects]);
+
+  // When modal opens for new plan, re-sync blocks after a short delay so we pick up children/subjects that may arrive after first render (fixes "whole family + all subjects" not showing in card 2 until user toggles)
+  useEffect(() => {
+    if (!visible || academicYearId) return;
+    const t = setTimeout(() => {
+      syncBlocksFromEffectiveSubjects();
+    }, 50);
+    return () => clearTimeout(t);
+  }, [visible, academicYearId, syncBlocksFromEffectiveSubjects]);
 
   // Compute schedule potential when blocks + date range + exclusions change (debounced to avoid 429; immediate on first load so suggestion shows with modal)
   const triggerSchedulePotential = useCallback((immediate = false) => {
@@ -525,7 +624,7 @@ export default function PlanYearModal({
             block_id: b.block_id,
             subject_id: b.subject_id,
             child_ids: b.child_ids || [],
-            weekdays: b.weekdays || [1, 2, 3, 4, 5],
+            weekdays: b.weekdays || [],
             start_time: b.start_time || '09:00',
             end_time: b.end_time || '10:00',
             all_day: b.all_day || false,
@@ -775,7 +874,7 @@ export default function PlanYearModal({
           block_id: b.block_id,
           subject_id: b.subject_id,
           child_ids: b.child_ids || [],
-          weekdays: b.weekdays || [1, 2, 3, 4, 5],
+          weekdays: b.weekdays || [],
           start_time: b.start_time || '09:00',
           end_time: b.end_time || '10:00',
           all_day: b.all_day || false,
@@ -815,37 +914,51 @@ export default function PlanYearModal({
     }
   };
 
+  const scrollToDatesSection = useCallback(() => {
+    setSectionDatesExpanded(true);
+    setTimeout(() => {
+      const y = datesSectionYRef.current;
+      if (typeof y === 'number' && scrollRef.current) {
+        scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
+      }
+    }, 150);
+  }, []);
+
   const handleApplyToCalendar = async () => {
     if (!preconditionsMet) {
       setError('Add at least 1 child and 1 subject to generate a year plan.');
       return;
     }
     if (isHomeschool && !startDate) {
-      setError('Start date is required');
+      setError('Please select a start date in the Dates & Requirements section.');
+      scrollToDatesSection();
       return;
     }
     if (isHomeschool && mode === 'FIXED_END' && !endDate) {
-      setError('End date is required for fixed end mode');
+      setError('Please select an end date. With "End date" selected as your planning goal, an end date is required.');
+      scrollToDatesSection();
       return;
     }
     if (isHomeschool && mode === 'TARGET_DAYS' && !targetDays) {
-      setError('Target days is required');
+      setError('Please enter the number of target instructional days in the Dates & Requirements section.');
+      scrollToDatesSection();
       return;
     }
     if (isHomeschool && mode === 'TARGET_HOURS' && (!targetHours || !hoursPerDay)) {
-      setError('Target hours and hours per day are required');
+      setError('Please enter both target instructional hours and hours per instructional day.');
+      scrollToDatesSection();
       return;
     }
     if (blocks.length === 0 && isHomeschool && !feasible) {
-      setError('Not enough days. Add weekdays or extend end date.');
+      setError('Not enough instructional days. Add more weekdays in Scheduled Class Days or extend your end date.');
       return;
     }
     if (blocks.length === 0 && !useAllSubjects && selectedCount === 0) {
-      setError('Select at least one subject, or add scheduled class days.');
+      setError('Select at least one subject in Who & Subjects, or add scheduled class days.');
       return;
     }
     if (blocks.length > 0 && blocks.some((b) => !b.subject_id)) {
-      setError('Each scheduled class day must have a subject. Remove or fix empty entries.');
+      setError('Each scheduled class day needs a subject. Remove or fix any empty rows in Scheduled Class Days.');
       return;
     }
 
@@ -859,19 +972,23 @@ export default function PlanYearModal({
 
   const handleSave = async (isDraft = false) => {
     if (isHomeschool && !startDate) {
-      setError('Start date is required');
+      setError('Please select a start date in the Dates & Requirements section.');
+      scrollToDatesSection();
       return;
     }
     if (isHomeschool && mode === 'FIXED_END' && !endDate) {
-      setError('End date is required for fixed end mode');
+      setError('Please select an end date. With "End date" selected as your planning goal, an end date is required.');
+      scrollToDatesSection();
       return;
     }
     if (isHomeschool && mode === 'TARGET_DAYS' && !targetDays) {
-      setError('Target days is required');
+      setError('Please enter the number of target instructional days in the Dates & Requirements section.');
+      scrollToDatesSection();
       return;
     }
     if (isHomeschool && mode === 'TARGET_HOURS' && (!targetHours || !hoursPerDay)) {
-      setError('Target hours and hours per day are required');
+      setError('Please enter both target instructional hours and hours per instructional day.');
+      scrollToDatesSection();
       return;
     }
     
@@ -952,7 +1069,7 @@ export default function PlanYearModal({
 
   const addCustomHoliday = () => {
     if (!newHolidayDate || !newHolidayName) {
-      setError('Date and name are required');
+      setError('Please enter both a date and a name for the custom holiday.');
       return;
     }
     
@@ -972,11 +1089,11 @@ export default function PlanYearModal({
 
   const addCustomBreak = () => {
     if (!newBreakStart || !newBreakEnd || !newBreakName) {
-      setError('Break start, end, and name are required');
+      setError('Please enter start date, end date, and a name for the break.');
       return;
     }
     if (newBreakStart > newBreakEnd) {
-      setError('Break start must be before end');
+      setError('Break end date must be on or after the start date.');
       return;
     }
     setCustomBreaks([...customBreaks, { start: newBreakStart, end: newBreakEnd, name: newBreakName }]);
@@ -995,7 +1112,7 @@ export default function PlanYearModal({
       block_id: crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}`,
       subject_id: subj?.id || '',
       child_ids: planForChildId ? [planForChildId] : [],
-      weekdays: [1, 2, 3, 4, 5],
+      weekdays: [],
       start_time: '09:00',
       end_time: '10:00',
       all_day: false,
@@ -1005,12 +1122,11 @@ export default function PlanYearModal({
 
   const addBlocksFromSubjects = () => {
     const ids = useAllSubjects ? (subjectsForCurrentSelection?.map((s) => s.id) || []) : (selectedSubjectIds?.length ? selectedSubjectIds : subjectsForCurrentSelection?.map((s) => s.id) || []);
-    const wkd = [1, 2, 3, 4, 5];
     const newBlocks = ids.slice(0, 10).map((subjectId) => ({
       block_id: crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${subjectId}`,
       subject_id: subjectId,
       child_ids: planForChildId ? [planForChildId] : [],
-      weekdays: [...wkd],
+      weekdays: [],
       start_time: '09:00',
       end_time: '10:00',
       all_day: false,
@@ -1037,25 +1153,44 @@ export default function PlanYearModal({
 
   const handleClearPlan = async () => {
     if (!familyId) return;
-    const confirmClear = await new Promise((resolve) => {
-      Alert.alert(
-        'Remove generated placeholders?',
-        'This removes only generated placeholder lessons. Customized lessons will remain.',
-        [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove placeholders', style: 'destructive', onPress: () => resolve(true) }]
+    const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
+    let confirmClear = false;
+    if (isWeb) {
+      confirmClear = window.confirm(
+        'Remove generated placeholders? This removes only generated placeholder lessons. Customized lessons will remain.'
       );
-    });
+    } else {
+      confirmClear = await new Promise((resolve) => {
+        Alert.alert(
+          'Remove generated placeholders?',
+          'This removes only generated placeholder lessons. Customized lessons will remain.',
+          [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove placeholders', style: 'destructive', onPress: () => resolve(true) }]
+        );
+      });
+    }
     if (!confirmClear) return;
     setClearingPlan(true);
     setError(null);
     try {
-      const { data, error: clearError } = await clearPlaceholders(familyId, academicYearId || undefined);
+      const deletePlan = !!academicYearId;
+      const { data, error: clearError } = await clearPlaceholders(familyId, academicYearId || undefined, { deletePlan });
       if (clearError) throw clearError;
       setExistingPlaceholdersCount(0);
-      Alert.alert('Done', `Removed ${data?.deleted ?? 0} generated placeholder${data?.deleted !== 1 ? 's' : ''}. Customized lessons were kept.`, [
-        { text: 'OK', onPress: () => {
-          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
-        }},
-      ]);
+      invalidatePlanHealthCache();
+      onClose?.();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        setTimeout(() => window.dispatchEvent(new CustomEvent('refreshCalendar')), 150);
+      }
+      if (isWeb) {
+        window.alert(deletePlan && data?.plan_deleted
+          ? `Plan and ${data?.deleted ?? 0} placeholder${data?.deleted !== 1 ? 's' : ''} removed.`
+          : `Removed ${data?.deleted ?? 0} generated placeholder${data?.deleted !== 1 ? 's' : ''}. Customized lessons were kept.`);
+      } else {
+        Alert.alert('Done', deletePlan && data?.plan_deleted
+          ? `Plan and ${data?.deleted ?? 0} placeholder${data?.deleted !== 1 ? 's' : ''} removed.`
+          : `Removed ${data?.deleted ?? 0} generated placeholder${data?.deleted !== 1 ? 's' : ''}. Customized lessons were kept.`);
+      }
     } catch (err) {
       setError(err?.message || err?.detail || 'Failed to remove plan');
     } finally {
@@ -1063,13 +1198,13 @@ export default function PlanYearModal({
     }
   };
 
-  // Reset state when modal closes
+  // Reset state when modal closes (so reopening doesn't show stale conflicts/plan data after e.g. removing placeholders)
   useEffect(() => {
     if (!visible) {
       setError(null);
       setCustomHolidays([]);
       setCustomBreaks([]);
-      setPlanConstraintMode('days');
+      setPlanConstraintMode('none');
       setPlanTargetDays('180');
       setPlanTargetHours('1000');
       setNewBreakStart('');
@@ -1082,8 +1217,24 @@ export default function PlanYearModal({
       setAcademicYearId(null);
       setSelectedSubjectIds([]);
       setPlanForChildId(null);
+      setBlocks([]);
+      setDismissedConflictKeys(new Set());
+      setSchedulePotential(null);
+      setStartDate('');
+      setEndDate('');
     }
   }, [visible]);
+
+  // Clear validation error when user fixes the missing field (e.g. selects end date)
+  useEffect(() => {
+    if (!error) return;
+    const dateRequirementMet = startDate && (mode !== 'FIXED_END' || endDate);
+    const targetDaysMet = mode !== 'TARGET_DAYS' || !!targetDays;
+    const targetHoursMet = mode !== 'TARGET_HOURS' || (!!targetHours && !!hoursPerDay);
+    if (dateRequirementMet && targetDaysMet && targetHoursMet) {
+      setError(null);
+    }
+  }, [error, startDate, endDate, mode, targetDays, targetHours, hoursPerDay]);
 
   if (checkingHomeschool) {
     return (
@@ -1099,9 +1250,10 @@ export default function PlanYearModal({
   }
 
   const editPlanLoading = isHomeschool && (initialAcademicYearId || academicYearId) && loadedYearIdRef.current !== (initialAcademicYearId || academicYearId);
-  const headerMeta = editPlanLoading
+  const headerMetaRaw = editPlanLoading
     ? 'Loading…'
     : [startDate && endDate ? `${formatDateDisplay(startDate)} – ${formatDateDisplay(endDate)}` : null, planForChildId ? (children || []).find((c) => String(c.id) === String(planForChildId))?.first_name || (children || []).find((c) => String(c.id) === String(planForChildId))?.name : null, effectiveSubjectIds?.length ? (baseSubjectList || []).filter((s) => effectiveSubjectIds.includes(s.id)).map((s) => s.name).slice(0, 3).join(', ') + (effectiveSubjectIds.length > 3 ? '…' : '') : null].filter(Boolean).join(' • ');
+  const headerMeta = (headerMetaRaw && headerMetaRaw.trim() && headerMetaRaw.trim() !== '.') ? headerMetaRaw : null;
   const step0Complete = preconditionsMet;
   const step1Complete = effectiveSubjectIds.length > 0 && blocks.length >= effectiveSubjectIds.length;
   const step2Complete = !!startDate && (mode !== 'FIXED_END' || !!endDate);
@@ -1111,29 +1263,34 @@ export default function PlanYearModal({
   const currentStep = currentStepIndex >= 0 ? currentStepIndex : 3;
   const sectionStepLabels = ['Subjects', 'Schedule', 'Dates', 'Breaks'];
 
+  const pickerOnly = openForNewPlan && !academicYearId && !startCreatingNew;
+
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
+      <View style={[styles.overlay, pickerOnly && styles.pickerOverlay]}>
+        <View style={[styles.modal, pickerOnly && styles.pickerModal, pickerOnly && (Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.05)' } : { shadowOpacity: 0.08, elevation: 4 })]}>
+          {!pickerOnly && (
           <View style={styles.modalHeader}>
             <View style={styles.modalHeaderLeft}>
-              <Text style={styles.modalHeaderTitle}>Edit Plan</Text>
-              {headerMeta ? <Text style={styles.modalHeaderMeta}>{headerMeta}</Text> : null}
+              <Text style={styles.modalHeaderTitle}>{openForNewPlan && !academicYearId ? 'Plan My Year' : 'Edit Plan'}</Text>
+              {headerMeta != null && headerMeta !== '' ? <Text style={styles.modalHeaderMeta}>{headerMeta}</Text> : null}
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButtonHeader} hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}>
               <X size={22} color={FG} />
             </TouchableOpacity>
           </View>
-          {isHomeschool && (
+          )}
+          {!pickerOnly && isHomeschool && (
             <View style={styles.sectionProgress}>
               {sectionStepLabels.map((label, i) => {
                 const isCompleted = completed[i];
                 const isCurrent = i === currentStep;
                 const isFuture = !isCompleted && !isCurrent;
                 const prefix = isCompleted ? '✓ ' : isCurrent ? '● ' : '';
+                const safeLabel = (label != null && String(label).trim() !== '.') ? String(label) : (sectionStepLabels[i] || '');
                 return (
                   <Text
-                    key={label}
+                    key={safeLabel || i}
                     style={[
                       styles.sectionProgressStep,
                       isCompleted && styles.sectionProgressStepCompleted,
@@ -1141,7 +1298,7 @@ export default function PlanYearModal({
                       isFuture && styles.sectionProgressStepFuture,
                     ]}
                   >
-                    {prefix}{label}
+                    {`${prefix}${safeLabel}`}
                   </Text>
                 );
               })}
@@ -1160,7 +1317,90 @@ export default function PlanYearModal({
               </View>
             )}
 
-            {isHomeschool && (initialAcademicYearId || academicYearId) && (loadedYearIdRef.current !== (initialAcademicYearId || academicYearId) || yearLoadInProgress) ? (
+            {/* Picker-only initial view: EDIT PLAN header + plan cards + OR + Create new plan */}
+            {pickerOnly && (
+              <View style={styles.pickerBody}>
+                {previousPlansLoading ? (
+                  <View style={styles.pickerLoading}>
+                    <ActivityIndicator size="small" color={ACCENT} />
+                    <Text style={[styles.mutedText, { marginTop: 8 }]}>Loading previous plans…</Text>
+                  </View>
+                ) : previousPlans.length > 0 ? (
+                  <>
+                    <View style={styles.pickerHeader}>
+                      <View style={{ marginRight: 8 }}>
+                        <Calendar size={18} color={SUB} />
+                      </View>
+                      <Text style={styles.pickerTitle}>Edit plan</Text>
+                    </View>
+                    <View style={styles.pickerDivider} />
+                    <View style={{ gap: 20 }}>
+                      {previousPlans.map((ay) => {
+                        const lines = parsePlanCardLines(ay);
+                        return (
+                          <TouchableOpacity
+                            key={ay.id}
+                            onPress={() => setAcademicYearId(ay.id)}
+                            style={styles.planCard}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && {
+                              cursor: 'pointer',
+                              onMouseEnter: (e) => {
+                                const node = e.currentTarget;
+                                if (node) {
+                                  node.style.borderColor = '#81C1E1';
+                                  node.style.backgroundColor = '#F4FAFF';
+                                }
+                              },
+                              onMouseLeave: (e) => {
+                                const node = e.currentTarget;
+                                if (node) {
+                                  node.style.borderColor = '#E3EEF8';
+                                  node.style.backgroundColor = '#F8FBFF';
+                                }
+                              },
+                            })}
+                          >
+                            <Text style={styles.planCardLine1}>{lines.line1}</Text>
+                            {lines.line2 ? <Text style={styles.planCardLine2}>{lines.line2}</Text> : null}
+                            {lines.line3 ? <Text style={styles.planCardLine3}>{lines.line3}</Text> : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <Text style={styles.pickerOr}>Or</Text>
+                      <TouchableOpacity
+                        onPress={() => setStartCreatingNew(true)}
+                        style={[styles.pickerCreateButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: ACCENT }]}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={[styles.pickerCreateButtonText, { color: ACCENT }]}>Create new plan</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.pickerHeader}>
+                      <View style={{ marginRight: 8 }}>
+                        <Calendar size={18} color={SUB} />
+                      </View>
+                      <Text style={styles.pickerTitle}>Edit plan</Text>
+                    </View>
+                    <View style={styles.pickerDivider} />
+                    <Text style={[styles.mutedText, { marginBottom: 16 }]}>No previous plans. Create your first year plan.</Text>
+                    <TouchableOpacity
+                      onPress={() => setStartCreatingNew(true)}
+                      style={styles.pickerCreateButton}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.pickerCreateButtonText}>Create new plan</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            )}
+
+            {!pickerOnly && (
+            isHomeschool && (initialAcademicYearId || academicYearId) && (loadedYearIdRef.current !== (initialAcademicYearId || academicYearId) || yearLoadInProgress) ? (
               <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivityIndicator size="large" color={ACCENT} />
                 <Text style={styles.loadingText}>Loading plan…</Text>
@@ -1193,8 +1433,8 @@ export default function PlanYearModal({
             ) : (
               // Homeschool Constraint Solver
               <View>
-                {/* Plan summary card: target, planned, over, suggestion */}
-                {(planHealth?.target_days != null || planHealth?.target_hours != null) && (
+                {/* Plan summary card: only when editing an existing plan, not when creating new */}
+                {academicYearId && (planHealth?.target_days != null || planHealth?.target_hours != null) && (
                   <View style={styles.card}>
                     <Text style={styles.sectionTitle}>Current Plan summary</Text>
                     <View style={{ borderTopWidth: 1, borderTopColor: CARD_BORDER, paddingTop: 12, marginTop: 6 }}>
@@ -1344,15 +1584,20 @@ export default function PlanYearModal({
                   activeOpacity={0.7}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={styles.sectionTitle}>WHO & SUBJECTS</Text>
+                  <Text style={styles.sectionTitle}>1. WHO & SUBJECTS</Text>
                   {sectionWhoExpanded ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
                 </TouchableOpacity>
                 {sectionWhoExpanded && (
                 <>
+                {!academicYearId && (
+                  <Text style={[styles.mutedText, { marginBottom: 20 }]}>
+                    You can create multiple plans and edit or delete previous plans at any time. Make edits to subjects or children in the Family tab. Whole family plans only include subjects that are attached to all children.
+                  </Text>
+                )}
                 <View style={Platform.OS === 'web' ? styles.twoColumnRow : undefined}>
                   <View style={Platform.OS === 'web' ? styles.twoColumnHalf : undefined}>
                 <View style={[styles.inputGroup, { marginBottom: 12 }]}>
-                  <Text style={styles.label}>Who are we planning for?</Text>
+                  <Text style={[styles.label, { fontSize: 15 }]}>Who are we planning for?</Text>
                   <View style={styles.radioRow}>
                     <TouchableOpacity
                       style={[styles.radioOption, planForChildId === null && styles.radioOptionActive]}
@@ -1368,7 +1613,7 @@ export default function PlanYearModal({
                     </TouchableOpacity>
                   </View>
                   {planForChildId === null && children?.length > 0 && (
-                    <Text style={styles.mutedText}>
+                    <Text style={[styles.mutedText, { marginTop: 8 }]}>
                       This plan is for {children.length === 1
                         ? (children[0].first_name || children[0].name || 'your child') + '.'
                         : children.map((c) => c.first_name || c.name || 'Child').slice(0, -1).join(', ') + (children.length === 2 ? ' and ' : ', and ') + (children[children.length - 1].first_name || children[children.length - 1].name || 'Child') + '.'}
@@ -1392,25 +1637,12 @@ export default function PlanYearModal({
                       </View>
                     </View>
                   )}
-                  <View style={{ marginTop: 24 }}>
-                    <TouchableOpacity
-                      style={styles.preconditionButton}
-                      onPress={() => {
-                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                          window.dispatchEvent(new CustomEvent('openAddChildModal'));
-                        }
-                      }}
-                    >
-                      <Plus size={14} color={ACCENT} />
-                      <Text style={styles.preconditionButtonText}>Add child</Text>
-                    </TouchableOpacity>
-                  </View>
                 </View>
                   </View>
 
                   <View style={Platform.OS === 'web' ? styles.twoColumnHalf : undefined}>
                 <View style={[styles.inputGroup, { marginBottom: 0 }]}>
-                  <Text style={styles.label}>Which subjects should receive placeholders?</Text>
+                  <Text style={[styles.label, { fontSize: 15 }]}>Which subjects should receive placeholders?</Text>
                   <View style={styles.radioRow}>
                     <TouchableOpacity
                       style={[styles.radioOption, useAllSubjects && styles.radioOptionActive]}
@@ -1456,27 +1688,15 @@ export default function PlanYearModal({
                     </View>
                   )}
                   {useAllSubjects && subjectsCount > 0 && (
-                    <Text style={styles.mutedText}>All {subjectsCount} subject{subjectsCount !== 1 ? 's' : ''} will receive placeholders.</Text>
+                    <Text style={[styles.mutedText, { marginTop: 8 }]}>
+                      {subjectsForCurrentSelection.map((s) => s.name || 'Subject').join(', ')} will receive placeholders.
+                    </Text>
                   )}
                   {subjectsForCurrentSelection.length === 0 && (
-                    <Text style={styles.mutedText}>
+                    <Text style={[styles.mutedText, { marginTop: 8 }]}>
                       {planForChildId ? 'No subjects assigned to this child. Add subjects in Profile or switch to Whole family plan.' : 'Add subjects above to select them.'}
                     </Text>
                   )}
-                </View>
-
-                <View style={{ marginTop: 24 }}>
-                  <TouchableOpacity
-                    style={styles.preconditionButton}
-                    onPress={() => {
-                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
-                      }
-                    }}
-                  >
-                    <Plus size={14} color={ACCENT} />
-                    <Text style={styles.preconditionButtonText}>Add subject</Text>
-                  </TouchableOpacity>
                 </View>
                   </View>
                 </View>
@@ -1500,16 +1720,16 @@ export default function PlanYearModal({
                         activeOpacity={0.7}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text style={styles.sectionTitle}>SCHEDULED CLASS DAYS</Text>
+                        <Text style={styles.sectionTitle}>2. SCHEDULED CLASS DAYS</Text>
                         {sectionScheduleExpanded ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
                       </TouchableOpacity>
                       {sectionScheduleExpanded && (
                       <View style={styles.scheduleBlocksInner}>
-                      <Text style={[styles.label, { marginBottom: 4 }]}>When does each subject meet?</Text>
-                      <Text style={[styles.mutedText, { marginBottom: 12 }]}>Set expected days and time for every subject.</Text>
+                      <Text style={[styles.mutedText, { marginBottom: 20 }]}>Set expected days and time for every subject. For the purpose of totaling instructional hours, we will use the time frame to calculate totals.</Text>
+                      <Text style={[styles.label, { marginBottom: 12, fontSize: 15 }]}>When does each subject meet?</Text>
                       {blocks.map((block, idx) => {
                       const subj = baseSubjectList.find((s) => s.id === block.subject_id);
-                      const weekdays = block.weekdays || [1, 2, 3, 4, 5];
+                      const weekdays = block.weekdays || [];
                       const conflictsForBlock = blockConflicts.filter((c) => c.blockIndexA === idx || c.blockIndexB === idx);
                       const conflictKey = (c) => `${Math.min(c.blockIndexA, c.blockIndexB)}-${Math.max(c.blockIndexA, c.blockIndexB)}-${c.childId}`;
                       const visibleConflicts = conflictsForBlock.filter((c) => !dismissedConflictKeys.has(conflictKey(c)));
@@ -1701,48 +1921,15 @@ export default function PlanYearModal({
                   activeOpacity={0.7}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                <Text style={styles.sectionTitle}>DATES & REQUIREMENTS</Text>
+                <Text style={styles.sectionTitle}>3. DATES & REQUIREMENTS</Text>
                 {sectionDatesExpanded ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
                 </TouchableOpacity>
                 {sectionDatesExpanded && (
                 <>
-                <Text style={[styles.label, { marginBottom: 8 }]}>Planning goal</Text>
-                <View style={styles.modeSelector}>
-                  <TouchableOpacity
-                    style={[styles.modeButton, mode === 'FIXED_END' && styles.modeButtonActive]}
-                    onPress={() => setMode('FIXED_END')}
-                  >
-                    <Calendar size={16} color={mode === 'FIXED_END' ? ACCENT : SUB} />
-                    <Text style={[styles.modeButtonText, mode === 'FIXED_END' && styles.modeButtonTextActive]}>
-                      End date
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.modeButton, mode === 'TARGET_DAYS' && styles.modeButtonActive]}
-                    onPress={() => setMode('TARGET_DAYS')}
-                  >
-                    <Target size={16} color={mode === 'TARGET_DAYS' ? ACCENT : SUB} />
-                    <Text style={[styles.modeButtonText, mode === 'TARGET_DAYS' && styles.modeButtonTextActive]}>
-                      Target days
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.modeButton, mode === 'TARGET_HOURS' && styles.modeButtonActive]}
-                    onPress={() => setMode('TARGET_HOURS')}
-                  >
-                    <Clock size={16} color={mode === 'TARGET_HOURS' ? ACCENT : SUB} />
-                    <Text style={[styles.modeButtonText, mode === 'TARGET_HOURS' && styles.modeButtonTextActive]}>
-                      Target hours
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
                 {/* Start Date and End Date on same row */}
-                <View style={styles.dateRow}>
+                <View style={[styles.dateRow, { marginTop: 12 }]}>
                   <View style={[styles.inputGroup, styles.inputGroupFlex]}>
-                  <Text style={styles.label}>Start Date</Text>
+                  <Text style={[styles.label, { fontSize: 15 }]}>Start Date</Text>
                     <TouchableOpacity
                       style={styles.datePickerTrigger}
                       onPress={() => {
@@ -1758,7 +1945,7 @@ export default function PlanYearModal({
                 </View>
                 {mode === 'FIXED_END' && (
                     <View style={[styles.inputGroup, styles.inputGroupFlex]}>
-                    <Text style={styles.label}>End Date</Text>
+                    <Text style={[styles.label, { fontSize: 15 }]}>End Date</Text>
                       <TouchableOpacity
                         style={styles.datePickerTrigger}
                         onPress={() => {
@@ -1778,7 +1965,7 @@ export default function PlanYearModal({
                 {/* Target Days (TARGET_DAYS mode) */}
                 {mode === 'TARGET_DAYS' && (
                   <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Target Instructional Days</Text>
+                    <Text style={[styles.label, { fontSize: 15 }]}>Target Instructional Days</Text>
                     <TextInput
                       style={[styles.input, focusedInput === 'targetDays' && styles.inputFocused]}
                       value={targetDays}
@@ -1796,7 +1983,7 @@ export default function PlanYearModal({
                 {mode === 'TARGET_HOURS' && (
                   <>
                     <View style={styles.inputGroup}>
-                      <Text style={styles.label}>Target Instructional Hours</Text>
+                      <Text style={[styles.label, { fontSize: 15 }]}>Target Instructional Hours</Text>
                       <TextInput
                         style={[styles.input, focusedInput === 'targetHours' && styles.inputFocused]}
                         value={targetHours}
@@ -1809,7 +1996,7 @@ export default function PlanYearModal({
                       />
                     </View>
                     <View style={styles.inputGroup}>
-                      <Text style={styles.label}>Hours per Instructional Day</Text>
+                      <Text style={[styles.label, { fontSize: 15 }]}>Hours per Instructional Day</Text>
                       <TextInput
                         style={[styles.input, focusedInput === 'hoursPerDay' && styles.inputFocused]}
                         value={hoursPerDay}
@@ -1825,10 +2012,16 @@ export default function PlanYearModal({
                 )}
 
                 {/* Your requirement: target for block-driven flow (days/hours) */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Your requirement</Text>
-                  <View style={[styles.radioRow, { marginTop: 8 }]}>
-                      <TouchableOpacity
+                <View style={[styles.inputGroup, { marginBottom: 4 }]}>
+                  <Text style={[styles.label, { fontSize: 15, marginBottom: 8 }]}>Your requirement</Text>
+                  <View style={styles.radioRow}>
+                    <TouchableOpacity
+                      style={[styles.radioOption, planConstraintMode === 'none' && styles.radioOptionActive]}
+                      onPress={() => setPlanConstraintMode('none')}
+                    >
+                      <Text style={[styles.radioLabel, planConstraintMode === 'none' && styles.radioLabelActive]}>None</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
                       style={[styles.radioOption, planConstraintMode === 'days' && styles.radioOptionActive]}
                       onPress={() => setPlanConstraintMode('days')}
                     >
@@ -1839,11 +2032,11 @@ export default function PlanYearModal({
                       onPress={() => setPlanConstraintMode('hours')}
                     >
                       <Text style={[styles.radioLabel, planConstraintMode === 'hours' && styles.radioLabelActive]}>I need X instructional hours</Text>
-                      </TouchableOpacity>
+                    </TouchableOpacity>
                   </View>
                   {planConstraintMode === 'days' && (
                     <View style={{ marginTop: 20 }}>
-                      <Text style={[styles.label, { marginBottom: 4 }]}>Target days</Text>
+                      <Text style={[styles.label, { marginBottom: 8, fontSize: 15 }]}>Target days</Text>
                       <TextInput
                         style={[styles.input, focusedInput === 'planTargetDays' && styles.inputFocused]}
                         value={planTargetDays}
@@ -1858,7 +2051,7 @@ export default function PlanYearModal({
                   )}
                   {planConstraintMode === 'hours' && (
                     <View style={{ marginTop: 20 }}>
-                      <Text style={[styles.label, { marginBottom: 4 }]}>Target hours</Text>
+                      <Text style={[styles.label, { marginBottom: 8, fontSize: 15 }]}>Target hours</Text>
                       <TextInput
                         style={[styles.input, focusedInput === 'planTargetHours' && styles.inputFocused]}
                         value={planTargetHours}
@@ -1884,13 +2077,13 @@ export default function PlanYearModal({
                   onPress={() => setHolidaysCollapsed(!holidaysCollapsed)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.sectionTitle}>HOLIDAYS & BREAKS</Text>
+                  <Text style={styles.sectionTitle}>4. HOLIDAYS & BREAKS</Text>
                   {holidaysCollapsed ? <ChevronDown size={20} color={MUTED} /> : <ChevronUp size={20} color={MUTED} />}
                 </TouchableOpacity>
                 {!holidaysCollapsed && (
                 <>
-                <View style={styles.settingRowInline}>
-                  <Text style={styles.settingText}>Follow U.S. public holidays</Text>
+                <View style={[styles.settingRowInline, { flexDirection: 'column', alignItems: 'flex-start', marginBottom: 12 }]}>
+                  <Text style={[styles.label, { fontSize: 15, marginBottom: 4 }]}>Follow U.S. public holidays?</Text>
                   <TouchableOpacity
                     style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
                     onPress={() => setFollowGlobalHolidays(!followGlobalHolidays)}
@@ -1902,8 +2095,8 @@ export default function PlanYearModal({
                 </View>
 
                 {/* Custom Holidays */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Custom Holidays</Text>
+                <View style={[styles.inputGroup, { marginBottom: 12 }]}>
+                  <Text style={[styles.label, { fontSize: 15 }]}>Custom Holidays</Text>
                   <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 12 }]}>e.g. March 8 Birthday</Text>
                   <View style={styles.holidayInputRow}>
                     <TouchableOpacity
@@ -1928,10 +2121,10 @@ export default function PlanYearModal({
                       onBlur={() => setFocusedInput(null)}
                     />
                     <TouchableOpacity
-                      style={styles.addButton}
+                      style={styles.holidayAddButton}
                       onPress={addCustomHoliday}
                     >
-                      <Plus size={18} color={BG} />
+                      <Plus size={18} color="#ffffff" />
                     </TouchableOpacity>
                   </View>
 
@@ -1949,9 +2142,9 @@ export default function PlanYearModal({
                   ))}
                 </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Custom breaks (date ranges)</Text>
-                  <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 12 }]}>e.g. Oct 10–25 Family trip</Text>
+                <View style={[styles.inputGroup, { marginBottom: 0 }]}>
+                  <Text style={[styles.label, { fontSize: 15 }]}>Custom breaks (date ranges)</Text>
+                  <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 12 }]}>e.g. March 8-15 Family trip</Text>
                   <View style={styles.holidayInputRow}>
                     <TouchableOpacity
                       style={[styles.datePickerTrigger, { flex: 1, marginRight: 6 }]}
@@ -1986,8 +2179,8 @@ export default function PlanYearModal({
                       onFocus={() => setFocusedInput('newBreakName')}
                       onBlur={() => setFocusedInput(null)}
                     />
-                    <TouchableOpacity style={styles.addButton} onPress={addCustomBreak}>
-                      <Plus size={18} color={BG} />
+                    <TouchableOpacity style={styles.holidayAddButton} onPress={addCustomBreak}>
+                      <Plus size={18} color="#ffffff" />
                     </TouchableOpacity>
                   </View>
                   {customBreaks.map((br, index) => (
@@ -2004,36 +2197,85 @@ export default function PlanYearModal({
                 )}
                 </View>
 
-                {/* Schedule potential preview (from blocks) — Phase 3: delta warnings */}
-                {blocks.length > 0 && (
-                  <View style={[styles.previewRow, { backgroundColor: ACCENT_LIGHT, padding: 12, borderRadius: 8, marginTop: 12 }]}>
-                    {(computingPotential || recalculating || (startDate && endDate && !schedulePotential)) && (
-                      <>
+                {/* Eligibility summary card — empty state or result */}
+                <View style={[styles.eligibilityCard, { marginTop: 0 }]}>
+                    {blocks.length === 0 && (
+                      <View style={styles.eligibilityCardEmpty}>
+                        <View style={styles.eligibilityChipRow}>
+                          <Info size={14} color={MUTED} />
+                          <Text style={styles.eligibilityChipText}>Waiting for schedule</Text>
+                        </View>
+                        <Text style={styles.eligibilityCardTitle}>Eligibility summary</Text>
+                        <Text style={styles.eligibilityCardMain}>Add class days to calculate your balance.</Text>
+                        <Text style={styles.eligibilityCardSecondary}>Once schedule days are set, we'll show if you meet your target.</Text>
+                      </View>
+                    )}
+                    {blocks.length > 0 && (!startDate || !endDate) && !schedulePotential && !computingPotential && !recalculating && (
+                      <View style={styles.eligibilityCardEmpty}>
+                        <View style={styles.eligibilityChipRow}>
+                          <Info size={14} color={MUTED} />
+                          <Text style={styles.eligibilityChipText}>Waiting for schedule</Text>
+                        </View>
+                        <Text style={styles.eligibilityCardTitle}>Eligibility summary</Text>
+                        <Text style={styles.eligibilityCardMain}>Add class days to calculate your balance.</Text>
+                        <Text style={styles.eligibilityCardSecondary}>Once schedule days are set, we'll show if you meet your target.</Text>
+                      </View>
+                    )}
+                    {blocks.length > 0 && (computingPotential || recalculating || (startDate && endDate && !schedulePotential)) && (
+                      <View style={[styles.eligibilityCardEmpty, { flexDirection: 'row', alignItems: 'center' }]}>
                         <ActivityIndicator size="small" color={ACCENT} />
                         <Text style={[styles.previewText, { marginLeft: 8 }]}>Calculating...</Text>
-                      </>
+                      </View>
                     )}
-                    {schedulePotential && !computingPotential && !recalculating && (
-                      <View style={{ gap: 4 }}>
-                        <Text style={[styles.previewSummary, { fontWeight: '600' }]}>
-                          You have {eligibleCount || schedulePotential.projected_days} eligible school days from {startDate ? formatDateDisplay(startDate) : '…'} – {endDate ? formatDateDisplay(endDate) : '…'}.
-                        </Text>
-                        {/* Phase 3: delta vs target — over = orange, 0 = green, under = red */}
+                    {blocks.length > 0 && schedulePotential && !computingPotential && !recalculating && (
+                      <View style={styles.eligibilityCardFilled}>
+                        {/* Row A — Summary */}
+                        <View style={styles.eligibilitySummaryRow}>
+                          <Text style={styles.eligibilitySummaryNumber}>{eligibleCount ?? schedulePotential.projected_days ?? 0} eligible days</Text>
+                          {(planConstraintMode === 'days' && (schedulePotential.target_days ?? planTargetDays) != null) && (
+                            <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_days ?? planTargetDays} days</Text>
+                          )}
+                          {(planConstraintMode === 'hours' && (schedulePotential.target_hours ?? planTargetHours) != null) && (
+                            <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_hours ?? planTargetHours} hours</Text>
+                          )}
+                        </View>
+                        {/* No requirement: baseline / deleted lesson message */}
+                        {planConstraintMode === 'none' &&
+                          planHealth?.baseline_scheduled_days != null &&
+                          planHealth.current_scheduled_days < planHealth.baseline_scheduled_days &&
+                          planHealth.deleted_dates?.length > 0 && (
+                          <Text style={[styles.eligibilityCardSecondary, { color: ERROR, marginTop: 6 }]}>
+                            You deleted a lesson on {new Date(planHealth.deleted_dates[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, schedule one to achieve original scheduled total school days.
+                          </Text>
+                        )}
+                        {/* Row B — Status pill + supporting (days mode) */}
                         {planConstraintMode === 'days' && schedulePotential.delta_days != null && (
                           <>
-                            <Text
-                              style={{
-                                color: schedulePotential.delta_days > 0 ? WARNING : schedulePotential.delta_days < 0 ? ERROR : SUCCESS,
-                                fontSize: 13,
-                                fontWeight: schedulePotential.delta_days !== 0 ? '600' : '400',
-                              }}
-                            >
-                              {schedulePotential.delta_days > 0
-                                ? `${schedulePotential.delta_days} days over your ${schedulePotential.target_days ?? planTargetDays}-day target`
-                                : schedulePotential.delta_days < 0
-                                ? `${-schedulePotential.delta_days} days under your ${schedulePotential.target_days ?? planTargetDays}-day target — add scheduled class days or extend schedule`
-                                : `0 days over your ${schedulePotential.target_days ?? planTargetDays}-day target`}
-                            </Text>
+                            <View style={styles.eligibilityStatusRow}>
+                              <View style={[
+                                styles.eligibilityPill,
+                                schedulePotential.delta_days > 0 && styles.eligibilityPillOver,
+                                schedulePotential.delta_days < 0 && styles.eligibilityPillUnder,
+                                schedulePotential.delta_days === 0 && styles.eligibilityPillOnTarget,
+                              ]}>
+                                <Text style={[
+                                  styles.eligibilityPillText,
+                                  schedulePotential.delta_days === 0 && { color: SUCCESS },
+                                  schedulePotential.delta_days > 0 && { color: WARNING },
+                                  schedulePotential.delta_days < 0 && { color: WARNING },
+                                ]}>
+                                  {schedulePotential.delta_days > 0
+                                    ? `${schedulePotential.delta_days} days over target`
+                                    : schedulePotential.delta_days < 0
+                                    ? `${-schedulePotential.delta_days} days short`
+                                    : 'On target'}
+                                </Text>
+                              </View>
+                              {(schedulePotential.delta_days > 0 || schedulePotential.delta_days < 0) && (
+                                <Text style={styles.eligibilityCardSecondary}>Add class days, or accept an extension.</Text>
+                              )}
+                            </View>
+                            {/* Row C — Recommendation + Accept (secondary button) */}
                             {schedulePotential.delta_days !== 0 && startDate && endDate && (() => {
                               const isOver = schedulePotential.delta_days > 0;
                               const perChild = schedulePotential.per_child || {};
@@ -2042,7 +2284,6 @@ export default function PlanYearModal({
                               const end = new Date(endDate + 'T12:00:00');
                               const weeksSoFar = Math.max(0.1, (end - start) / (7 * 24 * 60 * 60 * 1000));
                               const daysPerWeek = projected > 0 ? projected / weeksSoFar : 0;
-                              // Prefer backend's exact suggested_end_date (date that yields exactly target_days = 0 over/under)
                               let suggestedDate = schedulePotential.suggested_end_date || null;
                               if (!suggestedDate && isOver) {
                                 if (Object.keys(perChild).length > 0) {
@@ -2059,29 +2300,36 @@ export default function PlanYearModal({
                                   suggestedDate = toLocalYYYYMMDD(suggested);
                                 }
                               }
-                              // Under: only use backend suggested_end_date (no fallback) to avoid flashing wrong date
-                              // Only show "Change made!" when the accepted action matches current state: over → accepted shorten; under → accepted extend
                               const acceptedIsShorten = acceptedExtendDate && endDate && acceptedExtendDate < endDate;
                               const showAcceptedState = extendSuggestionAccepted && acceptedExtendDate && (isOver ? acceptedIsShorten : !acceptedIsShorten);
                               const displayDate = showAcceptedState ? acceptedExtendDate : suggestedDate;
                               if (!displayDate && !showAcceptedState) return null;
+                              const daysLabel = schedulePotential.delta_days != null && schedulePotential.delta_days !== 0
+                                ? `Adds ${Math.abs(schedulePotential.delta_days)} eligible days`
+                                : null;
                               return (
-                                <View style={{ marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: BORDER, gap: 6 }}>
+                                <View style={styles.eligibilityRecommendationRow}>
                                   {showAcceptedState ? (
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
-                                      <Text style={[styles.summaryValue, { color: CHIP_SELECTED_TEXT, fontSize: 13 }]}>
-                                        {acceptedIsShorten ? 'Shorten' : 'Extend'} to {new Date(acceptedExtendDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} to meet your target
-                                      </Text>
+                                    <View style={styles.eligibilityOptionRow}>
+                                      <View>
+                                        <Text style={styles.eligibilityOptionTitle}>
+                                          {acceptedIsShorten ? 'Shorten' : 'Extend'} to {new Date(acceptedExtendDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        </Text>
+                                        <Text style={styles.eligibilityOptionSubtext}>Change made!</Text>
+                                      </View>
                                       <View style={styles.suggestionAcceptButton}>
                                         <Check size={14} color={BG} />
                                         <Text style={styles.suggestionAcceptButtonText}>Change made!</Text>
                                       </View>
                                     </View>
                                   ) : (
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
-                                      <Text style={[styles.summaryValue, { color: CHIP_SELECTED_TEXT, fontSize: 13 }]}>
-                                        {isOver ? 'Shorten' : 'Extend'} to {new Date(suggestedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} to meet your target
-                                      </Text>
+                                    <View style={[styles.eligibilityOptionRow, Platform.OS === 'web' && styles.eligibilityOptionRowHover]}>
+                                      <View style={{ flex: 1, minWidth: 0 }}>
+                                        <Text style={styles.eligibilityOptionTitle}>
+                                          Suggested extension: {new Date(suggestedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        </Text>
+                                        {daysLabel ? <Text style={styles.eligibilityOptionSubtext}>{daysLabel}</Text> : null}
+                                      </View>
                                       <TouchableOpacity
                                         onPress={() => {
                                           setEndDate(suggestedDate);
@@ -2089,11 +2337,10 @@ export default function PlanYearModal({
                                           setAcceptedExtendDate(suggestedDate);
                                           setExtendSuggestionAccepted(true);
                                         }}
-                                        style={styles.suggestionAcceptButtonPending}
+                                        style={styles.eligibilityAcceptButton}
                                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                       >
-                                        <Check size={14} color={FG} />
-                                        <Text style={styles.suggestionAcceptButtonTextPending}>Accept</Text>
+                                        <Text style={styles.eligibilityAcceptButtonText}>Accept</Text>
                                       </TouchableOpacity>
                                     </View>
                                   )}
@@ -2102,28 +2349,39 @@ export default function PlanYearModal({
                             })()}
                           </>
                         )}
+                        {/* Hours mode: status pill + copy */}
                         {planConstraintMode === 'hours' && schedulePotential.delta_hours != null && (
-                          <Text
-                            style={{
-                              color: schedulePotential.delta_hours > 0 ? WARNING : schedulePotential.delta_hours < 0 ? ERROR : SUCCESS,
-                              fontSize: 13,
-                              fontWeight: schedulePotential.delta_hours !== 0 ? '600' : '400',
-                            }}
-                          >
-                            {schedulePotential.delta_hours > 0
-                              ? `${schedulePotential.delta_hours.toFixed(0)} hours over your ${schedulePotential.target_hours ?? planTargetHours}-hour target`
-                              : schedulePotential.delta_hours < 0
-                              ? `${(-schedulePotential.delta_hours).toFixed(0)} hours under your ${schedulePotential.target_hours ?? planTargetHours}-hour target — add scheduled class days or extend schedule`
-                              : `0 hours over your ${schedulePotential.target_hours ?? planTargetHours}-hour target`}
-                          </Text>
+                          <View style={styles.eligibilityStatusRow}>
+                            <View style={[
+                              styles.eligibilityPill,
+                              schedulePotential.delta_hours > 0 && styles.eligibilityPillOver,
+                              schedulePotential.delta_hours < 0 && styles.eligibilityPillUnder,
+                              schedulePotential.delta_hours === 0 && styles.eligibilityPillOnTarget,
+                            ]}>
+                              <Text style={[
+                                styles.eligibilityPillText,
+                                schedulePotential.delta_hours === 0 && { color: SUCCESS },
+                                (schedulePotential.delta_hours > 0 || schedulePotential.delta_hours < 0) && { color: WARNING },
+                              ]}>
+                                {schedulePotential.delta_hours > 0
+                                  ? `${schedulePotential.delta_hours.toFixed(0)} hours over target`
+                                  : schedulePotential.delta_hours < 0
+                                  ? `${(-schedulePotential.delta_hours).toFixed(0)} hours short`
+                                  : 'On target'}
+                              </Text>
+                            </View>
+                            {(schedulePotential.delta_hours > 0 || schedulePotential.delta_hours < 0) && (
+                              <Text style={styles.eligibilityCardSecondary}>Add class days, or accept an extension.</Text>
+                            )}
+                          </View>
                         )}
-                        {/* Manual instructional events counted (plan health input) */}
+                        {/* Manual instructional events counted */}
                         {(planHealth?.manual_events_days != null && planHealth.manual_events_days > 0) ||
                          (planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0) ? (
-                          <View style={[styles.inputGroup, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: BORDER }]}>
+                          <View style={[styles.inputGroup, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: ELIGIBILITY_CARD_BORDER }]}>
                             <Text style={[styles.mutedText, { marginBottom: 6 }]}>
                               Manual instructional events counted this term: {planHealth.manual_events_days ?? 0} days
-                              {(planHealth.manual_events_hours != null && planHealth.manual_events_hours > 0)
+                              {(planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0)
                                 ? `, ${Number(planHealth.manual_events_hours).toFixed(0)} hours`
                                 : ''}
                             </Text>
@@ -2144,9 +2402,9 @@ export default function PlanYearModal({
                       </View>
                     )}
                   </View>
-                )}
 
-                {/* Danger Zone */}
+                {/* Danger Zone: only when editing an existing plan */}
+                {academicYearId && (
                 <View style={styles.dangerZone}>
                   <TouchableOpacity
                     style={styles.dangerZoneToggle}
@@ -2191,7 +2449,9 @@ export default function PlanYearModal({
                     </View>
                   )}
                 </View>
+                )}
               </View>
+            )
             )}
           </ScrollView>
 
@@ -2559,7 +2819,23 @@ export default function PlanYearModal({
           )}
 
           {/* Footer - Build Curriculum style: Cancel + rounded primary, no icons */}
-          <View style={styles.footer}>
+          <View style={[styles.footer, pickerOnly && styles.pickerFooter]}>
+            {pickerOnly ? (
+              <>
+                <TouchableOpacity onPress={onClose} style={styles.cancelButton}>
+                  <Text style={[styles.cancelText, styles.pickerCancelText]}>Cancel</Text>
+                </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                  onPress={() => setStartCreatingNew(true)}
+                  style={styles.pickerCreateButton}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.pickerCreateButtonText}>Create new plan</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
             <TouchableOpacity
               onPress={onClose}
               style={styles.cancelButton}
@@ -2594,12 +2870,21 @@ export default function PlanYearModal({
               )}
             </TouchableOpacity>
             )}
+              </>
+            )
+          }
           </View>
         </View>
       </View>
     </Modal>
   );
 }
+
+const PICKER_CARD_BG = '#F8FBFF';
+const PICKER_CARD_BORDER = '#E3EEF8';
+const PICKER_OR_COLOR = '#94A3B8';
+const PICKER_CREATE_BG = '#81C1E1';
+const PICKER_CREATE_HOVER = '#6FB4D8';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -2608,6 +2893,100 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
+  },
+  pickerOverlay: {
+    ...(Platform.OS === 'web' && { backdropFilter: 'blur(3px)' }),
+  },
+  pickerModal: {
+    maxWidth: 520,
+    width: '100%',
+    paddingHorizontal: 28,
+    paddingTop: 24,
+    paddingBottom: 24,
+  },
+  pickerBody: {
+    flex: 1,
+    minHeight: 0,
+  },
+  pickerLoading: {
+    paddingVertical: 24,
+    alignItems: 'center',
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  pickerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: FG,
+  },
+  pickerDivider: {
+    height: 1,
+    backgroundColor: CARD_BORDER,
+    marginBottom: 16,
+  },
+  planCard: {
+    backgroundColor: PICKER_CARD_BG,
+    borderWidth: 1,
+    borderColor: PICKER_CARD_BORDER,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    ...(Platform.OS === 'web' && {
+      transition: 'border-color 0.2s ease, background-color 0.2s ease',
+    }),
+  },
+  planCardLine1: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: MUTED,
+    marginBottom: 2,
+  },
+  planCardLine2: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: FG,
+    marginBottom: 2,
+  },
+  planCardLine3: {
+    fontSize: 13,
+    color: MUTED,
+  },
+  pickerOr: {
+    fontSize: 12,
+    color: PICKER_OR_COLOR,
+    letterSpacing: 0.04,
+    textTransform: 'uppercase',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  pickerCreateButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: PICKER_CREATE_BG,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(129,193,225,.25)',
+      transition: 'background-color 0.2s ease, transform 0.2s ease',
+    }),
+  },
+  pickerCreateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  pickerFooter: {
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  pickerCancelText: {
+    color: PICKER_OR_COLOR,
+    fontWeight: '500',
   },
   modal: {
     width: Platform.OS === 'web' ? 720 : '100%',
@@ -2683,7 +3062,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   sectionProgressStepCurrent: {
-    color: ACCENT,
+    color: CHIP_SELECTED_TEXT,
     fontWeight: '600',
   },
   sectionProgressStepFuture: {
@@ -2695,7 +3074,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: CARD_BORDER,
     borderRadius: 14,
-    padding: CARD_PADDING,
+    paddingTop: CARD_PADDING,
+    paddingHorizontal: CARD_PADDING,
+    paddingBottom: 12,
     marginBottom: SECTION_SPACING,
     ...(Platform.OS === 'web' && { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }),
     ...(Platform.OS !== 'web' && { elevation: 2 }),
@@ -2711,7 +3092,7 @@ const styles = StyleSheet.create({
   twoColumnRow: {
     flexDirection: 'row',
     gap: 24,
-    marginBottom: 16,
+    marginBottom: 4,
     flexWrap: 'wrap',
   },
   twoColumnHalf: {
@@ -2754,7 +3135,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: FG,
-    marginBottom: 12,
+    marginBottom: 4,
     marginTop: 0,
     textTransform: 'uppercase',
     ...(Platform.OS === 'web' && {
@@ -2794,31 +3175,34 @@ const styles = StyleSheet.create({
   settingText: {
     fontSize: 13,
     color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   customToggleTrack: {
     width: 50,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#DDE5F0',
+    backgroundColor: '#d1d5db',
     padding: 2,
     flexDirection: 'row',
     alignItems: 'center',
   },
   customToggleTrackOn: {
-    backgroundColor: ACCENT,
+    backgroundColor: '#AECBFA',
   },
   customToggleThumb: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f9fafb',
     ...(Platform.OS === 'web' && {
       transition: 'transform 0.2s ease',
-      boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
     }),
   },
   customToggleThumbOn: {
     transform: [{ translateX: 22 }],
+    backgroundColor: '#6BB3E8',
   },
   holidaySettingsRow: {
     flexDirection: 'row',
@@ -2841,14 +3225,17 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
+    height: 36,
+    minHeight: 36,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: '#e5e7eb',
     borderRadius: 20,
     backgroundColor: BG,
   },
   modeButtonActive: {
-    borderColor: ACCENT,
-    backgroundColor: ACCENT_LIGHT,
+    backgroundColor: CHIP_SELECTED_BG,
+    borderColor: CHIP_SELECTED_BORDER,
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(107,179,232,0.2)' }),
   },
   modeButtonText: {
     fontSize: 13,
@@ -2856,8 +3243,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   modeButtonTextActive: {
-    color: ACCENT,
-    fontWeight: '600',
+    color: CHIP_SELECTED_TEXT,
+    fontWeight: '700',
   },
   inputGroup: {
     marginBottom: 24,
@@ -3019,6 +3406,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  holidayAddButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#85C4F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   addButtonWithLabel: {
     width: undefined,
     height: undefined,
@@ -3037,7 +3432,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   scheduleBlocksInner: {
-    marginTop: 4,
+    marginTop: 0,
   },
   blockRow: {
     borderBottomWidth: 1,
@@ -3048,12 +3443,12 @@ const styles = StyleSheet.create({
   blockRowNoDivider: {
     borderBottomWidth: 0,
     marginBottom: 0,
+    paddingBottom: 4,
   },
   blockRowSubject: {
     fontSize: 14,
     fontWeight: '600',
     color: FG,
-    marginBottom: 8,
   },
   blockRowLine: {
     flexDirection: 'row',
@@ -3217,14 +3612,18 @@ const styles = StyleSheet.create({
   radioOption: {
     paddingVertical: 10,
     paddingHorizontal: 16,
+    height: 36,
+    minHeight: 36,
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: '#e5e7eb',
     borderRadius: 20,
     backgroundColor: BG,
   },
   radioOptionActive: {
-    borderColor: ACCENT,
-    backgroundColor: ACCENT_LIGHT,
+    backgroundColor: CHIP_SELECTED_BG,
+    borderColor: CHIP_SELECTED_BORDER,
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(107,179,232,0.2)' }),
   },
   radioLabel: {
     fontSize: 13,
@@ -3232,7 +3631,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   radioLabelActive: {
-    color: ACCENT,
+    color: CHIP_SELECTED_TEXT,
+    fontWeight: '700',
   },
   childSelectRow: {
     marginTop: 12,
@@ -3437,6 +3837,136 @@ const styles = StyleSheet.create({
   suggestionAcceptHint: {
     fontSize: 11,
     color: MUTED,
+  },
+  eligibilityCard: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: ELIGIBILITY_CARD_BORDER,
+    backgroundColor: ELIGIBILITY_CARD_BG,
+  },
+  eligibilityCardEmpty: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  eligibilityChipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  eligibilityChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: MUTED,
+  },
+  eligibilityCardTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: MUTED,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    width: '100%',
+    marginBottom: 4,
+  },
+  eligibilityCardMain: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    width: '100%',
+  },
+  eligibilityCardSecondary: {
+    fontSize: 13,
+    color: MUTED,
+    marginTop: 2,
+    width: '100%',
+  },
+  eligibilityCardFilled: {
+    gap: 8,
+  },
+  eligibilitySummaryRow: {
+    marginBottom: 4,
+  },
+  eligibilitySummaryNumber: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: FG,
+  },
+  eligibilityTargetMuted: {
+    fontSize: 13,
+    color: MUTED,
+    marginTop: 10,
+  },
+  eligibilityStatusRow: {
+    marginTop: 0,
+    gap: 6,
+  },
+  eligibilityPill: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+  },
+  eligibilityPillOver: {
+    backgroundColor: 'rgba(217,119,6,0.15)',
+  },
+  eligibilityPillUnder: {
+    backgroundColor: 'rgba(217,119,6,0.15)',
+  },
+  eligibilityPillOnTarget: {
+    backgroundColor: 'rgba(16,185,129,0.15)',
+  },
+  eligibilityPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  eligibilityRecommendationRow: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: ELIGIBILITY_CARD_BORDER,
+  },
+  eligibilityOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: BG,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  eligibilityOptionRowHover: {
+    cursor: 'pointer',
+  },
+  eligibilityOptionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+  },
+  eligibilityOptionSubtext: {
+    fontSize: 12,
+    color: MUTED,
+    marginTop: 2,
+  },
+  eligibilityAcceptButton: {
+    height: 36,
+    minHeight: 36,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: SECONDARY_BTN_BORDER,
+    backgroundColor: BG,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  eligibilityAcceptButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
   },
   loadingText: {
     marginTop: 12,

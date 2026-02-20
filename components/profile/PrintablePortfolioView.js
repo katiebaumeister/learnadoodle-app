@@ -5125,8 +5125,8 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
                     left: indicatorX,
                     width: indicatorWidth,
                   },
+                  { pointerEvents: 'none' },
                 ]}
-                pointerEvents="none"
               />
               
               {sortedChildren.map((c) => {

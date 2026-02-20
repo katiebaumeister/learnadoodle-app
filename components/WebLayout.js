@@ -135,6 +135,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
   const [showPlanYearModal, setShowPlanYearModal] = useState(false);
   const [planYearInitialAcademicYearId, setPlanYearInitialAcademicYearId] = useState(null);
+  const [planYearOpenForNewPlan, setPlanYearOpenForNewPlan] = useState(false);
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
@@ -177,10 +178,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const filtersButtonRef = useRef(null);
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
-  const [showPlanOptimizeDropdown, setShowPlanOptimizeDropdown] = useState(false);
-  const planOptimizeButtonRef = useRef(null);
-  const planOptimizeDropdownRef = useRef(null);
-  const [planOptimizeDropdownPosition, setPlanOptimizeDropdownPosition] = useState({ top: 0, left: 0 });
   const filtersDropdownRef = useRef(null);
   const [showViewModeDropdown, setShowViewModeDropdown] = useState(false);
   const viewModeButtonRef = useRef(null);
@@ -404,30 +401,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, [showFiltersDropdown]);
-
-  // Handle click outside Plan & Optimize dropdown
-  useEffect(() => {
-    if (showPlanOptimizeDropdown && Platform.OS === 'web' && typeof document !== 'undefined') {
-      const handleClickOutside = (event) => {
-        const buttonNode = planOptimizeButtonRef.current?._nativeNode || planOptimizeButtonRef.current;
-        const dropdownNode = planOptimizeDropdownRef.current?._nativeNode || planOptimizeDropdownRef.current;
-        
-        const target = event.target;
-        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
-        const isInsideDropdown = dropdownNode && (dropdownNode === target || dropdownNode.contains(target));
-        
-        if (!isInsideButton && !isInsideDropdown) {
-          setShowPlanOptimizeDropdown(false);
-        }
-      };
-      
-      document.addEventListener('click', handleClickOutside, true);
-      
-      return () => {
-        document.removeEventListener('click', handleClickOutside, true);
-      };
-    }
-  }, [showPlanOptimizeDropdown]);
 
   // Handle click outside View Mode dropdown
   useEffect(() => {
@@ -1526,7 +1499,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openYearWizard', handler);
   }, [navigateToIntelligence]);
 
-  // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal)
+  // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal / EventDetails)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (event) => {
@@ -1536,6 +1509,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setPlanYearHighlightFromHealth(from === 'plan_health_over');
       if (yearIdFromEvent) {
         setPlanYearInitialAcademicYearId(yearIdFromEvent);
+        setPlanYearOpenForNewPlan(false);
+      } else {
+        setPlanYearInitialAcademicYearId(null);
+        setPlanYearOpenForNewPlan(false);
       }
       setShowPlanYearModal(true);
     };
@@ -2085,7 +2062,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       >
                         {[
                           { key: 'month', label: 'Calendar' },
-                          { key: 'week', label: 'Week' },
+                          // Week view hidden from UI for now; logic kept
                           { key: 'board', label: 'Board' },
                           { key: 'tasks', label: 'Lists' },
                         ].map((view) => {
@@ -2423,7 +2400,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     )}
                   </View>
                   
-                  {/* Plan & Optimize (Smart Tools) + Plan health notification icon */}
+                  {/* Plan My Year button + Plan health notification icon */}
                   <View style={{ 
                     flexShrink: 0,
                     position: 'relative',
@@ -2431,121 +2408,38 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     alignItems: 'center',
                     gap: 6,
                   }}>
-                    <TouchableOpacity
-                      ref={planOptimizeButtonRef}
-                      onPress={() => {
-                        if (Platform.OS === 'web' && planOptimizeButtonRef.current) {
-                          const node = planOptimizeButtonRef.current._nativeNode || planOptimizeButtonRef.current;
-                          if (node && typeof node.getBoundingClientRect === 'function') {
-                            const rect = node.getBoundingClientRect();
-                            setPlanOptimizeDropdownPosition({
-                              top: rect.bottom + 4,
-                              left: rect.left,
-                            });
-                          }
-                        }
-                        setShowPlanOptimizeDropdown(!showPlanOptimizeDropdown);
-                      }}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 4,
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 12,
-                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                        borderWidth: 1,
-                        borderColor: 'rgba(209, 213, 219, 0.8)',
-                      }}
-                    >
-                      <Text style={{
-                        fontSize: 15,
-                        color: 'rgba(15, 23, 42, 0.85)',
-                        fontWeight: '500',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}>
-                        Plan & Optimize
-                      </Text>
-                      <ChevronDown size={13} color="rgba(15, 23, 42, 0.7)" />
-                    </TouchableOpacity>
-                    <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={preloadedPlanHealth} />
-                    {showPlanOptimizeDropdown && Platform.OS === 'web' && (
-                      <View
-                        ref={planOptimizeDropdownRef}
+                    {family?.default_planning_mode !== 'NONE' && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setPlanYearInitialAcademicYearId(null);
+                          setPlanYearOpenForNewPlan(true);
+                          setShowPlanYearModal(true);
+                        }}
+                        accessibilityLabel="Plan My Year"
+                        accessibilityRole="button"
                         style={{
-                          position: 'fixed',
-                          top: planOptimizeDropdownPosition.top,
-                          left: planOptimizeDropdownPosition.left,
-                          backgroundColor: '#FFFFFF',
-                          borderRadius: 8,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(255, 255, 255, 0.9)',
                           borderWidth: 1,
-                          borderColor: 'rgba(15,23,42,0.08)',
-                          padding: 4,
-                          minWidth: 200,
-                          zIndex: 1000,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                          borderColor: 'rgba(209, 213, 219, 0.8)',
                         }}
                       >
-                        {[
-                          { id: 'buildCurriculum', label: 'Build Curriculum', icon: BookOpen },
-                          { id: 'rebalance', label: 'Rebalance', icon: RefreshCw },
-                          { id: 'schedulingAssistant', label: 'Scheduling Assistant', icon: Clock },
-                          ...(family?.default_planning_mode !== 'NONE'
-                            ? [{ id: 'planYear', label: 'Plan My Year', icon: Calendar }]
-                            : []),
-                        ].map((action) => {
-                          const ActionIcon = action.icon;
-                          return (
-                            <TouchableOpacity
-                              key={action.id}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 8,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                              }}
-                              onPress={() => {
-                                setShowPlanOptimizeDropdown(false);
-                                switch (action.id) {
-                                  case 'buildCurriculum':
-                                    setShowBuildCurriculumModal(true);
-                                    break;
-                                  case 'progressForecast':
-                                    setShowProgressForecastModal(true);
-                                    break;
-                                  case 'rebalance':
-                                    setShowRebalanceModal(true);
-                                    break;
-                                  case 'schedulingAssistant':
-                                    // Open Scheduling Assistant modal with current week and selected children
-                                    // Use current month to calculate current week start
-                                    const today = new Date();
-                                    const currentWeekStart = startOfWeek(today);
-                                    setSchedulingAssistantWeekStart(currentWeekStart);
-                                    // Use first selected child, or first child if none selected
-                                    const selectedChild = selectedCalendarChildren && selectedCalendarChildren.length > 0
-                                      ? selectedCalendarChildren[0]
-                                      : (children.length > 0 ? children[0].id : null);
-                                    setSchedulingAssistantChildId(selectedChild);
-                                    setShowSchedulingAssistantModal(true);
-                                    break;
-                                  case 'planYear':
-                                    setShowPlanYearModal(true);
-                                    break;
-                                }
-                              }}
-                            >
-                              <ActionIcon size={14} color="rgba(15,23,42,0.6)" />
-                              <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                {action.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
+                        <Text style={{
+                          fontSize: 15,
+                          color: 'rgba(15, 23, 42, 0.85)',
+                          fontWeight: '500',
+                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }}>
+                          Plan My Year
+                        </Text>
+                      </TouchableOpacity>
                     )}
+                    <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={preloadedPlanHealth} />
                   </View>
                   
                   {/* Freeze Week toggle - icon only, shown only in Week view */}
@@ -2902,8 +2796,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   transform: [{ translateX: -50 }], // Center horizontally
                   marginTop: -32, // Position above button
                 },
+                { pointerEvents: 'none' },
               ]}
-              pointerEvents="none"
             >
               <Text style={{
                 color: '#FFFFFF',
@@ -3200,17 +3094,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setShowPlanYearModal(false);
           setPlanYearHighlightFromHealth(false);
           setPlanYearInitialAcademicYearId(null);
+          setPlanYearOpenForNewPlan(false);
         }}
         familyId={familyId}
         children={children}
         subjects={subjects}
         fullSubjects={fullSubjects}
         initialAcademicYearId={planYearInitialAcademicYearId}
+        openForNewPlan={planYearOpenForNewPlan}
         highlightFromPlanHealth={planYearHighlightFromHealth}
         onComplete={() => {
           setShowPlanYearModal(false);
           setPlanYearHighlightFromHealth(false);
           setPlanYearInitialAcademicYearId(null);
+          setPlanYearOpenForNewPlan(false);
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }}
       />

@@ -54,7 +54,7 @@ export default function AppShell({
             {...(Platform.OS === 'web' ? { className: 'glass-surface' } : {})}
           >
             {disabled && (
-              <View style={styles.setupBanner} pointerEvents="box-none">
+              <View style={[styles.setupBanner, { pointerEvents: 'box-none' }]}>
                 <Text style={styles.setupBannerText}>Finish setup to begin planning</Text>
                 <Text style={styles.setupBannerHint}>Complete the quick setup above to use the planner, add events, and track progress.</Text>
               </View>
@@ -62,8 +62,7 @@ export default function AppShell({
             <View style={styles.mainContentWrap}>
               {disabled && (
                 <View
-                  style={styles.focusOverlay}
-                  pointerEvents="auto"
+                  style={[styles.focusOverlay, { pointerEvents: 'auto' }]}
                   {...(Platform.OS === 'web' && {
                     tabIndex: 0,
                     'aria-hidden': false,
@@ -72,8 +71,7 @@ export default function AppShell({
                 />
               )}
               <View
-                style={[styles.contentInner, disabled && styles.mainContentWrapDisabled]}
-                pointerEvents={disabled ? 'none' : 'auto'}
+                style={[styles.contentInner, disabled && styles.mainContentWrapDisabled, { pointerEvents: disabled ? 'none' : 'auto' }]}
                 {...(disabled && Platform.OS === 'web' && { 'aria-hidden': true })}
               >
                 {children}

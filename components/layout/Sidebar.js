@@ -403,8 +403,8 @@ export default function Sidebar({
               left: tooltip.x,
               top: tooltip.y,
             },
+            { pointerEvents: 'none' },
           ]}
-          pointerEvents="none"
         >
           <Text style={styles.tooltipText}>{tooltip.text}</Text>
         </View>

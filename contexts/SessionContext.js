@@ -17,7 +17,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { getMe } from '../lib/apiClient';
+import { getMe, getIntegrationStatus } from '../lib/apiClient';
 import { useAuth } from './AuthContext';
 
 const SessionContext = createContext(null);
@@ -262,46 +262,31 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     }
   }, []);
 
-  // Preload connection status in background
+  // Preload connection status in background (uses same API base as apiClient)
   const preloadConnectionStatus = useCallback(async (familyId) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     
     try {
-      // Check if already cached
       const cacheKey = `connection_status_${familyId}`;
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const { timestamp } = JSON.parse(cached);
         const age = Date.now() - timestamp;
         const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-        if (age < CACHE_TTL_MS) {
-          // Cache is still valid, no need to preload
-          return;
-        }
+        if (age < CACHE_TTL_MS) return;
       }
       
-      // Fetch and cache connection status
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      
-      const statusRes = await fetch(`${apiBase}/api/integrations/status`, {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
-      
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
+      const { data: statusData, error } = await getIntegrationStatus();
+      if (!error && statusData != null) {
         localStorage.setItem(cacheKey, JSON.stringify({
           data: statusData,
           timestamp: Date.now()
         }));
         console.log('[SessionContext] Connection status preloaded');
       }
-    } catch (err) {
-      // Silently fail - this is just a preload
-      console.warn('[SessionContext] Connection status preload failed:', err);
+      // Preload is best-effort; no warning when backend is unreachable (e.g. Load failed)
+    } catch (_err) {
+      // Intentionally silent — connection status preload failure is expected when server is down
     }
   }, []);
 

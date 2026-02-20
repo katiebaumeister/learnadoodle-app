@@ -76,10 +76,18 @@ def regenerate_block(
     if child_id_override and not block.get("child_ids"):
         child_ids = [child_id_override]
 
+    # Whole-family block: one event per date with all children on child_ids (one chip, all circles).
+    # Also treat child_ids == [None] (e.g. no family children) as whole-family so we still insert one event per date.
+    is_whole_family = (
+        (len(child_ids) > 1 and not any(cid is None for cid in child_ids))
+        or (len(child_ids) == 1 and child_ids[0] is None)
+    )
+    whole_family_sentinel = None  # key (d, None) for whole-family event on date d
+
     # Fetch existing overwrite-safe placeholders for this block only (include soft-deleted so we can undelete on re-apply)
     existing_res = (
         supabase.table("events")
-        .select("id, start_ts, end_ts, child_id, subject_id, title, deleted_at")
+        .select("id, start_ts, end_ts, child_id, child_ids, subject_id, title, deleted_at")
         .eq("family_id", family_id)
         .eq("academic_year_id", academic_year_id)
         .eq("source_block_id", block_id)
@@ -89,12 +97,17 @@ def regenerate_block(
     )
     existing = existing_res.data or []
 
-    # Key by (date, child_id) for matching
+    # Key by (date, child_id) for single-child; (date, None) for whole-family event on that date
     existing_by_key: Dict[Tuple[date, Any], Dict] = {}
     for e in existing:
         d = _event_date_from_start_ts(e)
-        if d is not None:
-            cid = e.get("child_id")
+        if d is None:
+            continue
+        cid = e.get("child_id")
+        e_child_ids = e.get("child_ids") or []
+        if is_whole_family and cid is None and e_child_ids and len(e_child_ids) > 1:
+            existing_by_key[(d, whole_family_sentinel)] = e
+        else:
             existing_by_key[(d, cid)] = e
 
     # Collision avoidance (Option B): do not insert placeholder if an existing qualifying event
@@ -113,6 +126,7 @@ def regenerate_block(
             .eq("subject_id", block["subject_id"])
             .eq("counts_toward_plan", True)
             .is_("deleted_at", "null")
+            .not_.is_("academic_year_id", "null")  # don't count orphaned events (e.g. from deleted plan) as blocking
             .eq("event_type", "Lesson")  # qualifying type (align with plan_health)
             .neq("status", "canceled")
             .gte("start_ts", f"{min_d.isoformat()}T00:00:00")
@@ -136,11 +150,17 @@ def regenerate_block(
             for cid in cids_to_add:
                 if cid in child_ids:
                     occupied_slots.add((d, cid))
+                    if is_whole_family:
+                        occupied_slots.add((d, whole_family_sentinel))
 
-    desired_keys: Set[Tuple[date, Any]] = set()
-    for d in occ_dates:
-        for cid in child_ids:
-            desired_keys.add((d, cid))
+    if is_whole_family:
+        desired_keys = {(d, whole_family_sentinel) for d in occ_dates}
+    else:
+        desired_keys = set()
+        for d in occ_dates:
+            for cid in child_ids:
+                if cid is not None:
+                    desired_keys.add((d, cid))
 
     to_update: List[Dict[str, Any]] = []
     to_insert: List[Dict[str, Any]] = []
@@ -153,8 +173,9 @@ def regenerate_block(
             start_ts = f"{d.isoformat()}T09:00:00+00:00"
             end_ts = f"{d.isoformat()}T15:00:00+00:00"
         subject_id = block.get("subject_id")
-        for cid in child_ids:
-            key = (d, cid)
+
+        if is_whole_family:
+            key = (d, whole_family_sentinel)
             if key in existing_by_key:
                 e = existing_by_key[key]
                 to_update.append({
@@ -167,10 +188,10 @@ def regenerate_block(
                     "deleted_at": e.get("deleted_at"),
                 })
             elif key not in occupied_slots:
-                # Skip insert if parent already has a counting lesson that day for this child+subject
                 to_insert.append({
                     "family_id": family_id,
-                    "child_id": cid,
+                    "child_id": None,
+                    "child_ids": [c for c in child_ids if c is not None] if child_ids else [],
                     "title": subject_name,
                     "start_ts": start_ts,
                     "end_ts": end_ts,
@@ -185,6 +206,40 @@ def regenerate_block(
                     "source_block_id": block_id,
                     "counts_toward_plan": True,
                 })
+        else:
+            for cid in child_ids:
+                if cid is None:
+                    continue  # skip placeholder for "no child" (e.g. family has no children)
+                key = (d, cid)
+                if key in existing_by_key:
+                    e = existing_by_key[key]
+                    to_update.append({
+                        "id": e["id"],
+                        "start_ts": start_ts,
+                        "end_ts": end_ts,
+                        "subject_id": subject_id,
+                        "title": subject_name,
+                        "generation_batch_id": generation_batch_id,
+                        "deleted_at": e.get("deleted_at"),
+                    })
+                elif key not in occupied_slots:
+                    to_insert.append({
+                        "family_id": family_id,
+                        "child_id": cid,
+                        "title": subject_name,
+                        "start_ts": start_ts,
+                        "end_ts": end_ts,
+                        "status": "scheduled",
+                        "source": "system",
+                        "event_type": "Lesson",
+                        "subject_id": subject_id,
+                        "is_placeholder": True,
+                        "generated_by": "plan_year",
+                        "academic_year_id": academic_year_id,
+                        "generation_batch_id": generation_batch_id,
+                        "source_block_id": block_id,
+                        "counts_toward_plan": True,
+                    })
 
     for (d, cid), e in existing_by_key.items():
         if (d, cid) not in desired_keys:

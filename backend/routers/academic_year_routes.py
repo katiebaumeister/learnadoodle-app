@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 import math
 import json
@@ -183,6 +183,10 @@ class PlanHealthOutput(BaseModel):
     per_child_subject: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None  # child_id -> subject_id -> { planned_days, subject_target_days, subject_delta_days, ... }
     subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # subject_id -> { target_days, target_hours } for client/schedule potential
     planning_mode: Optional[str] = None  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
+    # No-requirement mode: baseline from first apply, current count, and example deleted date for UI message
+    baseline_scheduled_days: Optional[int] = None
+    current_scheduled_days: Optional[int] = None
+    deleted_dates: Optional[List[str]] = None  # date strings (YYYY-MM-DD) that had a lesson deleted
 
 
 class ApplyFixSuggestionInput(BaseModel):
@@ -741,7 +745,7 @@ async def get_plan_health(
         try:
             plan_resp = (
                 supabase.table("academic_year_plan")
-                .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets, blocks")
+                .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets, blocks, baseline_scheduled_days, baseline_scheduled_dates")
                 .eq("family_id", family_id)
                 .order("updated_at", desc=True)
                 .limit(1)
@@ -785,7 +789,7 @@ async def get_plan_health(
             supabase.table("events")
             .select(
                 "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, "
-                "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
+                "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder, generated_by"
             )
             .eq("family_id", family_id)
             .eq("academic_year_id", academic_year_id)
@@ -796,6 +800,22 @@ async def get_plan_health(
         )
         events = ev_resp.data or []
         attributions = get_instructional_attributions(events)
+
+        # No-requirement mode: compute current placeholder days and deleted dates for "You deleted a lesson on [date]..." message
+        baseline_scheduled_days = plan.get("baseline_scheduled_days")
+        baseline_scheduled_dates = plan.get("baseline_scheduled_dates") or []
+        current_scheduled_days = None
+        deleted_dates = None
+        if constraint_mode == "none" and isinstance(baseline_scheduled_dates, list) and len(baseline_scheduled_dates) > 0:
+            placeholder_dates = set()
+            for e in events:
+                if e.get("is_placeholder") and e.get("generated_by") == "plan_year":
+                    start_ts = e.get("start_ts")
+                    if start_ts and isinstance(start_ts, str) and "T" in start_ts:
+                        placeholder_dates.add(start_ts[:10])
+            current_scheduled_days = len(placeholder_dates)
+            baseline_set = set(baseline_scheduled_dates)
+            deleted_dates = sorted([d for d in baseline_set if d not in placeholder_dates])
         print(
             f"[BACKEND] plan_health: plan_id={plan.get('id')} academic_year_id={academic_year_id} "
             f"start={plan['start_date'][:10]} end={plan['end_date'][:10]} target_days={target_days} "
@@ -886,6 +906,9 @@ async def get_plan_health(
             per_child_subject=result.get("per_child_subject"),
             subject_targets=subject_targets,
             planning_mode=plan.get("planning_mode"),
+            baseline_scheduled_days=baseline_scheduled_days if constraint_mode == "none" else None,
+            current_scheduled_days=current_scheduled_days if constraint_mode == "none" else None,
+            deleted_dates=deleted_dates if constraint_mode == "none" else None,
         )
     except HTTPException:
         raise
@@ -1429,15 +1452,19 @@ async def schedule_potential(
 async def clear_placeholders(
     family_id: str = Query(..., description="Family ID"),
     academic_year_id: str = Query(None, description="Optional: clear only this year's placeholders"),
+    delete_plan: bool = Query(False, description="If True and academic_year_id set, also delete the academic year record (full plan removal)"),
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
     """
     Remove Plan Year placeholder lessons. By default clears all placeholders for the family.
     If academic_year_id is provided, clears only that year's placeholders (validates family ownership).
-    Only deletes events where is_placeholder=true and generated_by='plan_year'.
-    Manual events are never touched.
+    Only touches events where is_placeholder=true and generated_by='plan_year' and deleted_at is null.
+    Uses soft delete (sets deleted_at) so calendar/views that filter deleted_at IS NULL stop showing them.
+    If delete_plan=True and academic_year_id is set, also deletes the academic_year row (CASCADE removes
+    academic_year_plan, holidays, class_days, exclusions). Events keep rows but academic_year_id becomes NULL.
     """
+    print(f"[BACKEND] clear_placeholders: family_id={family_id} academic_year_id={academic_year_id} delete_plan={delete_plan}")
     try:
         family_id_user = get_family_id_for_user(user["id"])
         if not family_id_user or family_id_user != family_id:
@@ -1448,23 +1475,56 @@ async def clear_placeholders(
         supabase = get_admin_client()
 
         if academic_year_id:
-            # Validate academic year belongs to family
             ay = supabase.table("academic_years").select("family_id").eq("id", academic_year_id).execute()
             if not ay.data or len(ay.data) == 0:
                 raise HTTPException(status_code=404, detail="Academic year not found")
             if ay.data[0].get("family_id") != family_id:
                 raise HTTPException(status_code=403, detail="Academic year does not belong to your family")
 
-        q = supabase.table("events").delete().eq("family_id", family_id).eq("is_placeholder", True).eq("generated_by", "plan_year")
+        # Select placeholder event ids (only non-deleted)
+        q = (
+            supabase.table("events")
+            .select("id")
+            .eq("family_id", family_id)
+            .eq("is_placeholder", True)
+            .eq("generated_by", "plan_year")
+            .is_("deleted_at", None)
+        )
         if academic_year_id:
             q = q.eq("academic_year_id", academic_year_id)
-        resp = q.select("id").execute()
-        deleted = len(resp.data) if resp.data else 0
-        log_event("academic_year.clear_placeholders.success", user_id=user["id"], family_id=family_id, academic_year_id=academic_year_id, deleted=deleted)
-        return {"deleted": deleted}
+        resp = q.execute()
+        ids = [row["id"] for row in (resp.data or [])]
+        print(f"[BACKEND] clear_placeholders: found {len(ids)} placeholder(s) to soft-delete")
+
+        deleted = 0
+        if ids:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            batch_size = 100
+            for i in range(0, len(ids), batch_size):
+                batch = ids[i : i + batch_size]
+                supabase.table("events").update({"deleted_at": now_iso}).in_("id", batch).eq("family_id", family_id).execute()
+            deleted = len(ids)
+
+        plan_deleted = False
+        if delete_plan and academic_year_id:
+            try:
+                # events_instructional_requires_academic_year: (counts_toward_plan = false OR academic_year_id IS NOT NULL).
+                # ON DELETE SET NULL will set academic_year_id = NULL; clear counts_toward_plan first so the constraint still holds.
+                supabase.table("events").update({"counts_toward_plan": False}).eq("academic_year_id", academic_year_id).eq("family_id", family_id).execute()
+                supabase.table("academic_years").delete().eq("id", academic_year_id).eq("family_id", family_id).execute()
+                plan_deleted = True
+                print(f"[BACKEND] clear_placeholders: deleted academic_year {academic_year_id}")
+            except Exception as del_err:
+                print(f"[BACKEND] clear_placeholders: academic_year delete failed: {del_err}")
+                log_event("academic_year.clear_placeholders.plan_delete_failed", user_id=user["id"], family_id=family_id, academic_year_id=academic_year_id, error=str(del_err))
+
+        log_event("academic_year.clear_placeholders.success", user_id=user["id"], family_id=family_id, academic_year_id=academic_year_id, deleted=deleted, plan_deleted=plan_deleted)
+        return {"deleted": deleted, "plan_deleted": plan_deleted}
     except HTTPException:
         raise
     except Exception as e:
+        traceback.print_exc()
+        print(f"[BACKEND] clear_placeholders error: {e}")
         log_event("academic_year.clear_placeholders.error", user_id=user.get("id"), error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1897,7 +1957,7 @@ async def apply_to_calendar(
         if academic_year_id:
             if body.subject_targets is not None:
                 validate_subject_targets(supabase, body.family_id, body.subject_targets)
-            constraint_mode = body.constraint_mode if body.constraint_mode in ("days", "hours") else "days"
+            constraint_mode = body.constraint_mode if body.constraint_mode in ("days", "hours", "none") else "days"
             plan_data = {
                 "academic_year_id": academic_year_id,
                 "family_id": body.family_id,
@@ -1955,6 +2015,17 @@ async def apply_to_calendar(
                 for d in get_block_occurrence_dates(block, start_date_obj, end_date_obj, exclusion_ranges):
                     planned_dates_set.add(d)
             created_count = totals_inserted
+            # No-requirement mode: store baseline so we can show "You deleted a lesson on [date]..." if user removes placeholders
+            if constraint_mode == "none" and planned_dates_set:
+                baseline_dates = sorted([d.isoformat() for d in planned_dates_set])
+                try:
+                    supabase.table("academic_year_plan").update({
+                        "baseline_scheduled_days": len(planned_dates_set),
+                        "baseline_scheduled_dates": baseline_dates,
+                        "updated_at": datetime.now().isoformat(),
+                    }).eq("academic_year_id", academic_year_id).execute()
+                except Exception:
+                    pass  # columns may not exist before migration
         else:
             # Legacy path: no blocks — use target days + subjects
             subject_index = 0

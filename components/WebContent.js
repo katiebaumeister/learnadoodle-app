@@ -2211,12 +2211,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       
       // Invalidate calendar cache so refetch returns fresh data (e.g. after Fix-It apply or plan changes)
       setCalendarDataCache({});
-      
-      // Always refresh calendar data when requested, regardless of active tab
-      // This ensures new events appear immediately after year plan creation
-      console.log('[WebContent] Calling refreshCalendarData with date:', refreshDate);
-      // Call the function directly - it's always available
-      refreshCalendarData(refreshDate).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
+      setCalendarEvents({});
+
+      const forceInvalidate = event?.detail?.forceInvalidate === true;
+      const doRefetch = () => {
+        console.log('[WebContent] Calling refreshCalendarData with date:', refreshDate);
+        refreshCalendarData(refreshDate).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
+      };
+      if (forceInvalidate) {
+        setTimeout(doRefetch, 0);
+      } else {
+        doRefetch();
+      }
       
       // Force planner to refresh by dispatching a custom event
       // PlannerWeek listens to this event to trigger a refetch
