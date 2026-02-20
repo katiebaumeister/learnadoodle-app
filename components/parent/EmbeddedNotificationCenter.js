@@ -480,10 +480,10 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: '#e5e7eb',
     position: 'relative',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
@@ -494,20 +494,20 @@ const styles = StyleSheet.create({
     }),
   },
   tabActive: {
-    borderColor: '#60a5fa',
-    backgroundColor: '#eff6ff',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: '#6b7280',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   tabTextActive: {
-    color: '#60a5fa',
-    fontWeight: '600',
+    color: '#6BB3E8',
+    fontWeight: '700',
   },
   countBadge: {
     minWidth: 18,

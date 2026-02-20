@@ -1416,15 +1416,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               />
             </View>
             
-            <Text style={styles.subsectionTitle}>Appearance</Text>
-            <View style={styles.subsectionDivider} />
-            
-            <View style={styles.preferenceRow}>
-              <Text style={styles.preferenceLabel}>Dark mode</Text>
-              <CustomToggle
-                value={darkMode === 'on'}
-                onValueChange={(value) => setDarkMode(value ? 'on' : 'off')}
-              />
+            <View style={styles.preferencesSectionSpacer}>
+              <Text style={styles.subsectionTitle}>Appearance</Text>
+              <View style={styles.subsectionDivider} />
+              
+              <View style={styles.preferenceRow}>
+                <Text style={styles.preferenceLabel}>Dark mode</Text>
+                <CustomToggle
+                  value={darkMode === 'on'}
+                  onValueChange={(value) => setDarkMode(value ? 'on' : 'off')}
+                />
+              </View>
             </View>
           </View>
         );
@@ -3735,6 +3737,9 @@ function createStyles(tokens) {
       backgroundColor: '#e5e7eb',
       marginBottom: 20,
     },
+    preferencesSectionSpacer: {
+      marginTop: 28,
+    },
     membersSectionRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -3845,19 +3850,20 @@ function createStyles(tokens) {
       justifyContent: 'center',
     },
     customToggleTrackOn: {
-      backgroundColor: '#60a5fa',
+      backgroundColor: '#AECBFA',
     },
     customToggleThumb: {
       width: 24,
       height: 24,
       borderRadius: 12,
-      backgroundColor: '#ffffff',
+      backgroundColor: '#f9fafb',
       ...(Platform.OS === 'web' && {
         transition: 'transform 0.2s ease',
       }),
     },
     customToggleThumbOn: {
       transform: [{ translateX: 22 }],
+      backgroundColor: '#6BB3E8',
     },
     sidebar: {
       width: 280,
@@ -4884,8 +4890,8 @@ function createStyles(tokens) {
       alignItems: 'center',
     },
     notifCheckboxChecked: {
-      backgroundColor: '#60a5fa',
-      borderColor: '#60a5fa',
+      backgroundColor: '#85C4F2',
+      borderColor: '#85C4F2',
     },
     notifCheckmark: {
       fontSize: 16,
@@ -5823,7 +5829,7 @@ function createStyles(tokens) {
     faqCardTitle: {
       fontSize: 18,
       fontWeight: '600',
-      color: '#3b82f6',
+      color: '#6BB3E8',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -5851,7 +5857,7 @@ function createStyles(tokens) {
       paddingHorizontal: 20,
       paddingBottom: 16,
       paddingTop: 0,
-      backgroundColor: '#fafafa',
+      backgroundColor: '#ffffff',
     },
     faqAnswerText: {
       fontSize: 16,
@@ -6212,14 +6218,14 @@ function createStyles(tokens) {
     feedbackTypeOption: {
       paddingVertical: 10,
       paddingHorizontal: 16,
-      borderRadius: 8,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: '#e5e7eb',
       backgroundColor: '#ffffff',
     },
     feedbackTypeOptionSelected: {
-      borderColor: '#3b82f6',
-      backgroundColor: '#eff6ff',
+      borderColor: '#6BB3E8',
+      backgroundColor: 'rgba(133,196,242,0.2)',
     },
     feedbackTypeOptionText: {
       fontSize: 13,
@@ -6230,31 +6236,36 @@ function createStyles(tokens) {
       }),
     },
     feedbackTypeOptionTextSelected: {
-      color: '#3b82f6',
+      color: '#6BB3E8',
+      fontWeight: '700',
     },
     feedbackSubmitButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       gap: 8,
-      backgroundColor: '#22d3ee',
-      paddingVertical: 14,
-      paddingHorizontal: 28,
+      backgroundColor: '#85C4F2',
+      paddingVertical: 12,
+      paddingHorizontal: 20,
       borderRadius: 10,
       alignSelf: 'flex-end',
       marginTop: 8,
+      ...(Platform.OS === 'web' && {
+        boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+        cursor: 'pointer',
+      }),
     },
     feedbackSubmitButtonDisabled: {
-      backgroundColor: '#9ca3af',
-      opacity: 0.6,
+      backgroundColor: '#9CA3AF',
+      opacity: 0.8,
+      ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
     },
     feedbackSubmitButtonText: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: '#ffffff',
-      letterSpacing: 0.5,
+      fontSize: 16,
+      fontWeight: '500',
+      color: '#FFFFFF',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", sans-serif',
       }),
     },
     feedbackSuccessContainer: {
@@ -6555,11 +6566,13 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      backgroundColor: '#887DEE',
-      paddingVertical: 10,
-      paddingHorizontal: 16,
-      borderRadius: 8,
+      backgroundColor: '#85C4F2',
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: 10,
+      alignSelf: 'flex-end',
       ...(Platform.OS === 'web' && {
+        boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
         cursor: 'pointer',
       }),
     },
@@ -6567,11 +6580,11 @@ function createStyles(tokens) {
       backgroundColor: '#10b981',
     },
     inviteUrlCopyButtonText: {
-      color: '#ffffff',
-      fontSize: 14,
-      fontWeight: '600',
+      color: '#FFFFFF',
+      fontSize: 16,
+      fontWeight: '500',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", sans-serif',
       }),
     },
     inviteUrlDoneButton: {
@@ -6668,7 +6681,9 @@ function createStyles(tokens) {
       }),
     },
     inviteUrlCopyButtonDisabled: {
-      opacity: 0.5,
+      backgroundColor: '#9CA3AF',
+      opacity: 0.8,
+      ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
     },
   });
 }

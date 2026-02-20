@@ -29,14 +29,8 @@ const EVENT_TYPES = [
   'Exam',
   'Assignment',
   'Activity',
-  'Schedule Block',
   'Appointment',
 ];
-
-// Tag categories and suggested tags
-const TAG_CATEGORIES = {
-  domain: ['academic', 'physical', 'creative', 'social', 'emotional'],
-};
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
 
@@ -151,8 +145,6 @@ export default function TaskCreateModal({
 
   const [assigneeIds, setAssigneeIds] = useState(initialAssigneeIds);
   const [notes, setNotes] = useState('');
-  const [tags, setTags] = useState([]); // Array of tag strings
-  const [tagInput, setTagInput] = useState(''); // For custom tag input
   const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
   const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
   const [submitting, setSubmitting] = useState(false);
@@ -241,6 +233,7 @@ export default function TaskCreateModal({
   const [percentValidationError, setPercentValidationError] = useState(null);
   const [percentValidationData, setPercentValidationData] = useState(null);
   const [checkingPercent, setCheckingPercent] = useState(false);
+  const [createButtonHovered, setCreateButtonHovered] = useState(false);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
@@ -327,7 +320,7 @@ export default function TaskCreateModal({
     (async () => {
       const { data, error } = await supabase
         .from('academic_years')
-        .select('id, start_date, end_date')
+        .select('id, start_date, end_date, year_name')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false })
         .limit(10);
@@ -337,7 +330,16 @@ export default function TaskCreateModal({
         setAcademicYears([]);
         return;
       }
-      const list = data || [];
+      // One chip per plan: dedupe by date range so we never show both "Max · Cats · ..." and "2026-2026" for the same plan
+      const seen = new Set();
+      const list = (data || []).filter((ay) => {
+        const start = (ay.start_date && String(ay.start_date).slice(0, 10)) || '';
+        const end = (ay.end_date && String(ay.end_date).slice(0, 10)) || '';
+        const key = `${start}_${end}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       setAcademicYears(list);
       if (list.length > 0) {
         setSelectedAcademicYearId((prev) => (prev && list.some((y) => y.id === prev)) ? prev : list[0].id);
@@ -857,9 +859,7 @@ export default function TaskCreateModal({
       setStartTime(DEFAULT_START_TIME);
       setEndTime('');
       // Reset new fields
-      setEventType(defaultEventType || 'Lesson'); // Use defaultEventType if provided, otherwise default to "Lesson"
-      setTags([]); // Reset tags
-      setTagInput(''); // Reset tag input
+      setEventType(defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson')); // Use defaultEventType if provided (display "Scheduled Class Day" for "Schedule Block")
       setSelectedMaterialId(null);
       setAttachedMaterialIds([]);
       setAttachedStandards([]);
@@ -1452,10 +1452,10 @@ export default function TaskCreateModal({
           _end_ts: todayEnd.toISOString(),
           _status: 'scheduled',
           _source: 'manual',
-          _tags: tags.length > 0 ? tags : null,
+          _tags: null,
           _is_flexible: true,
           _is_backlog: true,
-          _event_type: eventType || 'Lesson', // Default to "Lesson" if somehow empty
+          _event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson', // Default to "Lesson" if somehow empty
           _subject_id: subjectId || null,
           _unit: unit.trim() || null,
           _grade: grade.trim() || null,
@@ -1616,9 +1616,9 @@ export default function TaskCreateModal({
               _end_ts: dayEnd.toISOString(),
               _status: 'scheduled',
               _source: 'manual',
-              _tags: tags.length > 0 ? tags : null,
+              _tags: null,
               _is_flexible: allDay,
-              _event_type: eventType || 'Lesson',
+              _event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson',
               _subject_id: subjectId || null,
               _unit: unit.trim() || null,
               _grade: grade.trim() || null,
@@ -1719,9 +1719,9 @@ export default function TaskCreateModal({
             _end_ts: endDate?.toISOString(),
             _status: 'scheduled',
             _source: 'manual',
-            _tags: tags.length > 0 ? tags : null,
+            _tags: null,
             _is_flexible: allDay,
-            _event_type: eventType || 'Lesson', // Default to "Lesson" if somehow empty
+            _event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson', // Default to "Lesson" if somehow empty
             _subject_id: subjectId || null,
             _unit: unit.trim() || null,
             _grade: grade.trim() || null,
@@ -1999,14 +1999,6 @@ export default function TaskCreateModal({
             // Prevent clicks inside modal from closing it
           }}
         >
-          {/* Header */}
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalHeaderTitle}>Add Event</Text>
-            <TouchableOpacity onPress={onClose} style={styles.modalHeaderCloseButton}>
-              <X size={20} color={MUTED} />
-            </TouchableOpacity>
-          </View>
-
           {/* Title input */}
           <View style={styles.header}>
             <View style={{ marginBottom: 8 }}>
@@ -2248,14 +2240,13 @@ export default function TaskCreateModal({
             ['Lesson', 'Assignment', 'Project'].includes(eventType) &&
             (academicYears.length > 0 || loadingAcademicYears) && (
             <View style={[styles.inputGroup, { marginTop: 16, marginBottom: 8 }]}>
-              <Text style={styles.fieldLabel}>Counts toward year plan</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                 <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
                 <Switch
                   value={countsTowardPlan}
                   onValueChange={setCountsTowardPlan}
-                  trackColor={{ false: BORDER, true: ACCENT }}
-                  thumbColor={BG}
+                  trackColor={{ false: BORDER, true: '#AECBFA' }}
+                  thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
                 />
               </View>
               {countsTowardPlan && (
@@ -2269,41 +2260,48 @@ export default function TaskCreateModal({
                     <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
                   ) : (
                     <>
-                      <Text style={[styles.fieldLabel, { marginTop: 4 }]}>Which plan?</Text>
+                      <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                        {academicYears.map((ay) => {
-                          const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                          const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                          const label = start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
-                          const isSelected = selectedAcademicYearId === ay.id;
-                          return (
-                            <TouchableOpacity
-                              key={ay.id}
-                              onPress={() => setSelectedAcademicYearId(ay.id)}
-                              style={[
-                                styles.chipOption,
-                                isSelected && styles.chipOptionActive,
-                              ]}
-                            >
-                              <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
-                                {label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
+                        {(() => {
+                          const baseLabels = academicYears.map((ay) => {
+                            const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                            const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                            if (ay.year_name && String(ay.year_name).trim()) {
+                              return String(ay.year_name).trim();
+                            }
+                            return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
+                          });
+                          const labelCounts = {};
+                          baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+                          return academicYears.map((ay, idx) => {
+                            const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                            const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                            let base = ay.year_name && String(ay.year_name).trim()
+                              ? String(ay.year_name).trim()
+                              : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
+                            const needsDisambiguator = labelCounts[base] > 1;
+                            const monthRange = start && end
+                              ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
+                              : '';
+                            const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
+                            const isSelected = selectedAcademicYearId === ay.id;
+                            return (
+                              <TouchableOpacity
+                                key={ay.id}
+                                onPress={() => setSelectedAcademicYearId(ay.id)}
+                                style={[
+                                  styles.chipOption,
+                                  isSelected && styles.chipOptionActive,
+                                ]}
+                              >
+                                <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
+                                  {label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          });
+                        })()}
                       </View>
-                      <Text style={[styles.fieldLabel, { marginTop: 0 }]}>Instructional minutes (optional)</Text>
-                      <TextInput
-                        placeholder="Auto from duration"
-                        placeholderTextColor={MUTED}
-                        value={instructionalMinutesOverride}
-                        onChangeText={setInstructionalMinutesOverride}
-                        keyboardType="number-pad"
-                        style={[styles.titleInput, { marginBottom: 4 }]}
-                      />
-                      <Text style={{ fontSize: 12, color: MUTED }}>
-                        Counts toward this plan&apos;s days/hours progress. Leave minutes blank to use event duration.
-                      </Text>
                     </>
                   )}
                 </>
@@ -2405,8 +2403,8 @@ export default function TaskCreateModal({
                             setEndTime('');
                           }
                         }}
-                        trackColor={{ false: BORDER, true: '#93c5fd' }}
-                        thumbColor={allDay ? '#ffffff' : '#f9fafb'}
+                        trackColor={{ false: BORDER, true: '#AECBFA' }}
+                        thumbColor={allDay ? '#45A29E' : '#f9fafb'}
                       />
                     </View>
                     <View style={styles.allDayControl}>
@@ -2416,8 +2414,8 @@ export default function TaskCreateModal({
                         onValueChange={(value) => {
                           setIsRecurring(value);
                         }}
-                        trackColor={{ false: BORDER, true: '#93c5fd' }}
-                        thumbColor={isRecurring ? '#ffffff' : '#f9fafb'}
+                        trackColor={{ false: BORDER, true: '#AECBFA' }}
+                        thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
                       />
                     </View>
                   </View>
@@ -3431,103 +3429,6 @@ export default function TaskCreateModal({
                   )}
                 </View>
               </SafeFieldRow>
-              
-
-              {/* Tags input - moved to Academic Details */}
-              <SafeFieldRow style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Tags (optional)</Text>
-                  <Text style={styles.fieldHelpText}>
-                    Add tags for context, modality, and domain categorization
-                  </Text>
-                  
-                  {/* Selected tags */}
-                  {tags.length > 0 && (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                      {tags.map((tag, index) => (
-                        <View
-                          key={index}
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            backgroundColor: CHIP_BG,
-                            borderWidth: 1,
-                            borderColor: CHIP_BORDER,
-                            borderRadius: 16,
-                            paddingHorizontal: 10,
-                            paddingVertical: 4,
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, color: FG }}>{tag}</Text>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setTags(tags.filter((_, i) => i !== index));
-                            }}
-                            style={{ marginLeft: 6 }}
-                          >
-                            <X size={14} color={MUTED} />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {/* Tag suggestions and custom input */}
-                  <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {Object.values(TAG_CATEGORIES).flat().map((suggestedTag) => {
-                      const isSelected = tags.includes(suggestedTag);
-                      return (
-                        <TouchableOpacity
-                          key={suggestedTag}
-                          onPress={() => {
-                            if (isSelected) {
-                              setTags(tags.filter(t => t !== suggestedTag));
-                            } else {
-                              setTags([...tags, suggestedTag]);
-                            }
-                          }}
-                          style={{
-                            backgroundColor: isSelected ? '#e8f0fe' : CHIP_BG,
-                            borderWidth: 1,
-                            borderColor: isSelected ? '#4285f4' : CHIP_BORDER,
-                            borderRadius: 16,
-                            paddingHorizontal: 10,
-                            paddingVertical: 4,
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, color: isSelected ? '#4285f4' : FG }}>
-                            {suggestedTag}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    <TextInput
-                      style={{
-                        backgroundColor: CHIP_BG,
-                        borderWidth: 1,
-                        borderColor: CHIP_BORDER,
-                        borderRadius: 16,
-                        paddingHorizontal: 10,
-                        paddingVertical: 4,
-                        fontSize: 12,
-                        color: FG,
-                        minWidth: 120,
-                      }}
-                      placeholder="Add custom tag..."
-                      placeholderTextColor={MUTED}
-                      value={tagInput}
-                      onChangeText={setTagInput}
-                      onSubmitEditing={() => {
-                        const trimmed = tagInput.trim().toLowerCase();
-                        if (trimmed && !tags.includes(trimmed)) {
-                          setTags([...tags, trimmed]);
-                          setTagInput('');
-                        }
-                      }}
-                    />
-                  </View>
-                </View>
-              </SafeFieldRow>
                 </>
               )}
             </SafeView>
@@ -3775,9 +3676,16 @@ export default function TaskCreateModal({
               style={[
                 styles.createButton,
                 (submitting || !isFormValid()) && styles.createButtonDisabled,
+                Platform.OS === 'web' && isFormValid() && !submitting && createButtonHovered && styles.createButtonHovered,
               ]}
+              onMouseEnter={Platform.OS === 'web' ? () => setCreateButtonHovered(true) : undefined}
+              onMouseLeave={Platform.OS === 'web' ? () => setCreateButtonHovered(false) : undefined}
+              activeOpacity={0.9}
             >
-              <Text style={styles.createButtonText}>
+              <Text style={[
+                styles.createButtonText,
+                (submitting || !isFormValid()) && styles.createButtonTextDisabled,
+              ]}>
                 {submitting ? 'Adding…' : 'Add task'}
               </Text>
             </TouchableOpacity>
@@ -4495,27 +4403,6 @@ export default function TaskCreateModal({
 }
 
 const styles = StyleSheet.create({
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  modalHeaderTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: FG,
-    flex: 1,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  modalHeaderCloseButton: {
-    padding: 4,
-  },
   overlay: {
     position: 'absolute',
     top: 0,
@@ -4655,22 +4542,22 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: CHIP_BORDER,
+    borderColor: '#e5e7eb',
   },
   chipOptionActive: {
-    backgroundColor: '#e8f0fe',
-    borderColor: '#4285f4',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   chipOptionText: {
-    color: FG,
+    color: '#6b7280',
     fontSize: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   chipOptionTextActive: {
-    fontWeight: '600',
-    color: '#4285f4',
+    color: '#6BB3E8',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -4851,21 +4738,37 @@ const styles = StyleSheet.create({
     }),
   },
   createButton: {
-    backgroundColor: '#8B7CF6',
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 12,
+    backgroundColor: '#85C4F2',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
+  },
+  createButtonHovered: {
+    backgroundColor: '#78BCEF',
   },
   createButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && {
+      cursor: 'not-allowed',
+    }),
   },
   createButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", sans-serif',
     }),
+  },
+  createButtonTextDisabled: {
+    color: '#FFFFFF',
   },
   inputError: {
     borderColor: '#ef4444',
@@ -4989,23 +4892,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: CHIP_BORDER,
+    borderColor: '#e5e7eb',
     backgroundColor: '#fff',
   },
   dropdownOptionActive: {
-    backgroundColor: '#e8f0fe',
-    borderColor: '#4285f4',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   dropdownOptionText: {
-    color: FG,
+    color: '#6b7280',
     fontSize: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   dropdownOptionTextActive: {
-    fontWeight: '600',
-    color: '#4285f4',
+    color: '#6BB3E8',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

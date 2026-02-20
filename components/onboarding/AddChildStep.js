@@ -545,7 +545,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipAgeGradeSelected: {
-    backgroundColor: '#5B7FFF',
+    backgroundColor: '#85C4F2',
     borderWidth: 0,
   },
   chipAgeGradeText: {
@@ -574,7 +574,7 @@ const styles = StyleSheet.create({
   addBtnText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#5B7FFF',
+    color: '#85C4F2',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   errorText: {
@@ -589,13 +589,13 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   continueBtn: {
-    backgroundColor: '#5B7FFF',
+    backgroundColor: '#85C4F2',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 14px rgba(91,127,255,0.25)',
+      boxShadow: '0 4px 14px rgba(133,196,242,0.3)',
       cursor: 'pointer',
       fontFamily: '"League Spartan", sans-serif',
     }),
@@ -648,11 +648,11 @@ const styles = StyleSheet.create({
   },
   avatarCellSelected: {
     borderWidth: 2,
-    borderColor: '#5B7FFF',
+    borderColor: '#85C4F2',
     backgroundColor: '#F4F7FF',
     transform: [{ scale: 1.05 }],
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 0 0 3px rgba(91,127,255,0.15), 0 6px 16px rgba(91,127,255,0.18)',
+      boxShadow: '0 0 0 3px rgba(133,196,242,0.2), 0 6px 16px rgba(133,196,242,0.2)',
     }),
   },
   avatarImg: {

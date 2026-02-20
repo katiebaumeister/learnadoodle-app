@@ -6,16 +6,16 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, Platform } from 'react-native';
-import { AlertTriangle, Info } from 'lucide-react';
-import { getPlanHealth } from '../../lib/services/academicYearClient';
+import { Bell } from 'lucide-react';
+import { getPlanHealth, invalidatePlanHealthCache } from '../../lib/services/academicYearClient';
 
 const BANNER_BORDER_WARNING = '#f59e0b';
 const BANNER_BORDER_INFO = '#3b82f6';
 const BANNER_TEXT_WARNING = '#92400e';
 const BANNER_TEXT_INFO = '#1e40af';
 
-export default function PlanHealthIcon({ familyId, visible = true }) {
-  const [health, setHealth] = useState(null);
+export default function PlanHealthIcon({ familyId, visible = true, initialHealth = null }) {
+  const [health, setHealth] = useState(initialHealth ?? null);
   const [loading, setLoading] = useState(false);
   const [showPopover, setShowPopover] = useState(false);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
@@ -26,17 +26,18 @@ export default function PlanHealthIcon({ familyId, visible = true }) {
     setLoading(true);
     try {
       const { data, error } = await getPlanHealth(familyId);
-      if (!error && data?.plan_exists) {
-        setHealth(data);
-      } else {
-        setHealth(null);
+      if (!error && data != null) {
+        setHealth(data.plan_exists ? data : null);
       }
-    } catch {
-      setHealth(null);
+      // On error (e.g. 429): keep previous health so icon doesn't disappear
     } finally {
       setLoading(false);
     }
   }, [familyId, visible]);
+
+  useEffect(() => {
+    if (initialHealth != null) setHealth(initialHealth);
+  }, [initialHealth]);
 
   useEffect(() => {
     fetchHealth();
@@ -44,7 +45,10 @@ export default function PlanHealthIcon({ familyId, visible = true }) {
 
   useEffect(() => {
     if (typeof window === 'undefined' || !visible) return;
-    const onRefresh = () => fetchHealth();
+    const onRefresh = () => {
+      invalidatePlanHealthCache();
+      fetchHealth();
+    };
     window.addEventListener('refreshCalendar', onRefresh);
     window.addEventListener('refreshPlanHealth', onRefresh);
     return () => {
@@ -63,7 +67,7 @@ export default function PlanHealthIcon({ familyId, visible = true }) {
     }
   };
 
-  if (!visible || loading || !health) return null;
+  if (!visible || !health) return null;
   const isUnder = (health.constraint_mode === 'days' && health.delta_days != null && health.delta_days < 0) ||
     (health.constraint_mode === 'hours' && health.delta_hours != null && health.delta_hours < 0);
   const isOver = (health.constraint_mode === 'days' && health.delta_days != null && health.delta_days > 0) ||
@@ -87,7 +91,6 @@ export default function PlanHealthIcon({ familyId, visible = true }) {
     }
   };
 
-  const IconComponent = isUnder ? AlertTriangle : Info;
   const iconSize = 18;
 
   return (
@@ -108,7 +111,7 @@ export default function PlanHealthIcon({ familyId, visible = true }) {
         }}
         accessibilityLabel="Plan health notification"
       >
-        <IconComponent size={iconSize} color={borderColor} />
+        <Bell size={iconSize} color={borderColor} />
       </TouchableOpacity>
       {Platform.OS === 'web' && showPopover && (
         <>
@@ -142,7 +145,7 @@ export default function PlanHealthIcon({ familyId, visible = true }) {
           >
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
               <View style={{ flexShrink: 0, marginTop: 2 }}>
-                <IconComponent size={18} color={borderColor} />
+                <Bell size={18} color={borderColor} />
               </View>
               <Text style={{ fontSize: 13, color: textColor, flex: 1 }}>{message}</Text>
             </View>

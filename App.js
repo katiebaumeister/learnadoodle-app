@@ -20,14 +20,15 @@ const Stack = createStackNavigator();
 function AppContent() {
   const { user, loading } = useAuth();
 
-  // Don't render anything until auth is ready - no loading screen
-  if (loading) {
-    return null;
-  }
-
-  // Render different layouts based on platform
+  // On web, render immediately so landing page shows without waiting for auth (no blank screen)
+  // Auth loading is handled inside WebRouter (shows landing/auth until session is ready)
   if (Platform.OS === 'web') {
     return <WebRouter />;
+  }
+
+  // On native, don't render until auth is ready
+  if (loading) {
+    return null;
   }
 
   // Mobile layout with React Navigation

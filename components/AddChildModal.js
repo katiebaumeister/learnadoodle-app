@@ -6,6 +6,7 @@ import { addChild } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
+import { useModalStackElevation } from './hooks/useModalStackElevation';
 
 /**
  * Add Child Modal - Matches Learnadoodle onboarding spec
@@ -18,6 +19,8 @@ export default function AddChildModal({
   familyId 
 }) {
   const formRef = useRef(null);
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [canSubmit, setCanSubmit] = useState(false);
@@ -105,7 +108,7 @@ export default function AddChildModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
@@ -271,18 +274,29 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   saveButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    backgroundColor: '#8B7CF6',
+    backgroundColor: '#85C4F2',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
   },
   saveButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   buttonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
 });
 

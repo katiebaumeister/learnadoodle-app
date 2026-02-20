@@ -308,7 +308,7 @@ export default function AddSubjectStep({
                   onPress={() => setShowAddMaterialModal(true)}
                   disabled={isSaving || adding}
                 >
-                  <Plus size={14} color="#5B7FFF" />
+                  <Plus size={14} color="#85C4F2" />
                   <Text style={styles.addMaterialBtnText}>Add material</Text>
                 </TouchableOpacity>
               </View>
@@ -470,7 +470,7 @@ const styles = StyleSheet.create({
   chipSelected: {
     backgroundColor: '#EEF2FF',
     borderWidth: 2,
-    borderColor: '#5B7FFF',
+    borderColor: '#85C4F2',
     ...(Platform.OS === 'web' && {
       boxShadow: '0 2px 6px rgba(91,127,255,0.15)',
     }),
@@ -519,7 +519,7 @@ const styles = StyleSheet.create({
   addBtnText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#5B7FFF',
+    color: '#85C4F2',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   errorText: {
@@ -602,7 +602,7 @@ const styles = StyleSheet.create({
   addMaterialBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#5B7FFF',
+    color: '#85C4F2',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   materialLibraryWrap: {
@@ -625,7 +625,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   continueBtn: {
-    backgroundColor: '#5B7FFF',
+    backgroundColor: '#85C4F2',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     marginTop: 28,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(91,127,255,0.2)',
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
       fontFamily: '"League Spartan", sans-serif',
     }),
   },

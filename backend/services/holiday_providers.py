@@ -69,12 +69,16 @@ class NagerDateProvider:
             List of HolidayEntry objects
         """
         try:
-            # Nager.Date API endpoint
             url = f"{NagerDateProvider.BASE_URL}/PublicHolidays/{year}/{country_code}"
-            
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            
+            response = None
+            for timeout in (15, 25):
+                try:
+                    response = requests.get(url, timeout=timeout)
+                    response.raise_for_status()
+                    break
+                except requests.RequestException as e:
+                    if timeout == 25:
+                        raise
             holidays_data = response.json()
             
             entries = []

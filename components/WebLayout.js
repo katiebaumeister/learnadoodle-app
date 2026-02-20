@@ -33,6 +33,7 @@ import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
 import AIModal from './AIModal';
 import { proposeReschedule, getFamilyMembers, getOnboardingStatus } from '../lib/apiClient';
+import { getPlanHealth } from '../lib/services/academicYearClient';
 import AnalyticsDashboard from './analytics/AnalyticsDashboard';
 import ProgressReport from './analytics/ProgressReport';
 import ScheduleSettingsModal from './modals/ScheduleSettingsModal';
@@ -98,9 +99,29 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [subjectsLoaded, setSubjectsLoaded] = useState(false); // Cache flag for subjects
   const [fullSubjects, setFullSubjects] = useState([]); // Full subject data for FamilyPanel courses section
   const [fullSubjectsLoaded, setFullSubjectsLoaded] = useState(false); // Cache flag for full subjects
-  const [familyId, setFamilyId] = useState(null);
+  // Initialize familyId from session on first paint so planner/home load immediately (no blank until effect runs)
+  const [familyId, setFamilyId] = useState(() => (session?.family_id ?? null));
   const [family, setFamily] = useState(null);
   const [profile, setProfile] = useState(null);
+
+  // Keep familyId in sync with session when it becomes available or changes
+  useEffect(() => {
+    if (session?.family_id && session.family_id !== familyId) {
+      setFamilyId(session.family_id);
+    }
+  }, [session?.family_id, familyId]);
+
+  // Preload plan health at app start so banner/icon show immediately when switching to planner
+  const [preloadedPlanHealth, setPreloadedPlanHealth] = useState(null);
+  useEffect(() => {
+    if (!familyId) return;
+    let cancelled = false;
+    getPlanHealth(familyId).then(({ data, error }) => {
+      if (!cancelled && !error && data?.plan_exists) setPreloadedPlanHealth(data);
+    });
+    return () => { cancelled = true; };
+  }, [familyId]);
+
   // Onboarding: resolve status before first paint so we never flash landing without modal
   const [onboardingCheckDone, setOnboardingCheckDone] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
@@ -2342,7 +2363,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             All Event Types
                           </Text>
                         </TouchableOpacity>
-                        {['Lesson', 'Assignment', 'Activity', 'Schedule Block', 'Appointment'].map((eventType) => {
+                        {['Lesson', 'Assignment', 'Activity', 'Scheduled Class Day', 'Appointment'].map((eventType) => {
                           const isSelected = selectedEventTypes?.includes(eventType);
                           
                           // Get background color for event type (matching EventChip colors)
@@ -2351,7 +2372,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             if (typeLower === 'lesson') return '#E3F0FF'; // Soft Blue
                             if (typeLower === 'activity') return '#EDE6FF'; // Lavender
                             if (typeLower === 'assignment') return '#DFF7E3'; // Soft Green
-                            if (typeLower === 'schedule block') return '#FFE8D1'; // Soft Orange / Peach
+                            if (typeLower === 'scheduled class day') return '#FFE8D1'; // Soft Orange / Peach
                             if (typeLower === 'appointment') return '#F2F4F7'; // Warm Gray
                             return 'transparent';
                           };
@@ -2447,7 +2468,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       </Text>
                       <ChevronDown size={13} color="rgba(15, 23, 42, 0.7)" />
                     </TouchableOpacity>
-                    <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} />
+                    <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={preloadedPlanHealth} />
                     {showPlanOptimizeDropdown && Platform.OS === 'web' && (
                       <View
                         ref={planOptimizeDropdownRef}
@@ -2949,6 +2970,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             }}
             session={session}
             profile={profile}
+            preloadedPlanHealth={preloadedPlanHealth}
           />
         </AppShell>
 
@@ -3172,6 +3194,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       />
 
       <PlanYearModal
+        key={planYearInitialAcademicYearId || 'plan-year-modal'}
         visible={showPlanYearModal}
         onClose={() => {
           setShowPlanYearModal(false);

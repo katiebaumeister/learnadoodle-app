@@ -629,7 +629,7 @@ import PlanHealthBanner from './planner/PlanHealthBanner'
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -763,8 +763,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const rightSidebarRef = useRef(null);
   
   // Family ID state (must be declared early to avoid TDZ errors)
-  // Use propFamilyId if provided (preloaded from WebLayout), otherwise load it
-  const [familyId, setFamilyId] = useState(propFamilyId);
+  // Use propFamilyId if provided; fallback to session.family_id so home/planner have familyId on first paint
+  const [familyId, setFamilyId] = useState(propFamilyId || propSession?.family_id || null);
   
   // Materials cache for pre-loading
   const [materialsCache, setMaterialsCache] = useState(null);
@@ -1021,7 +1021,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       setTaskModalDefaultPlacement(detail.placement || 'calendar'); // Use placement from event detail, default to 'calendar'
       setShowTaskModal(true);
       
-      console.log('[WebContent] Task modal state set - showTaskModal: true, date:', date, 'childId:', childId);
+      console.log('[WebContent] Task modal state set - showTaskModal: true, date:', date, 'primaryChildId:', primaryChildId);
     };
     
     console.log('[WebContent] Setting up openTaskModal event listener');
@@ -2158,6 +2158,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       setIsCalendarDataLoaded(true);
     } catch (err) {
       console.error('[WebContent] refreshCalendarData failed:', err);
+      setCalendarDataCache((prev) => ({ ...prev, [monthKey]: {} }));
     } finally {
       setCalendarDataLoading(false);
     }
@@ -2204,7 +2205,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       if (targetYear !== undefined && targetMonth !== undefined) {
         refreshDate = new Date(targetYear, targetMonth, 1);
         console.log('[WebContent] Refreshing specific month:', { year: targetYear, month: targetMonth, date: refreshDate });
+      } else {
+        refreshDate = new Date();
       }
+      
+      // Invalidate calendar cache so refetch returns fresh data (e.g. after Fix-It apply or plan changes)
+      setCalendarDataCache({});
       
       // Always refresh calendar data when requested, regardless of active tab
       // This ensures new events appear immediately after year plan creation
@@ -2432,7 +2438,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         window.removeEventListener('eventDeleted', handleEventDeletedForHome);
       }
     };
-  }, [activeTab, homeData, user, homeSelectedDate]);
+  }, [activeTab, homeData, user, homeSelectedDate, refreshCalendarData]);
 
   // Listen for rebalance modal events from PlannerWeek
   useEffect(() => {
@@ -6272,9 +6278,21 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
+    const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+    const hasMonthData = !!calendarDataCache[monthKey];
+    const showPlannerLoading = familyId && !hasMonthData;
+
+    if (showPlannerLoading) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+          <ActivityIndicator size="large" color="#887DEE" />
+          <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading planner...</Text>
+        </View>
+      );
+    }
     return (
       <View style={{ flex: 1 }}>
-        <PlanHealthBanner familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} />
+        <PlanHealthBanner familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={propPreloadedPlanHealth} />
         <CenterPane
         date={date}
         events={plannerEventsForMonth}
@@ -6594,8 +6612,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             );
           }
           // Fallback to legacy home content for non-parents or when session not ready
+          // Never return null - show loading so content area is never blank
           if (homeLoading || !homeData) {
-            return null;
+            return (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+                <ActivityIndicator size="large" color="#887DEE" />
+                <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+              </View>
+            );
           }
           return renderHomeContent()
         }
@@ -6731,5 +6755,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
   };
 
-  return renderContent();
+  const contentWrapStyle = {
+    flex: 1,
+    ...(Platform.OS === 'web' ? { minHeight: 360 } : { minHeight: 0 }),
+  };
+  return <View style={contentWrapStyle}>{renderContent()}</View>;
 }

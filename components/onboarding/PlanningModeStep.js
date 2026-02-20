@@ -147,10 +147,10 @@ const styles = StyleSheet.create({
   },
   cardSelected: {
     borderWidth: 2,
-    borderColor: '#5B7FFF',
+    borderColor: '#85C4F2',
     backgroundColor: '#F4F7FF',
     ...(Platform.OS === 'web' && {
-      shadowColor: '#5B7FFF',
+      shadowColor: '#85C4F2',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.12,
       shadowRadius: 12,
@@ -184,14 +184,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   continueBtn: {
-    backgroundColor: '#5B7FFF',
+    backgroundColor: '#85C4F2',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     alignSelf: 'flex-end',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(91,127,255,0.2)',
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
       fontFamily: '"League Spartan", sans-serif',
     }),
   },
@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   continueBtnHovered: {
-    backgroundColor: '#4A6BEB',
+    backgroundColor: '#78BCEF',
   },
   continueBtnText: {
     fontSize: 16,

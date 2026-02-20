@@ -110,6 +110,7 @@ def compute_schedule_potential(
     end_date: date,
     exclusion_ranges: List[Tuple[date, date]],
     target_days: Optional[int] = None,
+    target_hours: Optional[float] = None,
     plan_children_ids: Optional[List[str]] = None,
     subject_targets: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
@@ -181,18 +182,68 @@ def compute_schedule_potential(
     projected_days = len(all_dates)
     projected_hours = round(total_minutes / 60.0, 2)
 
+    # Top-level suggested_end_date: exact date that yields target_days or target_hours (for 0 over/under)
+    suggested_end_date: Optional[str] = None
+    if target_days is not None and target_days > 0:
+        if len(all_dates) >= target_days:
+            sorted_all = sorted(all_dates)
+            suggested_end_date = sorted_all[target_days - 1].isoformat()
+        else:
+            # Under target: extend range and find when we hit target_days
+            extend_days = min(365, max(14, (target_days - len(all_dates)) * 4))
+            extended_end = end_date + timedelta(days=extend_days)
+            extended_dates: Set[date] = set()
+            for block in blocks:
+                block_child_ids = _block_child_ids(block, plan_children_ids)
+                for d in get_block_occurrence_dates(block, start_date, extended_end, exclusion_ranges):
+                    extended_dates.add(d)
+            if len(extended_dates) >= target_days:
+                sorted_extended = sorted(extended_dates)
+                suggested_end_date = sorted_extended[target_days - 1].isoformat()
+    elif target_hours is not None and target_hours > 0 and projected_hours < target_hours:
+        # Under target hours: extend range week by week until projected hours >= target_hours (same avg teaching)
+        target_minutes = target_hours * 60.0
+        extended_end = end_date
+        for _ in range(52):  # max 52 weeks
+            extended_end = extended_end + timedelta(days=7)
+            ext_dates: Set[date] = set()
+            ext_intervals: Dict[date, List[Tuple[int, int]]] = {}
+            for block in blocks:
+                for d in get_block_occurrence_dates(block, start_date, extended_end, exclusion_ranges):
+                    ext_dates.add(d)
+                    start_t = _parse_time(block.get("start_time") or "09:00")
+                    end_t = _parse_time(block.get("end_time") or "10:00")
+                    if block.get("all_day"):
+                        start_min, end_min = 9 * 60, 15 * 60
+                    else:
+                        start_min = start_t.hour * 60 + start_t.minute
+                        end_min = end_t.hour * 60 + end_t.minute
+                        if end_min <= start_min:
+                            end_min += 24 * 60
+                    if d not in ext_intervals:
+                        ext_intervals[d] = []
+                    ext_intervals[d].append((start_min, end_min))
+            ext_minutes = 0
+            for d in ext_dates:
+                merged = _merge_intervals(ext_intervals.get(d, []))
+                for s, e in merged:
+                    ext_minutes += e - s
+            if ext_minutes >= target_minutes:
+                suggested_end_date = extended_end.isoformat()
+                break
+
     # Per-subject: projected_days, sorted occurrence_dates, suggested_end_date (target_days-th occurrence)
     per_subject: Dict[str, Dict[str, Any]] = {}
     for sid, dates_list in per_subject_dates.items():
         sorted_dates = sorted(set(dates_list))
         subj_projected = len(sorted_dates)
-        suggested_end_date = None
+        subj_suggested = None
         if target_days is not None and target_days > 0 and len(sorted_dates) >= target_days:
-            suggested_end_date = sorted_dates[target_days - 1].isoformat()
+            subj_suggested = sorted_dates[target_days - 1].isoformat()
         per_subject[sid] = {
             "projected_days": subj_projected,
             "occurrence_dates_sorted": [d.isoformat() for d in sorted_dates],
-            "suggested_end_date": suggested_end_date,
+            "suggested_end_date": subj_suggested,
         }
 
     # Per-child: projected_days, suggested_end_date = date of target_days-th occurrence for that child (child-aware)
@@ -200,12 +251,12 @@ def compute_schedule_potential(
     for cid, dates_set in per_child_all_dates.items():
         sorted_dates = sorted(dates_set)
         ch_projected = len(sorted_dates)
-        suggested_end_date = None
+        ch_suggested = None
         if target_days is not None and target_days > 0 and len(sorted_dates) >= target_days:
-            suggested_end_date = sorted_dates[target_days - 1].isoformat()
+            ch_suggested = sorted_dates[target_days - 1].isoformat()
         per_child[cid] = {
             "projected_days": ch_projected,
-            "suggested_end_date": suggested_end_date,
+            "suggested_end_date": ch_suggested,
         }
 
     # Per-child-subject: projected_days, occurrence_dates_sorted, suggested_end_date_for_subject_target when subject target exists
@@ -229,6 +280,7 @@ def compute_schedule_potential(
         "projected_days": projected_days,
         "projected_hours": projected_hours,
         "occurrence_dates": all_dates,
+        "suggested_end_date": suggested_end_date,
         "per_subject": per_subject,
         "per_child": per_child,
         "per_child_subject": per_child_subject,

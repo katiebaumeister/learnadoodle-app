@@ -554,30 +554,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-    backgroundColor: 'transparent',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
     marginRight: 8,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
   filterChipActive: {
-    borderColor: '#60a5fa',
-    backgroundColor: '#eff6ff',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   filterChipText: {
     fontSize: 12,
-    color: colors.text,
+    color: '#6b7280',
     fontWeight: '400',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   filterChipTextActive: {
-    color: '#60a5fa',
-    fontWeight: '500',
+    color: '#6BB3E8',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

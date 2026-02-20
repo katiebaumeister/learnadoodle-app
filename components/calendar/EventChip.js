@@ -21,7 +21,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     if (eventTypeLower === 'lesson') return 'lesson';
     if (eventTypeLower === 'activity') return 'activity';
     if (eventTypeLower === 'assignment') return 'assignment';
-    if (eventTypeLower === 'schedule block') return 'schedule_block';
+    if (eventTypeLower === 'schedule block' || eventTypeLower === 'scheduled class day') return 'schedule_block';
     if (eventTypeLower === 'appointment') return 'appointment';
     if (eventTypeLower === 'holiday') return 'holiday';
     

@@ -51,14 +51,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   finishBtn: {
-    backgroundColor: '#5B7FFF',
+    backgroundColor: '#85C4F2',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     alignSelf: 'flex-end',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(91,127,255,0.2)',
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
       fontFamily: '"League Spartan", sans-serif',
     }),
   },

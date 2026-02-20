@@ -262,7 +262,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#e5e7eb',
+    borderLeftWidth: 4,
+    borderLeftColor: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
     }),
@@ -285,21 +287,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'background-color 0.15s ease',
       '&:hover': {
-        backgroundColor: colors.bgOffset,
-        borderRadius: 8,
+        backgroundColor: 'rgba(133,196,242,0.15)',
       },
     }),
   },
   viewAllText: {
     fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
+    color: '#6BB3E8',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

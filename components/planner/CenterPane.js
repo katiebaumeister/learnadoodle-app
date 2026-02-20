@@ -120,7 +120,14 @@ export default function CenterPane({
     if (filters?.eventTypes && Array.isArray(filters.eventTypes) && filters.eventTypes.length > 0) {
       out = out.filter(e => {
         const eventType = e.event_type || e.data?.event_type || e.type;
-        return eventType && filters.eventTypes.includes(eventType);
+        if (!eventType) return false;
+        if (filters.eventTypes.includes(eventType)) return true;
+        // Treat "Schedule Block" and "Scheduled Class Day" as the same
+        const typeLower = (eventType || '').toLowerCase();
+        const selectedLower = (filters.eventTypes || []).map(t => (t || '').toLowerCase());
+        if ((typeLower === 'schedule block' && selectedLower.includes('scheduled class day')) ||
+            (typeLower === 'scheduled class day' && selectedLower.includes('schedule block'))) return true;
+        return false;
       });
     }
     return out;

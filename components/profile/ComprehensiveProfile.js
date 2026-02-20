@@ -892,7 +892,7 @@ function ProfileOverview({ child, familyId, children = [] }) {
         .eq('family_id', familyId)
         .in('subject_id', subjectIds);
 
-      // Fetch events count (for schedule blocks)
+      // Fetch events count (for scheduled class days)
       const { data: eventsCountData } = await supabase
         .from('events')
         .select('subject_id')

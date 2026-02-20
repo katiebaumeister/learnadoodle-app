@@ -76,16 +76,15 @@ def regenerate_block(
     if child_id_override and not block.get("child_ids"):
         child_ids = [child_id_override]
 
-    # Fetch existing overwrite-safe placeholders for this block only
+    # Fetch existing overwrite-safe placeholders for this block only (include soft-deleted so we can undelete on re-apply)
     existing_res = (
         supabase.table("events")
-        .select("id, start_ts, end_ts, child_id, subject_id, title")
+        .select("id, start_ts, end_ts, child_id, subject_id, title, deleted_at")
         .eq("family_id", family_id)
         .eq("academic_year_id", academic_year_id)
         .eq("source_block_id", block_id)
         .eq("is_placeholder", True)
         .eq("generated_by", "plan_year")
-        .is_("deleted_at", "null")
         .execute()
     )
     existing = existing_res.data or []
@@ -163,15 +162,16 @@ def regenerate_block(
                     "start_ts": start_ts,
                     "end_ts": end_ts,
                     "subject_id": subject_id,
-                    "title": f"{subject_name} — Lesson",
+                    "title": subject_name,
                     "generation_batch_id": generation_batch_id,
+                    "deleted_at": e.get("deleted_at"),
                 })
             elif key not in occupied_slots:
                 # Skip insert if parent already has a counting lesson that day for this child+subject
                 to_insert.append({
                     "family_id": family_id,
                     "child_id": cid,
-                    "title": f"{subject_name} — Lesson",
+                    "title": subject_name,
                     "start_ts": start_ts,
                     "end_ts": end_ts,
                     "status": "scheduled",
@@ -184,7 +184,6 @@ def regenerate_block(
                     "generation_batch_id": generation_batch_id,
                     "source_block_id": block_id,
                     "counts_toward_plan": True,
-                    "instructional_status": "PLAN_PLACEHOLDER",
                 })
 
     for (d, cid), e in existing_by_key.items():
@@ -195,13 +194,17 @@ def regenerate_block(
     updated_count = 0
     for row in to_update:
         try:
-            supabase.table("events").update({
+            payload = {
                 "start_ts": row["start_ts"],
                 "end_ts": row["end_ts"],
                 "subject_id": row["subject_id"],
                 "title": row["title"],
                 "generation_batch_id": row["generation_batch_id"],
-            }).eq("id", row["id"]).eq("family_id", family_id).execute()
+            }
+            # Undelete if this placeholder was soft-deleted so plan_health sees it again
+            if row.get("deleted_at"):
+                payload["deleted_at"] = None
+            supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
             updated_count += 1
         except Exception:
             pass

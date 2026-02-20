@@ -360,6 +360,7 @@ export default function DraggableEvent({
       case 'assignment':
         return '#DFF7E3'; // Soft Green
       case 'schedule block':
+      case 'scheduled class day':
         return '#FFE8D1'; // Soft Orange / Peach
       case 'appointment':
         return '#F2F4F7'; // Warm Gray

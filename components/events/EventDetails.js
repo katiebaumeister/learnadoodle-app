@@ -391,7 +391,6 @@ const EVENT_TYPES = [
   'Exam',
   'Assignment',
   'Activity',
-  'Schedule Block',
   'Appointment',
 ];
 
@@ -458,40 +457,32 @@ function fmtDateRange(startDate, endDate) {
   return `${fmt(startDate)} - ${fmt(endDate)}`;
 }
 
-// Safe View wrapper that filters out text nodes
+// Safe View wrapper: wrap or drop text nodes so no raw text is a child of View
 function SafeView({ children, style, ...props }) {
   const childrenArray = React.Children.toArray(children);
-  const safeChildren = childrenArray.filter((child) => {
-    if (typeof child === 'string') return false;
-    if (child == null) return false;
-    if (typeof child === 'boolean') return false;
-    return true;
-  });
+  const safeChildren = childrenArray.map((child, i) => {
+    if (typeof child === 'string' && child.length > 0) return <Text key={`sv-${i}`} style={{ fontSize: 14 }}>{child}</Text>;
+    if (child == null || typeof child === 'boolean') return null;
+    return child;
+  }).filter(Boolean);
   return <View style={style} {...props}>{safeChildren}</View>;
 }
 
-// Wrapper for fieldRow to catch text nodes
+// Wrapper for fieldRow: wrap string children in Text so no raw text is a child of View
 function SafeFieldRow({ children, style }) {
-  const safeChildren = React.Children.toArray(children).filter((child) => {
-    if (typeof child === 'string') return false;
-    return child != null;
-  });
+  const safeChildren = React.Children.toArray(children).map((child, i) => {
+    if (typeof child === 'string' && child.length > 0) return <Text key={`sfr-${i}`} style={{ fontSize: 14 }}>{child}</Text>;
+    return child != null ? child : null;
+  }).filter(Boolean);
   return <View style={style}>{safeChildren}</View>;
 }
 
 function ChipRow({ children, style }) {
-  const normalizedChildren = React.Children.map(children, (child) => {
-    if (typeof child === 'string') return null;
-    if (child == null) return null;
-    if (typeof child === 'boolean') return null;
+  const safeChildren = (React.Children.map(children, (child, i) => {
+    if (typeof child === 'string' && child.length > 0) return <Text key={`cr-${i}`} style={{ fontSize: 14 }}>{child}</Text>;
+    if (child == null || typeof child === 'boolean') return null;
     return child;
-  }) || [];
-  
-  const safeChildren = normalizedChildren.filter((child) => {
-    if (typeof child === 'string') return false;
-    if (child == null) return false;
-    return true;
-  });
+  }) || []).filter(Boolean);
 
   return <View style={style}>{safeChildren}</View>;
 }
@@ -644,7 +635,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   // Helper functions matching TaskCreateModal
   const showAcademicFields = () => {
-    return eventType && ['Lesson', 'Activity', 'Assignment', 'Schedule Block'].includes(eventType);
+    return eventType && ['Lesson', 'Activity', 'Assignment', 'Scheduled Class Day', 'Schedule Block'].includes(eventType);
   };
 
   const showLocationFields = () => {
@@ -1078,8 +1069,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDraftTags(Array.isArray(event.tags) ? event.tags : []);
     setTagInput('');
     
-    // Event type
-    setEventType(event.event_type || 'Lesson');
+    // Event type (display "Scheduled Class Day" for DB value "Schedule Block")
+    setEventType(event.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event.event_type || 'Lesson'));
     
     // Academic fields
     setSubjectId(event.subject_id || null);
@@ -1166,7 +1157,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     (async () => {
       const { data, error } = await supabase
         .from('academic_years')
-        .select('id, start_date, end_date')
+        .select('id, start_date, end_date, year_name')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false })
         .limit(10);
@@ -1175,7 +1166,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setAcademicYears([]);
         return;
       }
-      const list = data || [];
+      // One chip per plan: dedupe by date range so we show only one row per plan (the most recent, with friendly name)
+      const seen = new Set();
+      const list = (data || []).filter((ay) => {
+        const start = (ay.start_date && String(ay.start_date).slice(0, 10)) || '';
+        const end = (ay.end_date && String(ay.end_date).slice(0, 10)) || '';
+        const key = `${start}_${end}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       setAcademicYears(list);
     })();
     return () => { cancelled = true; };
@@ -2076,7 +2076,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         tags: draftTags.length ? draftTags : null,
         material_id: selectedMaterialId || null,
         materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
-        event_type: eventType || 'Lesson',
+        event_type: eventType === 'Scheduled Class Day' ? 'Schedule Block' : (eventType || 'Lesson'),
         subject_id: subjectId || null,
         unit: (unit && unit.trim()) ? unit.trim() : null,
         grade: (grade && grade.trim()) ? grade.trim() : null,
@@ -2581,7 +2581,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     
     return (
-      <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+      <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
         {/* Header / Title */}
         <View style={styles.header}>
           <Text style={[styles.titleInput, { color: FG, fontSize: 18, fontWeight: '600' }]}>
@@ -2604,6 +2604,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             },
           })}
         >
+          <SafeView style={{ flex: 1 }}>
           {/* Placeholder note - when editing Plan Year placeholder */}
           {event?.is_placeholder && event?.generated_by === 'plan_year' && (
             <View style={{ paddingHorizontal: 16, paddingVertical: 10, marginBottom: 4, backgroundColor: '#f5f3ff', borderRadius: 8, marginTop: 8 }}>
@@ -3013,10 +3014,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </SafeFieldRow>
           )}
+          </SafeView>
         </ScrollView>
 
         {/* Footer with Edit and Delete buttons */}
-        <View style={[styles.footer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+        <SafeView style={[styles.footer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
           <TouchableOpacity onPress={() => {
             setEditing(true);
             onEditingChange?.(true);
@@ -3035,8 +3037,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </Text>
             </TouchableOpacity>
           )}
-        </View>
-      </View>
+        </SafeView>
+      </SafeView>
     );
   };
 
@@ -3045,7 +3047,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       console.log('[EventDetails] renderEditForm called');
     }
     return (
-    <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+    <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
       {/* Header / Title input */}
       <View style={styles.header}>
       <TextInput
@@ -3356,8 +3358,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         setEndTime(endTime || '');
                       }
                     }}
-                    trackColor={{ false: BORDER, true: '#93c5fd' }}
-                    thumbColor={allDay ? '#ffffff' : '#f9fafb'}
+                    trackColor={{ false: BORDER, true: '#AECBFA' }}
+                    thumbColor={allDay ? '#45A29E' : '#f9fafb'}
         />
       </View>
                 <View style={styles.allDayControl}>
@@ -3365,8 +3367,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Switch
                     value={isRecurring}
                     onValueChange={setIsRecurring}
-                    trackColor={{ false: BORDER, true: '#93c5fd' }}
-                    thumbColor={isRecurring ? '#ffffff' : '#f9fafb'}
+                    trackColor={{ false: BORDER, true: '#AECBFA' }}
+                    thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
                   />
                 </View>
               </View>
@@ -3813,9 +3815,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.fieldLabel}>Plan</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
                     {academicYears.map((ay) => {
-                      const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                      const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                      const label = start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : (ay.id?.slice(0, 8) || 'Plan');
+                      const label =
+                        ay.year_name && String(ay.year_name).trim()
+                          ? String(ay.year_name).trim()
+                          : (() => {
+                              const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                              const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                              return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : (ay.id?.slice(0, 8) || 'Plan');
+                            })();
                       const isSelected = academicYearId === ay.id;
                       return (
                         <TouchableOpacity
@@ -3839,20 +3846,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   {validationErrors.instructional && (
                     <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
                   )}
-                </View>
-                <View style={[styles.fieldRow, { marginTop: 8 }]}>
-                  <Text style={styles.fieldLabel}>Instructional minutes</Text>
-                  <TextInput
-                    placeholder="Auto from duration"
-                    placeholderTextColor={MUTED}
-                    value={instructionalMinutesOverride}
-                    onChangeText={setInstructionalMinutesOverride}
-                    keyboardType="number-pad"
-                    style={[styles.input, { maxWidth: 120 }]}
-                  />
-                  <Text style={[styles.mutedText, { fontSize: 11, marginTop: 4 }]}>
-                    Leave blank to use event duration. Counts toward this plan&apos;s days/hours progress.
-                  </Text>
                 </View>
               </>
             )}
@@ -4585,7 +4578,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </Text>
           </TouchableOpacity>
       </View>
-    </View>
+    </SafeView>
   );
   };
 

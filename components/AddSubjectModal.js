@@ -8,6 +8,7 @@ import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
+import { useModalStackElevation } from './hooks/useModalStackElevation';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -43,6 +44,8 @@ export default function AddSubjectModal({
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const materialDropdownRef = useRef(null);
   const materialButtonRef = useRef(null);
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible);
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
@@ -550,7 +553,7 @@ export default function AddSubjectModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
@@ -1065,23 +1068,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: 'transparent',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: '#e5e7eb',
     marginRight: 8,
   },
   childChipSelected: {
-    backgroundColor: '#e8f0fe',
-    borderColor: '#4285f4',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   childChipText: {
     fontSize: 14,
-    color: '#374151',
+    color: '#6b7280',
     fontWeight: '400',
   },
   childChipTextSelected: {
-    color: '#4285f4',
-    fontWeight: '500',
+    color: '#6BB3E8',
+    fontWeight: '700',
   },
   gradeScroll: {
     marginTop: 8,
@@ -1130,18 +1133,29 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   saveButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    backgroundColor: '#8B7CF6',
+    backgroundColor: '#85C4F2',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
   },
   saveButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   buttonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
   required: {
     color: '#dc2626',

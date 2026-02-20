@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { AlertTriangle } from 'lucide-react';
-import { getPlanHealth } from '../../lib/services/academicYearClient';
+import { getPlanHealth, invalidatePlanHealthCache } from '../../lib/services/academicYearClient';
 import FixItSuggestionsModal from './FixItSuggestionsModal';
 
 const BANNER_BG_WARNING = '#fef3c7';
@@ -18,29 +18,38 @@ const BANNER_BG_INFO = '#dbeafe';
 const BANNER_BORDER_INFO = '#3b82f6';
 const BANNER_TEXT_INFO = '#1e40af';
 
-export default function PlanHealthBanner({ familyId, visible = true }) {
-  const [health, setHealth] = useState(null);
+const SUPPRESS_BANNER_AFTER_APPLY_MS = 35000; // Hide "under" banner for 35s after Fix-It or Apply so backend/DB can catch up
+
+export default function PlanHealthBanner({ familyId, visible = true, initialHealth = null }) {
+  const [health, setHealth] = useState(initialHealth ?? null);
   const [loading, setLoading] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [showFixItModal, setShowFixItModal] = useState(false);
+  const [fixItHealth, setFixItHealth] = useState(null); // health used by Fix-It modal (refetched when opening)
+  const [suppressBannerUntil, setSuppressBannerUntil] = useState(null);
 
   const fetchHealth = useCallback(async () => {
     if (!familyId || !visible) return;
     setLoading(true);
     try {
       const { data, error } = await getPlanHealth(familyId);
-      if (!error && data?.plan_exists) {
-        setHealth(data);
-        setDismissed(false);
-      } else {
-        setHealth(null);
+      if (!error && data != null) {
+        if (data.plan_exists) {
+          setHealth(data);
+          setDismissed(false);
+        } else {
+          setHealth(null);
+        }
       }
-    } catch {
-      setHealth(null);
+      // On error (e.g. 429): keep previous health so banner doesn't disappear
     } finally {
       setLoading(false);
     }
   }, [familyId, visible]);
+
+  useEffect(() => {
+    if (initialHealth != null) setHealth(initialHealth);
+  }, [initialHealth]);
 
   useEffect(() => {
     fetchHealth();
@@ -49,26 +58,49 @@ export default function PlanHealthBanner({ familyId, visible = true }) {
   // Refetch when calendar refreshes (e.g. after event delete)
   useEffect(() => {
     if (typeof window === 'undefined' || !visible) return;
-    const onRefresh = () => fetchHealth();
+    const onRefresh = () => {
+      invalidatePlanHealthCache();
+      fetchHealth();
+    };
     window.addEventListener('refreshCalendar', onRefresh);
     return () => window.removeEventListener('refreshCalendar', onRefresh);
   }, [fetchHealth, visible]);
 
-  // Refetch immediately after Event Details save (e.g. counts_toward_plan toggle)
+  // Refetch after Event Details save or Fix-It apply; hide banner and suppress "under" for a while so backend/DB can catch up
   useEffect(() => {
     if (typeof window === 'undefined' || !visible) return;
-    const onPlanHealthRefresh = () => fetchHealth();
+    let timeoutId = null;
+    let suppressTimeoutId = null;
+    const onPlanHealthRefresh = () => {
+      invalidatePlanHealthCache();
+      setHealth(null);
+      setSuppressBannerUntil(Date.now() + SUPPRESS_BANNER_AFTER_APPLY_MS);
+      if (suppressTimeoutId) clearTimeout(suppressTimeoutId);
+      suppressTimeoutId = setTimeout(() => {
+        setSuppressBannerUntil(null);
+      }, SUPPRESS_BANNER_AFTER_APPLY_MS);
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        fetchHealth();
+      }, 500);
+    };
     window.addEventListener('refreshPlanHealth', onPlanHealthRefresh);
-    return () => window.removeEventListener('refreshPlanHealth', onPlanHealthRefresh);
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (suppressTimeoutId) clearTimeout(suppressTimeoutId);
+      window.removeEventListener('refreshPlanHealth', onPlanHealthRefresh);
+    };
   }, [fetchHealth, visible]);
 
-  if (!visible || loading || !health) return null;
+  if (!visible || !health) return null;
   const isUnder = (health.constraint_mode === 'days' && health.delta_days != null && health.delta_days < 0) ||
     (health.constraint_mode === 'hours' && health.delta_hours != null && health.delta_hours < 0);
   const isOver = (health.constraint_mode === 'days' && health.delta_days != null && health.delta_days > 0) ||
     (health.constraint_mode === 'hours' && health.delta_hours != null && health.delta_hours > 0);
   if (!isUnder && !isOver) return null;
   if (dismissed) return null;
+  if (isUnder && suppressBannerUntil != null && Date.now() < suppressBannerUntil) return null;
 
   const bg = isUnder ? BANNER_BG_WARNING : BANNER_BG_INFO;
   const border = isUnder ? BANNER_BORDER_WARNING : BANNER_BORDER_INFO;
@@ -109,7 +141,13 @@ export default function PlanHealthBanner({ familyId, visible = true }) {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         {isUnder && (
           <TouchableOpacity
-            onPress={() => setShowFixItModal(true)}
+            onPress={async () => {
+              setShowFixItModal(true);
+              setFixItHealth(null);
+              const { data } = await getPlanHealth(familyId);
+              if (data?.plan_exists) setFixItHealth(data);
+              else setFixItHealth(health);
+            }}
             style={{
               paddingHorizontal: 12,
               paddingVertical: 6,
@@ -146,9 +184,9 @@ export default function PlanHealthBanner({ familyId, visible = true }) {
       </View>
       <FixItSuggestionsModal
         visible={showFixItModal}
-        onClose={() => setShowFixItModal(false)}
+        onClose={() => { setShowFixItModal(false); setFixItHealth(null); }}
         familyId={familyId}
-        health={health}
+        health={showFixItModal && fixItHealth === null ? null : (fixItHealth ?? health)}
         onSuccess={fetchHealth}
       />
     </View>

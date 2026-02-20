@@ -70,6 +70,7 @@ class RecalculateInput(BaseModel):
     allowed_weekdays: List[int] = Field(default=[1, 2, 3, 4, 5])  # Mon-Fri default
     holiday_settings: Optional[HolidaySettings] = None
     custom_holidays: List[HolidayEntry] = []
+    year_name: Optional[str] = None  # Display name e.g. "Lilly · Math · Feb 26 – Mar 26, 2026"
 
 
 class RecalculateOutput(BaseModel):
@@ -117,6 +118,7 @@ class ApplyToCalendarInput(BaseModel):
     target_days: Optional[int] = None
     target_hours: Optional[float] = None
     subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # { subject_id: { target_days, target_hours } }; validated on write
+    year_name: Optional[str] = None  # Display name e.g. "Lilly · Math · Feb 26 – Mar 26, 2026"
 
 
 class BlockRegenResult(BaseModel):
@@ -155,6 +157,7 @@ class SchedulePotentialOutput(BaseModel):
     target_hours: Optional[float] = None
     delta_days: Optional[int] = None
     delta_hours: Optional[float] = None
+    suggested_end_date: Optional[str] = None  # exact date that yields exactly target_days (0 over/under)
     per_subject: Optional[Dict[str, Dict[str, Any]]] = None  # subject_id -> { projected_days, suggested_end_date, ... }
     per_child: Optional[Dict[str, Dict[str, Any]]] = None  # child_id -> { projected_days, suggested_end_date } (child-aware)
     per_child_subject: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None  # child_id -> subject_id -> { projected_days, occurrence_dates_sorted }
@@ -171,6 +174,9 @@ class PlanHealthOutput(BaseModel):
     target_days: Optional[int] = None
     target_hours: Optional[float] = None
     academic_year_id: Optional[str] = None
+    end_date: Optional[str] = None  # plan end date for fix-it impact preview
+    suggested_end_date: Optional[str] = None  # exact date for 0 days over/under (from blocks)
+    max_extra_days_per_week: Optional[int] = None  # 5 - distinct weekdays already in blocks (Mon–Fri only); 0 if already M–F
     manual_events_days: Optional[int] = None
     manual_events_hours: Optional[float] = None
     per_child: Optional[Dict[str, Dict[str, Any]]] = None
@@ -181,7 +187,7 @@ class PlanHealthOutput(BaseModel):
 
 class ApplyFixSuggestionInput(BaseModel):
     family_id: str
-    suggestion_type: str  # 'extra_day_per_week' | 'extend_end_date' | 'catch_up_week'
+    suggestion_type: str  # 'extra_day_per_week' | 'extra_days_per_week' | 'extend_end_date' | 'catch_up_week'
     params: Optional[Dict[str, Any]] = None
 
 
@@ -359,34 +365,49 @@ async def create_default_academic_year(
         
         start_date = date(start_year, 8, 15)
         end_date = date(start_year + 1, 6, 15)
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
+
+        # Reuse existing default year with same range so we don't create duplicate chips when user reopens Plan Year
+        existing = (
+            supabase.table("academic_years")
+            .select("id")
+            .eq("family_id", family_id)
+            .eq("start_date", start_str)
+            .eq("end_date", end_str)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if existing.data and len(existing.data) > 0:
+            academic_year_id = existing.data[0]["id"]
+        else:
+            year_resp = supabase.table("academic_years").insert({
+                "family_id": family_id,
+                "year_name": f"{start_year}-{start_year + 1}",
+                "start_date": start_str,
+                "end_date": end_str,
+                "is_draft": False,
+                "mode": "FIXED_END",
+                "allowed_weekdays": [1, 2, 3, 4, 5],  # Mon-Fri
+                "is_current": True
+            }).select().single().execute()
+
+            if not year_resp.data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create academic year"
+                )
+
+            academic_year_id = year_resp.data["id"]
         
-        # Create academic year
-        year_resp = supabase.table("academic_years").insert({
-            "family_id": family_id,
-            "year_name": f"{start_year}-{start_year + 1}",
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "is_draft": False,
-            "mode": "FIXED_END",
-            "allowed_weekdays": [1, 2, 3, 4, 5],  # Mon-Fri
-            "is_current": True
-        }).select().single().execute()
-        
-        if not year_resp.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create academic year"
-            )
-        
-        academic_year_id = year_resp.data["id"]
-        
-        # Create holiday settings with global holidays enabled (US default)
-        supabase.table("academic_year_holiday_settings").insert({
+        # Create or update holiday settings with global holidays enabled (US default)
+        supabase.table("academic_year_holiday_settings").upsert({
             "academic_year_id": academic_year_id,
             "follow_global_holidays": True,
             "holiday_country_code": "US",
             "provider": "NAGER_DATE"
-        }).execute()
+        }, on_conflict="academic_year_id").execute()
         
         # Sync global holidays
         await sync_global_holidays_internal(
@@ -578,9 +599,10 @@ async def save_academic_year(
             end_date_obj = date.fromisoformat(result["end_date"])
         
         # Upsert academic year
+        year_name = (body.year_name and body.year_name.strip()) or f"{start_date_obj.year}-{end_date_obj.year}"
         year_data = {
             "family_id": family_id,
-            "year_name": f"{start_date_obj.year}-{end_date_obj.year}",
+            "year_name": year_name,
             "start_date": start_date_obj.isoformat(),
             "end_date": end_date_obj.isoformat(),
             "mode": body.mode,
@@ -719,7 +741,7 @@ async def get_plan_health(
         try:
             plan_resp = (
                 supabase.table("academic_year_plan")
-                .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets")
+                .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets, blocks")
                 .eq("family_id", family_id)
                 .order("updated_at", desc=True)
                 .limit(1)
@@ -729,7 +751,7 @@ async def get_plan_health(
             try:
                 plan_resp = (
                     supabase.table("academic_year_plan")
-                    .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode")
+                    .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, blocks")
                     .eq("family_id", family_id)
                     .order("updated_at", desc=True)
                     .limit(1)
@@ -738,13 +760,14 @@ async def get_plan_health(
             except Exception:
                 plan_resp = (
                     supabase.table("academic_year_plan")
-                    .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours")
+                    .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, blocks")
                     .eq("family_id", family_id)
                     .order("updated_at", desc=True)
                     .limit(1)
                     .execute()
                 )
         if not plan_resp.data or len(plan_resp.data) == 0:
+            print("[BACKEND] plan_health: no plan found for family, returning plan_exists=False", flush=True)
             return PlanHealthOutput(plan_exists=False)
 
         plan = plan_resp.data[0]
@@ -757,38 +780,28 @@ async def get_plan_health(
         target_hours = float(plan["target_hours"]) if plan.get("target_hours") is not None else None
 
         end_next = (end_date_obj + timedelta(days=1)).isoformat()
-        # Some columns (instructional_status/instructional_day_credit) may not exist until migrations run.
-        # Prefer the full projection, but fall back to a minimal one in dev.
-        try:
-            ev_resp = (
-                supabase.table("events")
-                .select(
-                    "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, instructional_status, "
-                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, instructional_day_credit, is_placeholder"
-                )
-                .eq("family_id", family_id)
-                .eq("academic_year_id", academic_year_id)
-                .is_("deleted_at", None)
-                .gte("start_ts", plan["start_date"] + "T00:00:00")
-                .lt("start_ts", end_next + "T00:00:00")
-                .execute()
+        # Use minimal projection so DBs without instructional_status/instructional_day_credit don't 500
+        ev_resp = (
+            supabase.table("events")
+            .select(
+                "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, "
+                "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
             )
-        except Exception:
-            ev_resp = (
-                supabase.table("events")
-                .select(
-                    "id, start_ts, end_ts, status, deleted_at, counts_toward_plan, "
-                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
-                )
-                .eq("family_id", family_id)
-                .eq("academic_year_id", academic_year_id)
-                .is_("deleted_at", None)
-                .gte("start_ts", plan["start_date"] + "T00:00:00")
-                .lt("start_ts", end_next + "T00:00:00")
-                .execute()
-            )
+            .eq("family_id", family_id)
+            .eq("academic_year_id", academic_year_id)
+            .is_("deleted_at", None)
+            .gte("start_ts", plan["start_date"] + "T00:00:00")
+            .lt("start_ts", end_next + "T00:00:00")
+            .execute()
+        )
         events = ev_resp.data or []
         attributions = get_instructional_attributions(events)
+        print(
+            f"[BACKEND] plan_health: plan_id={plan.get('id')} academic_year_id={academic_year_id} "
+            f"start={plan['start_date'][:10]} end={plan['end_date'][:10]} target_days={target_days} "
+            f"events_in_range={len(events)} attributions={len(attributions)}",
+            flush=True,
+        )
         result = compute_plan_health_from_attributions(
             attributions,
             start_date_obj,
@@ -798,6 +811,44 @@ async def get_plan_health(
             target_hours,
             subject_targets=subject_targets,
         )
+        print(
+            f"[BACKEND] plan_health result: planned_days={result.get('planned_days')} delta_days={result.get('delta_days')} "
+            f"planned_hours={result.get('planned_hours')} delta_hours={result.get('delta_hours')}",
+            flush=True,
+        )
+        # Exact suggested_end_date for 0 days/hours over/under (from blocks)
+        suggested_end_date = None
+        if constraint_mode == "days" and target_days and (result.get("delta_days") or 0) != 0:
+            blocks_for_potential = list(plan.get("blocks") or [])
+            if blocks_for_potential:
+                try:
+                    exc_ranges = exclusion_ranges_from_breaks_and_holidays([], [])
+                    pot = compute_schedule_potential(
+                        blocks_for_potential,
+                        start_date_obj,
+                        end_date_obj,
+                        exc_ranges,
+                        target_days=target_days,
+                    )
+                    suggested_end_date = pot.get("suggested_end_date")
+                except Exception:
+                    pass
+        elif constraint_mode == "hours" and target_hours and (result.get("delta_hours") or 0) < 0:
+            blocks_for_potential = list(plan.get("blocks") or [])
+            if blocks_for_potential:
+                try:
+                    exc_ranges = exclusion_ranges_from_breaks_and_holidays([], [])
+                    pot = compute_schedule_potential(
+                        blocks_for_potential,
+                        start_date_obj,
+                        end_date_obj,
+                        exc_ranges,
+                        target_hours=float(target_hours),
+                    )
+                    suggested_end_date = pot.get("suggested_end_date")
+                except Exception:
+                    pass
+
         health_cache = {
             **result,
             "computed_at": datetime.now().isoformat(),
@@ -806,6 +857,14 @@ async def get_plan_health(
             "health_cache": health_cache,
             "updated_at": datetime.now().isoformat(),
         }).eq("id", plan["id"]).execute()
+
+        # Max extra weekdays we can add (Mon–Fri): 5 minus distinct weekdays already in blocks
+        scheduled_weekdays = set()
+        for b in (plan.get("blocks") or []):
+            for w in (b.get("weekdays") or []):
+                if 1 <= w <= 5:
+                    scheduled_weekdays.add(w)
+        max_extra_days_per_week = max(0, 5 - len(scheduled_weekdays))
 
         return PlanHealthOutput(
             plan_exists=True,
@@ -818,6 +877,9 @@ async def get_plan_health(
             target_days=target_days,
             target_hours=target_hours,
             academic_year_id=academic_year_id,
+            end_date=plan["end_date"][:10] if plan.get("end_date") else None,
+            suggested_end_date=suggested_end_date,
+            max_extra_days_per_week=max_extra_days_per_week,
             manual_events_days=result.get("manual_events_days"),
             manual_events_hours=result.get("manual_events_hours"),
             per_child=result.get("per_child"),
@@ -861,31 +923,19 @@ async def get_instructional_attributions_debug(
         start_date = ay.data[0]["start_date"][:10]
         end_date = ay.data[0]["end_date"][:10]
         end_next = (date.fromisoformat(end_date) + timedelta(days=1)).isoformat()
-        try:
-            ev_resp = (
-                supabase.table("events")
-                .select(
-                    "id, start_ts, end_ts, status, deleted_at, counts_toward_plan, instructional_status, "
-                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
-                )
-                .eq("family_id", family_id)
-                .eq("academic_year_id", academic_year_id)
-                .is_("deleted_at", None)
-                .gte("start_ts", start_date + "T00:00:00")
-                .lt("start_ts", end_next + "T00:00:00")
-                .execute()
+        ev_resp = (
+            supabase.table("events")
+            .select(
+                "id, start_ts, end_ts, status, deleted_at, counts_toward_plan, "
+                "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder"
             )
-        except Exception:
-            ev_resp = (
-                supabase.table("events")
-                .select("id, start_ts, end_ts, status, deleted_at, counts_toward_plan, academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder")
-                .eq("family_id", family_id)
-                .eq("academic_year_id", academic_year_id)
-                .is_("deleted_at", None)
-                .gte("start_ts", start_date + "T00:00:00")
-                .lt("start_ts", end_next + "T00:00:00")
-                .execute()
-            )
+            .eq("family_id", family_id)
+            .eq("academic_year_id", academic_year_id)
+            .is_("deleted_at", None)
+            .gte("start_ts", start_date + "T00:00:00")
+            .lt("start_ts", end_next + "T00:00:00")
+            .execute()
+        )
         events = ev_resp.data or []
         attributions = get_instructional_attributions(events)
 
@@ -958,6 +1008,10 @@ async def apply_fix_suggestion(
     Apply a fix-it suggestion: add Flex block (extra day/week), extend end date, or add catch-up week.
     """
     try:
+        print(
+            f"[BACKEND] apply_fix_suggestion: suggestion_type={body.suggestion_type} family_id={body.family_id} params={getattr(body, 'params', {})}",
+            flush=True,
+        )
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
@@ -1011,16 +1065,63 @@ async def apply_fix_suggestion(
                 "updated_at": datetime.now().isoformat(),
             }).eq("id", plan["id"]).execute()
 
+        elif body.suggestion_type == "extra_days_per_week":
+            # Add N blocks on N different weekdays that currently have no blocks (no double-booking)
+            wday_count = {w: 0 for w in [1, 2, 3, 4, 5]}
+            for b in blocks:
+                for w in b.get("weekdays") or []:
+                    if w in wday_count:
+                        wday_count[w] += 1
+            available_weekdays = [w for w in [1, 2, 3, 4, 5] if wday_count[w] == 0]
+            extra_days = min(int(params.get("extra_days_per_week", 1)), len(available_weekdays))
+            if extra_days <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No unused weekdays left (schedule is already Mon–Fri). Extend the year instead.",
+                )
+            sub_resp = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
+            subject_id = (sub_resp.data[0]["id"] if sub_resp.data else None) or (
+                blocks[0]["subject_id"] if blocks else None
+            )
+            if not subject_id:
+                raise HTTPException(status_code=400, detail="Add at least one subject first.")
+            children_resp = supabase.table("children").select("id").eq("family_id", family_id).execute()
+            child_ids = [r["id"] for r in (children_resp.data or [])]
+            for w in available_weekdays[:extra_days]:
+                new_block = {
+                    "block_id": str(uuid.uuid4()),
+                    "subject_id": subject_id,
+                    "child_ids": child_ids[:1] if child_ids else [],
+                    "weekdays": [w],
+                    "start_time": "10:00",
+                    "end_time": "11:00",
+                    "all_day": False,
+                }
+                blocks.append(new_block)
+            supabase.table("academic_year_plan").update({
+                "blocks": blocks,
+                "updated_at": datetime.now().isoformat(),
+            }).eq("id", plan["id"]).execute()
+
         elif body.suggestion_type == "extend_end_date":
-            extra_weeks = int(params.get("extra_weeks", 2))
-            end_obj = date.fromisoformat(end_date)
-            new_end = (end_obj + timedelta(weeks=extra_weeks)).isoformat()
-            end_date = new_end
+            new_end = None
+            suggested = params.get("suggested_end_date")
+            if suggested:
+                try:
+                    new_end = date.fromisoformat(suggested[:10]).isoformat()
+                except (ValueError, TypeError):
+                    pass
+            if not new_end:
+                extra_weeks = int(params.get("extra_weeks", 2))
+                end_obj = date.fromisoformat(end_date)
+                new_end = (end_obj + timedelta(weeks=extra_weeks)).isoformat()
             supabase.table("academic_years").update({"end_date": new_end}).eq("id", academic_year_id).execute()
             supabase.table("academic_year_plan").update({
                 "end_date": new_end,
                 "updated_at": datetime.now().isoformat(),
             }).eq("id", plan["id"]).execute()
+            end_date = new_end[:10]
+            plan["end_date"] = new_end
 
         elif body.suggestion_type == "catch_up_week":
             week_start = params.get("week_start")
@@ -1083,6 +1184,10 @@ async def apply_fix_suggestion(
             target_hours=float(plan["target_hours"]) if plan.get("target_hours") is not None else None,
         )
         result = await apply_to_calendar(apply_body, user, __)
+        print(
+            f"[BACKEND] apply_fix_suggestion done: created={result.created} planned_days={result.planned_days}",
+            flush=True,
+        )
         return {"success": True, "created": result.created, "planned_days": result.planned_days}
     except HTTPException:
         raise
@@ -1308,6 +1413,7 @@ async def schedule_potential(
             target_hours=body.target_hours,
             delta_days=delta_days,
             delta_hours=delta_hours,
+            suggested_end_date=result.get("suggested_end_date"),
             per_subject=result.get("per_subject"),
             per_child=result.get("per_child"),
             per_child_subject=result.get("per_child_subject"),
@@ -1392,7 +1498,6 @@ async def get_academic_year(
 
 async def _get_academic_year_impl(academic_year_id: str, user: dict):
     """Shared implementation for GET academic year (by path or query)."""
-    print(f"[academic_year] GET {academic_year_id} entered", flush=True)
     log_event("academic_year.get.start", user_id=user["id"], academic_year_id=academic_year_id)
     try:
         family_id = get_family_id_for_user(user["id"])
@@ -1493,9 +1598,8 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
             )
             plan_created_at = p.get("created_at")
             plan_updated_at = p.get("updated_at")
-        
         log_event("academic_year.get.success", user_id=user["id"], academic_year_id=academic_year_id)
-        
+
         # Build JSON-serializable response (avoid Pydantic/float NaN issues)
         def _str_date(v):
             if v is None:
@@ -1650,6 +1754,11 @@ async def apply_to_calendar(
     Reuses recalc logic; optionally replaces existing placeholders for the academic year.
     """
     log_event("academic_year.apply_to_calendar.start", user_id=user["id"], family_id=body.family_id)
+    print(
+        f"[BACKEND] apply_to_calendar start: family_id={body.family_id} academic_year_id={body.academic_year_id or 'new'} "
+        f"start_date={body.start_date} end_date={body.end_date} replace_placeholders={getattr(body, 'replace_placeholders', None)}",
+        flush=True,
+    )
     try:
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
@@ -1729,40 +1838,90 @@ async def apply_to_calendar(
 
         academic_year_id = body.academic_year_id
         if not academic_year_id:
-            # insert().execute() returns inserted row(s) in .data (no .select() on insert builder in this client)
-            year_row = (
+            # Reuse existing academic year for this family with same start/end so edits don't create duplicate plans
+            existing = (
                 supabase.table("academic_years")
-                .insert(
-                    {
-                        "family_id": body.family_id,
-                        "year_name": f"{start_date_obj.year}-{end_date_obj.year}",
-                        "start_date": body.start_date,
-                        "end_date": body.end_date,
-                        "is_draft": False,
-                        "mode": "FIXED_END",
-                        "allowed_weekdays": allowed_weekdays_for_persist,
-                        "is_current": True,
-                    }
-                )
+                .select("id")
+                .eq("family_id", body.family_id)
+                .eq("start_date", body.start_date)
+                .eq("end_date", body.end_date)
+                .order("updated_at", desc=True)
+                .limit(1)
                 .execute()
             )
-            if year_row.data and len(year_row.data) > 0:
-                academic_year_id = year_row.data[0]["id"]
-            elif year_row.data and isinstance(year_row.data, dict):
-                academic_year_id = year_row.data.get("id")
-            if not academic_year_id:
-                err_msg = getattr(year_row, "error", None) or getattr(year_row, "message", None) or "No id returned"
-                log_event("academic_year.apply_to_calendar.error", user_id=user["id"], error=f"academic_year insert failed: {err_msg}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Could not create academic year. {str(err_msg)}",
+            if existing.data and len(existing.data) > 0:
+                academic_year_id = existing.data[0]["id"]
+                if body.year_name and body.year_name.strip():
+                    supabase.table("academic_years").update({"year_name": body.year_name.strip()}).eq("id", academic_year_id).execute()
+            else:
+                year_name_apply = (body.year_name and body.year_name.strip()) or f"{start_date_obj.year}-{end_date_obj.year}"
+                year_row = (
+                    supabase.table("academic_years")
+                    .insert(
+                        {
+                            "family_id": body.family_id,
+                            "year_name": year_name_apply,
+                            "start_date": body.start_date,
+                            "end_date": body.end_date,
+                            "is_draft": False,
+                            "mode": "FIXED_END",
+                            "allowed_weekdays": allowed_weekdays_for_persist,
+                            "is_current": True,
+                        }
+                    )
+                    .execute()
                 )
+                if year_row.data and len(year_row.data) > 0:
+                    academic_year_id = year_row.data[0]["id"]
+                elif year_row.data and isinstance(year_row.data, dict):
+                    academic_year_id = year_row.data.get("id")
+                if not academic_year_id:
+                    err_msg = getattr(year_row, "error", None) or getattr(year_row, "message", None) or "No id returned"
+                    log_event("academic_year.apply_to_calendar.error", user_id=user["id"], error=f"academic_year insert failed: {err_msg}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Could not create academic year. {str(err_msg)}",
+                    )
+        else:
+            # Reapply: academic_year_id was provided — still update year_name if sent so the plan label stays current
+            if body.year_name and body.year_name.strip():
+                supabase.table("academic_years").update({"year_name": body.year_name.strip()}).eq("id", academic_year_id).execute()
 
         generation_batch_id = str(uuid.uuid4())
         events_to_insert = []
         planned_dates_set = set()
         block_regen_results: List[BlockRegenResult] = []
         totals_updated, totals_inserted, totals_deleted = 0, 0, 0
+
+        # Persist plan (target_days, end_date, blocks) immediately so Edit Plan shows saved values even if placeholder generation fails
+        if academic_year_id:
+            if body.subject_targets is not None:
+                validate_subject_targets(supabase, body.family_id, body.subject_targets)
+            constraint_mode = body.constraint_mode if body.constraint_mode in ("days", "hours") else "days"
+            plan_data = {
+                "academic_year_id": academic_year_id,
+                "family_id": body.family_id,
+                "start_date": body.start_date,
+                "end_date": body.end_date,
+                "constraint_mode": constraint_mode,
+                "target_days": body.target_days if constraint_mode == "days" else None,
+                "target_hours": float(body.target_hours) if constraint_mode == "hours" and body.target_hours is not None else None,
+                "current_generation_id": generation_batch_id,
+                "updated_at": datetime.now().isoformat(),
+            }
+            if use_blocks and blocks_to_use:
+                plan_data["blocks"] = [
+                    {"block_id": b["block_id"], "subject_id": b["subject_id"], "child_ids": b.get("child_ids", []),
+                     "weekdays": b.get("weekdays", [1, 2, 3, 4, 5]), "start_time": b.get("start_time", "09:00"),
+                     "end_time": b.get("end_time", "10:00"), "all_day": b.get("all_day", False)}
+                    for b in blocks_to_use
+                ]
+            else:
+                plan_data["blocks"] = []
+            if body.subject_targets is not None:
+                plan_data["subject_targets"] = body.subject_targets
+            supabase.table("academic_year_plan").upsert(plan_data, on_conflict="academic_year_id").execute()
+            supabase.table("academic_years").update({"allowed_weekdays": allowed_weekdays_for_persist}).eq("id", academic_year_id).execute()
 
         if use_blocks:
             # Block-aware regeneration: only touch placeholders for each block (no global delete)
@@ -1811,7 +1970,7 @@ async def apply_to_calendar(
                     ev = {
                         "family_id": body.family_id,
                         "child_id": body.child_id,
-                        "title": f"{subject_name} — Lesson",
+                        "title": subject_name,
                         "start_ts": start_ts,
                         "end_ts": end_ts,
                         "status": "scheduled",
@@ -1823,7 +1982,6 @@ async def apply_to_calendar(
                         "academic_year_id": academic_year_id,
                         "generation_batch_id": generation_batch_id,
                         "counts_toward_plan": True,
-                        "instructional_status": "PLAN_PLACEHOLDER",
                     }
                     events_to_insert.append(ev)
 
@@ -1848,31 +2006,12 @@ async def apply_to_calendar(
                 else:
                     raise
 
-        # Phase 3: Upsert academic_year_plan when using blocks (store constraint mode + target)
-        if use_blocks and academic_year_id:
-            if body.subject_targets is not None:
-                validate_subject_targets(supabase, body.family_id, body.subject_targets)
-            constraint_mode = body.constraint_mode if body.constraint_mode in ("days", "hours") else "days"
-            plan_data = {
-                "academic_year_id": academic_year_id,
-                "family_id": body.family_id,
-                "start_date": body.start_date,
-                "end_date": body.end_date,
-                "constraint_mode": constraint_mode,
-                "target_days": body.target_days if constraint_mode == "days" else None,
-                "target_hours": float(body.target_hours) if constraint_mode == "hours" and body.target_hours is not None else None,
-                "blocks": [{"block_id": b["block_id"], "subject_id": b["subject_id"], "child_ids": b.get("child_ids", []), "weekdays": b.get("weekdays", [1, 2, 3, 4, 5]), "start_time": b.get("start_time", "09:00"), "end_time": b.get("end_time", "10:00"), "all_day": b.get("all_day", False)} for b in blocks_to_use],
-                "current_generation_id": generation_batch_id,
-                "updated_at": datetime.now().isoformat(),
-            }
-            if body.subject_targets is not None:
-                plan_data["subject_targets"] = body.subject_targets
-            supabase.table("academic_year_plan").upsert(plan_data, on_conflict="academic_year_id").execute()
-            # Persist allowed_weekdays derived from blocks so GET /academic_year counts stay consistent
-            supabase.table("academic_years").update({"allowed_weekdays": allowed_weekdays_for_persist}).eq("id", academic_year_id).execute()
-
         planned_days = len(planned_dates_set)
         log_event("academic_year.apply_to_calendar.success", user_id=user["id"], created=created_count, planned_days=planned_days)
+        print(
+            f"[BACKEND] apply_to_calendar success: academic_year_id={academic_year_id} created={created_count} planned_days={planned_days}",
+            flush=True,
+        )
 
         return ApplyToCalendarOutput(
             created=created_count,

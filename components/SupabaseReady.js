@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 export default function SupabaseReady({ children }) {
-  const [isReady, setIsReady] = useState(false);
+  // On web, start ready so landing page shows immediately; we still run the check in background
+  const [isReady, setIsReady] = useState(Platform.OS === 'web');
   const [error, setError] = useState(null);
 
   useEffect(() => {

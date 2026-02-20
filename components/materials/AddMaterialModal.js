@@ -1900,18 +1900,29 @@ const styles = StyleSheet.create({
     color: '#666666',
   },
   saveButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#8B7CF6',
+    backgroundColor: '#85C4F2',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
   },
   saveButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
   saveButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '500',
     color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   uploadButton: {
     flexDirection: 'row',
