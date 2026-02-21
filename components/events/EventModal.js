@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
-import { X } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
@@ -33,8 +32,8 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
         setEvent(initialEvent);
         setLoading(false);
       }
-      // Always reload from database to get latest data (especially important for child_ids after save)
-      loadEvent();
+      // Always reload from database; use DB times (forceUseDb=true) so plan-applied times show correctly
+      loadEvent(true);
     } else {
       setEvent(initialEvent ?? null);
       setSyllabus(null);
@@ -43,7 +42,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
     }
   }, [visible, eventId, initialEvent]);
   
-  const loadEvent = useCallback(async () => {
+  const loadEvent = useCallback(async (forceUseDb = false) => {
     if (!eventId) return;
     
     if (!event && !initialEvent) {
@@ -61,10 +60,16 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
         setEvent(prev => prev || initialEvent || null);
         return;
       }
+
+      // When forceUseDb (after plan apply / calendar refresh), use raw DB data so plan time updates show
+      if (forceUseDb) {
+        setEvent({ ...data });
+        setLoading(false);
+        return;
+      }
       
         setEvent(prev => {
         // Check if initialEvent has optimistic updates (different times than database)
-        // If so, preserve the optimistic times from initialEvent
         const hasOptimisticUpdate = initialEvent && (
           (initialEvent.start_ts && initialEvent.start_ts !== data.start_ts) ||
           (initialEvent.end_ts && initialEvent.end_ts !== data.end_ts) ||
@@ -74,16 +79,10 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
         
         // Merge data - prioritize database data (data) over previous/initialEvent data (prev)
         // But preserve child_ids from prev if data doesn't have it (important for flexible events)
-        // Extract child-related fields first to handle them explicitly
         const prevChildIds = prev?.child_ids;
         const prevChildId = prev?.child_id;
         const prevChild = prev?.child;
-        const dataChildIds = data?.child_ids;
-        const dataChildId = data?.child_id;
-        const dataChild = data?.child;
         
-        // Merge all fields, but handle child-related fields explicitly to preserve them correctly
-        // Remove child-related fields from data before merging to avoid overwriting
         const dataWithoutChildFields = { ...data };
         delete dataWithoutChildFields.child_ids;
         delete dataWithoutChildFields.child_id;
@@ -91,50 +90,37 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
         
         const merged = { ...(prev || {}), ...dataWithoutChildFields };
         
-        // Handle child_ids and child_id explicitly - prioritize database data but preserve if not present
-        // This is critical for flexible events where child_id might be NULL but child_ids has values
-        // Only overwrite if the database explicitly provides a value (including null), otherwise preserve existing
         if ('child_ids' in data) {
-          // Database explicitly provided child_ids (could be null, [], or [uuid])
           merged.child_ids = data.child_ids;
         } else if (prevChildIds !== undefined) {
-          // Database didn't provide child_ids, preserve previous value
           merged.child_ids = prevChildIds;
         }
         
         if ('child_id' in data) {
-          // Database explicitly provided child_id (could be null or uuid)
           merged.child_id = data.child_id;
         } else if (prevChildId !== undefined) {
-          // Database didn't provide child_id, preserve previous value
           merged.child_id = prevChildId;
         }
         
-        // child object should be set from getEvent() result, but preserve from prev if not present
-        if (dataChild) {
-          merged.child = dataChild;
+        if (data?.child) {
+          merged.child = data.child;
         } else if (prevChild && !merged.child) {
           merged.child = prevChild;
         }
         
-        // If initialEvent has optimistic updates, preserve the time fields
         if (hasOptimisticUpdate && initialEvent) {
           if (initialEvent.start_ts) merged.start_ts = initialEvent.start_ts;
           if (initialEvent.end_ts) merged.end_ts = initialEvent.end_ts;
           if (initialEvent.start_local) merged.start_local = initialEvent.start_local;
           if (initialEvent.end_local) merged.end_local = initialEvent.end_local;
-          // Also preserve updated_at if it's more recent
           if (initialEvent.updated_at && (!data.updated_at || new Date(initialEvent.updated_at) > new Date(data.updated_at))) {
             merged.updated_at = initialEvent.updated_at;
           }
         }
         
-          // If loaded event has subject_id, remove any string subject from initialEvent
-          // to prevent showing wrong subject name
-          if (data.subject_id && prev?.subject && typeof prev.subject === 'string') {
-            // Remove the string subject from initialEvent - the loaded event will resolve it correctly
-            delete merged.subject;
-          }
+        if (data.subject_id && prev?.subject && typeof prev.subject === 'string') {
+          delete merged.subject;
+        }
         
         return merged;
       });
@@ -173,6 +159,31 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
       window.removeEventListener('eventRescheduled', handleEventRescheduled);
     };
   }, [eventId, visible, loadEvent]);
+
+  // When calendar refreshes or plan applied: refetch this event so plan time updates show immediately
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refetchFromDb = () => {
+      if (visible && eventId) {
+        loadEvent(true); // forceUseDb so we show updated start_ts from DB (e.g. after plan apply)
+      }
+    };
+    const handleRefreshCalendar = () => refetchFromDb();
+    const handlePlanApplied = () => {
+      if (visible && eventId) {
+        setEvent(null);
+        setLoading(true);
+        // Delay so backend commit is visible, then refetch and show DB times
+        setTimeout(() => loadEvent(true), 500);
+      }
+    };
+    window.addEventListener('refreshCalendar', handleRefreshCalendar);
+    window.addEventListener('planAppliedToCalendar', handlePlanApplied);
+    return () => {
+      window.removeEventListener('refreshCalendar', handleRefreshCalendar);
+      window.removeEventListener('planAppliedToCalendar', handlePlanApplied);
+    };
+  }, [visible, eventId, loadEvent]);
 
   const handleEventUpdated = () => {
     loadEvent(); // Reload event data
@@ -265,16 +276,6 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
           onPress={onClose}
         />
         <View style={[styles.container, isEditing && styles.containerEditMode]}>
-          {/* Header - hidden when editing */}
-          {!isEditing && (
-            <View style={styles.header}>
-              <Text style={styles.headerTitle}>Event Details</Text>
-              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                <X size={18} color={colors.muted || 'rgba(15, 23, 42, 0.5)'} />
-              </TouchableOpacity>
-            </View>
-          )}
-
           {/* Content */}
           {loading ? (
             <View style={styles.loadingContainer}>

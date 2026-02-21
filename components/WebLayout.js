@@ -2420,7 +2420,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         style={{
                           flexDirection: 'row',
                           alignItems: 'center',
-                          gap: 4,
+                          gap: 8,
                           paddingHorizontal: 10,
                           paddingVertical: 6,
                           borderRadius: 12,
@@ -2429,6 +2429,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           borderColor: 'rgba(209, 213, 219, 0.8)',
                         }}
                       >
+                        <Target size={16} color="rgba(15, 23, 42, 0.85)" strokeWidth={2} />
                         <Text style={{
                           fontSize: 15,
                           color: 'rgba(15, 23, 42, 0.85)',

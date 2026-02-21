@@ -2007,7 +2007,7 @@ export default function TaskCreateModal({
               </Text>
             </View>
             <TextInput
-              placeholder="Task name"
+              placeholder="Event name"
               placeholderTextColor={MUTED}
               value={title}
               onChangeText={(text) => {
@@ -2042,8 +2042,8 @@ export default function TaskCreateModal({
               },
             })}
           >
-          {/* Event Type selector - shown first */}
-          <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+          {/* Event Type - at top above Schedule on calendar/backlog */}
+          <SafeFieldRow style={[styles.fieldRow, { marginTop: 20, marginBottom: 12 }]}>
             <View style={styles.field}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text style={styles.fieldLabel}>Event Type <Text style={{ color: '#ef4444' }}>*</Text></Text>
@@ -2082,6 +2082,80 @@ export default function TaskCreateModal({
               )}
             </View>
           </SafeFieldRow>
+
+          {/* Count this as instructional time - at top */}
+          {placement === 'calendar' &&
+            ['Lesson', 'Assignment', 'Project'].includes(eventType) &&
+            (academicYears.length > 0 || loadingAcademicYears) && (
+            <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 4 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
+                <Switch
+                  value={countsTowardPlan}
+                  onValueChange={setCountsTowardPlan}
+                  trackColor={{ false: BORDER, true: '#AECBFA' }}
+                  thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
+                />
+              </View>
+              {countsTowardPlan && (
+                <>
+                  {assigneeIds.length > 1 && (
+                    <Text style={[styles.errorTextSmall, { marginBottom: 8 }]}>
+                      Choose one child for counted events so progress is clear per child.
+                    </Text>
+                  )}
+                  {loadingAcademicYears ? (
+                    <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
+                  ) : (
+                    <>
+                      <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                        {(() => {
+                          const baseLabels = academicYears.map((ay) => {
+                            const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                            const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                            if (ay.year_name && String(ay.year_name).trim()) {
+                              return String(ay.year_name).trim();
+                            }
+                            return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
+                          });
+                          const labelCounts = {};
+                          baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+                          return academicYears.map((ay, idx) => {
+                            const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                            const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                            let base = ay.year_name && String(ay.year_name).trim()
+                              ? String(ay.year_name).trim()
+                              : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
+                            const needsDisambiguator = labelCounts[base] > 1;
+                            const monthRange = start && end
+                              ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
+                              : '';
+                            const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
+                            const isSelected = selectedAcademicYearId === ay.id;
+                            return (
+                              <TouchableOpacity
+                                key={ay.id}
+                                onPress={() => setSelectedAcademicYearId(ay.id)}
+                                style={[
+                                  styles.chipOption,
+                                  isSelected && styles.chipOptionActive,
+                                ]}
+                              >
+                                <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
+                                  {label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          });
+                        })()}
+                      </View>
+                    </>
+                  )}
+                </>
+              )}
+            </View>
+          )}
 
           {/* Placement toggle */}
           <View style={styles.modeToggle}>
@@ -2234,80 +2308,6 @@ export default function TaskCreateModal({
             {/* Labels chip */}
             {/* Labels section removed - no longer used */}
           </ScrollView>
-
-          {/* Counts toward year plan — show for learning-ish types when a plan exists */}
-          {placement === 'calendar' &&
-            ['Lesson', 'Assignment', 'Project'].includes(eventType) &&
-            (academicYears.length > 0 || loadingAcademicYears) && (
-            <View style={[styles.inputGroup, { marginTop: 16, marginBottom: 8 }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
-                <Switch
-                  value={countsTowardPlan}
-                  onValueChange={setCountsTowardPlan}
-                  trackColor={{ false: BORDER, true: '#AECBFA' }}
-                  thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
-                />
-              </View>
-              {countsTowardPlan && (
-                <>
-                  {assigneeIds.length > 1 && (
-                    <Text style={[styles.errorTextSmall, { marginBottom: 8 }]}>
-                      Choose one child for counted events so progress is clear per child.
-                    </Text>
-                  )}
-                  {loadingAcademicYears ? (
-                    <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
-                  ) : (
-                    <>
-                      <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                        {(() => {
-                          const baseLabels = academicYears.map((ay) => {
-                            const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                            const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                            if (ay.year_name && String(ay.year_name).trim()) {
-                              return String(ay.year_name).trim();
-                            }
-                            return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
-                          });
-                          const labelCounts = {};
-                          baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-                          return academicYears.map((ay, idx) => {
-                            const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                            const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                            let base = ay.year_name && String(ay.year_name).trim()
-                              ? String(ay.year_name).trim()
-                              : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
-                            const needsDisambiguator = labelCounts[base] > 1;
-                            const monthRange = start && end
-                              ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
-                              : '';
-                            const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
-                            const isSelected = selectedAcademicYearId === ay.id;
-                            return (
-                              <TouchableOpacity
-                                key={ay.id}
-                                onPress={() => setSelectedAcademicYearId(ay.id)}
-                                style={[
-                                  styles.chipOption,
-                                  isSelected && styles.chipOptionActive,
-                                ]}
-                              >
-                                <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
-                                  {label}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          });
-                        })()}
-                      </View>
-                    </>
-                  )}
-                </>
-              )}
-            </View>
-          )}
 
           {/* End date picker - shown below start date for multi-day events */}
           {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (
@@ -3155,7 +3155,7 @@ export default function TaskCreateModal({
                     <View style={styles.field}>
                       <Text style={styles.fieldLabel}>Instructor / Host (optional)</Text>
                       <TextInput
-                        placeholder="e.g. Ms. Chen"
+                        placeholder="e.g. Elisa"
                         placeholderTextColor={MUTED}
                         value={instructor}
                         onChangeText={setInstructor}
@@ -3433,7 +3433,7 @@ export default function TaskCreateModal({
               )}
             </SafeView>
             <Text style={[styles.fieldHelpText, { marginTop: 4 }]}>
-              Note: Make edits or add/delete children/subjects from the Profile screen
+              Note: Make edits or add/delete children/subjects from the Family screen
             </Text>
 
             {/* Labels removed - no longer used */}
@@ -3686,7 +3686,7 @@ export default function TaskCreateModal({
                 styles.createButtonText,
                 (submitting || !isFormValid()) && styles.createButtonTextDisabled,
               ]}>
-                {submitting ? 'Adding…' : 'Add task'}
+                {submitting ? 'Adding…' : 'Add Event'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -4721,13 +4721,12 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: BORDER,
-    gap: 12,
   },
   cancelText: {
     color: '#666666',

@@ -6,13 +6,16 @@ import EventChip from '../calendar/EventChip';
 import { supabase } from '../../lib/supabase';
 import { permanentlyDeleteAllTrashEvents } from '../../lib/services/plannerClientWithOffline';
 
+import AttendanceView from './attendance/AttendanceView';
+
 export default function TasksView({ 
   events = [], 
   onEventPress, 
   onEventRightClick, 
   onEventComplete,
   onCreateTask,
-  children = []
+  children = [],
+  familyId: familyIdProp = null,
 }) {
   const [activeSection, setActiveSection] = useState('today');
   const [userLists, setUserLists] = useState([]);
@@ -263,7 +266,7 @@ export default function TasksView({
     return events.find(e => e.family_id || e.familyId)?.family_id || events.find(e => e.family_id || e.familyId)?.familyId;
   }, [events, trashEvents]);
   
-  const familyId = familyIdFromEvents || fetchedFamilyId;
+  const familyId = familyIdProp || familyIdFromEvents || fetchedFamilyId;
 
   // Fetch familyId from profile if not found in events
   useEffect(() => {
@@ -529,6 +532,65 @@ export default function TasksView({
     return filtered.filter(ev => !ev.deleted && !ev.deleted_at);
   }, [activeSection, nonDeletedEvents, selectedList, backlogEvents, trashEvents]);
 
+  // Trash display: group plan placeholder events into one row per plan; other events stay as single rows
+  const trashDisplayItems = useMemo(() => {
+    if (activeSection !== 'trash') return [];
+    const planGroups = {};
+    const singles = [];
+    for (const ev of trashEvents) {
+      if (ev.is_placeholder && ev.generated_by === 'plan_year' && ev.academic_year_id) {
+        const id = ev.academic_year_id;
+        if (!planGroups[id]) planGroups[id] = { events: [], label: null };
+        planGroups[id].events.push(ev);
+        if (!planGroups[id].label) {
+          const t = (ev.title || '').trim();
+          planGroups[id].label = t.replace(/\s*Placeholder\s*$/i, '').trim() || 'Plan';
+        }
+      } else {
+        singles.push(ev);
+      }
+    }
+    const items = [];
+    for (const ev of singles) items.push({ type: 'event', event: ev });
+    for (const id of Object.keys(planGroups)) {
+      const g = planGroups[id];
+      const deletedAt = g.events.length ? g.events.reduce((max, e) => {
+        const d = e.deleted_at ? new Date(e.deleted_at).getTime() : 0;
+        return d > max ? d : max;
+      }, 0) : 0;
+      items.push({
+        type: 'plan',
+        academicYearId: id,
+        label: g.label,
+        count: g.events.length,
+        deletedAt,
+        eventIds: g.events.map(e => e.id),
+      });
+    }
+    items.sort((a, b) => {
+      const da = a.type === 'plan' ? a.deletedAt : (a.event.deleted_at ? new Date(a.event.deleted_at).getTime() : 0);
+      const db = b.type === 'plan' ? b.deletedAt : (b.event.deleted_at ? new Date(b.event.deleted_at).getTime() : 0);
+      return db - da;
+    });
+    return items;
+  }, [activeSection, trashEvents]);
+
+  const renderPlanTrashItem = (item) => (
+    <View key={`plan-${item.academicYearId}`} style={styles.taskItem}>
+      <View style={styles.planTrashRow}>
+        <View style={{ marginRight: 10 }}>
+          <Calendar size={16} color="#6B7280" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.planTrashLabel}>Plan: {item.label}</Text>
+          <Text style={styles.planTrashMeta}>
+            {item.count} placeholder event{item.count === 1 ? '' : 's'}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+
   const renderTaskItem = (event) => {
     // Add active section metadata to the event object so the handler knows we're in trash
     const eventWithSection = { ...event, _activeSection: activeSection };
@@ -658,6 +720,21 @@ export default function TasksView({
           {/* System Views */}
           <View style={styles.sidebarSection}>
             <TouchableOpacity
+              style={[styles.sidebarItem, activeSection === 'attendance' && styles.sidebarItemActive]}
+              onPress={() => {
+                setActiveSection('attendance');
+                setSelectedList(null);
+              }}
+            >
+              <Text style={[
+                styles.sidebarItemText,
+                activeSection === 'attendance' && styles.sidebarItemTextActive
+              ]}>
+                Attendance
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={[styles.sidebarItem, activeSection === 'completed' && styles.sidebarItemActive]}
               onPress={() => {
                 setActiveSection('completed');
@@ -700,12 +777,13 @@ export default function TasksView({
             {activeSection === 'backlog' && 'Backlog'}
             {activeSection === 'completed' && 'Completed'}
             {activeSection === 'trash' && 'Trash'}
+            {activeSection === 'attendance' && 'Attendance'}
             {selectedList && selectedList.name}
           </Text>
         </View>
 
-        {/* Add Task Input or Clear Trash Button */}
-        {activeSection === 'trash' && trashEvents.length > 0 ? (
+        {/* Add Task Input or Clear Trash Button (hidden for Attendance) */}
+        {activeSection === 'attendance' ? null : activeSection === 'trash' && trashEvents.length > 0 ? (
           <TouchableOpacity
             style={[styles.addTaskInput, styles.clearTrashButton]}
             onPress={handlePermanentlyClearTrash}
@@ -732,18 +810,37 @@ export default function TasksView({
           </TouchableOpacity>
         )}
 
-        {/* Tasks List */}
-        <ScrollView style={styles.tasksList}>
-          {currentEvents.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>
-                No tasks {activeSection === 'today' ? 'today' : activeSection === 'completed' ? 'completed' : 'here'}
-              </Text>
-            </View>
-          ) : (
-            currentEvents.map(renderTaskItem)
-          )}
-        </ScrollView>
+        {/* Tasks List or Attendance */}
+        {activeSection === 'attendance' ? (
+          <AttendanceView
+            familyId={familyId}
+            children={children}
+            events={events}
+            onEventPress={onEventPress}
+          />
+        ) : (
+          <ScrollView style={styles.tasksList}>
+            {activeSection === 'trash' ? (
+              trashDisplayItems.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No tasks in trash</Text>
+                </View>
+              ) : (
+                trashDisplayItems.map((item) =>
+                  item.type === 'event' ? renderTaskItem(item.event) : renderPlanTrashItem(item)
+                )
+              )
+            ) : currentEvents.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>
+                  No tasks {activeSection === 'today' ? 'today' : activeSection === 'completed' ? 'completed' : 'here'}
+                </Text>
+              </View>
+            ) : (
+              currentEvents.map(renderTaskItem)
+            )}
+          </ScrollView>
+        )}
       </View>
     </View>
   );
@@ -885,6 +982,44 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
+  },
+  planTrashRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  planTrashLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planTrashMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  comingSoonContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 64,
+    minHeight: 200,
+  },
+  comingSoonText: {
+    fontSize: 18,
+    color: '#9CA3AF',
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,

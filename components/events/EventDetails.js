@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated } from 'react-native';
-import { Clock, UserCircle, BookOpen, Trash2, Edit2, Calendar, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
+import { Clock, UserCircle, BookOpen, Edit2, Calendar, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest } from '../../lib/apiClient';
@@ -46,7 +46,11 @@ const toDateInput = (timestamp) => {
   if (!timestamp) return '';
   const d = new Date(timestamp);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().split('T')[0];
+  // Use local date so the calendar day matches user/family timezone, not UTC
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 };
 
 // Helper function to check if a string is just a UUID (not a valid URL)
@@ -135,13 +139,33 @@ const toTimeInput = (timestamp) => {
   if (!timestamp) return '';
   const d = new Date(timestamp);
   if (Number.isNaN(d.getTime())) return '';
-  // Convert to 12-hour format with AM/PM
+  // Use local hours/minutes so display matches user/family timezone (not UTC)
   let hours = d.getHours();
   const minutes = d.getMinutes();
   const ampm = hours >= 12 ? 'PM' : 'AM';
   hours = hours % 12;
   hours = hours ? hours : 12; // 0 should be 12
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+};
+
+// Parse time string from RPC (HH:MM or H:MM 24h) or "9:00 AM" into 12h display string
+const timeStringToDisplay = (str) => {
+  if (!str || typeof str !== 'string') return '';
+  const trimmed = str.trim();
+  // Already 12h with AM/PM
+  if (/\d{1,2}:\d{2}\s*(AM|PM)/i.test(trimmed)) return trimmed;
+  // 24h HH:MM or H:MM
+  const m24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) {
+    let h = parseInt(m24[1], 10);
+    const min = parseInt(m24[2], 10);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return '';
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12;
+    h = h || 12;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
+  }
+  return '';
 };
 
 // Format date input to enforce YYYY-MM-DD
@@ -1017,15 +1041,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDraftAllDay(inferredAllDay || (!startTs && !endTs));
     setAllDay(inferredAllDay || (!startTs && !endTs));
 
-    // Time handling
+    // Time handling: prefer start_local/end_local from RPC (family timezone) so plan times display correctly
     if (inferredAllDay) {
       setDraftStartTime('');
       setDraftEndTime('');
       setStartTime('');
       setEndTime('');
     } else {
-      const startTimeStr = toTimeInput(startTs);
-      const endTimeStr = toTimeInput(endTs);
+      const startFromLocal = timeStringToDisplay(event.start_local);
+      const endFromLocal = timeStringToDisplay(event.end_local);
+      const startTimeStr = startFromLocal || toTimeInput(startTs);
+      const endTimeStr = endFromLocal || toTimeInput(endTs);
       setDraftStartTime(startTimeStr);
       setDraftEndTime(endTimeStr);
       setStartTime(startTimeStr || DEFAULT_START_TIME);
@@ -2630,53 +2656,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </Text>
                 </TouchableOpacity>
               )}
-              <Text style={{ fontSize: 12, color: '#6b7280', lineHeight: 18, marginTop: 8 }}>
-                Want this to remain counted toward your plan? Leave Counts toward plan on.
-              </Text>
             </View>
           )}
 
-          {/* Counts toward plan - for lessons (constraint inclusion, independent of overwrite) */}
-          {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && (
-            <View style={{ marginTop: 12, marginBottom: 4 }}>
-              <Text style={[styles.fieldLabel, { marginBottom: 6 }]}>Counts toward plan?</Text>
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                <TouchableOpacity
-                  onPress={() => setCountsTowardPlan(true)}
-                  style={[
-                    styles.radioOption,
-                    countsTowardPlan && styles.radioOptionActive,
-                    { minWidth: 120 },
-                  ]}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[styles.radioLabel, countsTowardPlan && styles.radioLabelActive]}>Include</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setCountsTowardPlan(false)}
-                  style={[
-                    styles.radioOption,
-                    !countsTowardPlan && styles.radioOptionActive,
-                    { minWidth: 120 },
-                  ]}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[styles.radioLabel, !countsTowardPlan && styles.radioLabelActive]}>Exclude</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={[styles.mutedText, { marginTop: 4, fontSize: 11 }]}>
-                {countsTowardPlan
-                  ? 'This lesson counts toward your instructional day/hour requirement.'
-                  : "This lesson won't count toward your requirement (useful for optional enrichment)."}
-              </Text>
-            </View>
-          )}
-
-          {/* Event Type - show only selected */}
+          {/* Event Type - at top */}
           {eventType && (
-            <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+            <SafeFieldRow style={[styles.fieldRow, { marginTop: 20, marginBottom: 8 }]}>
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Event Type</Text>
                 <View style={styles.dropdownContainer}>
@@ -2688,6 +2673,34 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
               </View>
             </SafeFieldRow>
+          )}
+
+          {/* Count as instructional time - Which plan? at top (when lesson and counted) */}
+          {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && placement === 'calendar' && countsTowardPlan && academicYearId && (
+            <View style={{ marginTop: 0, marginBottom: 4, paddingHorizontal: 2 }}>
+              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
+              <View style={[styles.chipOption, styles.chipOptionActive, { alignSelf: 'flex-start' }]}>
+                <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
+                  {(() => {
+                    const ay = academicYears.find((a) => a.id === academicYearId);
+                    if (!ay) return 'Loading…';
+                    if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
+                    const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                    const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                    if (start && end) {
+                      try {
+                        const s = new Date(start + 'T12:00:00');
+                        const e = new Date(end + 'T12:00:00');
+                        return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                      } catch (_) {
+                        return `${start} – ${end}`;
+                      }
+                    }
+                    return ay.id?.slice(0, 8) || 'Plan';
+                  })()}
+                </Text>
+              </View>
+            </View>
           )}
 
           {/* Tags - show if they exist */}
@@ -2715,20 +2728,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </SafeFieldRow>
           )}
-
-          {/* Status - Scheduled or Backlogged */}
-          <SafeFieldRow style={styles.fieldRow}>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Status</Text>
-              <View style={styles.dropdownContainer}>
-                <View style={[styles.dropdownOption, styles.dropdownOptionActive]}>
-                  <Text style={[styles.dropdownOptionText, styles.dropdownOptionTextActive]}>
-                    {placement === 'backlog' ? 'Backlogged' : 'Scheduled'}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </SafeFieldRow>
 
           {/* Date and Assignee - side by side in chipRow */}
           <ScrollView
@@ -3017,26 +3016,48 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </SafeView>
         </ScrollView>
 
-        {/* Footer with Edit and Delete buttons */}
+        {/* Footer: Cancel left; when part of plan: Edit Event + Edit Plan (Edit Plan highlighted); else Edit Event only */}
         <SafeView style={[styles.footer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
-          <TouchableOpacity onPress={() => {
-            setEditing(true);
-            onEditingChange?.(true);
-          }}>
-            <Text style={styles.cancelText}>Edit</Text>
+          <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20 }}>
+            <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
-          {event?.source !== 'global_holiday' && (
-            <TouchableOpacity 
-              onPress={handleDelete}
-              disabled={deleting}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            {countsTowardPlan && academicYearId && (
+              <TouchableOpacity
+                onPress={() => {
+                  setEditing(true);
+                  onEditingChange?.(true);
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 20 }}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.cancelText}>Edit Event</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={() => {
+                if (countsTowardPlan && academicYearId) {
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+                      detail: { from: 'event_details', academicYearId },
+                    }));
+                  }
+                  onClose?.();
+                } else {
+                  setEditing(true);
+                  onEditingChange?.(true);
+                }
+              }}
+              style={styles.createButton}
+              activeOpacity={0.9}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Trash2 size={16} color={deleting ? MUTED : '#ef4444'} />
-              <Text style={[styles.cancelText, { color: deleting ? MUTED : '#ef4444' }]}>
-                {deleting ? 'Deleting...' : 'Delete'}
+              <Text style={styles.createButtonText}>
+                {countsTowardPlan && academicYearId ? 'Edit Plan' : 'Edit Event'}
               </Text>
             </TouchableOpacity>
-          )}
+          </View>
         </SafeView>
       </SafeView>
     );
@@ -3070,6 +3091,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         )}
       </View>
 
+      {/* Warning when event is attached to a plan: saving will detach it */}
+      {event?.academic_year_id && (
+        <View style={{ marginHorizontal: 20, marginTop: 12, marginBottom: 4, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#FEF3C7', borderRadius: 8, borderWidth: 1, borderColor: '#F59E0B' }}>
+          <Text style={{ fontSize: 13, color: '#92400E', lineHeight: 18 }}>
+            Saving will make this event separate from the plan, so it will not count toward plan calculations (progress, target days/hours, etc).
+          </Text>
+        </View>
+      )}
+
       {/* Scrollable Content */}
       <ScrollView 
         style={styles.bodyScroll}
@@ -3085,8 +3115,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           },
         })}
       >
-      {/* Event Type selector - shown first */}
-      <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+      {/* Event Type - at top above Schedule on calendar/backlog */}
+      <SafeFieldRow style={[styles.fieldRow, { marginTop: 20, marginBottom: 12 }]}>
         <View style={styles.field}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={styles.fieldLabel}>Event Type</Text>
@@ -3126,6 +3156,69 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
         </View>
       </SafeFieldRow>
+
+      {/* Count this as instructional time - at top above Schedule on calendar/backlog */}
+      {placement === 'calendar' && (academicYears.length > 0 || event?.academic_year_id) && (
+        <View style={{ marginTop: 0, marginBottom: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
+            <Switch
+              value={countsTowardPlan}
+              onValueChange={setCountsTowardPlan}
+              trackColor={{ false: BORDER, true: '#AECBFA' }}
+              thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
+            />
+          </View>
+          {countsTowardPlan && (
+            <>
+              <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
+                {(() => {
+                  const baseLabels = academicYears.map((ay) => {
+                    const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                    const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                    if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
+                    return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
+                  });
+                  const labelCounts = {};
+                  baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+                  return academicYears.map((ay) => {
+                    const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                    const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                    let base = ay.year_name && String(ay.year_name).trim()
+                      ? String(ay.year_name).trim()
+                      : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
+                    const needsDisambiguator = labelCounts[base] > 1;
+                    const monthRange = start && end
+                      ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
+                      : '';
+                    const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
+                    const isSelected = academicYearId === ay.id;
+                    return (
+                      <TouchableOpacity
+                        key={ay.id}
+                        onPress={() => {
+                          setAcademicYearId(ay.id);
+                          if (validationErrors.instructional) {
+                            setValidationErrors({ ...validationErrors, instructional: null });
+                          }
+                        }}
+                        style={[styles.chipOption, isSelected && styles.chipOptionActive]}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  });
+                })()}
+              </View>
+              {validationErrors.instructional && (
+                <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
+              )}
+            </>
+          )}
+        </View>
+      )}
 
       {/* Placement toggle */}
       <View style={styles.modeToggle}>
@@ -3783,74 +3876,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </>
           )}
         </SafeView>
-
-        {/* Instructional accounting — Counts toward year plan, Plan, Instructional minutes */}
-        {(academicYears.length > 0 || event?.academic_year_id) && (
-          <SafeView style={styles.academicSection}>
-            <Text style={[styles.sectionLabel, { marginBottom: 8 }]}>Instructional accounting</Text>
-            <View style={styles.fieldRow}>
-              <Text style={styles.fieldLabel}>Counts toward year plan</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                <TouchableOpacity
-                  onPress={() => setCountsTowardPlan(true)}
-                  style={[styles.radioOption, countsTowardPlan && styles.radioOptionActive]}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[styles.radioLabel, countsTowardPlan && styles.radioLabelActive]}>ON</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setCountsTowardPlan(false)}
-                  style={[styles.radioOption, !countsTowardPlan && styles.radioOptionActive]}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[styles.radioLabel, !countsTowardPlan && styles.radioLabelActive]}>OFF</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            {countsTowardPlan && (
-              <>
-                <View style={[styles.fieldRow, { marginTop: 8 }]}>
-                  <Text style={styles.fieldLabel}>Plan</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-                    {academicYears.map((ay) => {
-                      const label =
-                        ay.year_name && String(ay.year_name).trim()
-                          ? String(ay.year_name).trim()
-                          : (() => {
-                              const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                              const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                              return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : (ay.id?.slice(0, 8) || 'Plan');
-                            })();
-                      const isSelected = academicYearId === ay.id;
-                      return (
-                        <TouchableOpacity
-                          key={ay.id}
-                          onPress={() => {
-                            setAcademicYearId(ay.id);
-                            if (validationErrors.instructional) {
-                              setValidationErrors({ ...validationErrors, instructional: null });
-                            }
-                          }}
-                          style={[styles.chipOption, isSelected && styles.chipOptionActive]}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
-                            {label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  {validationErrors.instructional && (
-                    <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
-                  )}
-                </View>
-              </>
-            )}
-          </SafeView>
-        )}
 
         {/* Academic Details Section - after Schedule time */}
         <SafeView style={styles.academicSection}>
@@ -4566,14 +4591,40 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
           <TouchableOpacity
-          onPress={handleSave}
+          onPress={async () => {
+            if (saving || !isFormValid()) return;
+            if (event?.academic_year_id) {
+              let confirmed = false;
+              if (Platform.OS === 'web') {
+                confirmed = window.confirm(
+                  'This event is attached to a plan. Saving your changes will remove it from the plan, and it will no longer count toward plan progress, target days, or target hours. Continue?'
+                );
+              } else {
+                confirmed = await new Promise((resolve) => {
+                  Alert.alert(
+                    'Remove from plan?',
+                    'This event is attached to a plan. Saving will remove it from the plan, and it will no longer count toward plan progress, target days, or target hours.',
+                    [
+                      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                      { text: 'Save changes', onPress: () => resolve(true) },
+                    ]
+                  );
+                });
+              }
+              if (!confirmed) return;
+            }
+            handleSave();
+          }}
           disabled={saving || !isFormValid()}
           style={[
             styles.createButton,
             (saving || !isFormValid()) && styles.createButtonDisabled,
           ]}
         >
-          <Text style={styles.createButtonText}>
+          <Text style={[
+            styles.createButtonText,
+            (saving || !isFormValid()) && styles.createButtonTextDisabled,
+          ]}>
             {saving ? 'Saving…' : 'Save changes'}
           </Text>
           </TouchableOpacity>
@@ -6257,20 +6308,33 @@ const styles = StyleSheet.create({
     }),
   },
   createButton: {
-    backgroundColor: '#8B7CF6',
+    backgroundColor: '#85C4F2',
     paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
   },
   createButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && {
+      cursor: 'not-allowed',
+    }),
   },
   createButtonText: {
-    color: '#ffffff',
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", sans-serif',
     }),
+  },
+  createButtonTextDisabled: {
+    color: '#FFFFFF',
   },
   inputError: {
     borderColor: '#ef4444',

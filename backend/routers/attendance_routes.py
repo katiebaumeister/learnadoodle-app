@@ -122,45 +122,50 @@ async def complete_event(
         # Extract day_date from start_ts (date only)
         day_date = start_ts.date().isoformat()
         
-        # Determine child_id: prefer first child from child_ids array, fallback to child_id
-        child_id = None
-        if event.get("child_ids") and len(event.get("child_ids", [])) > 0:
-            # Use first child from child_ids array
-            child_id = event["child_ids"][0]
+        # Resolve which children this event applies to: event child_ids/child_id, or all family children (whole-family)
+        child_ids_raw = event.get("child_ids") or []
+        child_ids_valid = [c for c in child_ids_raw if c] if isinstance(child_ids_raw, list) else []
+        if child_ids_valid:
+            child_ids_to_use = child_ids_valid
         elif event.get("child_id"):
-            # Use single child_id
-            child_id = event["child_id"]
+            child_ids_to_use = [event["child_id"]]
+        else:
+            # Whole-family event: one attendance record per family child (e.g. Lilly, Max, Enzo)
+            children_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
+            child_ids_to_use = [r["id"] for r in (children_res.data or [])]
+            if not child_ids_to_use:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Event has no children assigned and family has no children. Add children to the family or assign the event to specific children."
+                )
         
-        if not child_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Event must have at least one child assigned (child_id or child_ids)"
-            )
-        
-        # Upsert attendance record
-        attendance_data = {
-            "family_id": family_id,
-            "child_id": child_id,
-            "event_id": event_id,
-            "day_date": day_date,
-            "minutes": minutes,
-            "status": "present",
-            "note": body.note,
-            "created_by": user["id"]
-        }
-        
-        # Use upsert with conflict resolution on event_id (unique constraint)
-        attendance_res = supabase.table("attendance_records").upsert(
-            attendance_data,
-            on_conflict="event_id"
+        # One attendance record per child. Use delete-then-insert so we don't depend on
+        # ON CONFLICT (avoids "no unique or exclusion constraint" if migration not applied or client mismatch).
+        supabase.table("attendance_records").delete().eq("event_id", event_id).execute()
+        attendance_payloads = [
+            {
+                "family_id": family_id,
+                "child_id": cid,
+                "event_id": event_id,
+                "day_date": day_date,
+                "minutes": minutes,
+                "status": "present",
+                "note": body.note,
+                "created_by": user["id"]
+            }
+            for cid in child_ids_to_use
+        ]
+        attendance_res = supabase.table("attendance_records").insert(
+            attendance_payloads
         ).execute()
         
         if not attendance_res.data:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create attendance record"
+                detail="Failed to create attendance record(s)"
             )
         
+        # Return first record for API shape; all children have a row in DB
         attendance = attendance_res.data[0] if isinstance(attendance_res.data, list) else attendance_res.data
         
         log_event("event.completed", event_id=event_id, family_id=family_id, minutes=minutes)

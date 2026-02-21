@@ -16,6 +16,7 @@ import {
 import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 import { getHolidaysForRange } from '../lib/services/academicYearClient'
+import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
@@ -2210,8 +2211,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       }
       
       // Invalidate calendar cache so refetch returns fresh data (e.g. after Fix-It apply or plan changes)
-      setCalendarDataCache({});
-      setCalendarEvents({});
+      // Skip clear when only toggling attendance to avoid blink (refetch will replace current month)
+      const skipCacheClear = event?.detail?.skipCacheClear === true;
+      if (!skipCacheClear) {
+        setCalendarDataCache({});
+        setCalendarEvents({});
+      }
 
       const forceInvalidate = event?.detail?.forceInvalidate === true;
       const doRefetch = () => {
@@ -6326,9 +6331,41 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             window.dispatchEvent(new CustomEvent('plannerEventContextMenu', { detail: { event: ev, position: { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY } } }));
           }
         }}
-        onEventComplete={(event) => {
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        onEventComplete={async (event) => {
+          if (!event?.id) return;
+          const isCurrentlyDone = event.status === 'done';
+          const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
+          const dateKey = event.date_local || (event.start_ts && event.start_ts.split('T')[0]);
+          const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
+          const cacheMonth = calendarDataCache[monthKey] || {};
+          const listForDate = calendarEvents[dateKey] || cacheMonth[dateKey] || [];
+          const optimisticList = listForDate.map((ev) =>
+            ev.id === event.id ? { ...ev, status: newStatus } : ev
+          );
+          setCalendarEvents((prev) => ({ ...prev, [dateKey]: optimisticList }));
+          try {
+            if (isCurrentlyDone) {
+              const result = await updateEventStatus(event.id, 'scheduled');
+              if (result.error) throw result.error;
+            } else {
+              const result = await completeEvent(event.id);
+              if (result.error) throw result.error;
+            }
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar', {
+                detail: {
+                  skipHomeRefresh: true,
+                  skipCacheClear: true,
+                  targetYear: plannerDate.getFullYear(),
+                  targetMonth: plannerDate.getMonth(),
+                },
+              }));
+            }
+          } catch (err) {
+            setCalendarEvents((prev) => ({ ...prev, [dateKey]: listForDate }));
+            if (Platform.OS === 'web') {
+              alert(`Failed to ${isCurrentlyDone ? 'unmark' : 'mark'} event: ${err?.message || err}`);
+            }
           }
         }}
         onNavigateToIntelligence={() => onTabChange && onTabChange('intelligence')}

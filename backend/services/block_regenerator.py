@@ -9,7 +9,7 @@ and deleted_at IS NULL. This avoids duplicating when a parent has moved a lesson
 we do not then insert a new placeholder at the block's original slot (e.g. 9–11am).
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Qualifying event type for collision avoidance (must match plan_health / compliance)
@@ -17,15 +17,32 @@ QUALIFYING_EVENT_TYPE = "lesson"
 
 from services.blocks_calculator import get_block_occurrence_dates
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 
-def _parse_time_to_iso(date_obj: date, time_str: str) -> str:
-    """Build ISO timestamp: date + time_str (e.g. '09:00') -> YYYY-MM-DDTHH:MM:00+00:00"""
+
+def _parse_time_to_iso(date_obj: date, time_str: str, tz_name: Optional[str] = None) -> str:
+    """
+    Build ISO timestamp in UTC: date + time_str (e.g. '09:00') interpreted as local time in tz_name.
+    If tz_name is None or 'UTC', time is treated as UTC (legacy). Otherwise the time is interpreted
+    in the given timezone (e.g. 'America/New_York') and converted to UTC so calendar displays correctly.
+    """
     parts = (time_str or "09:00").strip().split(":")
     h = int(parts[0]) if len(parts) >= 1 and parts[0].strip() else 9
     m = int(parts[1].split()[0]) if len(parts) >= 2 and parts[1] else 0
     h = max(0, min(23, h))
     m = max(0, min(59, m))
-    return f"{date_obj.isoformat()}T{h:02d}:{m:02d}:00+00:00"
+    if not tz_name or tz_name.upper() == "UTC":
+        return f"{date_obj.isoformat()}T{h:02d}:{m:02d}:00+00:00"
+    try:
+        local_tz = ZoneInfo(tz_name)
+        local_dt = datetime(date_obj.year, date_obj.month, date_obj.day, h, m, 0, tzinfo=local_tz)
+        utc_dt = local_dt.astimezone(timezone.utc)
+        return utc_dt.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    except Exception:
+        return f"{date_obj.isoformat()}T{h:02d}:{m:02d}:00+00:00"
 
 
 def _event_date_from_start_ts(ev: Dict[str, Any]) -> Optional[date]:
@@ -51,6 +68,7 @@ def regenerate_block(
     family_child_ids: List[Any],
     child_id_override: str = None,
     *,
+    family_timezone: Optional[str] = None,
     log_event_fn=None,
     user_id: str = None,
 ) -> Dict[str, int]:
@@ -167,11 +185,11 @@ def regenerate_block(
     to_delete_ids: List[str] = []
 
     for d in occ_dates:
-        start_ts = _parse_time_to_iso(d, block.get("start_time", "09:00"))
-        end_ts = _parse_time_to_iso(d, block.get("end_time", "10:00"))
+        start_ts = _parse_time_to_iso(d, block.get("start_time", "09:00"), family_timezone)
+        end_ts = _parse_time_to_iso(d, block.get("end_time", "10:00"), family_timezone)
         if block.get("all_day"):
-            start_ts = f"{d.isoformat()}T09:00:00+00:00"
-            end_ts = f"{d.isoformat()}T15:00:00+00:00"
+            start_ts = _parse_time_to_iso(d, "09:00", family_timezone)
+            end_ts = _parse_time_to_iso(d, "15:00", family_timezone)
         subject_id = block.get("subject_id")
 
         if is_whole_family:
@@ -247,6 +265,11 @@ def regenerate_block(
 
     # Execute: updates, then inserts, then deletes (soft-delete if schema has deleted_at)
     updated_count = 0
+    if to_update and family_timezone:
+        print(
+            f"[BACKEND] block_regen sample update: start_ts={to_update[0].get('start_ts')} tz={family_timezone}",
+            flush=True,
+        )
     for row in to_update:
         try:
             payload = {
@@ -261,8 +284,8 @@ def regenerate_block(
                 payload["deleted_at"] = None
             supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
             updated_count += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[BACKEND] block_regen update failed for id={row.get('id')}: {exc}", flush=True)
 
     inserted_count = 0
     if to_insert:

@@ -119,6 +119,7 @@ class ApplyToCalendarInput(BaseModel):
     target_hours: Optional[float] = None
     subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # { subject_id: { target_days, target_hours } }; validated on write
     year_name: Optional[str] = None  # Display name e.g. "Lilly · Math · Feb 26 – Mar 26, 2026"
+    timezone: Optional[str] = None  # IANA timezone from client (e.g. America/New_York) when family timezone not set
 
 
 class BlockRegenResult(BaseModel):
@@ -724,12 +725,13 @@ async def sync_global_holidays(
 @router.get("/plan_health", response_model=PlanHealthOutput)
 async def get_plan_health(
     family_id: str = Query(..., description="Family ID"),
+    academic_year_id_param: Optional[str] = Query(None, alias="academic_year_id", description="If provided, health for this plan only; otherwise most recently updated plan"),
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
     """
     Compute plan health (actual compliance) from events in DB.
-    Uses academic_year_plan for the family's most recent academic year.
+    When academic_year_id is provided, uses that plan only. Otherwise uses the family's most recent academic year.
     Stores result in health_cache for instant UI.
     """
     from services.plan_health import compute_plan_health_from_attributions
@@ -742,34 +744,40 @@ async def get_plan_health(
         supabase = get_admin_client()
 
         # planning_mode / subject_targets may not exist yet (migration order). Be resilient in dev.
+        base_query = (
+            supabase.table("academic_year_plan")
+            .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets, blocks, baseline_scheduled_days, baseline_scheduled_dates")
+            .eq("family_id", family_id)
+        )
+        if academic_year_id_param:
+            base_query = base_query.eq("academic_year_id", academic_year_id_param)
+        else:
+            base_query = base_query.order("updated_at", desc=True).limit(1)
         try:
-            plan_resp = (
-                supabase.table("academic_year_plan")
-                .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, subject_targets, blocks, baseline_scheduled_days, baseline_scheduled_dates")
-                .eq("family_id", family_id)
-                .order("updated_at", desc=True)
-                .limit(1)
-                .execute()
-            )
+            plan_resp = base_query.execute()
         except Exception:
             try:
-                plan_resp = (
+                fallback = (
                     supabase.table("academic_year_plan")
                     .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, planning_mode, blocks")
                     .eq("family_id", family_id)
-                    .order("updated_at", desc=True)
-                    .limit(1)
-                    .execute()
                 )
+                if academic_year_id_param:
+                    fallback = fallback.eq("academic_year_id", academic_year_id_param)
+                else:
+                    fallback = fallback.order("updated_at", desc=True).limit(1)
+                plan_resp = fallback.execute()
             except Exception:
-                plan_resp = (
+                fallback2 = (
                     supabase.table("academic_year_plan")
                     .select("id, academic_year_id, family_id, start_date, end_date, constraint_mode, target_days, target_hours, blocks")
                     .eq("family_id", family_id)
-                    .order("updated_at", desc=True)
-                    .limit(1)
-                    .execute()
                 )
+                if academic_year_id_param:
+                    fallback2 = fallback2.eq("academic_year_id", academic_year_id_param)
+                else:
+                    fallback2 = fallback2.order("updated_at", desc=True).limit(1)
+                plan_resp = fallback2.execute()
         if not plan_resp.data or len(plan_resp.data) == 0:
             print("[BACKEND] plan_health: no plan found for family, returning plan_exists=False", flush=True)
             return PlanHealthOutput(plan_exists=False)
@@ -1983,6 +1991,26 @@ async def apply_to_calendar(
             supabase.table("academic_year_plan").upsert(plan_data, on_conflict="academic_year_id").execute()
             supabase.table("academic_years").update({"allowed_weekdays": allowed_weekdays_for_persist}).eq("id", academic_year_id).execute()
 
+        # Timezone for plan times: prefer client (browser), then family DB, else UTC
+        family_tz = None
+        if getattr(body, "timezone", None) and (body.timezone or "").strip():
+            family_tz = (body.timezone or "").strip()
+        if not family_tz:
+            try:
+                tz_resp = supabase.table("family").select("timezone").eq("id", body.family_id).maybe_single().execute()
+                if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
+                    family_tz = (tz_resp.data.get("timezone") or "").strip()
+            except Exception:
+                pass
+        if not family_tz:
+            family_tz = "UTC"
+            print("[BACKEND] apply_to_calendar: no timezone from client or family; using UTC (plan times may show wrong)", flush=True)
+        else:
+            print(f"[BACKEND] apply_to_calendar using timezone: {family_tz}", flush=True)
+        if use_blocks and blocks_to_use:
+            b0 = blocks_to_use[0]
+            print(f"[BACKEND] apply_to_calendar first block: start_time={b0.get('start_time')} end_time={b0.get('end_time')}", flush=True)
+
         if use_blocks:
             # Block-aware regeneration: only touch placeholders for each block (no global delete)
             for block in blocks_to_use:
@@ -2000,6 +2028,7 @@ async def apply_to_calendar(
                     subject_name,
                     family_child_ids,
                     body.child_id,
+                    family_timezone=family_tz,
                     log_event_fn=log_event,
                     user_id=user["id"],
                 )
@@ -2079,8 +2108,14 @@ async def apply_to_calendar(
 
         planned_days = len(planned_dates_set)
         log_event("academic_year.apply_to_calendar.success", user_id=user["id"], created=created_count, planned_days=planned_days)
+        totals_msg = ""
+        if use_blocks and block_regen_results:
+            tu = sum(r.updated for r in block_regen_results)
+            ti = sum(r.inserted for r in block_regen_results)
+            td = sum(r.deleted for r in block_regen_results)
+            totals_msg = f" updated={tu} inserted={ti} deleted={td}"
         print(
-            f"[BACKEND] apply_to_calendar success: academic_year_id={academic_year_id} created={created_count} planned_days={planned_days}",
+            f"[BACKEND] apply_to_calendar success: academic_year_id={academic_year_id} created={created_count} planned_days={planned_days}{totals_msg}",
             flush=True,
         )
 

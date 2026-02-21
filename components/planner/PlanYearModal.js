@@ -540,8 +540,9 @@ export default function PlanYearModal({
     if (visible && !prevVisibleRef.current) {
       const isEditPlanMode = !!initialAcademicYearId;
       setSectionWhoExpanded(!isEditPlanMode);
-      setSectionScheduleExpanded(!isEditPlanMode);
-      setSectionDatesExpanded(!isEditPlanMode);
+      // Edit Plan: expand sections 2 (Scheduled Class Days) and 3 (Dates & Requirements); new plan: expand all
+      setSectionScheduleExpanded(true);
+      setSectionDatesExpanded(true);
     }
     if (!visible) {
       setSuggestionAccepted(false);
@@ -606,7 +607,7 @@ export default function PlanYearModal({
   // Compute schedule potential when blocks + date range + exclusions change (debounced to avoid 429; immediate on first load so suggestion shows with modal)
   const triggerSchedulePotential = useCallback((immediate = false) => {
     if (schedulePotentialTimeoutRef.current) clearTimeout(schedulePotentialTimeoutRef.current);
-    const delay = immediate || !schedulePotentialFetchedRef.current ? 0 : 300;
+    const delay = immediate || !schedulePotentialFetchedRef.current ? 0 : 120;
     schedulePotentialTimeoutRef.current = setTimeout(async () => {
       if (!familyId || !startDate || !endDate || blocks.length === 0) {
         setSchedulePotential(null);
@@ -683,21 +684,26 @@ export default function PlanYearModal({
     }
   }, [flexSuggestion]);
 
-  // Fetch plan health when modal is open (for manual counted events panel)
+  // Plan id for health: use state or initial prop so we scope correctly on first render (before sync effect)
+  const planIdForHealth = academicYearId ?? initialAcademicYearId ?? undefined;
+
+  // Fetch plan health when modal is open (scoped to current plan when editing)
   useEffect(() => {
     if (!visible || !familyId) {
       setPlanHealth(null);
       return;
     }
+    // When editing a specific plan, invalidate cache so we don't show another plan's cached health
+    if (planIdForHealth) invalidatePlanHealthCache();
     let cancelled = false;
     (async () => {
-      const { data, error } = await getPlanHealth(familyId);
+      const { data, error } = await getPlanHealth(familyId, planIdForHealth);
       if (cancelled) return;
       if (!error && data) setPlanHealth(data);
       else setPlanHealth(null);
     })();
     return () => { cancelled = true; };
-  }, [visible, familyId]);
+  }, [visible, familyId, planIdForHealth]);
 
   // Fetch existing placeholder count when we have an academic year id
   useEffect(() => {
@@ -834,7 +840,11 @@ export default function PlanYearModal({
   const targetDaysNum = planConstraintMode === 'days'
     ? (parseInt(planTargetDays, 10) || TARGET_INSTRUCTIONAL_DAYS_DEFAULT)
     : TARGET_INSTRUCTIONAL_DAYS_DEFAULT;
-  const feasible = blocks.length > 0 ? (schedulePotential ? schedulePotential.projected_days > 0 : false) : eligibleCount >= targetDaysNum;
+  const feasible = blocks.length > 0
+    ? (planConstraintMode === 'none'
+        ? !!(startDate && endDate)
+        : (schedulePotential ? schedulePotential.projected_days > 0 : false))
+    : eligibleCount >= targetDaysNum;
 
   const runApplyToCalendar = async (replacePlaceholdersChoice) => {
     setSaving(true);
@@ -881,6 +891,16 @@ export default function PlanYearModal({
         })) : [],
         subject_targets: planHealth?.subject_targets ?? undefined,
         year_name,
+        // Always send timezone so plan times (e.g. 9 AM) are stored correctly; never fall back to UTC
+        timezone: (function getClientTimezone() {
+          try {
+            if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+              const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+              if (tz && typeof tz === 'string') return tz.trim();
+            }
+          } catch (e) { /* ignore */ }
+          return 'America/New_York';
+        })(),
       };
 
       const { data, error: applyError } = await applyToCalendar(payload);
@@ -890,14 +910,20 @@ export default function PlanYearModal({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
       }
-      const { data: healthData } = await getPlanHealth(familyId);
+      const { data: healthData } = await getPlanHealth(familyId, academicYearId ?? undefined);
       if (healthData) setPlanHealth(healthData);
 
       const message = data?.totals
         ? `Updated ${data.totals.updated ?? 0}, added ${data.totals.inserted ?? 0}, removed ${data.totals.deleted ?? 0} placeholders across ${data?.planned_days ?? 0} days.`
         : `Created ${data?.created ?? 0} lesson placeholders across ${data?.planned_days ?? 0} days.`;
       loadedYearIdRef.current = null;
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        // Tell open event modal to refetch so plan time updates show immediately (delay so DB commit is visible)
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
+        }, 350);
+      }
       setTimeout(() => Alert.alert('Success', message), 0);
       setTimeout(() => {
         onCompleteRef.current?.();
@@ -1055,7 +1081,7 @@ export default function PlanYearModal({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
       }
-      const { data: healthData } = await getPlanHealth(familyId);
+      const { data: healthData } = await getPlanHealth(familyId, academicYearId ?? data?.academic_year_id ?? undefined);
       if (healthData) setPlanHealth(healthData);
       Alert.alert('Success', 'Academic year saved successfully', [
         { text: 'OK', onPress: () => { onComplete?.(); onClose(); }},
@@ -1367,14 +1393,6 @@ export default function PlanYearModal({
                           </TouchableOpacity>
                         );
                       })}
-                      <Text style={styles.pickerOr}>Or</Text>
-                      <TouchableOpacity
-                        onPress={() => setStartCreatingNew(true)}
-                        style={[styles.pickerCreateButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: ACCENT }]}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={[styles.pickerCreateButtonText, { color: ACCENT }]}>Create new plan</Text>
-                      </TouchableOpacity>
                     </View>
                   </>
                 ) : (
@@ -2239,8 +2257,11 @@ export default function PlanYearModal({
                             <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_hours ?? planTargetHours} hours</Text>
                           )}
                         </View>
-                        {/* No requirement: baseline / deleted lesson message */}
-                        {planConstraintMode === 'none' &&
+                        {/* No requirement: baseline / deleted lesson message — only when health is for this plan (id + date range match) */}
+                        {planIdForHealth &&
+                          planHealth?.academic_year_id === planIdForHealth &&
+                          (!endDate || (planHealth?.end_date && planHealth.end_date.slice(0, 10) === endDate.slice(0, 10))) &&
+                          planConstraintMode === 'none' &&
                           planHealth?.baseline_scheduled_days != null &&
                           planHealth.current_scheduled_days < planHealth.baseline_scheduled_days &&
                           planHealth.deleted_dates?.length > 0 && (
@@ -2375,9 +2396,12 @@ export default function PlanYearModal({
                             )}
                           </View>
                         )}
-                        {/* Manual instructional events counted */}
-                        {(planHealth?.manual_events_days != null && planHealth.manual_events_days > 0) ||
-                         (planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0) ? (
+                        {/* Manual instructional events counted — only when health is for this plan (id + date range match) */}
+                        {planIdForHealth &&
+                        planHealth?.academic_year_id === planIdForHealth &&
+                        (!endDate || (planHealth?.end_date && planHealth.end_date.slice(0, 10) === endDate.slice(0, 10))) &&
+                        ((planHealth?.manual_events_days != null && planHealth.manual_events_days > 0) ||
+                         (planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0)) ? (
                           <View style={[styles.inputGroup, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: ELIGIBILITY_CARD_BORDER }]}>
                             <Text style={[styles.mutedText, { marginBottom: 6 }]}>
                               Manual instructional events counted this term: {planHealth.manual_events_days ?? 0} days
@@ -2385,18 +2409,6 @@ export default function PlanYearModal({
                                 ? `, ${Number(planHealth.manual_events_hours).toFixed(0)} hours`
                                 : ''}
                             </Text>
-                            {typeof window !== 'undefined' && (
-                              <TouchableOpacity
-                                style={[styles.addButton, { alignSelf: 'flex-start' }]}
-                                onPress={() => {
-                                  window.dispatchEvent(new CustomEvent('viewCountedEvents', {
-                                    detail: { academic_year_id: planHealth?.academic_year_id },
-                                  }));
-                                }}
-                              >
-                                <Text style={{ color: ACCENT, fontWeight: '600' }}>View counted events</Text>
-                              </TouchableOpacity>
-                            )}
                           </View>
                         ) : null}
                       </View>

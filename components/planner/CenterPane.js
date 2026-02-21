@@ -234,6 +234,7 @@ export default function CenterPane({
               onEventComplete={onEventComplete}
               onCreateTask={onCreateTask}
               children={children}
+              familyId={familyId}
             />
           )}
         </>
