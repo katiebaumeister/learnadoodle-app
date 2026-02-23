@@ -23,6 +23,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     if (eventTypeLower === 'assignment') return 'assignment';
     if (eventTypeLower === 'schedule block' || eventTypeLower === 'scheduled class day') return 'schedule_block';
     if (eventTypeLower === 'appointment') return 'appointment';
+    if (eventTypeLower === 'project') return 'project';
+    if (eventTypeLower === 'exam' || eventTypeLower === 'assessment') return 'exam';
     if (eventTypeLower === 'holiday') return 'holiday';
     
     // Fallback to ev.color if set, otherwise default to appointment (gray)
@@ -66,6 +68,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#FFE8D1'; // Soft Orange / Peach
       case 'appointment':
         return '#F2F4F7'; // Warm Gray
+      case 'project':
+        return '#D6F0ED'; // Soft Teal
+      case 'exam':
+        return '#FCE7F3'; // Soft Pink
       case 'holiday':
         return '#FEF3C7'; // Soft Amber (day off)
       default:
@@ -86,6 +92,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#FFD9B3'; // More saturated Soft Orange / Peach
       case 'appointment':
         return '#E5E7EB'; // More saturated Warm Gray
+      case 'project':
+        return '#B8E6E0'; // More saturated Soft Teal
+      case 'exam':
+        return '#F9D5E8'; // More saturated Soft Pink
       case 'holiday':
         return '#FDE68A'; // More saturated Amber
       default:
@@ -106,6 +116,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#E08A3C'; // Soft Orange / Peach accent
       case 'appointment':
         return '#6B7280'; // Warm Gray accent
+      case 'project':
+        return '#0D9488'; // Teal accent
+      case 'exam':
+        return '#BE185D'; // Pink accent
       case 'holiday':
         return '#B45309'; // Amber accent
       default:
@@ -482,6 +496,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#E08A3C'; // Soft Orange / Peach accent
       case 'appointment':
         return '#6B7280'; // Warm Gray accent
+      case 'project':
+        return '#0D9488'; // Teal accent
+      case 'exam':
+        return '#BE185D'; // Pink accent
       default:
         return '#6B7280'; // Default Warm Gray accent
     }

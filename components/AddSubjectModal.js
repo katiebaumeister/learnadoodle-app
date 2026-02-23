@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { X, ChevronDown, Plus, Trash2, CheckCircle } from 'lucide-react';
+import { X, ChevronDown, Plus, Trash2, CheckCircle, BookOpen } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -9,6 +9,7 @@ import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
+import ConfirmDialog from './ConfirmDialog';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -54,6 +55,7 @@ export default function AddSubjectModal({
   const [subjectEvents, setSubjectEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [deletingEvents, setDeletingEvents] = useState(false);
+  const [deleteEventsConfirm, setDeleteEventsConfirm] = useState({ visible: false });
   const [markingAttended, setMarkingAttended] = useState(false);
 
   // Update children when prop changes
@@ -139,52 +141,19 @@ export default function AddSubjectModal({
   };
   
   // Delete all events for this subject
-  const handleDeleteAllEvents = async () => {
+  const performDeleteAllEvents = async () => {
     if (!subject || !subject.id || subjectEvents.length === 0) return;
-    
-    // Web-compatible confirmation
-    let confirmed = false;
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
-      confirmed = window.confirm(
-        `Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`
-      );
-    } else {
-      // Native Alert.alert
-      confirmed = await new Promise((resolve) => {
-        Alert.alert(
-          'Delete All Events',
-          `Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            {
-              text: 'Delete All',
-              style: 'destructive',
-              onPress: () => resolve(true),
-            }
-          ]
-        );
-      });
-    }
-    
-    if (!confirmed) return;
-    
     setDeletingEvents(true);
     try {
       const eventIds = subjectEvents.map(e => e.id);
-      
-      // Soft delete events
       const { error } = await supabase
         .from('events')
         .update({ deleted_at: new Date().toISOString() })
         .in('id', eventIds)
         .eq('family_id', familyId);
-      
       if (error) throw error;
-      
       toast.show('All events deleted successfully', 'success');
       setSubjectEvents([]);
-      
-      // Refresh events in the app
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshEvents'));
         window.dispatchEvent(new CustomEvent('subjectUpdated'));
@@ -195,6 +164,26 @@ export default function AddSubjectModal({
     } finally {
       setDeletingEvents(false);
     }
+  };
+
+  const handleDeleteAllEvents = async () => {
+    if (!subject || !subject.id || subjectEvents.length === 0) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      setDeleteEventsConfirm({ visible: true });
+      return;
+    }
+    const confirmed = await new Promise((resolve) => {
+      Alert.alert(
+        'Delete All Events',
+        `Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Delete All', style: 'destructive', onPress: () => resolve(true) }
+        ]
+      );
+    });
+    if (!confirmed) return;
+    await performDeleteAllEvents();
   };
   
   // Mark all events as attended
@@ -565,8 +554,15 @@ export default function AddSubjectModal({
           style={styles.modal}
         >
           {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>{subject ? 'Edit Subject' : 'Add Subject'}</Text>
+          <View style={[styles.header, subject && styles.headerEdit]}>
+            <View style={styles.headerTitleRow}>
+              {subject ? (
+                <View style={styles.headerIconWrap}>
+                  <BookOpen size={20} color="#6b7280" />
+                </View>
+              ) : null}
+              <Text style={styles.title}>{subject ? 'Edit Subject' : 'Add Subject'}</Text>
+            </View>
             <TouchableOpacity
               style={styles.closeButton}
               onPress={onClose}
@@ -576,6 +572,7 @@ export default function AddSubjectModal({
               <X size={20} color="#6b7280" />
             </TouchableOpacity>
           </View>
+          {subject ? <View style={styles.headerDivider} /> : null}
 
           {/* Content - Scrollable */}
           <ScrollView 
@@ -921,8 +918,9 @@ export default function AddSubjectModal({
             )}
           </ScrollView>
 
+          {subject ? <View style={styles.footerDivider} /> : null}
           {/* Fixed Footer with Save Button */}
-          <View style={styles.footer}>
+          <View style={[styles.footer, subject && styles.footerEdit]}>
             <TouchableOpacity
               style={[styles.cancelButton, isSubmitting && styles.buttonDisabled]}
               onPress={onClose}
@@ -956,6 +954,18 @@ export default function AddSubjectModal({
         }}
         familyId={familyId}
         children={children}
+      />
+      <ConfirmDialog
+        visible={deleteEventsConfirm.visible}
+        title="Delete All Events"
+        message={`Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`}
+        confirmLabel="OK"
+        cancelLabel="Cancel"
+        onConfirm={async () => {
+          setDeleteEventsConfirm({ visible: false });
+          await performDeleteAllEvents();
+        }}
+        onCancel={() => setDeleteEventsConfirm({ visible: false })}
       />
     </RNModal>
   );
@@ -1006,6 +1016,31 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  headerEdit: {
+    borderBottomWidth: 0,
+    paddingBottom: 0,
+    paddingTop: 24,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  headerIconWrap: {
+    marginRight: 2,
+  },
+  headerDivider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginHorizontal: 20,
+    marginTop: 20,
+  },
+  footerDivider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginHorizontal: 20,
   },
   title: {
     fontSize: 18,
@@ -1113,7 +1148,7 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 24,
     paddingVertical: 16,
@@ -1121,6 +1156,9 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
     backgroundColor: '#ffffff',
     gap: 12,
+  },
+  footerEdit: {
+    borderTopWidth: 0,
   },
   cancelButton: {
     paddingVertical: 10,

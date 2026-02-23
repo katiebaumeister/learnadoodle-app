@@ -1,5 +1,7 @@
-import React, { useState, useImperativeHandle, forwardRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Platform } from 'react-native';
+import React, { useState, useImperativeHandle, forwardRef, useEffect, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Platform, Modal } from 'react-native';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useModalStackElevation } from './hooks/useModalStackElevation';
 
 const GRADES = ['Pre-K','K','1','2','3','4','5','6','7','8','9','10','11','12'];
 const STATES = ['None','AL','AK','AZ','AR','CA','CO','CT','DC','DE','FL','GA','HI','IA','ID','IL','IN','KS','KY','LA','MA','MD','ME','MI','MN','MO','MS','MT','NC','ND','NE','NH','NJ','NM','NV','NY','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VA','VT','WA','WI','WV','WY'];
@@ -38,6 +40,40 @@ const EXECUTIVE_FUNCTION = [
 // Limit to 8 avatars as per spec
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8'];
 
+// Date picker chip style (match Add Event / TaskCreateModal)
+const FG = '#111827';
+const SUB = '#6b7280';
+const ACCENT = '#d4a256';
+const CHIP_BG = '#f3f4f6';
+const CHIP_BORDER = '#e5e7eb';
+
+function toDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function toDisplayDate(s) {
+  if (!s || typeof s !== 'string') return null;
+  try {
+    const d = new Date(s + 'T12:00:00');
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch (_) { return null; }
+}
+function parseDateSafe(s) {
+  if (!s || typeof s !== 'string') return null;
+  try {
+    const d = new Date(s + 'T12:00:00');
+    return isNaN(d.getTime()) ? null : d;
+  } catch (_) { return null; }
+}
+function addDays(d, n) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
 const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, onValidationChange }, ref) => {
   const [name, setName] = useState(initial.name || '');
   const [nickname, setNickname] = useState(initial.nickname || '');
@@ -54,6 +90,21 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const [executiveFunction, setExecutiveFunction] = useState(Array.isArray(initial.executive_function) ? initial.executive_function : []);
   const [supportNotes, setSupportNotes] = useState(initial.support_notes || '');
   const [otherDiagnosis, setOtherDiagnosis] = useState('');
+
+  // School year & target (optional) — used for attendance / progress
+  const [targetMode, setTargetMode] = useState(initial.targetMode || '');
+  const [targetDays, setTargetDays] = useState(initial.targetDays != null ? String(initial.targetDays) : '');
+  const [targetHours, setTargetHours] = useState(initial.targetHours != null ? String(initial.targetHours) : '');
+  const [schoolYearStart, setSchoolYearStart] = useState(initial.schoolYearStart || '');
+  const [schoolYearEnd, setSchoolYearEnd] = useState(initial.schoolYearEnd || '');
+  const [showDatePickerFor, setShowDatePickerFor] = useState(null);
+  const [calendarViewMonth, setCalendarViewMonth] = useState(() => {
+    const s = initial.schoolYearStart || '';
+    const d = parseDateSafe(s);
+    return d || new Date();
+  });
+  const datePickerOverlayRef = useRef(null);
+  useModalStackElevation(datePickerOverlayRef, !!showDatePickerFor, 50000);
 
   // Update form when initial data changes (for edit mode)
   useEffect(() => {
@@ -87,6 +138,11 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
     if (initial.support_notes !== undefined) {
       setSupportNotes(initial.support_notes || '');
     }
+    if (initial.targetMode !== undefined) setTargetMode(initial.targetMode || '');
+    if (initial.targetDays !== undefined) setTargetDays(initial.targetDays != null ? String(initial.targetDays) : '');
+    if (initial.targetHours !== undefined) setTargetHours(initial.targetHours != null ? String(initial.targetHours) : '');
+    if (initial.schoolYearStart !== undefined) setSchoolYearStart(initial.schoolYearStart || '');
+    if (initial.schoolYearEnd !== undefined) setSchoolYearEnd(initial.schoolYearEnd || '');
   }, [initial]);
 
   const avatarSources = {
@@ -144,6 +200,12 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       supportNeeds: supportNeeds.length > 0 ? supportNeeds : null,
       executiveFunction: executiveFunction.length > 0 ? executiveFunction : null,
       supportNotes: supportNotes.trim() || null,
+      // School year (optional) — applied to family academic year
+      targetMode: targetMode || null,
+      targetDays: targetMode === 'days' && targetDays.trim() ? parseInt(targetDays, 10) : null,
+      targetHours: targetMode === 'hours' && targetHours.trim() ? parseInt(targetHours, 10) : null,
+      schoolYearStart: schoolYearStart.trim() || null,
+      schoolYearEnd: schoolYearEnd.trim() || null,
     };
     
     onSubmit && onSubmit(payload);
@@ -232,6 +294,174 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
             </TouchableOpacity>
           ))}
         </View>
+      </View>
+
+      {/* Section: School year (optional) */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>School year</Text>
+        <Text style={styles.sectionSubtitle}>(Optional — used for attendance and progress tracking)</Text>
+        <View style={styles.field}>
+          <Text style={styles.label}>Target</Text>
+          <View style={styles.chipsWrap}>
+            <TouchableOpacity
+              style={[styles.chip, targetMode === 'days' && styles.chipSelected]}
+              onPress={() => setTargetMode('days')}
+            >
+              <Text style={[styles.chipText, targetMode === 'days' && styles.chipTextSelected]}>Target days</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.chip, targetMode === 'hours' && styles.chipSelected]}
+              onPress={() => setTargetMode('hours')}
+            >
+              <Text style={[styles.chipText, targetMode === 'hours' && styles.chipTextSelected]}>Target hours</Text>
+            </TouchableOpacity>
+          </View>
+          {targetMode === 'days' && (
+            <TextInput
+              style={[styles.input, { marginTop: 8, maxWidth: 120 }]}
+              placeholder="e.g. 180"
+              value={targetDays}
+              onChangeText={setTargetDays}
+              placeholderTextColor="#9ca3af"
+              keyboardType="number-pad"
+            />
+          )}
+          {targetMode === 'hours' && (
+            <TextInput
+              style={[styles.input, { marginTop: 8, maxWidth: 120 }]}
+              placeholder="e.g. 1000"
+              value={targetHours}
+              onChangeText={setTargetHours}
+              placeholderTextColor="#9ca3af"
+              keyboardType="number-pad"
+            />
+          )}
+        </View>
+        <View style={styles.field}>
+          <Text style={styles.label}>School year start</Text>
+          <View style={styles.dateChipRow}>
+            <View style={styles.dateChip}>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearStart) || new Date(); setSchoolYearStart(toDateStr(addDays(d, -1))); }}>
+                <ChevronLeft size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { const d = parseDateSafe(schoolYearStart) || new Date(); setCalendarViewMonth(d); setShowDatePickerFor('start'); }}
+                style={styles.dateChipCenter}
+              >
+                <Text style={styles.dateChipText}>{toDisplayDate(schoolYearStart) || 'Select start date'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearStart) || new Date(); setSchoolYearStart(toDateStr(addDays(d, 1))); }}>
+                <ChevronRight size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setSchoolYearStart(toDateStr(new Date())); }} style={styles.todayBtn}>
+                <Text style={styles.todayBtnText}>Today</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+        <View style={styles.field}>
+          <Text style={styles.label}>School year end</Text>
+          <View style={styles.dateChipRow}>
+            <View style={styles.dateChip}>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearEnd) || new Date(); setSchoolYearEnd(toDateStr(addDays(d, -1))); }}>
+                <ChevronLeft size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { const d = parseDateSafe(schoolYearEnd) || new Date(); setCalendarViewMonth(d); setShowDatePickerFor('end'); }}
+                style={styles.dateChipCenter}
+              >
+                <Text style={styles.dateChipText}>{toDisplayDate(schoolYearEnd) || 'Select end date'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearEnd) || new Date(); setSchoolYearEnd(toDateStr(addDays(d, 1))); }}>
+                <ChevronRight size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setSchoolYearEnd(toDateStr(new Date())); }} style={styles.todayBtn}>
+                <Text style={styles.todayBtnText}>Today</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {showDatePickerFor ? (
+          <Modal animationType="fade" transparent visible onRequestClose={() => setShowDatePickerFor(null)} statusBarTranslucent>
+            <TouchableOpacity ref={datePickerOverlayRef} style={[styles.datePickerOverlay, styles.datePickerOverlayZ]} activeOpacity={1} onPress={() => setShowDatePickerFor(null)}>
+              <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.datePickerModal, styles.datePickerModalZ]}>
+                <View style={styles.datePickerMonthRow}>
+                  <TouchableOpacity onPress={() => setCalendarViewMonth(addDays(new Date(calendarViewMonth.getFullYear(), calendarViewMonth.getMonth(), 1), -1))} style={{ padding: 4 }}>
+                    <ChevronLeft size={20} color={FG} />
+                  </TouchableOpacity>
+                  <Text style={styles.datePickerMonthText}>{calendarViewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                  <TouchableOpacity onPress={() => setCalendarViewMonth(addDays(new Date(calendarViewMonth.getFullYear(), calendarViewMonth.getMonth() + 1, 1), 0))} style={{ padding: 4 }}>
+                    <ChevronRight size={20} color={FG} />
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.datePickerYearRow}>
+                  <TouchableOpacity onPress={() => setCalendarViewMonth(new Date(calendarViewMonth.getFullYear() - 1, calendarViewMonth.getMonth(), 1))} style={{ padding: 4 }}>
+                    <Text style={styles.datePickerSubText}>← Year</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { const t = new Date(); setCalendarViewMonth(t); if (showDatePickerFor === 'start') setSchoolYearStart(toDateStr(t)); else setSchoolYearEnd(toDateStr(t)); setShowDatePickerFor(null); }} style={{ padding: 4 }}>
+                    <Text style={[styles.datePickerSubText, { textDecorationLine: 'underline' }]}>Today</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setCalendarViewMonth(new Date(calendarViewMonth.getFullYear() + 1, calendarViewMonth.getMonth(), 1))} style={{ padding: 4 }}>
+                    <Text style={styles.datePickerSubText}>Year →</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ marginBottom: 8, flexDirection: 'row' }}>
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                    <View key={day} style={{ flex: 1, alignItems: 'center' }}><Text style={{ fontSize: 11, color: SUB, fontWeight: '500' }}>{day}</Text></View>
+                  ))}
+                </View>
+                {(() => {
+                  const year = calendarViewMonth.getFullYear();
+                  const month = calendarViewMonth.getMonth();
+                  const firstDay = new Date(year, month, 1);
+                  const startDate = new Date(firstDay);
+                  startDate.setDate(startDate.getDate() - startDate.getDay());
+                  const days = [];
+                  const current = new Date(startDate);
+                  for (let i = 0; i < 42; i++) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
+                  const currentVal = showDatePickerFor === 'start' ? schoolYearStart : schoolYearEnd;
+                  const selectedDate = parseDateSafe(currentVal);
+                  return (
+                    <View>
+                      {[0, 1, 2, 3, 4, 5].map((week) => (
+                        <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                          {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                            const isCurrentMonth = day.getMonth() === month;
+                            const isSelected = selectedDate && day.toDateString() === selectedDate.toDateString();
+                            const isToday = day.toDateString() === new Date().toDateString();
+                            return (
+                              <TouchableOpacity
+                                key={idx}
+                                onPress={() => {
+                                  if (showDatePickerFor === 'start') setSchoolYearStart(toDateStr(day));
+                                  else setSchoolYearEnd(toDateStr(day));
+                                  setShowDatePickerFor(null);
+                                }}
+                                style={{
+                                  flex: 1,
+                                  aspectRatio: 1,
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  borderRadius: 6,
+                                  backgroundColor: isSelected ? ACCENT : 'transparent',
+                                  borderWidth: isToday ? 2 : 0,
+                                  borderColor: isToday ? ACCENT : 'transparent',
+                                }}
+                              >
+                                <Text style={{ fontSize: 13, color: isSelected ? '#FFFFFF' : (isCurrentMonth ? FG : '#9ca3af'), fontWeight: isSelected || isToday ? '600' : '400' }}>{day.getDate()}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })()}
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        ) : null}
       </View>
 
       {/* Section: Learning Profile & Supports (Optional) */}
@@ -515,5 +745,77 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
+  dateChipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    maxWidth: 260,
+    width: '100%',
+  },
+  dateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: CHIP_BG,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 8,
+    minHeight: 40,
+    flex: 1,
+    maxWidth: 260,
+  },
+  dateChipCenter: { flex: 1, paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' },
+  dateChipText: {
+    color: FG,
+    fontWeight: '600',
+    fontSize: 14,
+    ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  todayBtn: { marginLeft: 4 },
+  todayBtnText: {
+    color: SUB,
+    textDecorationLine: 'underline',
+    fontSize: 12,
+    ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  datePickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  datePickerOverlayZ: Platform.OS === 'web' ? { zIndex: 50000, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 } : { elevation: 10000 },
+  datePickerModalZ: Platform.OS === 'web' ? { zIndex: 50001 } : { elevation: 10001 },
+  datePickerModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    width: Platform.OS === 'web' ? 280 : '90%',
+    maxWidth: 280,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }),
+  },
+  datePickerMonthRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  datePickerMonthText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  datePickerYearRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  datePickerSubText: { fontSize: 12, color: SUB, ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }) },
 });
 

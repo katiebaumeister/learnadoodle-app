@@ -87,7 +87,8 @@ export default function SubjectOverviewCard({
 
   // Handler functions
   const handleAddMaterial = (e) => {
-    e.stopPropagation();
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (e && e.preventDefault) e.preventDefault();
     if (onAddMaterial) {
       onAddMaterial(subject);
     } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -318,8 +319,14 @@ export default function SubjectOverviewCard({
         )}
       </View>
 
-      {/* Action bar */}
-      <View style={styles.actionBar}>
+      {/* Action bar - stop propagation on web so card's onPress doesn't swallow button clicks */}
+      <View
+        style={styles.actionBar}
+        {...(Platform.OS === 'web' && {
+          onClick: (e) => e.stopPropagation(),
+          onMouseDown: (e) => e.stopPropagation(),
+        })}
+      >
         <TouchableOpacity
           style={[
             styles.actionButtonPill,

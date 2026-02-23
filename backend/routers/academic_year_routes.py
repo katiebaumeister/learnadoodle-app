@@ -145,6 +145,8 @@ class SchedulePotentialInput(BaseModel):
     blocks: List[BlockEntry] = []
     custom_holidays: List[HolidayEntry] = []
     custom_breaks: List[CustomBreakEntry] = []
+    follow_public_holidays: Optional[bool] = False
+    holiday_region: Optional[str] = None  # e.g. "US" or "US:ca"
     target_days: Optional[int] = None
     target_hours: Optional[float] = None
     plan_children_ids: Optional[List[str]] = None  # for whole-family blocks: attribute to these children (child-aware suggested_end_date)
@@ -162,6 +164,7 @@ class SchedulePotentialOutput(BaseModel):
     per_subject: Optional[Dict[str, Dict[str, Any]]] = None  # subject_id -> { projected_days, suggested_end_date, ... }
     per_child: Optional[Dict[str, Dict[str, Any]]] = None  # child_id -> { projected_days, suggested_end_date } (child-aware)
     per_child_subject: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None  # child_id -> subject_id -> { projected_days, occurrence_dates_sorted }
+    days_excluded_holidays: Optional[int] = None  # when follow_public_holidays: count of eligible days excluded due to (global) holidays
 
 
 class PlanHealthOutput(BaseModel):
@@ -1398,6 +1401,17 @@ async def schedule_potential(
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
         holiday_dates = [h.date for h in body.custom_holidays]
+        if body.follow_public_holidays and body.holiday_region:
+            country_code = body.holiday_region.split(":")[0] if ":" in body.holiday_region else body.holiday_region
+            region_code = body.holiday_region.split(":")[1] if ":" in body.holiday_region and len(body.holiday_region.split(":")) > 1 else None
+            for year in {start_date_obj.year, end_date_obj.year}:
+                global_holidays = fetch_global_holidays(
+                    country_code, year, "NAGER_DATE", region_code, None
+                )
+                for gh in global_holidays:
+                    if start_date_obj <= gh.date <= end_date_obj:
+                        holiday_dates.append(gh.date.isoformat())
+
         exclusion_ranges = exclusion_ranges_from_breaks_and_holidays(
             [{"start": b.start, "end": b.end} for b in body.custom_breaks],
             holiday_dates,
@@ -1429,9 +1443,27 @@ async def schedule_potential(
         )
         projected_days = result["projected_days"]
         projected_hours = result["projected_hours"]
+
+        days_excluded_holidays = None
+        if body.follow_public_holidays and body.holiday_region:
+            custom_only_dates = [h.date for h in body.custom_holidays]
+            exclusion_ranges_no_global = exclusion_ranges_from_breaks_and_holidays(
+                [{"start": b.start, "end": b.end} for b in body.custom_breaks],
+                custom_only_dates,
+            )
+            result_no_global = compute_schedule_potential(
+                blocks_dict,
+                start_date_obj,
+                end_date_obj,
+                exclusion_ranges_no_global,
+                target_days=None,
+                plan_children_ids=body.plan_children_ids,
+                subject_targets=None,
+            )
+            days_excluded_holidays = max(0, result_no_global["projected_days"] - projected_days)
+
         delta_days = None
         delta_hours = None
-
         if body.target_days is not None:
             delta_days = projected_days - body.target_days
         if body.target_hours is not None:
@@ -1448,6 +1480,7 @@ async def schedule_potential(
             per_subject=result.get("per_subject"),
             per_child=result.get("per_child"),
             per_child_subject=result.get("per_child_subject"),
+            days_excluded_holidays=days_excluded_holidays,
         )
     except HTTPException:
         raise
@@ -1902,7 +1935,10 @@ async def apply_to_calendar(
                 )
             planned_dates_legacy = eligible_dates[: body.target_instructional_days]
 
-        exclusion_ranges = _build_exclusion_ranges_for_apply(holiday_dates, custom_breaks_dict) if use_blocks else []
+        if use_blocks:
+            exclusion_ranges = _build_exclusion_ranges_for_apply(holiday_dates, custom_breaks_dict)
+        else:
+            exclusion_ranges = []
 
         academic_year_id = body.academic_year_id
         if not academic_year_id:

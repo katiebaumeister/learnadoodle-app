@@ -92,7 +92,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         return;
       }
 
-      // Step 3: If we didn't get role from backend, try family_members then profiles (may 500 if table missing)
+      // Step 3: If we didn't get role from backend, try family_members then profiles (may 500 if table missing or RLS)
       if (memberRole == null) {
         try {
           const { data: familyMember, error: fmError } = await supabase
@@ -108,7 +108,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
             childId = familyMember.child_id || null;
           }
         } catch (_) {
-          // Supabase 500 or missing table - ignore, use profiles fallback
+          // Supabase 500 or missing table - ignore, use profiles fallback (no log to avoid console noise)
         }
         if (memberRole == null) {
           const { data: profile } = await supabase
@@ -118,8 +118,9 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
             .maybeSingle();
           memberRole = profile?.role || 'parent';
           isLegacy = true;
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('[SessionContext] Using legacy mode - family_members row not found. Falling back to profiles.role');
+          // Only log in development, and at debug level (family_members may 500 if table/RLS not ready)
+          if (process.env.NODE_ENV === 'development' && typeof console.debug === 'function') {
+            console.debug('[SessionContext] Using profiles.role (family_members unavailable or no row).');
           }
         }
       }

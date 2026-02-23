@@ -40,6 +40,7 @@ import {
   Info
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
+import ConfirmDialog from '../ConfirmDialog';
 import {
   createDefaultAcademicYear,
   recalculateAcademicYear,
@@ -294,6 +295,7 @@ export default function PlanYearModal({
   const [existingPlaceholdersCount, setExistingPlaceholdersCount] = useState(0);
   const [replacePlaceholders, setReplacePlaceholders] = useState(true);
   const [clearingPlan, setClearingPlan] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [suggestionAccepted, setSuggestionAccepted] = useState(false);
   const [extendSuggestionAccepted, setExtendSuggestionAccepted] = useState(false);
@@ -632,6 +634,8 @@ export default function PlanYearModal({
           })),
           custom_holidays: customHolidays.map((h) => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
           custom_breaks: (customBreaks || []).map((b) => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
+          follow_public_holidays: followGlobalHolidays ?? false,
+          holiday_region: regionCode ? `${countryCode}:${regionCode}` : countryCode,
           target_days: planConstraintMode === 'days' ? (parseInt(planTargetDays, 10) || null) : null,
           target_hours: planConstraintMode === 'hours' ? (parseFloat(planTargetHours) || null) : null,
           plan_children_ids: planChildrenIds.length > 0 ? planChildrenIds : undefined,
@@ -649,7 +653,7 @@ export default function PlanYearModal({
         setComputingPotential(false);
       }
     }, delay);
-  }, [familyId, startDate, endDate, blocks, customHolidays, customBreaks, planConstraintMode, planTargetDays, planTargetHours, planForChildId, children, planHealth?.subject_targets]);
+  }, [familyId, startDate, endDate, blocks, customHolidays, customBreaks, followGlobalHolidays, countryCode, regionCode, planConstraintMode, planTargetDays, planTargetHours, planForChildId, children, planHealth?.subject_targets]);
 
   useEffect(() => {
     if (!visible) {
@@ -1177,24 +1181,9 @@ export default function PlanYearModal({
     setBlocks(blocks.map((b, i) => (i === index ? { ...b, ...updates } : b)));
   };
 
-  const handleClearPlan = async () => {
+  const performClearPlan = async () => {
     if (!familyId) return;
     const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
-    let confirmClear = false;
-    if (isWeb) {
-      confirmClear = window.confirm(
-        'Remove generated placeholders? This removes only generated placeholder lessons. Customized lessons will remain.'
-      );
-    } else {
-      confirmClear = await new Promise((resolve) => {
-        Alert.alert(
-          'Remove generated placeholders?',
-          'This removes only generated placeholder lessons. Customized lessons will remain.',
-          [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove placeholders', style: 'destructive', onPress: () => resolve(true) }]
-        );
-      });
-    }
-    if (!confirmClear) return;
     setClearingPlan(true);
     setError(null);
     try {
@@ -1222,6 +1211,24 @@ export default function PlanYearModal({
     } finally {
       setClearingPlan(false);
     }
+  };
+
+  const handleClearPlan = async () => {
+    if (!familyId) return;
+    const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
+    if (isWeb) {
+      setShowClearConfirm(true);
+      return;
+    }
+    const confirmClear = await new Promise((resolve) => {
+      Alert.alert(
+        'Remove generated placeholders?',
+        'This removes only generated placeholder lessons. Customized lessons will remain.',
+        [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove placeholders', style: 'destructive', onPress: () => resolve(true) }]
+      );
+    });
+    if (!confirmClear) return;
+    await performClearPlan();
   };
 
   // Reset state when modal closes (so reopening doesn't show stale conflicts/plan data after e.g. removing placeholders)
@@ -1298,8 +1305,15 @@ export default function PlanYearModal({
           {!pickerOnly && (
           <View style={styles.modalHeader}>
             <View style={styles.modalHeaderLeft}>
-              <Text style={styles.modalHeaderTitle}>{openForNewPlan && !academicYearId ? 'Plan My Year' : 'Edit Plan'}</Text>
-              {headerMeta != null && headerMeta !== '' ? <Text style={styles.modalHeaderMeta}>{headerMeta}</Text> : null}
+              <View style={styles.modalHeaderTitleRow}>
+                <View style={styles.modalHeaderIconWrap}>
+                  <Calendar size={20} color={SUB} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.modalHeaderTitle}>{openForNewPlan && !academicYearId ? 'Plan My Year' : 'Edit Plan'}</Text>
+                  {headerMeta != null && headerMeta !== '' ? <Text style={styles.modalHeaderMeta}>{headerMeta}</Text> : null}
+                </View>
+              </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButtonHeader} hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}>
               <X size={22} color={FG} />
@@ -1451,8 +1465,8 @@ export default function PlanYearModal({
             ) : (
               // Homeschool Constraint Solver
               <View>
-                {/* Plan summary card: only when editing an existing plan, not when creating new */}
-                {academicYearId && (planHealth?.target_days != null || planHealth?.target_hours != null) && (
+                {/* Plan summary card: always show when editing an existing plan (current plan view) */}
+                {academicYearId && (
                   <View style={styles.card}>
                     <Text style={styles.sectionTitle}>Current Plan summary</Text>
                     <View style={{ borderTopWidth: 1, borderTopColor: CARD_BORDER, paddingTop: 12, marginTop: 6 }}>
@@ -1589,6 +1603,12 @@ export default function PlanYearModal({
                               You're {(-planHealth.delta_hours).toFixed(0)} hours short — add class days or extend your end date to meet your target.
                             </Text>
                           )}
+                        </>
+                      )}
+                      {planConstraintMode === 'none' && (
+                        <>
+                          {headerMeta ? <Text style={[styles.summaryValue, { marginBottom: 4 }]}>{headerMeta}</Text> : null}
+                          <Text style={[styles.mutedText, { fontSize: 13, marginTop: 4 }]}>No day/hour requirement set.</Text>
                         </>
                       )}
                     </View>
@@ -2257,6 +2277,13 @@ export default function PlanYearModal({
                             <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_hours ?? planTargetHours} hours</Text>
                           )}
                         </View>
+                        {followGlobalHolidays && (schedulePotential.days_excluded_holidays ?? 0) > 0 && (
+                          <Text style={[styles.eligibilityCardSecondary, { marginTop: 4 }]}>
+                            {schedulePotential.days_excluded_holidays === 1
+                              ? '1 day excluded due to holiday'
+                              : `${schedulePotential.days_excluded_holidays} days excluded due to holidays`}
+                          </Text>
+                        )}
                         {/* No requirement: baseline / deleted lesson message — only when health is for this plan (id + date range match) */}
                         {planIdForHealth &&
                           planHealth?.academic_year_id === planIdForHealth &&
@@ -2888,6 +2915,18 @@ export default function PlanYearModal({
           </View>
         </View>
       </View>
+      <ConfirmDialog
+        visible={showClearConfirm}
+        title="Remove generated placeholders?"
+        message="This removes only generated placeholder lessons. Customized lessons will remain."
+        confirmLabel="OK"
+        cancelLabel="Cancel"
+        onConfirm={async () => {
+          setShowClearConfirm(false);
+          await performClearPlan();
+        }}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </Modal>
   );
 }
@@ -3043,6 +3082,14 @@ const styles = StyleSheet.create({
     backgroundColor: BG,
   },
   modalHeaderLeft: { flex: 1, minWidth: 0 },
+  modalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  modalHeaderIconWrap: {
+    marginRight: 2,
+  },
   modalHeaderTitle: {
     fontSize: 18,
     fontWeight: '700',

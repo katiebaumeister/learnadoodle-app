@@ -33,6 +33,7 @@ import { useToast } from '../Toast';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import BuildCurriculumModal from '../planner/modals/BuildCurriculumModal';
+import ConfirmDialog from '../ConfirmDialog';
 
 // Helper function to check if a URL is from Supabase storage
 const isSupabaseStorageUrl = (url) => {
@@ -151,6 +152,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [deletedMaterials, setDeletedMaterials] = useState([]);
   const [loadingDeleted, setLoadingDeleted] = useState(false);
   const [showBuildFromMaterialModal, setShowBuildFromMaterialModal] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ visible: false, title: '', message: '', confirmLabel: 'OK', onConfirm: null });
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -492,33 +494,28 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     const { kind, data, normalized } = item;
     const itemName = normalized.title || 'this item';
     
-    // Show warning dialog before deleting
-    // On web, Alert.alert might not work, so use window.confirm as fallback
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const confirmed = window.confirm(
-        `"${itemName}" will be moved to Recently Deleted. You can restore it from there.\n\nDo you want to continue?`
-      );
-      if (confirmed) {
-        performDelete(item, itemName);
-      }
-    } else {
-      Alert.alert(
-        'Move to Recently Deleted',
-        `"${itemName}" will be moved to Recently Deleted. You can restore it from there.`,
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel'
-          },
-          {
-            text: 'Move to Deleted',
-            style: 'destructive',
-            onPress: () => performDelete(item, itemName)
-          }
-        ],
-        { cancelable: true }
-      );
+      setConfirmDialog({
+        visible: true,
+        title: 'Move to Recently Deleted',
+        message: `"${itemName}" will be moved to Recently Deleted. You can restore it from there.\n\nDo you want to continue?`,
+        confirmLabel: 'OK',
+        onConfirm: () => {
+          setConfirmDialog((p) => ({ ...p, visible: false }));
+          performDelete(item, itemName);
+        },
+      });
+      return;
     }
+    Alert.alert(
+      'Move to Recently Deleted',
+      `"${itemName}" will be moved to Recently Deleted. You can restore it from there.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Move to Deleted', style: 'destructive', onPress: () => performDelete(item, itemName) }
+      ],
+      { cancelable: true }
+    );
   };
 
   const performDelete = async (item, itemName) => {
@@ -962,34 +959,28 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     const { data, normalized } = item;
     const itemName = normalized.title || 'this item';
     
-    // On web, use window.confirm; on native, use Alert.alert
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const confirmed = window.confirm(
-        `Are you sure you want to permanently delete "${itemName}"? This action cannot be undone and will remove the item forever.`
-      );
-      if (!confirmed) return;
-    } else {
-      Alert.alert(
-        'Permanently Delete',
-        `Are you sure you want to permanently delete "${itemName}"? This action cannot be undone and will remove the item forever.`,
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel'
-          },
-          {
-            text: 'Delete Forever',
-            style: 'destructive',
-            onPress: () => performPermanentDelete(item, itemName)
-          }
-        ],
-        { cancelable: true }
-      );
+      setConfirmDialog({
+        visible: true,
+        title: 'Permanently Delete',
+        message: `Are you sure you want to permanently delete "${itemName}"? This action cannot be undone and will remove the item forever.`,
+        confirmLabel: 'OK',
+        onConfirm: async () => {
+          setConfirmDialog((p) => ({ ...p, visible: false }));
+          await performPermanentDelete(item, itemName);
+        },
+      });
       return;
     }
-    
-    // For web, execute directly after confirmation
-    await performPermanentDelete(item, itemName);
+    Alert.alert(
+      'Permanently Delete',
+      `Are you sure you want to permanently delete "${itemName}"? This action cannot be undone and will remove the item forever.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete Forever', style: 'destructive', onPress: () => performPermanentDelete(item, itemName) }
+      ],
+      { cancelable: true }
+    );
   };
 
   const performPermanentDelete = async (item, itemName) => {
@@ -1920,6 +1911,15 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           </View>
         </Modal>
       )}
+      <ConfirmDialog
+        visible={confirmDialog.visible}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        cancelLabel="Cancel"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog((p) => ({ ...p, visible: false }))}
+      />
     </View>
   );
 }

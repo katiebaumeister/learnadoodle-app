@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, Alert, TextInput, ActivityIndicator } from 'react-native';
-import { X, AlertTriangle } from 'lucide-react';
+import { X, AlertTriangle, UserCircle } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
@@ -24,6 +24,7 @@ export default function EditChildModal({
   const [deleting, setDeleting] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
   const [fullChildData, setFullChildData] = useState(null);
+  const [academicYear, setAcademicYear] = useState(null);
   const [loadingChildData, setLoadingChildData] = useState(false);
   const [formCanSubmit, setFormCanSubmit] = useState(false);
 
@@ -62,6 +63,20 @@ export default function EditChildModal({
 
       setFullChildData(data);
       setIsArchived(data.archived || false);
+
+      const fid = familyId || data.family_id;
+      if (fid) {
+        const { data: ay } = await supabase
+          .from('academic_years')
+          .select('id, start_date, end_date, target_instructional_days, target_instructional_hours')
+          .eq('family_id', fid)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        setAcademicYear(ay || null);
+      } else {
+        setAcademicYear(null);
+      }
       
       // If familyId wasn't provided, get it from the child data or user profile
       if (!familyId && data.family_id) {
@@ -104,6 +119,11 @@ export default function EditChildModal({
       ? fullChildData.learning_styles[0]
       : fullChildData.learning_style || '',
     avatar: fullChildData.avatar || fullChildData.avatar_url || 'prof1',
+    schoolYearStart: academicYear?.start_date || '',
+    schoolYearEnd: academicYear?.end_date || '',
+    targetMode: academicYear?.target_instructional_days != null ? 'days' : academicYear?.target_instructional_hours != null ? 'hours' : '',
+    targetDays: academicYear?.target_instructional_days != null ? String(academicYear.target_instructional_days) : '',
+    targetHours: academicYear?.target_instructional_hours != null ? String(academicYear.target_instructional_hours) : '',
   } : {};
 
   const handleSubmit = async (formData) => {
@@ -178,6 +198,37 @@ export default function EditChildModal({
 
       if (updateError) {
         throw updateError;
+      }
+
+      const hasTarget = (formData.targetMode === 'days' && formData.targetDays) || (formData.targetMode === 'hours' && formData.targetHours);
+      const hasRange = formData.schoolYearStart && formData.schoolYearEnd;
+      if (finalFamilyId && (hasTarget || hasRange)) {
+        const { data: existing } = await supabase
+          .from('academic_years')
+          .select('id, start_date, end_date')
+          .eq('family_id', finalFamilyId)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const startDate = formData.schoolYearStart || existing?.start_date;
+        const endDate = formData.schoolYearEnd || existing?.end_date;
+        if (existing) {
+          const toUpdate = { updated_at: new Date().toISOString() };
+          if (formData.targetMode === 'days' && formData.targetDays) toUpdate.target_instructional_days = formData.targetDays;
+          if (formData.targetMode === 'hours' && formData.targetHours) toUpdate.target_instructional_hours = formData.targetHours;
+          if (startDate) toUpdate.start_date = startDate;
+          if (endDate) toUpdate.end_date = endDate;
+          await supabase.from('academic_years').update(toUpdate).eq('id', existing.id);
+        } else if (startDate && endDate) {
+          await supabase.from('academic_years').insert({
+            family_id: finalFamilyId,
+            year_name: 'School year',
+            start_date: startDate,
+            end_date: endDate,
+            target_instructional_days: formData.targetMode === 'days' && formData.targetDays ? formData.targetDays : null,
+            target_instructional_hours: formData.targetMode === 'hours' && formData.targetHours ? formData.targetHours : null,
+          });
+        }
       }
 
       if (toast && toast.push) {
@@ -342,18 +393,26 @@ export default function EditChildModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
+      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} onPress={(e) => e?.stopPropagation?.()} style={styles.modal}>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
-              <Text style={styles.title}>Edit Child</Text>
-              <Text style={styles.subtitle}>Update {childName}'s information</Text>
+              <View style={styles.headerTitleRow}>
+                <View style={styles.headerIconWrap}>
+                  <UserCircle size={20} color="#6b7280" />
+                </View>
+                <View>
+                  <Text style={styles.title}>Edit Child</Text>
+                  <Text style={styles.subtitle}>Update {childName}'s information</Text>
+                </View>
+              </View>
             </View>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
               <X size={20} color="#6b7280" />
             </TouchableOpacity>
           </View>
+          <View style={styles.headerDivider} />
 
           {error && (
             <View style={styles.errorContainer}>
@@ -469,6 +528,7 @@ export default function EditChildModal({
             )}
           </ScrollView>
 
+          <View style={styles.footerDivider} />
           {/* Footer */}
           <View style={styles.footer}>
             <TouchableOpacity
@@ -492,8 +552,8 @@ export default function EditChildModal({
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </RNModal>
   );
 }
@@ -523,9 +583,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 0,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerIconWrap: {
+    marginRight: 2,
   },
   headerLeft: {
     flex: 1,
@@ -539,6 +607,17 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#6b7280',
+  },
+  headerDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginHorizontal: 20,
+    marginTop: 16,
+  },
+  footerDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginHorizontal: 20,
   },
   closeButton: {
     width: 32,
@@ -663,11 +742,10 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     gap: 12,
     padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
     backgroundColor: '#fafafa',
   },
   cancelButton: {
@@ -681,18 +759,29 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   saveButton: {
+    backgroundColor: '#85C4F2',
+    paddingVertical: 12,
     paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#8B7CF6',
+    borderRadius: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
   },
   saveButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
   saveButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ffffff',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   loadingContainer: {
     flexDirection: 'row',

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image, Animated } from 'react-native';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image, Animated, Modal } from 'react-native';
+import ReactDOM from 'react-dom';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const AVATAR_SIZE = 64;
 const AVATAR_PREVIEW_SIZE = 72;
@@ -39,6 +40,39 @@ const EXECUTIVE_FUNCTION = [
   'Difficulty planning tasks',
 ];
 
+const FG = '#111827';
+const SUB = '#6b7280';
+const ACCENT = '#d4a256';
+const CHIP_BG = '#f3f4f6';
+const CHIP_BORDER = '#e5e7eb';
+
+function toDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function toDisplayDate(s) {
+  if (!s || typeof s !== 'string') return null;
+  try {
+    const d = new Date(s + 'T12:00:00');
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch (_) { return null; }
+}
+function parseDateSafe(s) {
+  if (!s || typeof s !== 'string') return null;
+  try {
+    const d = new Date(s + 'T12:00:00');
+    return isNaN(d.getTime()) ? null : d;
+  } catch (_) { return null; }
+}
+function addDays(d, n) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
 const avatarSources = {
   prof1: require('../../assets/prof1.png'),
   prof2: require('../../assets/prof2.png'),
@@ -66,6 +100,29 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   const [supportNeeds, setSupportNeeds] = useState([]);
   const [executiveFunction, setExecutiveFunction] = useState([]);
   const [otherDiagnosis, setOtherDiagnosis] = useState('');
+  const [targetMode, setTargetMode] = useState('');
+  const [targetDays, setTargetDays] = useState('');
+  const [targetHours, setTargetHours] = useState('');
+  const [schoolYearStart, setSchoolYearStart] = useState('');
+  const [schoolYearEnd, setSchoolYearEnd] = useState('');
+  const [showDatePickerFor, setShowDatePickerFor] = useState(null);
+  const [calendarViewMonth, setCalendarViewMonth] = useState(() => new Date());
+  const [datePickerPortalContainer, setDatePickerPortalContainer] = useState(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    if (showDatePickerFor) {
+      const div = document.createElement('div');
+      div.setAttribute('data-date-picker-portal', '1');
+      div.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:50000;display:flex;flex-direction:column;';
+      document.body.appendChild(div);
+      setDatePickerPortalContainer(div);
+      return () => {
+        if (div.parentNode) div.parentNode.removeChild(div);
+        setDatePickerPortalContainer(null);
+      };
+    }
+  }, [showDatePickerFor]);
 
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -111,6 +168,11 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       supportNeeds: supportNeeds.length > 0 ? supportNeeds : null,
       executiveFunction: executiveFunction.length > 0 ? executiveFunction : null,
       supportNotes: null,
+      targetMode: targetMode || null,
+      targetDays: targetMode === 'days' && targetDays.trim() ? parseInt(targetDays, 10) : null,
+      targetHours: targetMode === 'hours' && targetHours.trim() ? parseInt(targetHours, 10) : null,
+      schoolYearStart: schoolYearStart.trim() || null,
+      schoolYearEnd: schoolYearEnd.trim() || null,
     };
   };
 
@@ -135,6 +197,11 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       setExecutiveFunction([]);
       setOtherDiagnosis('');
       setShowAdditional(false);
+      setTargetMode('');
+      setTargetDays('');
+      setTargetHours('');
+      setSchoolYearStart('');
+      setSchoolYearEnd('');
     } catch (e) {
       setError(e?.message ?? 'Failed to add child.');
     } finally {
@@ -369,6 +436,243 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               </TouchableOpacity>
             ))}
           </View>
+
+          <Text style={styles.subsectionTitle}>School year (optional)</Text>
+          <Text style={styles.label}>Target</Text>
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.chip, targetMode === 'days' && styles.chipSelected]}
+              onPress={() => { setTargetMode('days'); setError(null); }}
+            >
+              <Text style={[styles.chipText, targetMode === 'days' && styles.chipTextSelected]}>Target days</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.chip, targetMode === 'hours' && styles.chipSelected]}
+              onPress={() => { setTargetMode('hours'); setError(null); }}
+            >
+              <Text style={[styles.chipText, targetMode === 'hours' && styles.chipTextSelected]}>Target hours</Text>
+            </TouchableOpacity>
+          </View>
+          {targetMode === 'days' && (
+            <TextInput
+              style={[styles.input, { marginTop: 8, maxWidth: 120 }]}
+              placeholder="e.g. 180"
+              value={targetDays}
+              onChangeText={(t) => { setTargetDays(t); setError(null); }}
+              placeholderTextColor="#9CA3AF"
+              keyboardType="number-pad"
+            />
+          )}
+          {targetMode === 'hours' && (
+            <TextInput
+              style={[styles.input, { marginTop: 8, maxWidth: 120 }]}
+              placeholder="e.g. 1000"
+              value={targetHours}
+              onChangeText={(t) => { setTargetHours(t); setError(null); }}
+              placeholderTextColor="#9CA3AF"
+              keyboardType="number-pad"
+            />
+          )}
+          <Text style={styles.label}>School year start</Text>
+          <View style={styles.dateChipRow}>
+            <View style={styles.dateChip}>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearStart) || new Date(); setSchoolYearStart(toDateStr(addDays(d, -1))); setError(null); }}>
+                <ChevronLeft size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearStart) || new Date(); setCalendarViewMonth(d); setShowDatePickerFor('start'); setError(null); }} style={styles.dateChipCenter}>
+                <Text style={styles.dateChipText}>{toDisplayDate(schoolYearStart) || 'Select start date'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearStart) || new Date(); setSchoolYearStart(toDateStr(addDays(d, 1))); setError(null); }}>
+                <ChevronRight size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setSchoolYearStart(toDateStr(new Date())); setError(null); }} style={styles.todayBtn}>
+                <Text style={styles.todayBtnText}>Today</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <Text style={styles.label}>School year end</Text>
+          <View style={styles.dateChipRow}>
+            <View style={styles.dateChip}>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearEnd) || new Date(); setSchoolYearEnd(toDateStr(addDays(d, -1))); setError(null); }}>
+                <ChevronLeft size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearEnd) || new Date(); setCalendarViewMonth(d); setShowDatePickerFor('end'); setError(null); }} style={styles.dateChipCenter}>
+                <Text style={styles.dateChipText}>{toDisplayDate(schoolYearEnd) || 'Select end date'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { const d = parseDateSafe(schoolYearEnd) || new Date(); setSchoolYearEnd(toDateStr(addDays(d, 1))); setError(null); }}>
+                <ChevronRight size={16} color={FG} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setSchoolYearEnd(toDateStr(new Date())); setError(null); }} style={styles.todayBtn}>
+                <Text style={styles.todayBtnText}>Today</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {showDatePickerFor ? (
+            Platform.OS === 'web' && datePickerPortalContainer ? (() => {
+              ReactDOM.createPortal(
+                <TouchableOpacity style={[styles.datePickerOverlay, styles.datePickerOverlayZ]} activeOpacity={1} onPress={() => setShowDatePickerFor(null)}>
+                  <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.datePickerModal, styles.datePickerModalZ]}>
+                    <View style={styles.datePickerMonthRow}>
+                      <TouchableOpacity onPress={() => setCalendarViewMonth(addDays(new Date(calendarViewMonth.getFullYear(), calendarViewMonth.getMonth(), 1), -1))} style={{ padding: 4 }}>
+                        <ChevronLeft size={20} color={FG} />
+                      </TouchableOpacity>
+                      <Text style={styles.datePickerMonthText}>{calendarViewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                      <TouchableOpacity onPress={() => setCalendarViewMonth(addDays(new Date(calendarViewMonth.getFullYear(), calendarViewMonth.getMonth() + 1, 1), 0))} style={{ padding: 4 }}>
+                        <ChevronRight size={20} color={FG} />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.datePickerYearRow}>
+                      <TouchableOpacity onPress={() => setCalendarViewMonth(new Date(calendarViewMonth.getFullYear() - 1, calendarViewMonth.getMonth(), 1))} style={{ padding: 4 }}>
+                        <Text style={styles.datePickerSubText}>← Year</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { const t = new Date(); setCalendarViewMonth(t); if (showDatePickerFor === 'start') setSchoolYearStart(toDateStr(t)); else setSchoolYearEnd(toDateStr(t)); setShowDatePickerFor(null); setError(null); }} style={{ padding: 4 }}>
+                        <Text style={[styles.datePickerSubText, { textDecorationLine: 'underline' }]}>Today</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setCalendarViewMonth(new Date(calendarViewMonth.getFullYear() + 1, calendarViewMonth.getMonth(), 1))} style={{ padding: 4 }}>
+                        <Text style={styles.datePickerSubText}>Year →</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={{ marginBottom: 8, flexDirection: 'row' }}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                        <View key={day} style={{ flex: 1, alignItems: 'center' }}><Text style={{ fontSize: 11, color: SUB, fontWeight: '500' }}>{day}</Text></View>
+                      ))}
+                    </View>
+                    {(() => {
+                      const year = calendarViewMonth.getFullYear();
+                      const month = calendarViewMonth.getMonth();
+                      const firstDay = new Date(year, month, 1);
+                      const startDate = new Date(firstDay);
+                      startDate.setDate(startDate.getDate() - startDate.getDay());
+                      const days = [];
+                      const current = new Date(startDate);
+                      for (let i = 0; i < 42; i++) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
+                      const currentVal = showDatePickerFor === 'start' ? schoolYearStart : schoolYearEnd;
+                      const selectedDate = parseDateSafe(currentVal);
+                      return (
+                        <View>
+                          {[0, 1, 2, 3, 4, 5].map((week) => (
+                            <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                              {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                                const isCurrentMonth = day.getMonth() === month;
+                                const isSelected = selectedDate && day.toDateString() === selectedDate.toDateString();
+                                const isToday = day.toDateString() === new Date().toDateString();
+                                return (
+                                  <TouchableOpacity
+                                    key={idx}
+                                    onPress={() => {
+                                      if (showDatePickerFor === 'start') setSchoolYearStart(toDateStr(day));
+                                      else setSchoolYearEnd(toDateStr(day));
+                                      setShowDatePickerFor(null);
+                                      setError(null);
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      aspectRatio: 1,
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: 6,
+                                      backgroundColor: isSelected ? ACCENT : 'transparent',
+                                      borderWidth: isToday ? 2 : 0,
+                                      borderColor: isToday ? ACCENT : 'transparent',
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 13, color: isSelected ? '#FFFFFF' : (isCurrentMonth ? FG : '#9ca3af'), fontWeight: isSelected || isToday ? '600' : '400' }}>{day.getDate()}</Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    })()}
+                  </TouchableOpacity>
+                </TouchableOpacity>,
+                datePickerPortalContainer
+              );
+              return null;
+            })() : (
+            <Modal animationType="fade" transparent visible onRequestClose={() => setShowDatePickerFor(null)} statusBarTranslucent>
+              <TouchableOpacity style={[styles.datePickerOverlay, styles.datePickerOverlayZ]} activeOpacity={1} onPress={() => setShowDatePickerFor(null)}>
+                <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.datePickerModal, styles.datePickerModalZ]}>
+                  <View style={styles.datePickerMonthRow}>
+                    <TouchableOpacity onPress={() => setCalendarViewMonth(addDays(new Date(calendarViewMonth.getFullYear(), calendarViewMonth.getMonth(), 1), -1))} style={{ padding: 4 }}>
+                      <ChevronLeft size={20} color={FG} />
+                    </TouchableOpacity>
+                    <Text style={styles.datePickerMonthText}>{calendarViewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                    <TouchableOpacity onPress={() => setCalendarViewMonth(addDays(new Date(calendarViewMonth.getFullYear(), calendarViewMonth.getMonth() + 1, 1), 0))} style={{ padding: 4 }}>
+                      <ChevronRight size={20} color={FG} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.datePickerYearRow}>
+                    <TouchableOpacity onPress={() => setCalendarViewMonth(new Date(calendarViewMonth.getFullYear() - 1, calendarViewMonth.getMonth(), 1))} style={{ padding: 4 }}>
+                      <Text style={styles.datePickerSubText}>← Year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => { const t = new Date(); setCalendarViewMonth(t); if (showDatePickerFor === 'start') setSchoolYearStart(toDateStr(t)); else setSchoolYearEnd(toDateStr(t)); setShowDatePickerFor(null); setError(null); }} style={{ padding: 4 }}>
+                      <Text style={[styles.datePickerSubText, { textDecorationLine: 'underline' }]}>Today</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setCalendarViewMonth(new Date(calendarViewMonth.getFullYear() + 1, calendarViewMonth.getMonth(), 1))} style={{ padding: 4 }}>
+                      <Text style={styles.datePickerSubText}>Year →</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ marginBottom: 8, flexDirection: 'row' }}>
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                      <View key={day} style={{ flex: 1, alignItems: 'center' }}><Text style={{ fontSize: 11, color: SUB, fontWeight: '500' }}>{day}</Text></View>
+                    ))}
+                  </View>
+                  {(() => {
+                    const year = calendarViewMonth.getFullYear();
+                    const month = calendarViewMonth.getMonth();
+                    const firstDay = new Date(year, month, 1);
+                    const startDate = new Date(firstDay);
+                    startDate.setDate(startDate.getDate() - startDate.getDay());
+                    const days = [];
+                    const current = new Date(startDate);
+                    for (let i = 0; i < 42; i++) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
+                    const currentVal = showDatePickerFor === 'start' ? schoolYearStart : schoolYearEnd;
+                    const selectedDate = parseDateSafe(currentVal);
+                    return (
+                      <View>
+                        {[0, 1, 2, 3, 4, 5].map((week) => (
+                          <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                            {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                              const isCurrentMonth = day.getMonth() === month;
+                              const isSelected = selectedDate && day.toDateString() === selectedDate.toDateString();
+                              const isToday = day.toDateString() === new Date().toDateString();
+                              return (
+                                <TouchableOpacity
+                                  key={idx}
+                                  onPress={() => {
+                                    if (showDatePickerFor === 'start') setSchoolYearStart(toDateStr(day));
+                                    else setSchoolYearEnd(toDateStr(day));
+                                    setShowDatePickerFor(null);
+                                    setError(null);
+                                  }}
+                                  style={{
+                                    flex: 1,
+                                    aspectRatio: 1,
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    borderRadius: 6,
+                                    backgroundColor: isSelected ? ACCENT : 'transparent',
+                                    borderWidth: isToday ? 2 : 0,
+                                    borderColor: isToday ? ACCENT : 'transparent',
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13, color: isSelected ? '#FFFFFF' : (isCurrentMonth ? FG : '#9ca3af'), fontWeight: isSelected || isToday ? '600' : '400' }}>{day.getDate()}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })()}
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
+            )
+          ) : null}
         </View>
       )}
       <TouchableOpacity
@@ -691,4 +995,43 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     textAlignVertical: 'top',
   },
+  dateChipRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, alignSelf: 'flex-start', maxWidth: 260, width: '100%' },
+  dateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: CHIP_BG,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 8,
+    minHeight: 40,
+    flex: 1,
+    maxWidth: 260,
+  },
+  dateChipCenter: { flex: 1, paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' },
+  dateChipText: {
+    color: FG,
+    fontWeight: '600',
+    fontSize: 14,
+    ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  todayBtn: { marginLeft: 4 },
+  todayBtnText: { color: SUB, textDecorationLine: 'underline', fontSize: 12, ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }) },
+  datePickerOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.3)', justifyContent: 'center', alignItems: 'center' },
+  datePickerOverlayZ: Platform.OS === 'web' ? { zIndex: 50000, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 } : { elevation: 10000 },
+  datePickerModalZ: Platform.OS === 'web' ? { zIndex: 50001 } : { elevation: 10001 },
+  datePickerModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    width: Platform.OS === 'web' ? 280 : '90%',
+    maxWidth: 280,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }),
+  },
+  datePickerMonthRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  datePickerMonthText: { fontSize: 16, fontWeight: '600', color: FG, ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }) },
+  datePickerYearRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 },
+  datePickerSubText: { fontSize: 12, color: SUB, ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }) },
 });

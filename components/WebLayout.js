@@ -1924,19 +1924,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   >
                     <View>
                       <Text style={{
-                        fontSize: 24,
-                        color: 'rgba(15,23,42,0.95)',
-                        fontWeight: '700',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif',
+                        fontSize: 22,
+                        color: '#1E293B',
+                        fontWeight: '600',
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         marginBottom: 2,
                       }}>
                         {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                       </Text>
                       <Text style={{
-                        fontSize: 15,
-                        color: 'rgba(15,23,42,0.85)',
+                        fontSize: 13,
+                        color: '#64748B',
                         fontWeight: '400',
-                        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif',
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                       }}>
                         {(() => {
                           const month = currentMonth.getMonth();
@@ -2015,18 +2015,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
+                        height: 36,
                         gap: 4,
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 12,
-                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                        paddingHorizontal: 12,
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
                         borderWidth: 1,
-                        borderColor: 'rgba(209, 213, 219, 0.8)',
+                        borderColor: '#E6EBF2',
                       }}
                     >
                       <Text style={{ 
                         fontSize: 15, 
-                        color: 'rgba(15, 23, 42, 0.85)',
+                        color: '#1E293B',
                         fontWeight: '500',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                       }}>
@@ -2035,12 +2035,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             'month': 'Month',
                             'week': 'Week',
                             'board': 'Board',
-                            'tasks': 'Tasks',
+                            'tasks': 'To-do lists',
+                            'attendance': 'Attendance',
                           };
                           return viewLabels[currentView] || 'Month';
                         })()}
                       </Text>
-                      <ChevronDown size={13} color="rgba(15, 23, 42, 0.7)" />
+                      <ChevronDown size={13} color="#64748B" />
                     </TouchableOpacity>
                     
                     {showViewModeDropdown && Platform.OS === 'web' && (
@@ -2064,9 +2065,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           { key: 'month', label: 'Calendar' },
                           // Week view hidden from UI for now; logic kept
                           { key: 'board', label: 'Board' },
-                          { key: 'tasks', label: 'Lists' },
+                          { key: 'tasks', label: 'To-do lists' },
+                          { key: 'attendance', label: 'Attendance' },
                         ].map((view) => {
-                          const isActive = (currentView === view.key) || (currentView === 'board' && view.key === 'board');
+                          const isActive = (currentView === view.key) || (currentView === 'board' && view.key === 'board') || (currentView === 'attendance' && view.key === 'attendance');
                           return (
                             <TouchableOpacity
                               key={view.key}
@@ -2127,18 +2129,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
+                        height: 36,
                         gap: 4,
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 12,
-                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                        paddingHorizontal: 12,
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
                         borderWidth: 1,
-                        borderColor: 'rgba(209, 213, 219, 0.8)',
+                        borderColor: '#E6EBF2',
                       }}
                     >
                       <Text style={{ 
                         fontSize: 15, 
-                        color: 'rgba(15, 23, 42, 0.85)',
+                        color: '#1E293B',
                         fontWeight: '500',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                       }}>
@@ -2340,7 +2342,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             All Event Types
                           </Text>
                         </TouchableOpacity>
-                        {['Lesson', 'Assignment', 'Activity', 'Scheduled Class Day', 'Appointment'].map((eventType) => {
+                        {['Lesson', 'Assignment', 'Activity', 'Appointment', 'Project', 'Exam'].map((eventType) => {
                           const isSelected = selectedEventTypes?.includes(eventType);
                           
                           // Get background color for event type (matching EventChip colors)
@@ -2349,8 +2351,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             if (typeLower === 'lesson') return '#E3F0FF'; // Soft Blue
                             if (typeLower === 'activity') return '#EDE6FF'; // Lavender
                             if (typeLower === 'assignment') return '#DFF7E3'; // Soft Green
-                            if (typeLower === 'scheduled class day') return '#FFE8D1'; // Soft Orange / Peach
                             if (typeLower === 'appointment') return '#F2F4F7'; // Warm Gray
+                            if (typeLower === 'project') return '#D6F0ED'; // Soft Teal
+                            if (typeLower === 'exam') return '#FCE7F3'; // Soft Pink
                             return 'transparent';
                           };
                           
@@ -2420,19 +2423,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         style={{
                           flexDirection: 'row',
                           alignItems: 'center',
+                          height: 36,
                           gap: 8,
-                          paddingHorizontal: 10,
-                          paddingVertical: 6,
-                          borderRadius: 12,
-                          backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                          backgroundColor: '#FFFFFF',
                           borderWidth: 1,
-                          borderColor: 'rgba(209, 213, 219, 0.8)',
+                          borderColor: '#E6EBF2',
                         }}
                       >
-                        <Target size={16} color="rgba(15, 23, 42, 0.85)" strokeWidth={2} />
+                        <Target size={16} color="#1E293B" strokeWidth={2} />
                         <Text style={{
                           fontSize: 15,
-                          color: 'rgba(15, 23, 42, 0.85)',
+                          color: '#1E293B',
                           fontWeight: '500',
                           fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }}>
@@ -2544,12 +2547,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         maxWidth: 250,
                         gap: 8,
                         paddingHorizontal: 12,
-                        paddingVertical: 10,
-                        borderRadius: 20,
+                        borderRadius: 8,
                         borderWidth: 1,
-                        borderColor: showSearchDropdown ? '#8b5cf6' : '#e5e7eb',
-                        backgroundColor: '#ffffff',
-                        height: 40,
+                        borderColor: showSearchDropdown ? '#8b5cf6' : '#E6EBF2',
+                        backgroundColor: '#FFFFFF',
+                        height: 36,
                         ...Platform.select({
                           web: {
                             cursor: 'text',

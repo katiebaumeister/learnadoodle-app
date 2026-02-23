@@ -3,10 +3,9 @@ import { View, Text, ScrollView, TouchableOpacity, Platform, StyleSheet, Alert }
 import { Calendar, CalendarDays, List, Archive, Trash2, Plus, CheckCircle2, Circle } from 'lucide-react';
 import { format, addDays, isToday, isSameDay, startOfToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
+import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { supabase } from '../../lib/supabase';
 import { permanentlyDeleteAllTrashEvents } from '../../lib/services/plannerClientWithOffline';
-
-import AttendanceView from './attendance/AttendanceView';
 
 export default function TasksView({ 
   events = [], 
@@ -17,7 +16,7 @@ export default function TasksView({
   children = [],
   familyId: familyIdProp = null,
 }) {
-  const [activeSection, setActiveSection] = useState('today');
+  const [activeSection, setActiveSection] = useState('backlog');
   const [userLists, setUserLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const [backlogEvents, setBacklogEvents] = useState([]);
@@ -558,13 +557,23 @@ export default function TasksView({
         const d = e.deleted_at ? new Date(e.deleted_at).getTime() : 0;
         return d > max ? d : max;
       }, 0) : 0;
+      const dates = g.events.map((e) => {
+        const t = e.start_ts || e.start || e.start_local;
+        return t ? new Date(t) : null;
+      }).filter(Boolean);
+      const dateMin = dates.length ? new Date(Math.min(...dates.map((d) => d.getTime()))) : null;
+      const dateMax = dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
+      const childIds = [...new Set(g.events.flatMap((e) => (e.child_id ? [e.child_id] : (e.child_ids && Array.isArray(e.child_ids) ? e.child_ids : []))))];
       items.push({
         type: 'plan',
         academicYearId: id,
         label: g.label,
         count: g.events.length,
         deletedAt,
-        eventIds: g.events.map(e => e.id),
+        eventIds: g.events.map((e) => e.id),
+        dateRangeStart: dateMin,
+        dateRangeEnd: dateMax,
+        childIds,
       });
     }
     items.sort((a, b) => {
@@ -575,21 +584,65 @@ export default function TasksView({
     return items;
   }, [activeSection, trashEvents]);
 
-  const renderPlanTrashItem = (item) => (
-    <View key={`plan-${item.academicYearId}`} style={styles.taskItem}>
-      <View style={styles.planTrashRow}>
-        <View style={{ marginRight: 10 }}>
-          <Calendar size={16} color="#6B7280" />
+  const handleOpenEditPlan = (academicYearId) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+        detail: { from: 'trash', academicYearId },
+      }));
+    }
+  };
+
+  const formatPlanDateRange = (start, end) => {
+    if (!start || !end) return null;
+    const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const startStr = fmt(start);
+    const endStr = fmt(end);
+    return startStr === endStr ? startStr : `${startStr} – ${endStr}`;
+  };
+
+  const renderPlanTrashItem = (item) => {
+    const dateRangeStr = formatPlanDateRange(item.dateRangeStart, item.dateRangeEnd);
+    return (
+      <TouchableOpacity
+        key={`plan-${item.academicYearId}`}
+        style={styles.taskItem}
+        onPress={() => handleOpenEditPlan(item.academicYearId)}
+        activeOpacity={0.7}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <View style={styles.planTrashRow}>
+          <View style={{ marginRight: 10 }}>
+            <Calendar size={16} color="#6B7280" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.planTrashLabel}>Plan: {item.label}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+              {dateRangeStr ? (
+                <Text style={styles.planTrashMeta}>{dateRangeStr}</Text>
+              ) : null}
+              <Text style={styles.planTrashMeta}>
+                {item.count} lesson{item.count === 1 ? '' : 's'}
+              </Text>
+              {item.childIds && item.childIds.length > 0 && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  {item.childIds.map((cid) => {
+                    const child = children.find((c) => c.id === cid);
+                    const dotColor = child?.avatar ? getChildColorFromAvatar(child.avatar) : '#9CA3AF';
+                    return (
+                      <View
+                        key={cid}
+                        style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dotColor }}
+                      />
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.planTrashLabel}>Plan: {item.label}</Text>
-          <Text style={styles.planTrashMeta}>
-            {item.count} placeholder event{item.count === 1 ? '' : 's'}
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   const renderTaskItem = (event) => {
     // Add active section metadata to the event object so the handler knows we're in trash
@@ -626,6 +679,21 @@ export default function TasksView({
         <ScrollView style={styles.sidebarScroll}>
           {/* Primary Views */}
           <View style={styles.sidebarSection}>
+            <TouchableOpacity
+              style={[styles.sidebarItem, activeSection === 'backlog' && styles.sidebarItemActive]}
+              onPress={() => {
+                setActiveSection('backlog');
+                setSelectedList(null);
+              }}
+            >
+              <Text style={[
+                styles.sidebarItemText,
+                activeSection === 'backlog' && styles.sidebarItemTextActive
+              ]}>
+                Backlog
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.sidebarItem, activeSection === 'today' && styles.sidebarItemActive]}
               onPress={() => {
@@ -670,21 +738,6 @@ export default function TasksView({
                 Next 2 Weeks
               </Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'backlog' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('backlog');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'backlog' && styles.sidebarItemTextActive
-              ]}>
-                Backlog
-              </Text>
-            </TouchableOpacity>
           </View>
 
           {/* User Lists */}
@@ -719,21 +772,6 @@ export default function TasksView({
 
           {/* System Views */}
           <View style={styles.sidebarSection}>
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'attendance' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('attendance');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'attendance' && styles.sidebarItemTextActive
-              ]}>
-                Attendance
-              </Text>
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={[styles.sidebarItem, activeSection === 'completed' && styles.sidebarItemActive]}
               onPress={() => {
@@ -777,13 +815,17 @@ export default function TasksView({
             {activeSection === 'backlog' && 'Backlog'}
             {activeSection === 'completed' && 'Completed'}
             {activeSection === 'trash' && 'Trash'}
-            {activeSection === 'attendance' && 'Attendance'}
             {selectedList && selectedList.name}
           </Text>
+          {activeSection === 'backlog' && (
+            <Text style={styles.headerDescription}>
+              Keep backburner items here. Add them to the calendar any time.
+            </Text>
+          )}
         </View>
 
-        {/* Add Task Input or Clear Trash Button (hidden for Attendance) */}
-        {activeSection === 'attendance' ? null : activeSection === 'trash' && trashEvents.length > 0 ? (
+        {/* Add Task Input or Clear Trash Button */}
+        {activeSection === 'trash' && trashEvents.length > 0 ? (
           <TouchableOpacity
             style={[styles.addTaskInput, styles.clearTrashButton]}
             onPress={handlePermanentlyClearTrash}
@@ -810,16 +852,8 @@ export default function TasksView({
           </TouchableOpacity>
         )}
 
-        {/* Tasks List or Attendance */}
-        {activeSection === 'attendance' ? (
-          <AttendanceView
-            familyId={familyId}
-            children={children}
-            events={events}
-            onEventPress={onEventPress}
-          />
-        ) : (
-          <ScrollView style={styles.tasksList}>
+        {/* Tasks List */}
+        <ScrollView style={styles.tasksList}>
             {activeSection === 'trash' ? (
               trashDisplayItems.length === 0 ? (
                 <View style={styles.emptyState}>
@@ -838,9 +872,8 @@ export default function TasksView({
               </View>
             ) : (
               currentEvents.map(renderTaskItem)
-            )}
-          </ScrollView>
-        )}
+          )}
+        </ScrollView>
       </View>
     </View>
   );
@@ -942,6 +975,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  headerDescription: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
+    lineHeight: 20,
   },
   addTaskInput: {
     flexDirection: 'row',

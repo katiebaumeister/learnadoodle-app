@@ -6,6 +6,7 @@ import PlannerWeek from './PlannerWeek';
 import DayAgenda from './DayAgenda';
 import BoardView from './BoardView';
 import TasksView from './TasksView';
+import AttendanceView from './attendance/AttendanceView';
 import MobileCardView from './MobileCardView';
 import { startOfToday, startOfWeek } from './utils/date';
 
@@ -27,6 +28,7 @@ export default function CenterPane({
   blackoutDates = [],
   viewMode: externalViewMode,
   familyId = null,
+  onEditChild = null,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -36,8 +38,9 @@ export default function CenterPane({
   // Sync mode when external viewMode prop changes
   useEffect(() => {
     if (externalViewMode) {
-      // Capitalize first letter to match internal format (Month, Week, Day, Board)
-      const capitalized = externalViewMode.charAt(0).toUpperCase() + externalViewMode.slice(1);
+      // Capitalize first letter to match internal format (Month, Week, Day, Board, Tasks, Attendance)
+      const lower = (externalViewMode || '').toLowerCase();
+      const capitalized = lower.charAt(0).toUpperCase() + lower.slice(1);
       setMode(capitalized);
     }
   }, [externalViewMode]);
@@ -127,6 +130,9 @@ export default function CenterPane({
         const selectedLower = (filters.eventTypes || []).map(t => (t || '').toLowerCase());
         if ((typeLower === 'schedule block' && selectedLower.includes('scheduled class day')) ||
             (typeLower === 'scheduled class day' && selectedLower.includes('schedule block'))) return true;
+        // Treat "Exam" and "Assessment" as the same (UI shows "Exam", DB may store "Assessment")
+        if ((typeLower === 'exam' && selectedLower.includes('exam')) ||
+            (typeLower === 'assessment' && selectedLower.includes('exam'))) return true;
         return false;
       });
     }
@@ -235,6 +241,15 @@ export default function CenterPane({
               onCreateTask={onCreateTask}
               children={children}
               familyId={familyId}
+            />
+          )}
+          {mode === 'Attendance' && (
+            <AttendanceView
+              familyId={familyId}
+              children={children}
+              events={filtered}
+              onEventPress={onEventSelect}
+              onEditChild={onEditChild}
             />
           )}
         </>

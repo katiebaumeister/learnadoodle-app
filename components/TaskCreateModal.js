@@ -218,7 +218,7 @@ export default function TaskCreateModal({
   const [showStandardsModal, setShowStandardsModal] = useState(false);
 
   // Counts toward year plan (instructional accounting)
-  const [countsTowardPlan, setCountsTowardPlan] = useState(false);
+  const [countsTowardPlan, setCountsTowardPlan] = useState(true); // default true for Lesson
   const [academicYears, setAcademicYears] = useState([]);
   const [selectedAcademicYearId, setSelectedAcademicYearId] = useState(null);
   const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
@@ -341,9 +341,7 @@ export default function TaskCreateModal({
         return true;
       });
       setAcademicYears(list);
-      if (list.length > 0) {
-        setSelectedAcademicYearId((prev) => (prev && list.some((y) => y.id === prev)) ? prev : list[0].id);
-      }
+      // Default to "No plan" (null); do not auto-select first plan
     })();
     return () => { cancelled = true; };
   }, [visible, familyId]);
@@ -859,7 +857,9 @@ export default function TaskCreateModal({
       setStartTime(DEFAULT_START_TIME);
       setEndTime('');
       // Reset new fields
-      setEventType(defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson')); // Use defaultEventType if provided (display "Scheduled Class Day" for "Schedule Block")
+      const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
+      setEventType(initialEventType);
+      setCountsTowardPlan(['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(initialEventType));
       setSelectedMaterialId(null);
       setAttachedMaterialIds([]);
       setAttachedStandards([]);
@@ -1393,10 +1393,6 @@ export default function TaskCreateModal({
       toast.push('Choose one child so this event counts toward that child\'s plan.', 'error');
       return;
     }
-    if (countsTowardPlan && !selectedAcademicYearId) {
-      toast.push('Select which plan this counts toward.', 'error');
-      return;
-    }
 
     // Store allowOverlaps in a variable that will be used in the RPC call
     const shouldAllowOverlaps = allowOverlaps || (skipConflictValidation && conflictWarning !== null);
@@ -1838,13 +1834,13 @@ export default function TaskCreateModal({
         return;
       }
 
-      // If "Counts toward year plan" was enabled, set academic_year_id and counts_toward_plan (instructional accounting)
-      if (data?.id && countsTowardPlan && selectedAcademicYearId && placement === 'calendar') {
+      // If "Count this as instructional time" was enabled, set counts_toward_plan (and optional academic_year_id)
+      if (data?.id && countsTowardPlan && placement === 'calendar') {
         const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
         await supabase
           .from('events')
           .update({
-            academic_year_id: selectedAcademicYearId,
+            academic_year_id: selectedAcademicYearId || null,
             counts_toward_plan: true,
             instructional_status: 'MANUAL_COUNTS',
             instructional_minutes: (mins != null && !Number.isNaN(mins)) ? mins : null,
@@ -2057,6 +2053,7 @@ export default function TaskCreateModal({
                     key={type}
                     onPress={() => {
                       setEventType(type);
+                      setCountsTowardPlan(['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(type));
                       if (validationErrors.eventType) {
                         setValidationErrors({ ...validationErrors, eventType: null });
                       }
@@ -2085,7 +2082,7 @@ export default function TaskCreateModal({
 
           {/* Count this as instructional time - at top */}
           {placement === 'calendar' &&
-            ['Lesson', 'Assignment', 'Project'].includes(eventType) &&
+            ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) &&
             (academicYears.length > 0 || loadingAcademicYears) && (
             <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 4 }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -2099,17 +2096,23 @@ export default function TaskCreateModal({
               </View>
               {countsTowardPlan && (
                 <>
-                  {assigneeIds.length > 1 && (
-                    <Text style={[styles.errorTextSmall, { marginBottom: 8 }]}>
-                      Choose one child for counted events so progress is clear per child.
-                    </Text>
-                  )}
                   {loadingAcademicYears ? (
                     <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
                   ) : (
                     <>
-                      <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
+                      <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan? (optional)</Text>
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                        <TouchableOpacity
+                          onPress={() => setSelectedAcademicYearId(null)}
+                          style={[
+                            styles.chipOption,
+                            selectedAcademicYearId === null && styles.chipOptionActive,
+                          ]}
+                        >
+                          <Text style={[styles.chipOptionText, selectedAcademicYearId === null && styles.chipOptionTextActive]}>
+                            No plan
+                          </Text>
+                        </TouchableOpacity>
                         {(() => {
                           const baseLabels = academicYears.map((ay) => {
                             const start = ay.start_date ? ay.start_date.slice(0, 10) : '';

@@ -512,7 +512,7 @@ export default function WebAuthScreen() {
             >
               Privacy Policy
             </Text>
-            {' '}.
+            {' .'}
           </Text>
         </View>
       )}

@@ -364,6 +364,11 @@ export default function DraggableEvent({
         return '#FFE8D1'; // Soft Orange / Peach
       case 'appointment':
         return '#F2F4F7'; // Warm Gray
+      case 'project':
+        return '#D6F0ED'; // Soft Teal
+      case 'exam':
+      case 'assessment':
+        return '#FCE7F3'; // Soft Pink
       default:
         return '#F2F4F7'; // Default Warm Gray
     }

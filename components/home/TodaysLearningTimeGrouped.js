@@ -139,9 +139,15 @@ export default function TodaysLearningTimeGrouped({
       case 'assignment':
         return '#DFF7E3'; // Soft Green
       case 'schedule_block':
+      case 'schedule block':
         return '#FFE8D1'; // Soft Orange / Peach
       case 'appointment':
         return '#F2F4F7'; // Warm Gray
+      case 'project':
+        return '#D6F0ED'; // Soft Teal
+      case 'exam':
+      case 'assessment':
+        return '#FCE7F3'; // Soft Pink
       default:
         return null; // Use default card background
     }

@@ -32,6 +32,7 @@ export default function SubjectsPage({
   onAddSubject,
   onAddSyllabus,
   onAddEvent,
+  onAddMaterial,
   onEditSubject,
   onNavigateToPlanner,
   onNavigateToLibrary,
@@ -425,6 +426,7 @@ export default function SubjectsPage({
               onNavigateToPlanner={handleNavigateToPlanner}
               onAddSyllabus={handleAddSyllabus}
               onAddEvent={handleAddEvent}
+              onAddMaterial={onAddMaterial}
             />
           ))}
         </ScrollView>

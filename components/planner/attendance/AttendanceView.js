@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { supabase } from '../../../lib/supabase';
-import { getAttendanceLogs } from '../../../lib/services/recordsClient';
+
+/** Notify other views (planner calendar, event modals, subject pages) to refetch so attendance stays in sync.
+ *  Uses skipCacheClear + skipHomeRefresh so the page doesn't feel like a full refresh when toggling attendance. */
+function notifyAttendanceUpdated() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('refreshCalendar', {
+      detail: { skipCacheClear: true, skipHomeRefresh: true },
+    }));
+    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+  }
+}
+import { getAttendanceLogs, createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../../lib/services/recordsClient';
+import { updateEventStatus } from '../../../lib/services/attendanceClient';
 import HeaderSummaryStrip from './HeaderSummaryStrip';
 import YearHeatmapGrid from './YearHeatmapGrid';
 import MonthlyCalendarView from './MonthlyCalendarView';
-import ExceptionsPanel from './ExceptionsPanel';
-import TotalsPanel from './TotalsPanel';
-import DayAttendanceModal from './DayAttendanceModal';
+import DayEventsPanel from './DayEventsPanel';
 import MarkRangeModal from './MarkRangeModal';
+import AttendanceExportModal from './AttendanceExportModal';
+import { useToast } from '../../Toast';
+import { TOKENS } from './constants';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
@@ -28,11 +41,20 @@ function formatDateLabel(dateStr) {
   return d.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** Only events marked as counting toward instructional time are used for attendance. */
+function isInstructionalEvent(e) {
+  const status = e.instructional_status;
+  if (status === 'MANUAL_COUNTS' || status === 'PLAN_PLACEHOLDER') return true;
+  if (e.counts_toward_plan === true) return true;
+  return false;
+}
+
 export default function AttendanceView({
   familyId,
   children: childrenProp = [],
   events: eventsProp = [],
   onEventPress,
+  onEditChild = null,
 }) {
   const [loading, setLoading] = useState(true);
   const [academicYear, setAcademicYear] = useState(null);
@@ -40,9 +62,13 @@ export default function AttendanceView({
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [yearEvents, setYearEvents] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const [dayModal, setDayModal] = useState({ visible: false, date: null, childId: null });
+  const [selectedDay, setSelectedDay] = useState({ dateKey: null, childId: null });
   const [markRangeVisible, setMarkRangeVisible] = useState(false);
+  const [exportModalVisible, setExportModalVisible] = useState(false);
+  const [exportModalChildId, setExportModalChildId] = useState(null);
+  const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
 
+  const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
   const children = childrenProp.length > 0 ? childrenProp : [];
 
@@ -62,18 +88,27 @@ export default function AttendanceView({
           .order('start_date', { ascending: false })
           .limit(1);
 
-        const start = yearRange.start;
-        const end = yearRange.end;
-        const startStr = start.toISOString().split('T')[0];
-        const endStr = end.toISOString().split('T')[0];
-
+        const defaultRange = getDefaultYearRange();
+        let fetchStart = yearRange.start;
+        let fetchEnd = yearRange.end;
         if (years?.[0]) {
           const ay = years[0];
           setAcademicYear(ay);
           const ayStart = new Date(ay.start_date + 'T12:00:00');
           const ayEnd = new Date(ay.end_date + 'T12:00:00');
-          setYearRange({ start: ayStart, end: ayEnd });
+          fetchStart = ayStart;
+          fetchEnd = ayEnd;
+          // Include start of month so we fetch and display events before term start (e.g. Feb 1–23 when term starts Feb 24)
+          const rangeStart = new Date(fetchStart.getFullYear(), fetchStart.getMonth(), 1);
+          fetchStart = rangeStart;
+          setYearRange({ start: rangeStart, end: fetchEnd });
+        } else {
+          fetchStart = defaultRange.start;
+          fetchEnd = defaultRange.end;
+          setYearRange({ start: fetchStart, end: fetchEnd });
         }
+        const startStr = fetchStart.toISOString().split('T')[0];
+        const endStr = fetchEnd.toISOString().split('T')[0];
 
         const childIds = children.map((c) => c.id);
         const [logs, eventsRes] = await Promise.all([
@@ -82,8 +117,8 @@ export default function AttendanceView({
             .from('events')
             .select('*')
             .eq('family_id', familyIdResolved)
-            .gte('start_ts', start.toISOString())
-            .lte('start_ts', end.toISOString())
+            .gte('start_ts', fetchStart.toISOString())
+            .lte('start_ts', fetchEnd.toISOString())
             .neq('status', 'canceled')
             .is('deleted_at', null)
             .order('start_ts', { ascending: true }),
@@ -95,33 +130,39 @@ export default function AttendanceView({
         }
       } catch (e) {
         if (!cancelled) {
-          setAttendanceRecords([]);
-          setYearEvents([]);
+          setAttendanceRecords((prev) => prev);
+          setYearEvents((prev) => prev);
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [familyIdResolved, children.length]);
+  }, [familyIdResolved, children.length, attendanceRefreshKey]);
 
-  const events = yearEvents.length > 0 ? yearEvents : eventsProp.filter((e) => {
+  const eventsInRange = yearEvents.length > 0 ? yearEvents : eventsProp.filter((e) => {
     const t = e.start_ts || e.start || e.start_local;
     if (!t) return false;
     const d = new Date(t);
     return d >= yearRange.start && d <= yearRange.end;
   });
 
+  const events = useMemo(() => eventsInRange.filter(isInstructionalEvent), [eventsInRange]);
+
   const eventsByDateChild = useMemo(() => {
     const map = {};
     events.forEach((e) => {
       const dateStr = (e.start_ts || e.start || e.start_local || '').slice(0, 10);
       if (!dateStr) return;
-      const childId = e.child_id || e.child_ids?.[0];
-      if (!childId) return;
-      if (!map[dateStr]) map[dateStr] = {};
-      if (!map[dateStr][childId]) map[dateStr][childId] = [];
-      map[dateStr][childId].push(e);
+      const childIds = e.child_ids && Array.isArray(e.child_ids) && e.child_ids.length > 0
+        ? e.child_ids
+        : (e.child_id ? [e.child_id] : []);
+      childIds.forEach((childId) => {
+        if (!childId) return;
+        if (!map[dateStr]) map[dateStr] = {};
+        if (!map[dateStr][childId]) map[dateStr][childId] = [];
+        map[dateStr][childId].push(e);
+      });
     });
     return map;
   }, [events]);
@@ -138,30 +179,40 @@ export default function AttendanceView({
     const byChild = {};
     const startStr = yearRange.start.toISOString().split('T')[0];
     const endStr = yearRange.end.toISOString().split('T')[0];
+    // Today in local timezone (YYYY-MM-DD) for "past day" rule: unmarked past days count as absent
+    const now = new Date();
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     children.forEach((c) => { byChild[c.id] = {}; });
     for (let i = 0; i < 400; i++) {
       const d = new Date(yearRange.start);
       d.setDate(d.getDate() + i);
       const key = d.toISOString().split('T')[0];
       if (key > endStr) break;
+      const isPastDay = key < todayKey;
       children.forEach((c) => {
         const dayEvents = eventsByDateChild[key]?.[c.id] || [];
         const recordsForDay = attendanceRecords.filter(
           (r) => r.child_id === c.id && (r.day_date === key || (r.day_date && r.day_date.slice(0, 10) === key))
         );
-        const eventIds = new Set(dayEvents.map((e) => e.id));
-        const presentCount = recordsForDay.filter((r) => r.status === 'present').length;
-        const absentCount = recordsForDay.filter((r) => r.status === 'absent').length;
+        const eventIds = new Set(dayEvents.map((e) => String(e.id)));
+        const hasEvent = (r) => r.event_id != null && eventIds.has(String(r.event_id));
+        // Only count records for this day's events so we don't show "present" from unrelated records
+        const presentForEvents = new Set(
+          recordsForDay.filter((r) => r.status === 'present' && hasEvent(r)).map((r) => r.event_id)
+        );
+        const absentForEvents = new Set(
+          recordsForDay.filter((r) => r.status === 'absent' && hasEvent(r)).map((r) => r.event_id)
+        );
+        const presentCount = presentForEvents.size;
+        const absentCount = absentForEvents.size;
         if (dayEvents.length === 0) {
           byChild[c.id][key] = 'noEvents';
-        } else if (absentCount === dayEvents.length) {
-          byChild[c.id][key] = 'absent';
-        } else if (presentCount === dayEvents.length) {
+        } else if (presentCount >= 1) {
+          // Attended: at least one event has a present record for this child
           byChild[c.id][key] = 'present';
-        } else if (presentCount > 0) {
-          byChild[c.id][key] = 'partial';
         } else {
-          byChild[c.id][key] = 'unmarked';
+          // Unattended (none present): past days count as absent, future as upcoming
+          byChild[c.id][key] = isPastDay ? 'absent' : 'unmarked';
         }
       });
     }
@@ -172,7 +223,7 @@ export default function AttendanceView({
     return children.map((c) => {
       const daysSet = new Set();
       const minutesByDay = {};
-      attendanceRecords.filter((r) => r.child_id === c.id).forEach((r) => {
+      attendanceRecords.filter((r) => r.child_id === c.id && r.status === 'present').forEach((r) => {
         const day = r.day_date?.slice?.(0, 10) || r.day_date;
         if (day) {
           daysSet.add(day);
@@ -199,12 +250,18 @@ export default function AttendanceView({
   const exceptions = useMemo(() => {
     const list = [];
     const seen = new Set();
+    const getChildEventStatus = (childId, eventId, dateStr) => {
+      const r = attendanceRecords.find(
+        (rec) => String(rec.child_id) === String(childId) && rec.event_id === eventId && String(rec.day_date).slice(0, 10) === dateStr
+      );
+      return r?.status ?? null;
+    };
     Object.keys(eventsByDateChild).forEach((dateStr) => {
       Object.keys(eventsByDateChild[dateStr]).forEach((childId) => {
         const child = children.find((c) => c.id === childId);
         const dayEvents = eventsByDateChild[dateStr][childId];
-        const present = dayEvents.filter((e) => attendanceByEventId[e.id] === 'present').length;
-        const absent = dayEvents.filter((e) => attendanceByEventId[e.id] === 'absent').length;
+        const present = dayEvents.filter((e) => getChildEventStatus(childId, e.id, dateStr) === 'present').length;
+        const absent = dayEvents.filter((e) => getChildEventStatus(childId, e.id, dateStr) === 'absent').length;
         if (present === 0 && absent === 0) {
           const key = `${dateStr}-${childId}`;
           if (!seen.has(key)) {
@@ -230,22 +287,22 @@ export default function AttendanceView({
               childId,
               dateLabel: formatDateLabel(dateStr),
               childName: child?.first_name || child?.name || 'Child',
-              description: 'marked absent',
+              description: 'marked unattended',
             });
           }
         }
       });
     });
     return list.sort((a, b) => (b.dateLabel > a.dateLabel ? 1 : -1));
-  }, [eventsByDateChild, children, attendanceByEventId]);
+  }, [eventsByDateChild, children, attendanceRecords]);
 
   const totalsPerChild = useMemo(() => {
     return children.map((c) => {
       const minutes = attendanceRecords
-        .filter((r) => r.child_id === c.id)
+        .filter((r) => r.child_id === c.id && r.status === 'present')
         .reduce((sum, r) => sum + (r.minutes || 0), 0);
       const daysSet = new Set();
-      attendanceRecords.filter((r) => r.child_id === c.id).forEach((r) => {
+      attendanceRecords.filter((r) => r.child_id === c.id && r.status === 'present').forEach((r) => {
         const day = r.day_date?.slice?.(0, 10) || r.day_date;
         if (day) daysSet.add(day);
       });
@@ -277,28 +334,260 @@ export default function AttendanceView({
     });
   }, [children, attendanceRecords, academicYear, yearRange]);
 
-  const termLabel = academicYear?.year_name
-    ? (() => {
-        const m = new Date().getMonth();
-        if (m >= 0 && m <= 4) return 'Spring Term';
-        if (m >= 5 && m <= 7) return 'Summer Term';
-        return 'Fall Term';
-      })()
-    : 'School Year';
-  const yearLabel = academicYear?.year_name || `${yearRange.start.getFullYear()}–${yearRange.end.getFullYear()} Academic Year`;
+  const exportRows = useMemo(() => {
+    const startStr = yearRange.start.toISOString().split('T')[0];
+    const endStr = yearRange.end.toISOString().split('T')[0];
+    const rows = [];
+    for (let i = 0; i < 400; i++) {
+      const d = new Date(yearRange.start);
+      d.setDate(d.getDate() + i);
+      const dateKey = d.toISOString().split('T')[0];
+      if (dateKey > endStr) break;
+      const childStatuses = {};
+      children.forEach((c) => {
+        childStatuses[c.id] = dayStatusByChild[c.id]?.[dateKey] || 'noEvents';
+      });
+      rows.push({
+        dateKey,
+        dateLabel: formatDateLabel(dateKey),
+        childStatuses,
+      });
+    }
+    return rows;
+  }, [yearRange, children, dayStatusByChild]);
 
-  const dayModalEvents = dayModal.date && dayModal.childId
-    ? (eventsByDateChild[dayModal.date]?.[dayModal.childId] || [])
+  const selectedDayEvents = selectedDay.dateKey && selectedDay.childId
+    ? (eventsByDateChild[selectedDay.dateKey]?.[selectedDay.childId] || [])
     : [];
-  const dayModalChild = children.find((c) => c.id === dayModal.childId);
+  const selectedDayChild = children.find((c) => c.id === selectedDay.childId);
 
   const handleDayPress = useCallback((dateKey, childId) => {
-    setDayModal({ visible: true, date: dateKey, childId: childId || children[0]?.id });
+    setSelectedDay({ dateKey, childId: childId || children[0]?.id });
   }, [children]);
 
-  const handleExport = useCallback(() => {
-    // TODO: open export modal or trigger PDF/CSV
+  const getEventMinutes = useCallback((e) => {
+    if (e.duration_minutes != null) return e.duration_minutes;
+    const start = e.start_ts || e.start || e.start_local;
+    const end = e.end_ts || e.end;
+    if (start && end) return Math.round((new Date(end) - new Date(start)) / 60000);
+    return 0;
   }, []);
+
+  /** Child IDs explicitly assigned to this event (shared events have multiple). Only these children get attendance. */
+  const getChildIdsForEvent = useCallback((event) => {
+    if (!event) return [];
+    const ids = event.child_ids && Array.isArray(event.child_ids) && event.child_ids.length > 0
+      ? event.child_ids
+      : (event.child_id ? [event.child_id] : []);
+    return ids.filter(Boolean).map((id) => String(id));
+  }, []);
+
+  /** Events on the same day that are the same "lesson" (same source_block_id = per-child plan events, or same id). */
+  const getSiblingEventsOnDay = useCallback((dateKey, event, eventsList) => {
+    if (!event || !dateKey || !eventsList?.length) return [event].filter(Boolean);
+    const key = String(dateKey).slice(0, 10);
+    const blockId = event.source_block_id;
+    return eventsList.filter((ev) => {
+      const evDate = (ev.start_ts || ev.start || ev.start_local || '').slice(0, 10);
+      if (evDate !== key) return false;
+      if (blockId) return ev.source_block_id === blockId;
+      return ev.id === event.id;
+    });
+  }, []);
+
+  const attendanceRecordByEventId = useMemo(() => {
+    if (!selectedDay.dateKey || !selectedDay.childId) return {};
+    const key = String(selectedDay.dateKey).slice(0, 10);
+    const cid = String(selectedDay.childId);
+    const map = {};
+    attendanceRecords.forEach((r) => {
+      if (String(r.day_date).slice(0, 10) === key && String(r.child_id) === cid && r.event_id) {
+        map[r.event_id] = r;
+      }
+    });
+    return map;
+  }, [selectedDay.dateKey, selectedDay.childId, attendanceRecords]);
+
+  /** Per-child attendance for the selected day/child (so shared events show correct status for this child). */
+  const selectedDayAttendanceByEventId = useMemo(() => {
+    const map = {};
+    Object.entries(attendanceRecordByEventId).forEach(([eid, r]) => {
+      map[eid] = r.status || 'present';
+    });
+    return map;
+  }, [attendanceRecordByEventId]);
+
+  const handleToggleEventAttendance = useCallback(async (eventId) => {
+    if (!familyIdResolved || !selectedDay.childId || !selectedDay.dateKey) return;
+    const normKey = String(selectedDay.dateKey).slice(0, 10);
+    const normChildId = String(selectedDay.childId);
+    const event = selectedDayEvents.find((e) => e.id === eventId);
+    const existingForSelected = attendanceRecordByEventId[eventId];
+    const isUnmark = existingForSelected?.status === 'present';
+    try {
+      if (isUnmark) {
+        const assignedIds = getChildIdsForEvent(event);
+        const isShared = assignedIds.length > 1;
+        const minutes = getEventMinutes(event);
+        if (isShared) {
+          const existing = attendanceRecords.find(
+            (r) => r.event_id === event.id && String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
+          );
+          if (existing) {
+            await updateAttendanceLog(existing.id, { status: 'absent', minutes });
+          } else {
+            await createAttendanceLog({
+              family_id: familyIdResolved,
+              child_id: normChildId,
+              event_id: event.id,
+              day_date: normKey,
+              status: 'absent',
+              minutes,
+            });
+          }
+        } else {
+          const recordsToDelete = attendanceRecords.filter(
+            (r) => r.event_id === event.id && String(r.day_date).slice(0, 10) === normKey
+          );
+          await Promise.all(recordsToDelete.map((r) => deleteAttendanceLog(r.id)));
+          const res = await updateEventStatus(event.id, 'scheduled');
+          if (res.error) console.warn('[AttendanceView] Could not unmark event status:', res.error);
+        }
+        setTimeout(() => {
+          setAttendanceRefreshKey((k) => k + 1);
+          notifyAttendanceUpdated();
+        }, 150);
+        return;
+      }
+      const siblings = getSiblingEventsOnDay(normKey, event, events);
+      for (const ev of siblings) {
+        const childIds = getChildIdsForEvent(ev);
+        if (childIds.length === 0) continue;
+        const minutes = getEventMinutes(ev);
+        const upserts = childIds.map((cid) => {
+          const cidStr = String(cid);
+          const existing = attendanceRecords.find(
+            (r) => r.event_id === ev.id && String(r.child_id) === cidStr && String(r.day_date).slice(0, 10) === normKey
+          );
+          if (existing) {
+            return updateAttendanceLog(existing.id, { status: 'present', minutes });
+          }
+          return createAttendanceLog({
+            family_id: familyIdResolved,
+            child_id: cidStr,
+            event_id: ev.id,
+            day_date: normKey,
+            status: 'present',
+            minutes,
+          });
+        });
+        await Promise.all(upserts);
+        const res = await updateEventStatus(ev.id, 'done');
+        if (res.error) console.warn('[AttendanceView] Could not mark event complete:', res.error);
+      }
+      setAttendanceRefreshKey((k) => k + 1);
+      notifyAttendanceUpdated();
+    } catch (_) {
+      setAttendanceRefreshKey((k) => k + 1);
+    }
+  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay]);
+
+  const handleMarkDayAttended = useCallback(async (dateKey, childId) => {
+    if (!familyIdResolved || !childId) return;
+    const normKey = String(dateKey).slice(0, 10);
+    const normChildId = String(childId);
+    const dayEventsForChild = eventsByDateChild[normKey]?.[normChildId] || [];
+    if (dayEventsForChild.length === 0) {
+      toast.push('No events to mark for this day', 'info');
+      return;
+    }
+    // For "all present" check: this child must have at least one present record per their events that day
+    const allPresentForChild = dayEventsForChild.every((e) => {
+      const rec = attendanceRecords.find(
+        (r) => r.event_id === e.id && String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
+      );
+      return rec?.status === 'present';
+    });
+    try {
+      if (allPresentForChild) {
+        // Mark day unattended for this child only
+        for (const e of dayEventsForChild) {
+          const assignedIds = getChildIdsForEvent(e);
+          const isShared = assignedIds.length > 1;
+          const minutes = getEventMinutes(e);
+          if (isShared) {
+            // Do not change event completion status; only set this child's attendance to absent
+            const existing = attendanceRecords.find(
+              (r) => r.event_id === e.id && String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
+            );
+            if (existing) {
+              await updateAttendanceLog(existing.id, { status: 'absent', minutes });
+            } else {
+              await createAttendanceLog({
+                family_id: familyIdResolved,
+                child_id: normChildId,
+                event_id: e.id,
+                day_date: normKey,
+                status: 'absent',
+                minutes,
+              });
+            }
+          } else {
+            const recordsToDelete = attendanceRecords.filter(
+              (r) => r.event_id === e.id && String(r.day_date).slice(0, 10) === normKey
+            );
+            await Promise.all(recordsToDelete.map((r) => deleteAttendanceLog(r.id)));
+            const res = await updateEventStatus(e.id, 'scheduled');
+            if (res.error) console.warn('[AttendanceView] Could not unmark event status:', res.error);
+          }
+        }
+        setTimeout(() => {
+          setAttendanceRefreshKey((k) => k + 1);
+          notifyAttendanceUpdated();
+        }, 150);
+        return;
+      }
+      // Mark day attended: include sibling events so the lesson group shows complete; mark all assigned children present and set event done
+      const seenIds = new Set();
+      const dayEvents = [];
+      dayEventsForChild.forEach((e) => {
+        getSiblingEventsOnDay(normKey, e, events).forEach((s) => {
+          if (!seenIds.has(s.id)) {
+            seenIds.add(s.id);
+            dayEvents.push(s);
+          }
+        });
+      });
+      for (const e of dayEvents) {
+        const childIds = getChildIdsForEvent(e);
+        const minutes = getEventMinutes(e);
+        const upserts = childIds.map((cid) => {
+          const cidStr = String(cid);
+          const existing = attendanceRecords.find(
+            (r) => r.event_id === e.id && String(r.child_id) === cidStr && String(r.day_date).slice(0, 10) === normKey
+          );
+          if (existing) {
+            return updateAttendanceLog(existing.id, { status: 'present', minutes });
+          }
+          return createAttendanceLog({
+            family_id: familyIdResolved,
+            child_id: cidStr,
+            event_id: e.id,
+            day_date: normKey,
+            status: 'present',
+            minutes,
+          });
+        });
+        await Promise.all(upserts);
+        const res = await updateEventStatus(e.id, 'done');
+        if (res.error) console.warn('[AttendanceView] Could not mark event complete:', res.error);
+      }
+      setAttendanceRefreshKey((k) => k + 1);
+      notifyAttendanceUpdated();
+    } catch (_) {
+      setAttendanceRefreshKey((k) => k + 1);
+    }
+  }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast]);
 
   const handleMarkRangeConfirm = useCallback(({ childId, fromDate, toDate }) => {
     // TODO: call API to mark all scheduled events in range as attended
@@ -315,36 +604,63 @@ export default function AttendanceView({
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <HeaderSummaryStrip
-        termLabel={termLabel}
-        yearLabel={yearLabel}
-        childSummaries={summaryPerChild}
-        onExport={handleExport}
-        onMarkRange={() => setMarkRangeVisible(true)}
-        onSettings={() => {}}
-      />
+      <HeaderSummaryStrip />
       {children.length > 0 ? (
         <>
           <YearHeatmapGrid
             yearStart={yearRange.start.toISOString().slice(0, 10)}
             yearEnd={yearRange.end.toISOString().slice(0, 10)}
             children={children}
+            childSummaries={summaryPerChild}
             dayStatusByChild={dayStatusByChild}
-            onDayPress={handleDayPress}
+            onMarkDayAttended={handleMarkDayAttended}
+            onEditChild={onEditChild}
+            onExport={() => {
+              setExportModalChildId(null);
+              setExportModalVisible(true);
+            }}
+            onChildNamePress={(child) => {
+              setExportModalChildId(child.id);
+              setExportModalVisible(true);
+            }}
           />
-          <MonthlyCalendarView
-            monthDate={calendarMonth}
-            dayStatusByChild={dayStatusByChild}
-            selectedChildId={children[0]?.id}
-            onMonthChange={(delta) => setCalendarMonth((m) => {
-              const next = new Date(m);
-              next.setMonth(next.getMonth() + delta);
-              return next;
-            })}
-            onDayPress={(dateKey) => handleDayPress(dateKey, children[0]?.id)}
-          />
-          <ExceptionsPanel items={exceptions} onItemPress={(item) => setDayModal({ visible: true, date: item.dateStr, childId: item.childId || children[0]?.id })} />
-          <TotalsPanel title="This Year" childTotals={totalsPerChild} />
+          <View style={styles.drilldownSection}>
+            <View style={styles.drilldownDividerLine} />
+            <Text style={styles.drilldownTitle}>Month drill-down</Text>
+            <Text style={styles.drilldownHelp}>Click a day on the calendar or heatmap to see events. Attendance only considers events marked as instructional time.</Text>
+            <View style={styles.drilldownGrid}>
+              <View style={styles.calendarWithDivider}>
+                <View style={styles.calendarColumn}>
+                  <MonthlyCalendarView
+                    monthDate={calendarMonth}
+                    dayStatusByChild={dayStatusByChild}
+                    selectedChildId={children[0]?.id}
+                    selectedDateKey={selectedDay.dateKey}
+                    children={children}
+                    onMonthChange={(delta) => setCalendarMonth((m) => {
+                      const next = new Date(m);
+                      next.setMonth(next.getMonth() + delta);
+                      return next;
+                    })}
+                    onDayPress={(dateKey) => handleDayPress(dateKey, children[0]?.id)}
+                  />
+                </View>
+                <View style={styles.drilldownDivider} />
+              </View>
+              <View style={styles.detailColumn}>
+                <DayEventsPanel
+                  dateLabel={selectedDay.dateKey ? formatDateLabel(selectedDay.dateKey) : null}
+                  childName={selectedDayChild?.first_name || selectedDayChild?.name || null}
+                  events={selectedDayEvents}
+                  attendanceByEventId={selectedDayAttendanceByEventId}
+                  onToggleEventAttendance={handleToggleEventAttendance}
+                  onMarkAllAttended={selectedDay.dateKey && selectedDay.childId ? () => handleMarkDayAttended(selectedDay.dateKey, selectedDay.childId) : null}
+                  onEventPress={onEventPress}
+                  getEventMinutes={getEventMinutes}
+                />
+              </View>
+            </View>
+          </View>
         </>
       ) : (
         <View style={styles.empty}>
@@ -352,22 +668,21 @@ export default function AttendanceView({
         </View>
       )}
 
-      <DayAttendanceModal
-        visible={dayModal.visible}
-        dateLabel={dayModal.date ? formatDateLabel(dayModal.date) : ''}
-        childName={dayModalChild?.first_name || dayModalChild?.name || ''}
-        events={dayModalEvents}
-        attendanceByEventId={attendanceByEventId}
-        onClose={() => setDayModal({ visible: false, date: null, childId: null })}
-        onMarkEvent={(eventId, status) => {
-          // TODO: upsert attendance_records for event
-        }}
-      />
       <MarkRangeModal
         visible={markRangeVisible}
         children={children}
         onClose={() => setMarkRangeVisible(false)}
         onConfirm={handleMarkRangeConfirm}
+      />
+      <AttendanceExportModal
+        visible={exportModalVisible}
+        onClose={() => {
+          setExportModalVisible(false);
+          setExportModalChildId(null);
+        }}
+        exportRows={exportRows}
+        children={children}
+        singleChildId={exportModalChildId}
       />
     </ScrollView>
   );
@@ -375,9 +690,81 @@ export default function AttendanceView({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { paddingBottom: 48 },
+  content: {
+    paddingTop: TOKENS.contentPadY,
+    paddingBottom: 48,
+    paddingHorizontal: TOKENS.contentPadX,
+    maxWidth: TOKENS.contentMax,
+    alignSelf: 'center',
+    width: '100%',
+    ...(Platform.OS === 'web' && { marginLeft: 'auto', marginRight: 'auto' }),
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: TOKENS.text,
+    marginBottom: TOKENS.s2,
+  },
+  sectionHelp: {
+    fontSize: TOKENS.fontSizeCaption,
+    color: TOKENS.textMuted,
+    marginBottom: TOKENS.s6,
+  },
+  drilldownTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: TOKENS.text,
+    marginBottom: 8,
+  },
+  drilldownHelp: {
+    fontSize: TOKENS.fontSizeCaption,
+    color: TOKENS.textMuted,
+    marginBottom: 20,
+  },
+  drilldownSection: {
+    marginTop: TOKENS.s9,
+    paddingTop: 24,
+  },
+  drilldownDividerLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 1,
+    backgroundColor: 'rgba(15,23,42,0.08)',
+  },
+  drilldownGrid: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    flexWrap: 'wrap',
+    gap: 0,
+  },
+  calendarWithDivider: {
+    flexDirection: 'row',
+    width: 361,
+    minWidth: 281,
+  },
+  calendarColumn: {
+    width: 360,
+    minWidth: 280,
+  },
+  drilldownDivider: {
+    width: 1,
+    backgroundColor: 'rgba(15,23,42,0.06)',
+  },
+  detailColumn: {
+    flex: 1,
+    minWidth: 200,
+    paddingLeft: 24,
+  },
+  calendarRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: TOKENS.s7,
+    flexWrap: 'wrap',
+  },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  loadingText: { marginTop: 12, fontSize: 14, color: '#6B7280' },
+  loadingText: { marginTop: 12, fontSize: 14, color: TOKENS.textMuted },
   empty: { padding: 24 },
-  emptyText: { fontSize: 14, color: '#6B7280' },
+  emptyText: { fontSize: 14, color: TOKENS.textMuted },
 });

@@ -76,109 +76,127 @@ async def get_family_members(
     log_event("family.get_members.start", user_id=user["id"])
 
     try:
-        family_id = get_family_id_for_user(user["id"])
-    except Exception as e:
-        log_event("family.get_members.get_family_id_error", user_id=user["id"], error=str(e))
-        family_id = None
+        try:
+            family_id = get_family_id_for_user(user["id"])
+        except Exception as e:
+            log_event("family.get_members.get_family_id_error", user_id=user["id"], error=str(e))
+            family_id = None
 
-    if not family_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Family not found"
+        if not family_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Family not found"
+            )
+
+        supabase = get_admin_client()
+        family_name = None
+        children = []
+        members = []
+
+        # Get family row (name, onboarding_completed, default_planning_mode)
+        onboarding_completed = False
+        default_planning_mode = None
+        try:
+            family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
+            if family_res.data:
+                family_name = family_res.data.get("name")
+                # Prefer onboarding_completed; fallback to legacy has_completed_onboarding
+                onboarding_completed = family_res.data.get("onboarding_completed")
+                if onboarding_completed is None and family_res.data.get("has_completed_onboarding") is True:
+                    onboarding_completed = True
+                default_planning_mode = family_res.data.get("default_planning_mode")
+        except Exception as e:
+            log_event("family.get_members.family_table_error", user_id=user["id"], error=str(e))
+
+        # Get children
+        try:
+            children_res = supabase.table("children").select("id, first_name").eq("family_id", family_id).eq("archived", False).execute()
+            for child in (children_res.data or []):
+                first_name = child.get("first_name") or "Child"
+                children.append(ChildOut(
+                    id=child["id"],
+                    name=first_name,
+                    first_name=first_name
+                ))
+        except Exception as e:
+            log_event("family.get_members.children_table_error", user_id=user["id"], error=str(e))
+
+        # Derived onboarding validity (avoids stale onboarding_completed)
+        has_children = len(children) > 0
+        has_subjects = False
+        try:
+            subj_res = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
+            has_subjects = bool(subj_res.data and len(subj_res.data) > 0)
+        except Exception as e:
+            log_event("family.get_members.subjects_check_error", user_id=user["id"], error=str(e))
+        onboarding_is_valid = bool(
+            default_planning_mode is not None
+            and default_planning_mode != ""
+            and has_children
+            and has_subjects
         )
 
-    supabase = get_admin_client()
-    family_name = None
-    children = []
-    members = []
-
-    # Get family row (name, onboarding_completed, default_planning_mode)
-    onboarding_completed = False
-    default_planning_mode = None
-    try:
-        family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
-        if family_res.data:
-            family_name = family_res.data.get("name")
-            # Prefer onboarding_completed; fallback to legacy has_completed_onboarding
-            onboarding_completed = family_res.data.get("onboarding_completed")
-            if onboarding_completed is None and family_res.data.get("has_completed_onboarding") is True:
-                onboarding_completed = True
-            default_planning_mode = family_res.data.get("default_planning_mode")
-    except Exception as e:
-        log_event("family.get_members.family_table_error", user_id=user["id"], error=str(e))
-
-    # Get children
-    try:
-        children_res = supabase.table("children").select("id, first_name").eq("family_id", family_id).eq("archived", False).execute()
-        for child in (children_res.data or []):
-            first_name = child.get("first_name") or "Child"
-            children.append(ChildOut(
-                id=child["id"],
-                name=first_name,
-                first_name=first_name
-            ))
-    except Exception as e:
-        log_event("family.get_members.children_table_error", user_id=user["id"], error=str(e))
-
-    # Derived onboarding validity (avoids stale onboarding_completed)
-    has_children = len(children) > 0
-    has_subjects = False
-    try:
-        subj_res = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
-        has_subjects = bool(subj_res.data and len(subj_res.data) > 0)
-    except Exception as e:
-        log_event("family.get_members.subjects_check_error", user_id=user["id"], error=str(e))
-    onboarding_is_valid = bool(
-        default_planning_mode is not None
-        and default_planning_mode != ""
-        and has_children
-        and has_subjects
-    )
-
-    # Get family members - table may not exist or RLS/migration not applied
-    members_data = []
-    try:
-        members_res = supabase.table("family_members").select(
-            "id, user_id, member_role, child_scope"
-        ).eq("family_id", family_id).execute()
-        members_data = list(members_res.data or [])
-    except Exception as e:
-        log_event("family.get_members.family_members_table_error", user_id=user["id"], error=str(e))
-
-    # Batch fetch profile emails
-    user_ids = [m.get("user_id") for m in members_data if m.get("user_id")]
-    profiles_map = {}
-    if user_ids:
+        # Get family members - table may not exist or RLS/migration not applied
+        members_data = []
         try:
-            profiles_res = supabase.table("profiles").select("id, email").in_("id", user_ids).execute()
-            for profile in (profiles_res.data or []):
-                profiles_map[profile["id"]] = profile.get("email")
+            members_res = supabase.table("family_members").select(
+                "id, user_id, member_role, child_scope"
+            ).eq("family_id", family_id).execute()
+            members_data = list(members_res.data or [])
         except Exception as e:
-            log_event("family.get_members.profiles_table_error", user_id=user["id"], error=str(e))
+            log_event("family.get_members.family_members_table_error", user_id=user["id"], error=str(e))
 
-    for member in members_data:
-        email = profiles_map.get(member.get("user_id")) if member.get("user_id") else None
-        name = email or None
-        members.append(MemberOut(
-            id=member["id"],
-            name=name,
-            email=email,
-            role=member.get("member_role", "parent"),
-            member_role=member.get("member_role"),
-            child_scope=member.get("child_scope", []) or []
-        ))
+        # Batch fetch profile emails
+        user_ids = [m.get("user_id") for m in members_data if m.get("user_id")]
+        profiles_map = {}
+        if user_ids:
+            try:
+                profiles_res = supabase.table("profiles").select("id, email").in_("id", user_ids).execute()
+                for profile in (profiles_res.data or []):
+                    profiles_map[profile["id"]] = profile.get("email")
+            except Exception as e:
+                log_event("family.get_members.profiles_table_error", user_id=user["id"], error=str(e))
 
-    log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
+        for member in members_data:
+            mid = member.get("id")
+            if not mid:
+                continue
+            email = profiles_map.get(member.get("user_id")) if member.get("user_id") else None
+            name = email or None
+            members.append(MemberOut(
+                id=mid,
+                name=name,
+                email=email,
+                role=member.get("member_role", "parent"),
+                member_role=member.get("member_role"),
+                child_scope=member.get("child_scope", []) or []
+            ))
 
-    return FamilyMembersOut(
-        id=family_id,
-        family_name=family_name,
-        onboarding_completed=onboarding_completed,
-        onboarding_is_valid=onboarding_is_valid,
-        default_planning_mode=default_planning_mode,
-        children=children,
-        members=members
-    )
+        log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
+
+        return FamilyMembersOut(
+            id=family_id,
+            family_name=family_name,
+            onboarding_completed=onboarding_completed,
+            onboarding_is_valid=onboarding_is_valid,
+            default_planning_mode=default_planning_mode,
+            children=children,
+            members=members
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("family.get_members.unexpected_error", user_id=user["id"], error=str(e))
+        # Never return 500: return 200 with empty/safe data so UI can still load
+        return FamilyMembersOut(
+            id=family_id,
+            family_name=None,
+            onboarding_completed=False,
+            onboarding_is_valid=False,
+            default_planning_mode=None,
+            children=[],
+            members=[]
+        )
 
 
 @router.post("/reset_data")

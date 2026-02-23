@@ -14,6 +14,7 @@ import AddChildModal from '../AddChildModal';
 import AddSubjectModal from '../AddSubjectModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
+import ConfirmDialog from '../ConfirmDialog';
 
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null }) {
   const { mode } = useSensoryMode();
@@ -94,6 +95,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editSubjectName, setEditSubjectName] = useState('');
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
+  const [deleteSubjectConfirm, setDeleteSubjectConfirm] = useState({ visible: false, subject: null });
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
   
   // Feedback form state
@@ -420,65 +422,46 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  const handleDeleteSubject = async (subject) => {
-    const confirmed = Platform.OS === 'web' 
-      ? window.confirm(`Are you sure you want to delete "${subject.name}"? This will permanently remove the subject and all its related data.`)
-      : await new Promise((resolve) => {
-          Alert.alert(
-            'Delete Subject',
-            `Are you sure you want to delete "${subject.name}"? This will permanently remove the subject and all its related data.`,
-            [
-              { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
-              { text: 'Delete', onPress: () => resolve(true), style: 'destructive' }
-            ]
-          );
-        });
-    
-    if (!confirmed) return;
-    
+  const performDeleteSubject = async (subject) => {
+    if (!subject) return;
     try {
-      // First reset all related data
-      await supabase
-        .from('events')
-        .delete()
-        .eq('subject_id', subject.id);
-      
-      await supabase
-        .from('materials')
-        .delete()
-        .eq('subject_id', subject.id);
-      
-      const { data: syllabi } = await supabase
-        .from('syllabi')
-        .select('id')
-        .eq('subject_id', subject.id);
-      
+      await supabase.from('events').delete().eq('subject_id', subject.id);
+      await supabase.from('materials').delete().eq('subject_id', subject.id);
+      const { data: syllabi } = await supabase.from('syllabi').select('id').eq('subject_id', subject.id);
       if (syllabi && syllabi.length > 0) {
         const syllabusIds = syllabi.map(s => s.id);
-        await supabase
-          .from('syllabus_sections')
-          .delete()
-          .in('syllabus_id', syllabusIds);
-        
-        await supabase
-          .from('syllabi')
-          .delete()
-          .eq('subject_id', subject.id);
+        await supabase.from('syllabus_sections').delete().in('syllabus_id', syllabusIds);
+        await supabase.from('syllabi').delete().eq('subject_id', subject.id);
       }
-      
-      // Finally delete the subject
-      const { error } = await supabase
-        .from('subject')
-        .delete()
-        .eq('id', subject.id);
-      
+      const { error } = await supabase.from('subject').delete().eq('id', subject.id);
       if (error) throw error;
-      
       toast.push(`"${subject.name}" has been deleted.`, 'success');
       loadSubjects();
     } catch (err) {
       toast.push('Failed to delete subject: ' + err.message, 'error');
     }
+  };
+
+  const handleDeleteSubject = async (subject) => {
+    if (Platform.OS === 'web') {
+      setDeleteSubjectConfirm({
+        visible: true,
+        subject,
+      });
+      return;
+    }
+    const confirmed = await new Promise((resolve) => {
+      Alert.alert(
+        'Delete Subject',
+        `Are you sure you want to delete "${subject.name}"? This will permanently remove the subject and all its related data.`,
+        [
+          { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
+          { text: 'Delete', onPress: () => resolve(true), style: 'destructive' }
+        ]
+      );
+    });
+    if (!confirmed) return;
+    await performDeleteSubject(subject);
   };
 
   // Helper to get child names for a subject (child_id can be single UUID or semicolon-separated)
@@ -3323,9 +3306,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         <View style={styles.modalOverlay}>
           <View style={styles.childInviteModal}>
             <View style={styles.childInviteModalHeader}>
-              <Text style={styles.childInviteModalTitle}>
-                {childInviteStep === 'select' ? 'Select Child' : 'Enter Email'}
-              </Text>
+              {childInviteStep === 'select' ? (
+                <View style={{ width: 36, height: 36 }} />
+              ) : (
+                <Text style={styles.childInviteModalTitle}>Enter Email</Text>
+              )}
               <TouchableOpacity
                 onPress={() => {
                   setShowChildInviteModal(false);
@@ -3333,7 +3318,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   setSelectedChildForInvite(null);
                   setChildInviteEmail('');
                 }}
-                style={styles.inviteUrlModalClose}
+                style={styles.childInviteModalClose}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <X size={20} color="#6b7280" />
@@ -3342,7 +3327,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
             {childInviteStep === 'select' ? (
               <>
-                <Text style={styles.inviteUrlModalDescription}>
+                <Text style={styles.childInviteDescription}>
                   Select which child to invite:
                 </Text>
                 <ScrollView style={styles.childInviteList} contentContainerStyle={styles.childInviteListContent}>
@@ -3356,7 +3341,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <Text style={styles.childInviteItemName}>
                         {child.name || child.first_name || 'Child'}
                       </Text>
-                      <ChevronRight size={20} color="#6b7280" />
+                      <ChevronRight size={22} color="#6b7280" />
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -3658,6 +3643,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         </View>
       </Modal>
 
+      <ConfirmDialog
+        visible={deleteSubjectConfirm.visible}
+        title="Delete Subject"
+        message={deleteSubjectConfirm.subject ? `Are you sure you want to delete "${deleteSubjectConfirm.subject.name}"? This will permanently remove the subject and all its related data.` : ''}
+        confirmLabel="OK"
+        cancelLabel="Cancel"
+        onConfirm={async () => {
+          if (deleteSubjectConfirm.subject) {
+            await performDeleteSubject(deleteSubjectConfirm.subject);
+          }
+          setDeleteSubjectConfirm({ visible: false, subject: null });
+        }}
+        onCancel={() => setDeleteSubjectConfirm({ visible: false, subject: null })}
+      />
     </View>
   );
 }
@@ -6607,43 +6606,60 @@ function createStyles(tokens) {
     // Child Invite Modal styles
     childInviteModal: {
       backgroundColor: '#ffffff',
-      borderRadius: 16,
+      borderRadius: 20,
       width: '100%',
       maxWidth: 500,
       maxHeight: '80%',
-      padding: 24,
+      padding: 28,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
       ...(Platform.OS === 'web' && {
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     childInviteModalHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 16,
+      marginBottom: 12,
     },
     childInviteModalTitle: {
-      fontSize: 20,
+      fontSize: 22,
       fontWeight: '600',
-      color: '#111827',
+      color: '#2E2E2E',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    childInviteModalClose: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: '#ffffff',
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      justifyContent: 'center',
+      alignItems: 'center',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
       }),
     },
     childInviteList: {
       maxHeight: 300,
-      marginTop: 8,
+      marginTop: 12,
     },
     childInviteListContent: {
-      gap: 8,
+      gap: 10,
     },
     childInviteItem: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      padding: 16,
+      paddingVertical: 16,
+      paddingHorizontal: 20,
       backgroundColor: '#f9fafb',
-      borderRadius: 8,
+      borderRadius: 14,
       borderWidth: 1,
       borderColor: '#e5e7eb',
       ...(Platform.OS === 'web' && {
@@ -6651,11 +6667,20 @@ function createStyles(tokens) {
       }),
     },
     childInviteItemName: {
-      fontSize: 15,
-      fontWeight: '500',
-      color: '#111827',
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#2E2E2E',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    childInviteDescription: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: '#000000',
+      marginBottom: 4,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     childInviteEmailInput: {

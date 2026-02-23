@@ -36,6 +36,8 @@ const SIDEBAR_COLORS = {
   accent: '#4F46E5',
   accentSoft: 'rgba(79, 70, 229, 0.18)',
   accentSofter: 'rgba(79, 70, 229, 0.12)',
+  activeTint: 'rgba(129, 193, 225, 0.12)',
+  activeText: '#0F172A',
   avatar: 'rgba(148, 163, 184, 0.28)',
 };
 
@@ -348,8 +350,7 @@ export default function LeftRail({
 
 const styles = StyleSheet.create({
   container: {
-    ...(Platform.OS === 'web' ? {} : { backgroundColor: SIDEBAR_COLORS.background }),
-    // Border is handled by the outer LayoutShell to avoid double dividers.
+    ...(Platform.OS === 'web' ? {} : { backgroundColor: SIDEBAR_COLORS.backgroundColor }),
     paddingVertical: 16,
     flex: 1,
     minHeight: Platform.OS === 'web' ? '100vh' : undefined,
@@ -396,11 +397,11 @@ const styles = StyleSheet.create({
     }),
   },
   navItemActive: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12, // Curved edge
+    backgroundColor: SIDEBAR_COLORS.activeTint, // keep polish active tint
+    borderRadius: 12,
     borderWidth: 0,
-    paddingVertical: 4, // Shorter height to match navItem
-    paddingRight: 24, // Extend fill just past text
+    paddingVertical: 4,
+    paddingRight: 24,
     ...(Platform.OS === 'web' && {
       backgroundColor: '#FFFFFF',
     }),
@@ -431,7 +432,7 @@ const styles = StyleSheet.create({
     }),
   },
   navLabelActive: {
-    color: 'rgba(167, 139, 250, 0.9)', // Purple matching segmented control
+    color: SIDEBAR_COLORS.activeText,
     fontWeight: '800',
     textTransform: 'uppercase',
     lineHeight: 22, // Consistent line height for alignment

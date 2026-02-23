@@ -502,6 +502,7 @@ import QuickReviewModal from './materials/QuickReviewModal'
 import AddMaterialModal from './materials/AddMaterialModal'
 import RebalanceModal from './year/RebalanceModal'
 import EventOutcomeModal from './events/EventOutcomeModal'
+import ConfirmDialog from './ConfirmDialog'
 import ChildDashboard from './dashboards/ChildDashboard'
 import TutorDashboard from './dashboards/TutorDashboard'
 import IntegrationsSettings from './settings/IntegrationsSettings'
@@ -3393,6 +3394,182 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     return () => window.removeEventListener('plannerMonthChange', handlePlannerMonthChange);
   }, []);
 
+  // Right-click context menu for planner events (Month and other views that dispatch plannerEventContextMenu)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handlePlannerEventContextMenu = (e) => {
+      const { event: ev, position } = e.detail || {};
+      if (!ev || !position || !familyId) return;
+      const clientX = position.x ?? 0;
+      const clientY = position.y ?? 0;
+      const existingMenu = document.getElementById('planner-event-context-menu');
+      if (existingMenu) existingMenu.remove();
+      let eventId = ev._originalId || ev.originalId || ev.id;
+      if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
+        eventId = eventId.split('-day-')[0];
+      }
+      const menuItems = [];
+      menuItems.push({
+        text: 'Edit Event',
+        action: () => {
+          window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
+        },
+      });
+      const isRecurringEvent = ev.recurrence_rule || ev.recurrence_id || ev.parent_event_id;
+      if (isRecurringEvent) {
+        menuItems.push({
+          text: 'Delete This Event',
+          isDelete: true,
+          action: () => {
+            const setConfirm = setConfirmDialogRef.current;
+            if (!setConfirm) return;
+            const cleanId = (eventId || '').split('-day-')[0];
+            setConfirm({
+              visible: true,
+              title: 'Delete this occurrence?',
+              message: 'Are you sure you want to delete only this occurrence?',
+              confirmLabel: 'Delete',
+              cancelLabel: 'Cancel',
+              destructive: true,
+              onConfirm: async () => {
+                try {
+                  const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
+                  if (rpcError) {
+                    const result = await deletePlannerEvent(cleanId, familyId);
+                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                  } else if (!rpcData?.success) {
+                    const result = await deletePlannerEvent(cleanId, familyId);
+                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                  }
+                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                } catch (err) {
+                  Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
+                } finally {
+                  setConfirm((prev) => ({ ...prev, visible: false }));
+                }
+              },
+              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+            });
+          },
+        });
+        menuItems.push({
+          text: 'Delete All in Series',
+          isDelete: true,
+          action: () => {
+            const setConfirm = setConfirmDialogRef.current;
+            if (!setConfirm) return;
+            const cleanId = (eventId || '').split('-day-')[0];
+            setConfirm({
+              visible: true,
+              title: 'Delete all in series?',
+              message: 'Are you sure you want to delete all occurrences in this series?',
+              confirmLabel: 'Delete all',
+              cancelLabel: 'Cancel',
+              destructive: true,
+              onConfirm: async () => {
+                try {
+                  let masterEventId = ev.parent_event_id || ev.recurrence_id;
+                  if (masterEventId && typeof masterEventId === 'string' && masterEventId.includes('-day-')) masterEventId = masterEventId.split('-day-')[0];
+                  if (ev.recurrence_rule && !masterEventId) masterEventId = cleanId;
+                  if (!masterEventId) masterEventId = cleanId;
+                  const { error: seriesError } = await supabase
+                    .from('events')
+                    .update({ deleted_at: new Date().toISOString() })
+                    .or(`id.eq.${masterEventId},parent_event_id.eq.${masterEventId},recurrence_id.eq.${masterEventId}`)
+                    .is('deleted_at', null);
+                  if (seriesError) {
+                    const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
+                    if (rpcError || !rpcData?.success) await deletePlannerEvent(cleanId, familyId);
+                  }
+                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                } catch (err) {
+                  Alert.alert('Error', `Failed to delete series: ${err?.message || err}`);
+                } finally {
+                  setConfirm((prev) => ({ ...prev, visible: false }));
+                }
+              },
+              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+            });
+          },
+        });
+      } else {
+        menuItems.push({
+          text: 'Delete Event',
+          isDelete: true,
+          action: () => {
+            const setConfirm = setConfirmDialogRef.current;
+            if (!setConfirm) return;
+            const cleanId = (eventId || '').split('-day-')[0];
+            setConfirm({
+              visible: true,
+              title: 'Delete event?',
+              message: 'Are you sure you want to delete this event?',
+              confirmLabel: 'Delete',
+              cancelLabel: 'Cancel',
+              destructive: true,
+              onConfirm: async () => {
+                try {
+                  const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
+                  if (rpcError) {
+                    const result = await deletePlannerEvent(cleanId, familyId);
+                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                  } else if (!rpcData?.success) {
+                    const result = await deletePlannerEvent(cleanId, familyId);
+                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                  }
+                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                } catch (err) {
+                  Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
+                } finally {
+                  setConfirm((prev) => ({ ...prev, visible: false }));
+                }
+              },
+              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+            });
+          },
+        });
+      }
+      const estimatedMenuHeight = menuItems.length * 48 + 16;
+      const windowHeight = window.innerHeight;
+      const estimatedMenuWidth = 200;
+      const windowWidth = window.innerWidth;
+      let menuTop = clientY;
+      if (clientY + estimatedMenuHeight > windowHeight) {
+        menuTop = Math.max(8, clientY - estimatedMenuHeight);
+      }
+      let menuLeft = clientX;
+      if (clientX + estimatedMenuWidth > windowWidth) {
+        menuLeft = Math.max(8, clientX - estimatedMenuWidth);
+      }
+      const menu = document.createElement('div');
+      menu.id = 'planner-event-context-menu';
+      menu.style.cssText = `position: fixed; top: ${menuTop}px; left: ${menuLeft}px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05); z-index: 999999; min-width: 200px; padding: 8px 0; font-family: "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;`;
+      menuItems.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.style.cssText = `padding: 16px 24px; color: ${item.isDelete ? '#dc2626' : '#374151'}; font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.15s ease; border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};`;
+        div.addEventListener('mouseenter', () => { div.style.backgroundColor = item.isDelete ? '#fef2f2' : '#f8fafc'; });
+        div.addEventListener('mouseleave', () => { div.style.backgroundColor = 'transparent'; });
+        div.textContent = item.text;
+        div.addEventListener('click', () => { item.action(); menu.remove(); });
+        menu.appendChild(div);
+      });
+      document.body.appendChild(menu);
+      const closeMenu = (evt) => {
+        if (!menu.contains(evt.target)) {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+          document.removeEventListener('mousedown', closeMenu, true);
+          document.removeEventListener('contextmenu', closeMenu, true);
+        }
+      };
+      document.addEventListener('click', closeMenu);
+      document.addEventListener('mousedown', closeMenu, true);
+      document.addEventListener('contextmenu', closeMenu, true);
+    };
+    window.addEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
+    return () => window.removeEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
+  }, [familyId]);
+
   // Load month data when showing planner tab
   useEffect(() => {
     if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
@@ -3448,6 +3625,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
   const [contextMenuEvent, setContextMenuEvent] = useState(null);
   const [cutEventData, setCutEventData] = useState(null);
+
+  // Learnadoodle-styled confirm dialog (replaces native confirm for planner delete)
+  const [confirmDialog, setConfirmDialog] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    confirmLabel: 'OK',
+    cancelLabel: 'Cancel',
+    destructive: false,
+    onConfirm: null,
+    onCancel: null,
+  });
+  const setConfirmDialogRef = useRef(null);
+  useEffect(() => {
+    setConfirmDialogRef.current = setConfirmDialog;
+  }, []);
   
   const [newEventFormData, setNewEventFormData] = useState({
     title: '',
@@ -6327,9 +6520,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }
         }}
         onEventRightClick={(ev, e) => {
-          if (Platform.OS === 'web' && typeof window !== 'undefined' && e?.nativeEvent) {
-            window.dispatchEvent(new CustomEvent('plannerEventContextMenu', { detail: { event: ev, position: { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY } } }));
-          }
+          if (Platform.OS !== 'web' || typeof window === 'undefined' || !e) return;
+          // e may be native event (from MonthGrid) or synthetic (e.nativeEvent has clientX/Y)
+          const x = e.clientX ?? e.nativeEvent?.clientX ?? 0;
+          const y = e.clientY ?? e.nativeEvent?.clientY ?? 0;
+          window.dispatchEvent(new CustomEvent('plannerEventContextMenu', { detail: { event: ev, position: { x, y } } }));
         }}
         onEventComplete={async (event) => {
           if (!event?.id) return;
@@ -6374,6 +6569,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         blackoutDates={calendarBlackoutDates[`${plannerDate.getFullYear()}-${plannerDate.getMonth()}`] || []}
         familyId={familyId}
         viewMode={propPlannerView}
+        onEditChild={onEditChild}
       />
       </View>
     );
@@ -6756,6 +6952,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   }));
                 }
               }}
+              onAddMaterial={(subject) => {
+                const assignedChildIds = subject.assignedChildren && Array.isArray(subject.assignedChildren)
+                  ? subject.assignedChildren
+                  : (subject.assignedChildren ? [subject.assignedChildren] : []);
+                setAddMaterialModalDefaultSubjectId(subject.id);
+                setAddMaterialModalDefaultSubjectName(subject.name);
+                setAddMaterialModalDefaultChildIds(assignedChildIds);
+                setShowAddMaterialModal(true);
+              }}
               onEditSubject={(subject) => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
@@ -6802,5 +7007,29 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     flex: 1,
     ...(Platform.OS === 'web' ? { minHeight: 360 } : { minHeight: 0 }),
   };
-  return <View style={contentWrapStyle}>{renderContent()}</View>;
+  return (
+    <>
+      <View style={contentWrapStyle}>{renderContent()}</View>
+      <AddMaterialModal
+        visible={showAddMaterialModal}
+        onClose={() => setShowAddMaterialModal(false)}
+        onSaved={() => setShowAddMaterialModal(false)}
+        familyId={familyId}
+        children={children || []}
+        defaultSubjectId={addMaterialModalDefaultSubjectId}
+        defaultSubjectName={addMaterialModalDefaultSubjectName}
+        defaultChildIds={addMaterialModalDefaultChildIds}
+      />
+      <ConfirmDialog
+        visible={confirmDialog.visible}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        cancelLabel={confirmDialog.cancelLabel}
+        destructive={confirmDialog.destructive}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={confirmDialog.onCancel}
+      />
+    </>
+  );
 }

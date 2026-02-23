@@ -35,7 +35,15 @@ def get_block_occurrence_dates(
     Block schema: { weekdays: [1,3,5], start_time, end_time, all_day }
     Weekdays: 0=Sun, 1=Mon, ..., 6=Sat
     """
-    weekdays = block.get("weekdays") or []
+    raw = block.get("weekdays") or []
+    weekdays = []
+    for w in raw:
+        if w is None:
+            continue
+        try:
+            weekdays.append(int(w))
+        except (TypeError, ValueError):
+            continue
     if not weekdays:
         return []
 

@@ -136,6 +136,37 @@ export default function OnboardingModal({
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to create child.');
       const id = res?.data?.id ?? res?.id;
       if (id) setCreatedChildren((prev) => [...prev, { id, name: child.name }]);
+
+      const hasTarget = (child.targetMode === 'days' && child.targetDays) || (child.targetMode === 'hours' && child.targetHours);
+      const hasRange = child.schoolYearStart && child.schoolYearEnd;
+      if (familyId && (hasTarget || hasRange)) {
+        const { data: existing } = await supabase
+          .from('academic_years')
+          .select('id, start_date, end_date')
+          .eq('family_id', familyId)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const startDate = child.schoolYearStart || existing?.start_date;
+        const endDate = child.schoolYearEnd || existing?.end_date;
+        if (existing) {
+          const toUpdate = { updated_at: new Date().toISOString() };
+          if (child.targetMode === 'days' && child.targetDays) toUpdate.target_instructional_days = child.targetDays;
+          if (child.targetMode === 'hours' && child.targetHours) toUpdate.target_instructional_hours = child.targetHours;
+          if (startDate) toUpdate.start_date = startDate;
+          if (endDate) toUpdate.end_date = endDate;
+          await supabase.from('academic_years').update(toUpdate).eq('id', existing.id);
+        } else if (startDate && endDate) {
+          await supabase.from('academic_years').insert({
+            family_id: familyId,
+            year_name: 'School year',
+            start_date: startDate,
+            end_date: endDate,
+            target_instructional_days: child.targetMode === 'days' && child.targetDays ? child.targetDays : null,
+            target_instructional_hours: child.targetMode === 'hours' && child.targetHours ? child.targetHours : null,
+          });
+        }
+      }
     } catch (e) {
       setError(e?.message ?? 'Failed to create child.');
       throw e;

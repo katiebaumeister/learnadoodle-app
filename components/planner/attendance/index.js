@@ -5,5 +5,7 @@ export { default as MonthlyCalendarView } from './MonthlyCalendarView';
 export { default as ExceptionsPanel } from './ExceptionsPanel';
 export { default as TotalsPanel } from './TotalsPanel';
 export { default as DayAttendanceModal } from './DayAttendanceModal';
+export { default as DayEventsPanel } from './DayEventsPanel';
 export { default as MarkRangeModal } from './MarkRangeModal';
+export { default as AttendanceExportModal } from './AttendanceExportModal';
 export { ATTENDANCE_COLORS, STATUS_LABELS } from './constants';

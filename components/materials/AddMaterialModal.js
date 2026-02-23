@@ -893,12 +893,20 @@ export default function AddMaterialModal({
           style={styles.modal}
         >
           {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>{material ? 'Edit Material' : 'Add Material'}</Text>
+          <View style={[styles.header, material && styles.headerEdit]}>
+            <View style={styles.headerTitleRow}>
+              {material ? (
+                <View style={styles.headerIconWrap}>
+                  <FileText size={20} color={MUTED} />
+                </View>
+              ) : null}
+              <Text style={styles.title}>{material ? 'Edit Material' : 'Add Material'}</Text>
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <X size={20} color={MUTED} />
             </TouchableOpacity>
           </View>
+          {material ? <View style={styles.headerDivider} /> : null}
 
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
             {/* Document Upload */}
@@ -1407,8 +1415,9 @@ export default function AddMaterialModal({
             </View>
           </ScrollView>
 
+          {material ? <View style={styles.footerDivider} /> : null}
           {/* Actions - Fixed at bottom */}
-          <View style={styles.actions}>
+          <View style={[styles.actions, material && styles.actionsEdit]}>
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={onClose}
@@ -1700,6 +1709,30 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  headerEdit: {
+    borderBottomWidth: 0,
+    paddingBottom: 0,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  headerIconWrap: {
+    marginRight: 2,
+  },
+  headerDivider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginHorizontal: 20,
+    marginTop: 16,
+  },
+  footerDivider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginHorizontal: 20,
+  },
   title: {
     fontSize: 18,
     fontWeight: '600',
@@ -1880,13 +1913,16 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 20,
     paddingTop: 20,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+  },
+  actionsEdit: {
+    borderTopWidth: 0,
     backgroundColor: '#ffffff',
   },
   cancelButton: {

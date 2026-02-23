@@ -78,6 +78,38 @@ export default function AddChildModal({
         throw new Error(result.error.message || 'Failed to add child');
       }
 
+      // Optionally upsert family academic year (target days/hours, school year range)
+      const hasTarget = (formData.targetMode === 'days' && formData.targetDays) || (formData.targetMode === 'hours' && formData.targetHours);
+      const hasRange = formData.schoolYearStart && formData.schoolYearEnd;
+      if (familyId && (hasTarget || hasRange)) {
+        const { data: existing } = await supabase
+          .from('academic_years')
+          .select('id, start_date, end_date')
+          .eq('family_id', familyId)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const startDate = formData.schoolYearStart || existing?.start_date;
+        const endDate = formData.schoolYearEnd || existing?.end_date;
+        if (existing) {
+          const toUpdate = { updated_at: new Date().toISOString() };
+          if (formData.targetMode === 'days' && formData.targetDays) toUpdate.target_instructional_days = formData.targetDays;
+          if (formData.targetMode === 'hours' && formData.targetHours) toUpdate.target_instructional_hours = formData.targetHours;
+          if (startDate) toUpdate.start_date = startDate;
+          if (endDate) toUpdate.end_date = endDate;
+          await supabase.from('academic_years').update(toUpdate).eq('id', existing.id);
+        } else if (startDate && endDate) {
+          await supabase.from('academic_years').insert({
+            family_id: familyId,
+            year_name: 'School year',
+            start_date: startDate,
+            end_date: endDate,
+            target_instructional_days: formData.targetMode === 'days' && formData.targetDays ? formData.targetDays : null,
+            target_instructional_hours: formData.targetMode === 'hours' && formData.targetHours ? formData.targetHours : null,
+          });
+        }
+      }
+
       // Success - show toast and notify parent
       if (toast && toast.push) {
         toast.push(`${formData.name} has been added successfully!`, 'success');
@@ -254,7 +286,7 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 32,
     paddingVertical: 24,

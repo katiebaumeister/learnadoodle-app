@@ -703,9 +703,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (assigneeIds.length === 0) {
       errors.assignee = 'At least one assignee is required';
     }
-    if (countsTowardPlan && !academicYearId && academicYears.length > 0) {
-      errors.instructional = 'Select which plan this counts toward.';
-    }
+    // Plan is optional when counting as instructional time (can count without attaching to a plan)
     
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
@@ -2678,7 +2676,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {/* Count as instructional time - Which plan? at top (when lesson and counted) */}
           {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && placement === 'calendar' && countsTowardPlan && academicYearId && (
             <View style={{ marginTop: 0, marginBottom: 4, paddingHorizontal: 2 }}>
-              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
+              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Which plan? (optional)</Text>
               <View style={[styles.chipOption, styles.chipOptionActive, { alignSelf: 'flex-start' }]}>
                 <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
                   {(() => {
@@ -3069,27 +3067,35 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     return (
     <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-      {/* Header / Title input */}
-      <View style={styles.header}>
-      <TextInput
-          placeholder="Task name (required)"
-          placeholderTextColor={MUTED}
-        value={draftTitle}
-          onChangeText={(text) => {
-            setDraftTitle(text);
-            if (validationErrors.title) {
-              setValidationErrors({ ...validationErrors, title: null });
-            }
-          }}
-          style={[
-            styles.titleInput,
-            validationErrors.title && styles.inputError,
-          ]}
-        />
-        {validationErrors.title && (
-          <Text style={styles.errorText}>{validationErrors.title}</Text>
-        )}
+      {/* Header: icon + title input (edit-event style) */}
+      <View style={styles.headerEditEvent}>
+        <View style={styles.headerTitleRow}>
+          <View style={styles.headerIconWrap}>
+            <Calendar size={20} color={SUB} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <TextInput
+              placeholder="Task name (required)"
+              placeholderTextColor={MUTED}
+              value={draftTitle}
+              onChangeText={(text) => {
+                setDraftTitle(text);
+                if (validationErrors.title) {
+                  setValidationErrors({ ...validationErrors, title: null });
+                }
+              }}
+              style={[
+                styles.titleInput,
+                validationErrors.title && styles.inputError,
+              ]}
+            />
+            {validationErrors.title && (
+              <Text style={styles.errorText}>{validationErrors.title}</Text>
+            )}
+          </View>
+        </View>
       </View>
+      <View style={styles.headerDivider} />
 
       {/* Warning when event is attached to a plan: saving will detach it */}
       {event?.academic_year_id && (
@@ -3171,8 +3177,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </View>
           {countsTowardPlan && (
             <>
-              <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan?</Text>
+              <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan? (optional)</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setAcademicYearId(null);
+                    if (validationErrors.instructional) {
+                      setValidationErrors({ ...validationErrors, instructional: null });
+                    }
+                  }}
+                  style={[styles.chipOption, academicYearId === null && styles.chipOptionActive]}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={[styles.chipOptionText, academicYearId === null && styles.chipOptionTextActive]}>No plan</Text>
+                </TouchableOpacity>
                 {(() => {
                   const baseLabels = academicYears.map((ay) => {
                     const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
@@ -4583,8 +4601,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       )}
 
+      <View style={styles.footerDivider} />
       {/* Footer with Save/Cancel buttons */}
-      <View style={styles.footer}>
+      <View style={styles.footerEditEvent}>
         <TouchableOpacity onPress={() => {
           onClose?.();
         }}>
@@ -6003,6 +6022,30 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: BORDER,
   },
+  headerEditEvent: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 12,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerIconWrap: {
+    marginRight: 2,
+  },
+  headerDivider: {
+    height: 1,
+    backgroundColor: BORDER,
+    marginHorizontal: 20,
+    marginTop: 20,
+  },
+  footerDivider: {
+    height: 1,
+    backgroundColor: BORDER,
+    marginHorizontal: 20,
+  },
   titleInput: {
     fontSize: 22,
     fontWeight: '700',
@@ -6300,6 +6343,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: BORDER,
+  },
+  footerEditEvent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
   cancelText: {
     color: SUB,
