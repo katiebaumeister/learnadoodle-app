@@ -2540,26 +2540,24 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
       }
 
       try {
-        // Get state requirements from database
+        // Get state requirements from database (state-specific + all for that state; DB is source of truth)
         const { data: stateRequirements, error: reqError } = await supabase
           .from('state_requirements')
           .select('*')
-          .eq('state_code', childState)
-          .eq('is_common', true);
+          .eq('state_code', childState);
 
         if (reqError) {
           console.warn('[Compliance] Error fetching state requirements:', reqError);
           return;
         }
 
-        // Also get generic US requirements if no state-specific ones found
+        // If no state-specific rows, fall back to US baseline (e.g. before seed run)
         let requirements = stateRequirements || [];
         if (requirements.length === 0 && childState !== 'US') {
           const { data: usRequirements } = await supabase
             .from('state_requirements')
             .select('*')
-            .eq('state_code', 'US')
-            .eq('is_common', true);
+            .eq('state_code', 'US');
           requirements = usRequirements || [];
         }
 
@@ -2583,7 +2581,7 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
             // Reload compliance data after initialization
             const { data: reloadedData } = await supabase
               .from('family_compliance_checklist')
-              .select('id, child_id, status, requirement_id, requirement:state_requirements(id, requirement_type, requirement_title, requirement_description, is_common, state_code), completed_at, notes, evidence_upload_ids')
+              .select('id, child_id, status, requirement_id, requirement:state_requirements(id, requirement_type, requirement_title, requirement_description, is_common, state_code, source_url, last_verified_date, verified_at), completed_at, notes, evidence_upload_ids')
               .eq('family_id', familyId);
             
             if (reloadedData) {
@@ -3806,7 +3804,7 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
         // Load with requirement details for proper display
         childIds.length > 0 ? supabase
           .from('family_compliance_checklist')
-          .select('id, child_id, status, requirement_id, requirement:state_requirements(id, requirement_type, requirement_title, requirement_description, is_common), completed_at, notes, evidence_upload_ids')
+          .select('id, child_id, status, requirement_id, requirement:state_requirements(id, requirement_type, requirement_title, requirement_description, is_common, source_url, last_verified_date, verified_at), completed_at, notes, evidence_upload_ids')
           .in('child_id', childIds)
           .eq('family_id', familyId) : Promise.resolve({ data: [] })
       ]);

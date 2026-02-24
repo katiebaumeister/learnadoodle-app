@@ -278,14 +278,6 @@ export default function PlanYearModal({
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [startDateCalendarMonth, setStartDateCalendarMonth] = useState(() => new Date());
   const [endDateCalendarMonth, setEndDateCalendarMonth] = useState(() => new Date());
-  // Inline date range picker (Google Flights-style): keep modal open, drag range
-  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
-  const [rangePickerCalendarMonth, setRangePickerCalendarMonth] = useState(() => new Date());
-  const [rangePickerMode, setRangePickerMode] = useState('idle'); // 'idle' | 'picking' | 'adjusting'
-  const [rangePickerAnchorDate, setRangePickerAnchorDate] = useState(null);
-  const [rangePickerActiveHandle, setRangePickerActiveHandle] = useState(null); // 'start' | 'end'
-  const [rangePickerHoverDate, setRangePickerHoverDate] = useState(null);
-  const rangePickerPointerDownRef = useRef(false);
   const [showNewHolidayDatePicker, setShowNewHolidayDatePicker] = useState(false);
   const [showNewBreakStartPicker, setShowNewBreakStartPicker] = useState(false);
   const [showNewBreakEndPicker, setShowNewBreakEndPicker] = useState(false);
@@ -344,170 +336,6 @@ export default function PlanYearModal({
   const scheduleSectionYRef = useRef(0);
   const datesSectionYRef = useRef(0);
   const schedulePotentialFetchedRef = useRef(false);
-
-  // --- Date range picker (Google Flights-style): preview and commit ---
-  const rangePickerPreview = useMemo(() => {
-    const s = startDate || '';
-    const e = endDate || '';
-    if (rangePickerMode === 'idle') return { start: s, end: e };
-    if (rangePickerMode === 'picking' && rangePickerAnchorDate) {
-      const hover = rangePickerHoverDate || rangePickerAnchorDate;
-      const a = rangePickerAnchorDate;
-      return { start: a < hover ? a : hover, end: a < hover ? hover : a };
-    }
-    if (rangePickerMode === 'adjusting' && rangePickerActiveHandle) {
-      const hover = rangePickerHoverDate || (rangePickerActiveHandle === 'start' ? s : e);
-      if (rangePickerActiveHandle === 'start') {
-        const start = hover && e ? (hover <= e ? hover : e) : (hover || s);
-        const end = hover && e && hover > e ? hover : e;
-        return { start, end };
-      }
-      const end = hover && s ? (hover >= s ? hover : s) : (hover || e);
-      const start = hover && s && hover < s ? hover : s;
-      return { start, end };
-    }
-    return { start: s, end: e };
-  }, [startDate, endDate, rangePickerMode, rangePickerAnchorDate, rangePickerActiveHandle, rangePickerHoverDate]);
-
-  const commitRangePicker = useCallback((finalStart, finalEnd) => {
-    if (finalStart) setStartDate(finalStart);
-    if (finalEnd) setEndDate(finalEnd);
-    setRangePickerMode('idle');
-    setRangePickerAnchorDate(null);
-    setRangePickerActiveHandle(null);
-    setRangePickerHoverDate(null);
-    rangePickerPointerDownRef.current = false;
-  }, []);
-
-  const handleRangePickerDayPointerDown = useCallback((ymd) => {
-    // Second click while picking: commit range (anchor → this day)
-    if (rangePickerMode === 'picking' && rangePickerAnchorDate) {
-      const a = rangePickerAnchorDate;
-      const s = a <= ymd ? a : ymd;
-      const e = a <= ymd ? ymd : a;
-      commitRangePicker(s, e);
-      return;
-    }
-    if (rangePickerMode === 'adjusting') {
-      setRangePickerHoverDate(ymd);
-    }
-    rangePickerPointerDownRef.current = true;
-    const hasRange = startDate && endDate;
-    if (!hasRange || startDate > endDate) {
-      setRangePickerMode('picking');
-      setRangePickerAnchorDate(ymd);
-      setRangePickerActiveHandle(null);
-      setRangePickerHoverDate(ymd);
-      return;
-    }
-    if (ymd === startDate) {
-      setRangePickerMode('adjusting');
-      setRangePickerActiveHandle('start');
-      setRangePickerAnchorDate(null);
-      setRangePickerHoverDate(ymd);
-      return;
-    }
-    if (ymd === endDate) {
-      setRangePickerMode('adjusting');
-      setRangePickerActiveHandle('end');
-      setRangePickerAnchorDate(null);
-      setRangePickerHoverDate(ymd);
-      return;
-    }
-    const inRange = ymd >= startDate && ymd <= endDate;
-    if (inRange) {
-      const dStart = Math.abs((new Date(ymd + 'T12:00:00') - new Date(startDate + 'T12:00:00')) / 86400000);
-      const dEnd = Math.abs((new Date(ymd + 'T12:00:00') - new Date(endDate + 'T12:00:00')) / 86400000);
-      const handle = dStart <= dEnd ? 'start' : 'end';
-      setRangePickerMode('adjusting');
-      setRangePickerActiveHandle(handle);
-      setRangePickerAnchorDate(null);
-      setRangePickerHoverDate(ymd);
-      return;
-    }
-    setRangePickerMode('picking');
-    setRangePickerAnchorDate(ymd);
-    setRangePickerActiveHandle(null);
-    setRangePickerHoverDate(ymd);
-  }, [startDate, endDate]);
-
-  const handleRangePickerDayPointerUp = useCallback((ymd) => {
-    if (!rangePickerPointerDownRef.current) return;
-    rangePickerPointerDownRef.current = false;
-    const hover = rangePickerHoverDate || ymd;
-    if (rangePickerMode === 'picking' && rangePickerAnchorDate) {
-      const a = rangePickerAnchorDate;
-      const s = a <= hover ? a : hover;
-      const e = a <= hover ? hover : a;
-      commitRangePicker(s, e);
-      return;
-    }
-    if (rangePickerMode === 'adjusting' && rangePickerActiveHandle) {
-      const s = startDate || '';
-      const e = endDate || '';
-      if (rangePickerActiveHandle === 'start') {
-        const newStart = hover && e ? (hover <= e ? hover : e) : (hover || s);
-        const newEnd = hover && e && hover > e ? hover : e;
-        commitRangePicker(newStart, newEnd);
-      } else {
-        const newEnd = hover && s ? (hover >= s ? hover : s) : (hover || e);
-        const newStart = hover && s && hover < s ? hover : s;
-        commitRangePicker(newStart, newEnd);
-      }
-    }
-  }, [rangePickerMode, rangePickerAnchorDate, rangePickerActiveHandle, rangePickerHoverDate, startDate, endDate, commitRangePicker]);
-
-  const handleRangePickerDayHover = useCallback((ymd) => {
-    setRangePickerHoverDate(ymd);
-  }, []);
-
-  // Global pointer up: commit range when user releases outside a day cell; Escape: cancel preview / close picker
-  useEffect(() => {
-    if (!showDateRangePicker) return;
-    const onPointerUp = () => {
-      if (rangePickerMode !== 'idle' && rangePickerPointerDownRef.current) {
-        rangePickerPointerDownRef.current = false;
-        const hover = rangePickerHoverDate;
-        if (rangePickerMode === 'picking' && rangePickerAnchorDate && hover) {
-          const a = rangePickerAnchorDate;
-          commitRangePicker(a <= hover ? a : hover, a <= hover ? hover : a);
-        } else if (rangePickerMode === 'adjusting' && rangePickerActiveHandle) {
-          const s = startDate || '';
-          const e = endDate || '';
-          if (rangePickerActiveHandle === 'start') {
-            const newStart = hover && e ? (hover <= e ? hover : e) : (hover || s);
-            const newEnd = hover && e && hover > e ? hover : e;
-            commitRangePicker(newStart, newEnd);
-          } else {
-            const newEnd = hover && s ? (hover >= s ? hover : s) : (hover || e);
-            const newStart = hover && s && hover < s ? hover : s;
-            commitRangePicker(newStart, newEnd);
-          }
-        }
-      }
-    };
-    const onKeyDown = (ev) => {
-      if (ev.key === 'Escape') {
-        if (rangePickerMode !== 'idle') {
-          setRangePickerMode('idle');
-          setRangePickerAnchorDate(null);
-          setRangePickerActiveHandle(null);
-          setRangePickerHoverDate(null);
-          rangePickerPointerDownRef.current = false;
-        } else {
-          setShowDateRangePicker(false);
-        }
-      }
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('pointerup', onPointerUp);
-      window.addEventListener('keydown', onKeyDown);
-      return () => {
-        window.removeEventListener('pointerup', onPointerUp);
-        window.removeEventListener('keydown', onKeyDown);
-      };
-    }
-  }, [showDateRangePicker, rangePickerMode, rangePickerAnchorDate, rangePickerActiveHandle, rangePickerHoverDate, startDate, endDate, commitRangePicker]);
 
   const baseSubjectList = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
   const subjectsForCurrentSelection =
@@ -2194,15 +2022,15 @@ export default function PlanYearModal({
                 </TouchableOpacity>
                 {sectionDatesExpanded && (
                 <>
-                {/* Start Date and End Date on same row — clicking opens inline range picker (Google Flights-style) */}
+                {/* Start Date and End Date — same as Add Event modal: each opens its own calendar modal */}
                 <View style={[styles.dateRow, { marginTop: 12 }]}>
                   <View style={[styles.inputGroup, styles.inputGroupFlex]}>
                   <Text style={[styles.label, { fontSize: 15 }]}>Start Date</Text>
                     <TouchableOpacity
                       style={styles.datePickerTrigger}
                       onPress={() => {
-                        setRangePickerCalendarMonth(startDate ? dateStringToDate(startDate) : new Date());
-                        setShowDateRangePicker(true);
+                        setStartDateCalendarMonth(startDate ? dateStringToDate(startDate) : new Date());
+                        setShowStartDatePicker(true);
                       }}
                     >
                       <Text style={[styles.datePickerTriggerText, !startDate && styles.datePickerPlaceholder]}>
@@ -2217,8 +2045,8 @@ export default function PlanYearModal({
                       <TouchableOpacity
                         style={styles.datePickerTrigger}
                         onPress={() => {
-                          setRangePickerCalendarMonth(endDate ? dateStringToDate(endDate) : new Date());
-                          setShowDateRangePicker(true);
+                          setEndDateCalendarMonth(endDate ? dateStringToDate(endDate) : new Date());
+                          setShowEndDatePicker(true);
                         }}
                       >
                         <Text style={[styles.datePickerTriggerText, !endDate && styles.datePickerPlaceholder]}>
@@ -2229,130 +2057,6 @@ export default function PlanYearModal({
                   </View>
                 )}
                 </View>
-                {/* Inline date range picker: drag to select range, stays open inside modal */}
-                {showDateRangePicker && (
-                  <View style={styles.rangePickerContainer}>
-                    <View style={styles.rangePickerHeader}>
-                      <Text style={styles.rangePickerTitle}>Select date range</Text>
-                      <TouchableOpacity
-                        onPress={() => { setShowDateRangePicker(false); setRangePickerMode('idle'); setRangePickerAnchorDate(null); setRangePickerActiveHandle(null); setRangePickerHoverDate(null); }}
-                        style={styles.rangePickerCloseBtn}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <X size={18} color={SUB} />
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.rangePickerCalendarsRow}>
-                      {[0, 1].map((monthOffset) => {
-                        const base = new Date(rangePickerCalendarMonth.getFullYear(), rangePickerCalendarMonth.getMonth() + monthOffset, 1);
-                        const year = base.getFullYear();
-                        const month = base.getMonth();
-                        const firstDay = new Date(year, month, 1);
-                        const startDateGrid = new Date(firstDay);
-                        startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
-                        const days = [];
-                        const current = new Date(startDateGrid);
-                        for (let i = 0; i < 42; i++) {
-                          days.push(new Date(current));
-                          current.setDate(current.getDate() + 1);
-                        }
-                        const previewStart = rangePickerPreview.start;
-                        const previewEnd = rangePickerPreview.end;
-                        return (
-                          <View key={monthOffset} style={styles.rangePickerMonth}>
-                            <Text style={styles.calendarMonthTitle}>
-                              {base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                            </Text>
-                            <View style={styles.calendarDayHeaders}>
-                              {WEEKDAY_LABELS.map((day) => (
-                                <View key={day} style={styles.calendarDayHeader}>
-                                  <Text style={styles.calendarDayHeaderText}>{day}</Text>
-                                </View>
-                              ))}
-                            </View>
-                            <View>
-                              {[0, 1, 2, 3, 4, 5].map((week) => (
-                                <View key={week} style={styles.calendarWeekRow}>
-                                  {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
-                                    const isCurrentMonth = day.getMonth() === month;
-                                    const ymd = toLocalYYYYMMDD(day);
-                                    const isToday = ymd === toLocalYYYYMMDD(new Date());
-                                    const isRangeStart = previewStart && ymd === previewStart;
-                                    const isRangeEnd = previewEnd && ymd === previewEnd;
-                                    const isInRange = previewStart && previewEnd && ymd > previewStart && ymd < previewEnd;
-                                    const isSingleDay = isRangeStart && isRangeEnd;
-                                    const cellStyle = [
-                                      styles.calendarDayCell,
-                                      isRangeStart && !isSingleDay && styles.calendarDayCellRangeStart,
-                                      isRangeEnd && !isSingleDay && styles.calendarDayCellRangeEnd,
-                                      isSingleDay && styles.calendarDayCellSelected,
-                                      isInRange && styles.calendarDayCellInRange,
-                                      isToday && !isRangeStart && !isRangeEnd && styles.calendarDayCellToday,
-                                    ];
-                                    return (
-                                      <TouchableOpacity
-                                        key={idx}
-                                        style={cellStyle}
-                                        onPressIn={() => handleRangePickerDayPointerDown(ymd)}
-                                        onPressOut={() => handleRangePickerDayPointerUp(ymd)}
-                                        {...(Platform.OS === 'web' && {
-                                          onMouseEnter: () => handleRangePickerDayHover(ymd),
-                                        })}
-                                        activeOpacity={1}
-                                      >
-                                        <Text style={[
-                                          styles.calendarDayText,
-                                          (isRangeStart || isRangeEnd) && styles.calendarDayTextSelected,
-                                          !isCurrentMonth && styles.calendarDayTextMuted,
-                                        ]}>
-                                          {day.getDate()}
-                                        </Text>
-                                      </TouchableOpacity>
-                                    );
-                                  })}
-                                </View>
-                              ))}
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                    <View style={styles.calendarNavRow}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const d = new Date(rangePickerCalendarMonth);
-                          d.setMonth(d.getMonth() - 1);
-                          setRangePickerCalendarMonth(d);
-                        }}
-                        style={styles.calendarNavButton}
-                      >
-                        <ChevronLeft size={20} color={FG} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const today = new Date();
-                          setRangePickerCalendarMonth(today);
-                          setStartDate(toLocalYYYYMMDD(today));
-                          if (mode === 'FIXED_END') setEndDate(toLocalYYYYMMDD(today));
-                          setShowDateRangePicker(false);
-                        }}
-                        style={styles.calendarNavButton}
-                      >
-                        <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const d = new Date(rangePickerCalendarMonth);
-                          d.setMonth(d.getMonth() + 1);
-                          setRangePickerCalendarMonth(d);
-                        }}
-                        style={styles.calendarNavButton}
-                      >
-                        <ChevronRight size={20} color={FG} />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
 
                 {/* Target Days (TARGET_DAYS mode) */}
                 {mode === 'TARGET_DAYS' && (
@@ -3877,50 +3581,6 @@ const styles = StyleSheet.create({
   calendarDayCellToday: {
     borderWidth: 2,
     borderColor: ACCENT,
-  },
-  calendarDayCellInRange: {
-    backgroundColor: ACCENT_LIGHT,
-  },
-  calendarDayCellRangeStart: {
-    backgroundColor: ACCENT,
-    borderTopLeftRadius: 6,
-    borderBottomLeftRadius: 6,
-  },
-  calendarDayCellRangeEnd: {
-    backgroundColor: ACCENT,
-    borderTopRightRadius: 6,
-    borderBottomRightRadius: 6,
-  },
-  rangePickerContainer: {
-    marginTop: 0,
-    marginBottom: 24,
-    padding: 16,
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  rangePickerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  rangePickerTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: FG,
-  },
-  rangePickerCloseBtn: {
-    padding: 4,
-  },
-  rangePickerCalendarsRow: {
-    flexDirection: 'row',
-    gap: 24,
-    flexWrap: 'wrap',
-  },
-  rangePickerMonth: {
-    minWidth: 280,
   },
   calendarDayText: {
     fontSize: 13,

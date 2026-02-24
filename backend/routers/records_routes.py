@@ -2,11 +2,13 @@
 FastAPI routes for Records, Credits & Compliance (Phase 4)
 Handles grades, transcripts, portfolio uploads, and state requirements
 """
-from fastapi import APIRouter, HTTPException, Depends, status, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Depends, status, Query, Request, Body
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
+import hashlib
+from email.utils import formatdate
 import sys
 import csv
 import io
@@ -75,11 +77,18 @@ class StateRequirement(BaseModel):
     label: str
     detail: Optional[str] = None
     type: str  # "info", "required", "optional"
+    source_url: Optional[str] = None
+    last_verified_date: Optional[str] = None  # ISO date or null
+    verified_at: Optional[str] = None  # ISO timestamp when last marked verified
 
 
 class UpdateSupportProfileIn(BaseModel):
     color_mode: Optional[str] = Field(None, description="Color mode preference")
     color_preferences: Optional[Dict[str, Any]] = Field(None, description="Custom color preferences as JSON")
+
+
+class StateRequirementVerifyIn(BaseModel):
+    notes: Optional[str] = Field(None, description="Optional note when marking as verified")
 
 
 @router.post("/add_grade", response_model=AddGradeOut)
@@ -186,49 +195,180 @@ async def add_portfolio_upload(
         raise HTTPException(status_code=500, detail=f"Error adding portfolio upload: {str(e)}")
 
 
-@cached(ttl_seconds=3600)  # Cache for 1 hour
-def _fetch_state_requirements(state_code: str):
-    """Internal function to fetch state requirements (cached)"""
-    # Load state requirements from JSON file
-    data_file = Path(__file__).parent.parent / "data" / "state_requirements.json"
-    
-    if not data_file.exists():
-        # Return default requirements if file doesn't exist
-        return [
-            StateRequirement(
-                id="hours",
-                label="Minimum hours per year",
-                detail="900 hours",
-                type="info"
-            ),
-            StateRequirement(
-                id="attendance",
-                label="Attendance tracking",
-                type="required"
+def _fetch_state_requirements_from_db(state_code: str) -> List[StateRequirement]:
+    """Read state requirements from DB (source of truth). Returns empty list if none."""
+    try:
+        supabase = get_admin_client()
+        result = (
+            supabase.table("state_requirements")
+            .select(
+                "id, requirement_key, requirement_title, requirement_description, obligation_type, "
+                "source_url, last_verified_date, verified_at"
             )
-        ]
+            .eq("state_code", state_code.upper())
+            .order("requirement_type")
+            .execute()
+        )
+        rows = result.data or []
+        out = []
+        for r in rows:
+            last_verified = r.get("last_verified_date")
+            verified_at = r.get("verified_at")
+            out.append(
+                StateRequirement(
+                    id=str(r["id"]),
+                    label=r.get("requirement_title") or "",
+                    detail=r.get("requirement_description"),
+                    type=r.get("obligation_type") or "required",
+                    source_url=r.get("source_url"),
+                    last_verified_date=str(last_verified) if last_verified else None,
+                    verified_at=verified_at.isoformat() if isinstance(verified_at, datetime) else (str(verified_at) if verified_at else None),
+                )
+            )
+        return out
+    except Exception as e:
+        log_event("state_requirements.db_error", error=str(e), state_code=state_code)
+        return []
 
+
+def _get_state_requirements_max_updated(state_code: str) -> Optional[datetime]:
+    """Return MAX(updated_at) for state_requirements in this state (for ETag/Last-Modified)."""
+    try:
+        supabase = get_admin_client()
+        result = (
+            supabase.table("state_requirements")
+            .select("updated_at")
+            .eq("state_code", state_code.upper())
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not result.data or len(result.data) == 0:
+            return None
+        raw = result.data[0].get("updated_at")
+        if raw is None:
+            return None
+        if isinstance(raw, datetime):
+            return raw
+        if isinstance(raw, str):
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return None
+    except Exception:
+        return None
+
+
+def _fetch_state_requirements_from_json(state_code: str) -> List[StateRequirement]:
+    """Fallback: load from JSON file when DB has no rows for this state."""
+    data_file = Path(__file__).parent.parent / "data" / "state_requirements.json"
+    if not data_file.exists():
+        return [
+            StateRequirement(id="hours", label="Minimum hours per year", detail="900 hours", type="info"),
+            StateRequirement(id="attendance", label="Attendance tracking", type="required"),
+        ]
     with open(data_file, "r") as f:
         all_requirements = json.load(f)
-
-    # Get requirements for the specified state
     state_requirements = all_requirements.get(state_code.upper(), [])
+    # JSON uses id, label, detail, type — map to StateRequirement (id must be string for API); no source/verified in JSON
+    return [
+        StateRequirement(
+            id=req.get("id", ""),
+            label=req.get("label", ""),
+            detail=req.get("detail"),
+            type=req.get("type", "required"),
+            source_url=None,
+            last_verified_date=None,
+            verified_at=None,
+        )
+        for req in state_requirements
+    ]
 
-    return [StateRequirement(**req) for req in state_requirements]
+
+@cached(ttl_seconds=3600)  # Cache for 1 hour
+def _fetch_state_requirements(state_code: str) -> List[StateRequirement]:
+    """DB as source of truth; JSON fallback if DB empty for this state."""
+    state_code = state_code.upper()
+    from_db = _fetch_state_requirements_from_db(state_code)
+    if from_db:
+        return from_db
+    log_event(
+        "state_requirements.fallback_json",
+        state_code=state_code,
+        message="No rows in state_requirements for state; using JSON fallback",
+    )
+    return _fetch_state_requirements_from_json(state_code)
 
 
-@router.get("/state_requirements", response_model=List[StateRequirement])
+@router.get("/state_requirements")
 async def get_state_requirements(
+    request: Request,
     state_code: str = Query(..., description="State code (e.g. 'CA', 'NY')"),
     user: dict = Depends(get_current_user),
     rate_limit: None = Depends(rate_limiter)
 ):
-    """Get state requirements for compliance (cached for 1 hour)"""
+    """Get state requirements for compliance (cached for 1 hour). Reads from DB first, falls back to JSON.
+    Returns ETag and Last-Modified when data is from DB; supports If-None-Match / If-Modified-Since for 304."""
     try:
-        return _fetch_state_requirements(state_code)
+        data = _fetch_state_requirements(state_code)
+        state_code_upper = state_code.upper()
+        from_db = _fetch_state_requirements_from_db(state_code_upper)
+        headers = {}
+        if from_db:
+            max_updated = _get_state_requirements_max_updated(state_code_upper)
+            if max_updated:
+                last_modified = formatdate(timeval=max_updated.timestamp(), localtime=False, usegmt=True)
+                headers["Last-Modified"] = last_modified
+                etag = '"' + hashlib.md5(str(max_updated.isoformat()).encode()).hexdigest() + '"'
+                headers["ETag"] = etag
+                if_none_match = request.headers.get("If-None-Match")
+                if_modified_since = request.headers.get("If-Modified-Since")
+                if (if_none_match and if_none_match.strip() == etag) or (
+                    if_modified_since and last_modified and if_modified_since == last_modified
+                ):
+                    return Response(status_code=304, headers=headers)
+        body = [r.model_dump() for r in data]
+        return JSONResponse(content=body, headers=headers)
     except Exception as e:
         log_event("error", error=str(e), endpoint="state_requirements")
         raise HTTPException(status_code=500, detail=f"Error loading state requirements: {str(e)}")
+
+
+@router.post("/state_requirements/{requirement_id}/verify")
+async def verify_state_requirement(
+    requirement_id: str,
+    body: Optional[StateRequirementVerifyIn] = Body(None),
+    user: dict = Depends(get_current_user),
+    rate_limit: None = Depends(rate_limiter),
+):
+    """Mark a state requirement as verified (admin/content workflow). Sets verified_at, verified_by, last_verified_date, verification_notes."""
+    try:
+        supabase = get_admin_client()
+        # Ensure requirement exists
+        row = (
+            supabase.table("state_requirements")
+            .select("id")
+            .eq("id", requirement_id)
+            .single()
+            .execute()
+        )
+        if not row.data:
+            raise HTTPException(status_code=404, detail="Requirement not found")
+        now = datetime.utcnow()
+        update_data = {
+            "verified_at": now.isoformat(),
+            "verified_by": user["id"],
+            "last_verified_date": now.date().isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        if body and body.notes is not None:
+            update_data["verification_notes"] = body.notes
+        supabase.table("state_requirements").update(update_data).eq("id", requirement_id).execute()
+        log_event("state_requirement_verified", requirement_id=requirement_id, user_id=user["id"])
+        return {"ok": True, "requirement_id": requirement_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("error", error=str(e), endpoint="state_requirements_verify")
+        raise HTTPException(status_code=500, detail=f"Error verifying requirement: {str(e)}")
 
 
 @router.get("/last_transcript")

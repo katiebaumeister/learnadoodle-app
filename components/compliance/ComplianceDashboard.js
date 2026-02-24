@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
-import { Shield, CheckCircle, Clock, FileText, Award, TrendingUp, Download, AlertCircle, Settings } from 'lucide-react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, Linking } from 'react-native';
+import { Shield, CheckCircle, Clock, FileText, Award, TrendingUp, Download, AlertCircle, Settings, ExternalLink, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { apiRequest } from '../../lib/apiClient';
+import { verifyStateRequirement } from '../../lib/services/recordsClient';
 import { colors } from '../../theme/colors';
 import { useToast } from '../Toast';
 import StateRequirementsToggle from './StateRequirementsToggle';
@@ -409,6 +410,18 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
     }
   };
 
+  const handleMarkVerified = async (requirementId) => {
+    if (!requirementId) return;
+    try {
+      await verifyStateRequirement(requirementId);
+      complianceCache.delete(cacheKey);
+      toast.push('Requirement marked as verified', 'success');
+      loadComplianceData();
+    } catch (error) {
+      toast.push(error?.message || 'Failed to mark verified', 'error');
+    }
+  };
+
   const handleExport = async () => {
     setExporting(true);
     try {
@@ -612,6 +625,7 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
               key={item.id}
               item={item}
               onStatusChange={(status) => updateChecklistItem(item.id, status)}
+              onMarkVerified={handleMarkVerified}
             />
           ))
         )}
@@ -721,13 +735,38 @@ function MetricCard({ icon, label, value, subtitle }) {
   );
 }
 
-function ChecklistItem({ item, onStatusChange }) {
+function formatVerifiedDate(verifiedAt, lastVerifiedDate) {
+  if (verifiedAt) {
+    try {
+      const d = new Date(verifiedAt);
+      return isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch (_) { return null; }
+  }
+  if (lastVerifiedDate) {
+    try {
+      const d = new Date(lastVerifiedDate);
+      return isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch (_) { return null; }
+  }
+  return null;
+}
+
+function ChecklistItem({ item, onStatusChange, onMarkVerified }) {
   const requirement = item.requirement || {};
+  const requirementId = item.requirement_id || requirement.id;
+  const sourceUrl = requirement.source_url || null;
+  const lastVerifiedStr = formatVerifiedDate(requirement.verified_at, requirement.last_verified_date);
   const statusColors = {
     completed: '#10b981',
     in_progress: '#f59e0b',
     pending: '#6b7280',
     not_applicable: '#9ca3af',
+  };
+
+  const openSource = () => {
+    const url = sourceUrl && (sourceUrl.startsWith('http') ? sourceUrl : `https://${sourceUrl}`);
+    if (url && (typeof Linking !== 'undefined' && Linking.openURL)) Linking.openURL(url);
+    else if (url && typeof window !== 'undefined') window.open(url, '_blank');
   };
 
   return (
@@ -742,6 +781,22 @@ function ChecklistItem({ item, onStatusChange }) {
           </Text>
           <Text style={styles.checklistItemType}>
             {requirement.requirement_type || 'other'}
+          </Text>
+          {(sourceUrl || lastVerifiedStr) && (
+            <View style={styles.requirementProvenance}>
+              {sourceUrl && (
+                <TouchableOpacity onPress={openSource} style={styles.sourceLinkRow}>
+                  <ExternalLink size={14} color={colors.indigo || '#4f46e5'} />
+                  <Text style={styles.sourceLinkText}>Source</Text>
+                </TouchableOpacity>
+              )}
+              {lastVerifiedStr && (
+                <Text style={styles.lastVerifiedText}>Last verified: {lastVerifiedStr}</Text>
+              )}
+            </View>
+          )}
+          <Text style={styles.requirementDisclaimer}>
+            Informational only. Verify with your state's official requirements.
           </Text>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: statusColors[item.status] || '#6b7280' }]}>
@@ -767,6 +822,15 @@ function ChecklistItem({ item, onStatusChange }) {
           </TouchableOpacity>
         ))}
       </View>
+      {onMarkVerified && requirementId && (
+        <TouchableOpacity
+          style={styles.markVerifiedButton}
+          onPress={() => onMarkVerified(requirementId)}
+        >
+          <Check size={16} color="#fff" />
+          <Text style={styles.markVerifiedButtonText}>Mark verified</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -938,6 +1002,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9ca3af',
     textTransform: 'uppercase',
+  },
+  requirementProvenance: {
+    marginTop: 8,
+    gap: 4,
+  },
+  sourceLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  sourceLinkText: {
+    fontSize: 13,
+    color: colors.indigo || '#4f46e5',
+    textDecorationLine: 'underline',
+  },
+  lastVerifiedText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  requirementDisclaimer: {
+    fontSize: 11,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+    marginTop: 6,
+  },
+  markVerifiedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    backgroundColor: '#059669',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  markVerifiedButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#ffffff',
   },
   statusBadge: {
     paddingVertical: 4,

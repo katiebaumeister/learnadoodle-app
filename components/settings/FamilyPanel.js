@@ -147,6 +147,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [idCardRole, setIdCardRole] = useState(null);
   const [idCardCandidates, setIdCardCandidates] = useState([]);
   const [idCardSelected, setIdCardSelected] = useState(null);
+  // Temporary name for child ID card only (e.g. "First Last"); not saved to profile
+  const [idCardDisplayName, setIdCardDisplayName] = useState('');
 
   // Children list from DB (includes archived) so Family page shows all children even if API filters or fails
   const [childrenFromDb, setChildrenFromDb] = useState(null);
@@ -911,7 +913,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
     setIdCardRole(role);
     setIdCardCandidates(candidates);
-    setIdCardSelected(candidates.length === 1 ? candidates[0] : null);
+    const selected = candidates.length === 1 ? candidates[0] : null;
+    setIdCardSelected(selected);
+    if (role === 'child' && selected) {
+      setIdCardDisplayName(selected.name || selected.first_name || 'Child');
+    } else {
+      setIdCardDisplayName('');
+    }
     setShowIdCardModal(true);
   };
 
@@ -3386,6 +3394,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setIdCardRole(null);
           setIdCardCandidates([]);
           setIdCardSelected(null);
+          setIdCardDisplayName('');
         }}
       >
         <TouchableOpacity
@@ -3396,6 +3405,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             setIdCardRole(null);
             setIdCardCandidates([]);
             setIdCardSelected(null);
+            setIdCardDisplayName('');
           }}
         >
           <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
@@ -3408,6 +3418,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       setIdCardRole(null);
                       setIdCardCandidates([]);
                       setIdCardSelected(null);
+                      setIdCardDisplayName('');
                     }}
                     style={styles.childInviteModalClose}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -3416,8 +3427,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   </TouchableOpacity>
                 </View>
                 <ScrollView style={{ maxHeight: '70vh' }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+                  {idCardRole === 'child' && (
+                    <View style={styles.idCardNameFieldRow}>
+                      <Text style={styles.idCardNameFieldLabel}>Name on ID (Learnadoodle will not save this)</Text>
+                      <TextInput
+                        style={styles.idCardNameFieldInput}
+                        value={idCardDisplayName}
+                        onChangeText={setIdCardDisplayName}
+                        placeholder="e.g. First and Last name"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                  )}
                   <IDCardView
-                    child={normalizeMemberForIdCard(idCardSelected, idCardRole)}
+                    child={
+                      idCardRole === 'child'
+                        ? { ...normalizeMemberForIdCard(idCardSelected, idCardRole), first_name: idCardDisplayName || (idCardSelected?.name || idCardSelected?.first_name || 'Child'), name: idCardDisplayName || (idCardSelected?.name || idCardSelected?.first_name || 'Child') }
+                        : normalizeMemberForIdCard(idCardSelected, idCardRole)
+                    }
                     familyId={family?.id || familyId}
                     cardRole={idCardRole === 'child' ? 'student' : idCardRole}
                   />
@@ -3433,6 +3460,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   setIdCardRole(null);
                   setIdCardCandidates([]);
                   setIdCardSelected(null);
+                  setIdCardDisplayName('');
                 }}
                 style={styles.childInviteModalClose}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -3455,7 +3483,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <TouchableOpacity
                         key={member.id}
                         style={styles.childInviteItem}
-                        onPress={() => setIdCardSelected(member)}
+                        onPress={() => {
+                          setIdCardSelected(member);
+                          if (idCardRole === 'child') {
+                            setIdCardDisplayName(member.name || member.first_name || 'Child');
+                          }
+                        }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <Text style={styles.childInviteItemName}>{label}</Text>
@@ -6906,6 +6939,30 @@ function createStyles(tokens) {
       marginBottom: 4,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    idCardNameFieldRow: {
+      marginBottom: 16,
+      alignSelf: 'stretch',
+    },
+    idCardNameFieldLabel: {
+      fontSize: 13,
+      color: '#6b7280',
+      marginBottom: 6,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    idCardNameFieldInput: {
+      backgroundColor: '#f9fafb',
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      borderRadius: 8,
+      padding: 12,
+      fontSize: 15,
+      color: '#111827',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     childInviteEmailInput: {

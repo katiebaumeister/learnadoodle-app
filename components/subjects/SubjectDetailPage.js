@@ -192,7 +192,7 @@ export default function SubjectDetailPage({
   const avgGradePercent = subjectData?.avgGradePercent ?? null;
   const complianceReady = subjectData?.complianceReady ?? null;
 
-  // Get assigned children
+  // Get assigned children (IDs)
   const assignedChildren = useMemo(() => {
     if (!subject) return [];
     if (subject.child_id) {
@@ -200,6 +200,22 @@ export default function SubjectDetailPage({
     }
     return [...new Set((subjectData?.events || []).map(e => e.child_id).filter(Boolean))];
   }, [subject, subjectData?.events]);
+
+  // Assigned children as full objects (for state / compliance)
+  const assignedChildObjects = useMemo(
+    () => children.filter(c => assignedChildren.includes(c.id)),
+    [children, assignedChildren]
+  );
+
+  // State from child settings (first assigned child with a state set) — used to default compliance
+  const effectiveComplianceState = useMemo(() => {
+    const firstWithState = assignedChildObjects.find(
+      c => c.standards || c.standards_state || c.state_code || c.state
+    );
+    return firstWithState
+      ? (firstWithState.standards || firstWithState.standards_state || firstWithState.state_code || firstWithState.state)
+      : null;
+  }, [assignedChildObjects]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
 
@@ -246,6 +262,8 @@ export default function SubjectDetailPage({
         const percent = gradeMap[eo.grade] || null;
         return {
           id: `outcome-${eo.id}`,
+          eventId: eo.event_id,
+          event: event || null,
           name: event?.title || 'Assessment',
           date: eo.created_at,
           score: null,
@@ -265,6 +283,8 @@ export default function SubjectDetailPage({
         const percent = gradeMap[e.grade] || null;
         return {
           id: `event-${e.id}`,
+          eventId: e.id,
+          event: e,
           name: e.title,
           date: e.end_ts || e.start_ts,
           score: null,
@@ -312,6 +332,14 @@ export default function SubjectDetailPage({
     });
     return grouped;
   }, [complianceItems]);
+
+  const handleOpenEventDetails = useCallback((eventId, initialEvent) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openEventModal', {
+        detail: { eventId, initialEvent: initialEvent || null },
+      }));
+    }
+  }, []);
 
   if (loading && !preloadedSubjectData) {
     return (
@@ -532,15 +560,30 @@ export default function SubjectDetailPage({
                   <Text style={styles.summaryTileActionText}>View checklist</Text>
                 </TouchableOpacity>
               </>
-            ) : (
+            ) : effectiveComplianceState ? (
               <>
-                <Text style={styles.summaryTileValue}>Not configured</Text>
-                <Text style={styles.summaryTileSubtext}>Choose a state to generate requirements.</Text>
+                <Text style={styles.summaryTileValue}>State: {effectiveComplianceState}</Text>
+                <Text style={styles.summaryTileSubtext}>From child settings. Generate requirements to track.</Text>
                 <TouchableOpacity
                   style={styles.summaryTileAction}
                   onPress={(e) => {
                     e.stopPropagation();
-                    // Could open settings or compliance setup
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openSettings', { detail: { tab: 'compliance', stateCode: effectiveComplianceState } }));
+                    }
+                  }}
+                >
+                  <Text style={styles.summaryTileActionText}>Generate requirements</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.summaryTileValue}>Not configured</Text>
+                <Text style={styles.summaryTileSubtext}>Choose a state in child settings to generate requirements.</Text>
+                <TouchableOpacity
+                  style={styles.summaryTileAction}
+                  onPress={(e) => {
+                    e.stopPropagation();
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('openSettings', { detail: { tab: 'compliance' } }));
                     }
@@ -559,29 +602,33 @@ export default function SubjectDetailPage({
           {whatsNextInNext7Days.length > 0 ? (
             <>
               <View style={styles.timelineList}>
-                {whatsNextInNext7Days.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={styles.timelineItem}
-                    onPress={() =>
-                      onNavigateToPlanner?.({
-                        subjectId: subject.id,
-                        childId: item.childId,
-                        date: item.dueDate,
-                      })
-                    }
-                  >
-                    <View style={styles.timelineItemContent}>
-                      <Text style={styles.timelineItemTitle}>
-                        {item.title}
-                      </Text>
-                      <Text style={styles.timelineItemDate}>
-                        {formatRelativeDate(item.dueDate)} ({formatDayOfWeek(item.dueDate)})
-                      </Text>
-                    </View>
-                    <ChevronRight size={16} color={colors.muted || '#6B7280'} />
-                  </TouchableOpacity>
-                ))}
+                {whatsNextInNext7Days.map((item) => {
+                  const eventId = item.type === 'event' && typeof item.id === 'string' && item.id.startsWith('event-')
+                    ? item.id.slice(6)
+                    : item.id;
+                  const event = (subjectData?.events || []).find(e => e.id === eventId);
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.timelineItem}
+                      onPress={() => {
+                        if (eventId) handleOpenEventDetails(eventId, event);
+                      }}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={styles.timelineItemContent}>
+                        <Text style={styles.timelineItemTitle}>
+                          {item.title}
+                        </Text>
+                        <Text style={styles.timelineItemDate}>
+                          {formatRelativeDate(item.dueDate)} ({formatDayOfWeek(item.dueDate)})
+                        </Text>
+                      </View>
+                      <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
               {hasMoreBeyond7Days && onNavigateToPlanner && (
                 <TouchableOpacity
@@ -663,14 +710,20 @@ export default function SubjectDetailPage({
                 {(showAttendanceExpanded ? attendanceRecords : attendanceRecords.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                   const event = (subjectData?.events || []).find(e => e.id === record.event_id);
                   return (
-                    <View key={record.id} style={styles.attendanceItem}>
+                    <TouchableOpacity
+                      key={record.id}
+                      style={styles.attendanceItem}
+                      onPress={() => event && handleOpenEventDetails(event.id, event)}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
+                    >
                       <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
                       <Text style={styles.attendanceItemTitle}>
                         {event?.title || 'Lesson'}
                       </Text>
                       <Text style={styles.attendanceItemStatus}>{record.status}</Text>
                       <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -731,41 +784,51 @@ export default function SubjectDetailPage({
                 </View>
               )}
               <View style={styles.gradesList}>
-                {gradedItems.map((item) => (
-                  <View key={item.id} style={styles.gradeItem}>
-                    <View style={styles.gradeItemContent}>
-                      <Text style={styles.gradeItemName}>{item.name}</Text>
-                      <Text style={styles.gradeItemDate}>{formatDate(item.date)}</Text>
-                    </View>
-                    <View style={styles.gradeItemScore}>
-                      {item.score !== null && item.possible !== null && item.possible > 0 ? (
-                        <>
-                          <Text style={styles.gradeItemScoreText}>
-                            {item.score}/{item.possible}
-                          </Text>
-                          {item.percent !== null && (
-                            <Text style={styles.gradeItemPercent}>
-                              {item.percent}%
+                {gradedItems.map((item) => {
+                  const Wrapper = item.eventId ? TouchableOpacity : View;
+                  const wrapperProps = item.eventId
+                    ? {
+                        onPress: () => handleOpenEventDetails(item.eventId, item.event),
+                        activeOpacity: 0.7,
+                        ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+                      }
+                    : {};
+                  return (
+                    <Wrapper key={item.id} style={styles.gradeItem} {...wrapperProps}>
+                      <View style={styles.gradeItemContent}>
+                        <Text style={styles.gradeItemName}>{item.name}</Text>
+                        <Text style={styles.gradeItemDate}>{formatDate(item.date)}</Text>
+                      </View>
+                      <View style={styles.gradeItemScore}>
+                        {item.score !== null && item.possible !== null && item.possible > 0 ? (
+                          <>
+                            <Text style={styles.gradeItemScoreText}>
+                              {item.score}/{item.possible}
                             </Text>
-                          )}
-                        </>
-                      ) : item.score !== null ? (
-                        <>
-                          <Text style={styles.gradeItemScoreText}>
-                            {item.score}
-                          </Text>
-                          {item.percent !== null && (
-                            <Text style={styles.gradeItemPercent}>
-                              {item.percent}%
+                            {item.percent !== null && (
+                              <Text style={styles.gradeItemPercent}>
+                                {item.percent}%
+                              </Text>
+                            )}
+                          </>
+                        ) : item.score !== null ? (
+                          <>
+                            <Text style={styles.gradeItemScoreText}>
+                              {item.score}
                             </Text>
-                          )}
-                        </>
-                      ) : item.grade ? (
-                        <Text style={styles.gradeItemGrade}>{item.grade}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-                ))}
+                            {item.percent !== null && (
+                              <Text style={styles.gradeItemPercent}>
+                                {item.percent}%
+                              </Text>
+                            )}
+                          </>
+                        ) : item.grade ? (
+                          <Text style={styles.gradeItemGrade}>{item.grade}</Text>
+                        ) : null}
+                      </View>
+                    </Wrapper>
+                  );
+                })}
               </View>
             </>
           ) : (
@@ -813,10 +876,23 @@ export default function SubjectDetailPage({
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
-                Compliance becomes clearer as you log lessons, work, and portfolio items.
+                {effectiveComplianceState
+                  ? `State: ${effectiveComplianceState} (from child settings). Generate requirements to see your checklist here.`
+                  : 'Compliance becomes clearer as you log lessons, work, and portfolio items. Set a state in child settings or below.'}
               </Text>
-              <TouchableOpacity style={styles.emptyStateButton}>
-                <Text style={styles.emptyStateButtonText}>View state requirements</Text>
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openSettings', {
+                      detail: { tab: 'compliance', stateCode: effectiveComplianceState || undefined },
+                    }));
+                  }
+                }}
+              >
+                <Text style={styles.emptyStateButtonText}>
+                  {effectiveComplianceState ? 'Generate requirements' : 'View state requirements'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
