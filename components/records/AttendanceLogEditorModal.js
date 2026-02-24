@@ -110,6 +110,9 @@ export default function AttendanceLogEditorModal({
         setError(result.error.message || 'Unable to save attendance log');
       } else {
         if (onSaved) onSaved(result.data);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        }
         onClose();
       }
     } catch (err) {

@@ -185,7 +185,7 @@ export default function YearHeatmapGrid({
         )}
       </View>
       <Text style={styles.sectionHelp}>
-        Click a day to mark all events for that day as attended or unattended. Scroll left and right to view previous and future months. Click child name to view attendance for that child.
+        Each row is one child; each cell is one day. Click a cell to mark that day as attended or unattended for that child. For lessons shared with multiple children, marking attended marks all of them; unmarking affects only that child. Scroll left and right for other months. Click a child’s name to export their report.
       </Text>
       {isWeb ? (
         <View style={styles.topGrid}>

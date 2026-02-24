@@ -5,7 +5,7 @@ Provides country and subdivision lists for holiday picker
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import requests
 import sys
 from pathlib import Path
@@ -16,6 +16,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
+from services.holiday_providers import fetch_global_holidays
 
 router = APIRouter(prefix="/api/holidays", tags=["holidays"])
 
@@ -235,3 +236,34 @@ async def get_subdivisions(
     }
     
     return {"subdivisions": subdivisions}
+
+
+@router.get("/public")
+async def get_public_holidays_for_range(
+    country: str = Query(..., description="Country code (e.g., 'US', 'CA')"),
+    start: str = Query(..., description="Start date YYYY-MM-DD"),
+    end: str = Query(..., description="End date YYYY-MM-DD"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Get public holidays for a date range (for Plan My Year holiday picker).
+    Does not require an academic year; returns raw holidays from Nager.Date.
+    """
+    try:
+        start_date = date.fromisoformat(start[:10])
+        end_date = date.fromisoformat(end[:10])
+        if start_date > end_date:
+            raise HTTPException(status_code=400, detail="start must be <= end")
+        country_code = country.upper()
+        years = set([start_date.year, end_date.year])
+        result = []
+        for year in years:
+            entries = fetch_global_holidays(country_code, year, "NAGER_DATE", None, None)
+            for e in entries:
+                if start_date <= e.date <= end_date:
+                    result.append({"date": e.date.isoformat(), "name": e.name, "type": "GLOBAL_HOLIDAY"})
+        result.sort(key=lambda x: (x["date"], x["name"]))
+        return {"holidays": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")

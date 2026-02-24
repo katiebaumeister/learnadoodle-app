@@ -152,8 +152,8 @@ export default function CurriculumImportWizard({
 
   return (
     <Modal visible={visible} transparent={true} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity style={styles.modalContent} activeOpacity={1} onPress={() => {}}>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -343,8 +343,8 @@ export default function CurriculumImportWizard({
               </View>
             )}
           </ScrollView>
-        </View>
-      </View>
+      </TouchableOpacity>
+    </TouchableOpacity>
     </Modal>
   );
 }

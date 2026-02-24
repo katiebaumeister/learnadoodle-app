@@ -21,8 +21,8 @@ export default function MarkRangeModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.overlay}>
-        <View style={styles.box}>
+      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity style={styles.box} activeOpacity={1} onPress={() => {}}>
           <View style={styles.header}>
             <Text style={styles.title}>Mark attendance</Text>
             <TouchableOpacity onPress={onClose} hitSlop={12}>
@@ -71,8 +71,8 @@ export default function MarkRangeModal({
               <Text style={styles.confirmBtnText}>Mark all scheduled events attended</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }

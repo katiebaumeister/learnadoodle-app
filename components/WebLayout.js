@@ -1321,6 +1321,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setActiveTab('intelligence');
           setActiveTopNav('intelligence');
         }
+      } else if (pathname === '/planner') {
+        if (activeTab !== 'planner') {
+          setActiveTab('planner');
+          setActiveTopNav('planner');
+        }
+        const urlParams = new URLSearchParams(window.location.search);
+        const view = urlParams.get('view');
+        if (view) {
+          setCurrentView(view);
+        }
+      } else if (pathname === '/materials') {
+        if (activeTab !== 'materials') {
+          setActiveTab('materials');
+          setActiveTopNav('materials');
+        }
       } else if (pathname === '/' || pathname === '/home') {
         // On home page - always set tab if URL matches
         if (activeTab !== 'home') {
@@ -2062,7 +2077,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         }}
                       >
                         {[
-                          { key: 'month', label: 'Calendar' },
+                          { key: 'month', label: 'Month' },
                           // Week view hidden from UI for now; logic kept
                           { key: 'board', label: 'Board' },
                           { key: 'tasks', label: 'To-do lists' },

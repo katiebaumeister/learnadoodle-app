@@ -511,7 +511,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false }) {
   const session = useSession();
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
@@ -724,6 +724,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // set editing and schedulingBacklog states and placement to 'calendar'
   // Also check for _openInEditMode flag on the event itself
   useEffect(() => {
+    if (readOnly) return;
     const shouldOpenInEditMode = initialSchedulingMode || event?._openInEditMode;
     if (shouldOpenInEditMode) {
       console.log('[EventDetails] Opening in edit mode - initialSchedulingMode:', initialSchedulingMode, '_openInEditMode:', event?._openInEditMode);
@@ -735,7 +736,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // Also notify parent that we're in editing mode
       onEditingChange?.(true);
     }
-  }, [initialSchedulingMode, event?._openInEditMode, onEditingChange]);
+  }, [readOnly, initialSchedulingMode, event?._openInEditMode, onEditingChange]);
 
   // Load standards when event loads
   useEffect(() => {
@@ -1402,6 +1403,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name;
 
   const handleDelete = async () => {
+    if (readOnly) return;
     if (!event?.id) {
       if (Platform.OS === 'web') {
         window.alert('Error: Event ID is missing');
@@ -2569,6 +2571,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (typeof window !== 'undefined' && event?.academic_year_id) {
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
       }
+      // Refresh Subjects page so grades/materials and subject detail stay in sync
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        if (event?.subject_id) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: event.subject_id } }));
+        }
+      }
     } catch (err) {
       // Only show error toast if it's not an overlap error (those are handled by conflict UI)
       const errorMessage = err?.message || '';
@@ -3014,11 +3023,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </SafeView>
         </ScrollView>
 
-        {/* Footer: Cancel left; when part of plan: Edit Event + Edit Plan (Edit Plan highlighted); else Edit Event only */}
+        {/* Footer: Cancel left; when part of plan: Edit Event + Edit Plan (Edit Plan highlighted); else Edit Event only; readOnly: only Cancel */}
         <SafeView style={[styles.footer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
           <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20 }}>
             <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
+          {!readOnly && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             {countsTowardPlan && academicYearId && (
               <TouchableOpacity
@@ -3056,6 +3066,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </Text>
             </TouchableOpacity>
           </View>
+          )}
         </SafeView>
       </SafeView>
     );

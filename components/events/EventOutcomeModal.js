@@ -170,7 +170,8 @@ export default function EventOutcomeModal({
         throw new Error(outcomeResult.error.message || 'Failed to save outcome');
       }
       
-      if (Platform.OS === 'web') {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
       }
       if (onSaved) {
         onSaved(outcomeResult.data);

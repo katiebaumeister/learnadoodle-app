@@ -356,14 +356,30 @@ export default function AttendanceView({
     return rows;
   }, [yearRange, children, dayStatusByChild]);
 
-  const selectedDayEvents = selectedDay.dateKey && selectedDay.childId
-    ? (eventsByDateChild[selectedDay.dateKey]?.[selectedDay.childId] || [])
-    : [];
-  const selectedDayChild = children.find((c) => c.id === selectedDay.childId);
+  const selectedDayEvents = useMemo(() => {
+    if (!selectedDay.dateKey) return [];
+    if (selectedDay.childId != null) {
+      return eventsByDateChild[selectedDay.dateKey]?.[selectedDay.childId] || [];
+    }
+    const byChild = eventsByDateChild[selectedDay.dateKey];
+    if (!byChild) return [];
+    const seen = new Set();
+    const list = [];
+    children.forEach((c) => {
+      (byChild[c.id] || []).forEach((e) => {
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          list.push(e);
+        }
+      });
+    });
+    return list.sort((a, b) => (a.start_ts || a.start || '').localeCompare(b.start_ts || b.start || ''));
+  }, [selectedDay.dateKey, selectedDay.childId, eventsByDateChild, children]);
+  const selectedDayChild = selectedDay.childId != null ? children.find((c) => c.id === selectedDay.childId) : null;
 
   const handleDayPress = useCallback((dateKey, childId) => {
-    setSelectedDay({ dateKey, childId: childId || children[0]?.id });
-  }, [children]);
+    setSelectedDay({ dateKey, childId: childId !== undefined ? childId : null });
+  }, []);
 
   const getEventMinutes = useCallback((e) => {
     if (e.duration_minutes != null) return e.duration_minutes;
@@ -396,40 +412,68 @@ export default function AttendanceView({
   }, []);
 
   const attendanceRecordByEventId = useMemo(() => {
-    if (!selectedDay.dateKey || !selectedDay.childId) return {};
+    if (!selectedDay.dateKey) return {};
     const key = String(selectedDay.dateKey).slice(0, 10);
-    const cid = String(selectedDay.childId);
     const map = {};
+    const multi = selectedDay.childId == null;
     attendanceRecords.forEach((r) => {
-      if (String(r.day_date).slice(0, 10) === key && String(r.child_id) === cid && r.event_id) {
+      if (String(r.day_date).slice(0, 10) !== key || !r.event_id) return;
+      if (selectedDay.childId != null && String(r.child_id) !== String(selectedDay.childId)) return;
+      if (multi) {
+        if (!map[r.event_id]) map[r.event_id] = [];
+        map[r.event_id].push(r);
+      } else {
         map[r.event_id] = r;
       }
     });
     return map;
   }, [selectedDay.dateKey, selectedDay.childId, attendanceRecords]);
 
-  /** Per-child attendance for the selected day/child (so shared events show correct status for this child). */
+  /** Per-event attendance for the selected day. When viewing all children: present if any child present, else absent if any absent, else unmarked. */
   const selectedDayAttendanceByEventId = useMemo(() => {
     const map = {};
-    Object.entries(attendanceRecordByEventId).forEach(([eid, r]) => {
-      map[eid] = r.status || 'present';
+    Object.entries(attendanceRecordByEventId).forEach(([eid, recOrList]) => {
+      const list = Array.isArray(recOrList) ? recOrList : (recOrList ? [recOrList] : []);
+      const anyPresent = list.some((r) => r.status === 'present');
+      const anyAbsent = list.some((r) => r.status === 'absent');
+      map[eid] = anyPresent ? 'present' : anyAbsent ? 'absent' : 'unmarked';
     });
     return map;
   }, [attendanceRecordByEventId]);
 
   const handleToggleEventAttendance = useCallback(async (eventId) => {
-    if (!familyIdResolved || !selectedDay.childId || !selectedDay.dateKey) return;
+    if (!familyIdResolved || !selectedDay.dateKey) return;
     const normKey = String(selectedDay.dateKey).slice(0, 10);
-    const normChildId = String(selectedDay.childId);
+    const viewingAllChildren = selectedDay.childId == null;
+    const normChildId = viewingAllChildren ? null : String(selectedDay.childId);
     const event = selectedDayEvents.find((e) => e.id === eventId);
-    const existingForSelected = attendanceRecordByEventId[eventId];
-    const isUnmark = existingForSelected?.status === 'present';
+    const isUnmark = selectedDayAttendanceByEventId[eventId] === 'present';
     try {
       if (isUnmark) {
         const assignedIds = getChildIdsForEvent(event);
         const isShared = assignedIds.length > 1;
         const minutes = getEventMinutes(event);
-        if (isShared) {
+        if (viewingAllChildren) {
+          const recordsToUpdate = attendanceRecords.filter(
+            (r) => r.event_id === event.id && String(r.day_date).slice(0, 10) === normKey
+          );
+          if (isShared && recordsToUpdate.length > 0) {
+            await Promise.all(recordsToUpdate.map((r) => updateAttendanceLog(r.id, { status: 'absent', minutes })));
+          } else if (recordsToUpdate.length > 0) {
+            await Promise.all(recordsToUpdate.map((r) => deleteAttendanceLog(r.id)));
+            const res = await updateEventStatus(event.id, 'scheduled');
+            if (res.error) console.warn('[AttendanceView] Could not unmark event status:', res.error);
+          } else {
+            await Promise.all(assignedIds.map((cid) => createAttendanceLog({
+              family_id: familyIdResolved,
+              child_id: String(cid),
+              event_id: event.id,
+              day_date: normKey,
+              status: 'absent',
+              minutes,
+            })));
+          }
+        } else if (isShared) {
           const existing = attendanceRecords.find(
             (r) => r.event_id === event.id && String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
           );
@@ -490,7 +534,7 @@ export default function AttendanceView({
     } catch (_) {
       setAttendanceRefreshKey((k) => k + 1);
     }
-  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay]);
+  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, selectedDayAttendanceByEventId, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay]);
 
   const handleMarkDayAttended = useCallback(async (dateKey, childId) => {
     if (!familyIdResolved || !childId) return;
@@ -627,14 +671,16 @@ export default function AttendanceView({
           <View style={styles.drilldownSection}>
             <View style={styles.drilldownDividerLine} />
             <Text style={styles.drilldownTitle}>Month drill-down</Text>
-            <Text style={styles.drilldownHelp}>Click a day on the calendar or heatmap to see events. Attendance only considers events marked as instructional time.</Text>
+            <Text style={styles.drilldownHelp}>
+              Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
+            </Text>
             <View style={styles.drilldownGrid}>
               <View style={styles.calendarWithDivider}>
                 <View style={styles.calendarColumn}>
                   <MonthlyCalendarView
                     monthDate={calendarMonth}
                     dayStatusByChild={dayStatusByChild}
-                    selectedChildId={children[0]?.id}
+                    selectedChildId={selectedDay.childId}
                     selectedDateKey={selectedDay.dateKey}
                     children={children}
                     onMonthChange={(delta) => setCalendarMonth((m) => {
@@ -642,7 +688,7 @@ export default function AttendanceView({
                       next.setMonth(next.getMonth() + delta);
                       return next;
                     })}
-                    onDayPress={(dateKey) => handleDayPress(dateKey, children[0]?.id)}
+                    onDayPress={(dateKey) => handleDayPress(dateKey, null)}
                   />
                 </View>
                 <View style={styles.drilldownDivider} />
@@ -650,11 +696,14 @@ export default function AttendanceView({
               <View style={styles.detailColumn}>
                 <DayEventsPanel
                   dateLabel={selectedDay.dateKey ? formatDateLabel(selectedDay.dateKey) : null}
-                  childName={selectedDayChild?.first_name || selectedDayChild?.name || null}
+                  childName={selectedDay.childId == null && selectedDay.dateKey ? 'All children' : (selectedDayChild?.first_name || selectedDayChild?.name || null)}
                   events={selectedDayEvents}
                   attendanceByEventId={selectedDayAttendanceByEventId}
                   onToggleEventAttendance={handleToggleEventAttendance}
-                  onMarkAllAttended={selectedDay.dateKey && selectedDay.childId ? () => handleMarkDayAttended(selectedDay.dateKey, selectedDay.childId) : null}
+                  onMarkAllAttended={selectedDay.dateKey ? (selectedDay.childId != null ? () => handleMarkDayAttended(selectedDay.dateKey, selectedDay.childId) : async () => {
+                    const withEvents = children.filter((c) => (eventsByDateChild[selectedDay.dateKey]?.[c.id] || []).length > 0);
+                    await Promise.all(withEvents.map((c) => handleMarkDayAttended(selectedDay.dateKey, c.id)));
+                  }) : null}
                   onEventPress={onEventPress}
                   getEventMinutes={getEventMinutes}
                 />

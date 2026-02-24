@@ -725,6 +725,11 @@ export default function AddMaterialModal({
             detail: { materialId: material.id, familyId } 
           }));
           window.dispatchEvent(new CustomEvent('refreshMaterials'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          const subId = selectedSubjectId || material?.subject_id;
+          if (subId) {
+            window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } }));
+          }
         }
         } catch (updateError) {
           console.error('[AddMaterialModal] Error updating material:', updateError);
@@ -858,6 +863,11 @@ export default function AddMaterialModal({
             detail: { materialId, familyId, action: material ? 'updated' : 'created' } 
           }));
           window.dispatchEvent(new CustomEvent('refreshMaterials'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          const subId = material ? (selectedSubjectId || material?.subject_id) : (selectedSubjectId || created?.subject_id);
+          if (subId) {
+            window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } }));
+          }
         }
       }
 

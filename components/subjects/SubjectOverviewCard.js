@@ -306,15 +306,8 @@ export default function SubjectOverviewCard({
           </TouchableOpacity>
         ) : (
           <View style={styles.decisionRowEmpty}>
-            <Text style={styles.decisionRowEmptyTitle}>Nothing scheduled yet</Text>
-            <Text style={styles.decisionRowEmptyBody}>Add your first lesson</Text>
-            <TouchableOpacity
-              style={styles.addFirstButton}
-              onPress={handleAddLesson}
-            >
-              <Plus size={14} color={colors.accent || '#4F46E5'} />
-              <Text style={styles.addFirstButtonText}>Add first lesson</Text>
-            </TouchableOpacity>
+            <Clock size={16} color={colors.muted || '#6B7280'} />
+            <Text style={styles.decisionRowEmptyTitle}>Nothing coming up</Text>
           </View>
         )}
       </View>
@@ -547,13 +540,18 @@ const styles = StyleSheet.create({
     }),
   },
   decisionRowEmpty: {
-    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
   },
   decisionRowEmptyTitle: {
     fontSize: 14,
     fontWeight: '500',
     color: '#374151',
-    marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

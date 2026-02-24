@@ -31,6 +31,9 @@ class ChildOut(BaseModel):
     id: str
     name: str
     first_name: Optional[str] = None
+    grade: Optional[str] = None
+    grade_level: Optional[str] = None
+    archived: Optional[bool] = False
 
 class MemberOut(BaseModel):
     id: str
@@ -110,13 +113,18 @@ async def get_family_members(
 
         # Get children
         try:
-            children_res = supabase.table("children").select("id, first_name").eq("family_id", family_id).eq("archived", False).execute()
+            children_res = supabase.table("children").select("id, first_name, grade, grade_level, archived").eq("family_id", family_id).execute()
             for child in (children_res.data or []):
                 first_name = child.get("first_name") or "Child"
+                grade = child.get("grade") or child.get("grade_level")
+                archived = child.get("archived") is True
                 children.append(ChildOut(
                     id=child["id"],
                     name=first_name,
-                    first_name=first_name
+                    first_name=first_name,
+                    grade=grade,
+                    grade_level=child.get("grade_level"),
+                    archived=archived
                 ))
         except Exception as e:
             log_event("family.get_members.children_table_error", user_id=user["id"], error=str(e))

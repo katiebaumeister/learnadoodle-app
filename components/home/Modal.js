@@ -57,12 +57,6 @@ const Modal = ({
     }
   }, [isOpen, onClose]);
 
-  const handleOverlayPress = (event) => {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  };
-
   return (
     <RNModal
       visible={isOpen}
@@ -70,10 +64,16 @@ const Modal = ({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay} onTouchEnd={handleOverlayPress}>
-        <View 
+      <TouchableOpacity
+        style={styles.overlay}
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <TouchableOpacity
           ref={modalRef}
           style={styles.modal}
+          activeOpacity={1}
+          onPress={() => {}}
           role="dialog"
           aria-modal="true"
           aria-labelledby={ariaLabelledBy}
@@ -93,8 +93,8 @@ const Modal = ({
           <View style={styles.content}>
             {children}
           </View>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </RNModal>
   );
 };

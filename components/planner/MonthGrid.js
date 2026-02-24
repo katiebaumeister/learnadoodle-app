@@ -1196,7 +1196,8 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                         if (isDragging) {
                           console.log('[MonthGrid] Rendering event as dragging:', ev.id, 'draggedEventId:', draggedEventId);
                         }
-                        const canDrag = ev.status !== 'done' && !isBlackout;
+                        const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+                        const canDrag = ev.status !== 'done' && !isBlackout && !isHoliday;
                         
                         if (Platform.OS === 'web' && canDrag) {
                           // Web: Use View with web-specific drag handlers

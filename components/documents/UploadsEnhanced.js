@@ -827,8 +827,8 @@ function AssignSheet({ open, onClose, uploadIds, familyId, children, subjects, o
 
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetOverlay}>
-        <View style={styles.sheet}>
+      <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>
               {multi ? `Assign ${uploadIds.length} files` : 'Assign file'}
@@ -908,8 +908,8 @@ function AssignSheet({ open, onClose, uploadIds, familyId, children, subjects, o
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }

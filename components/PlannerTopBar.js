@@ -6,7 +6,7 @@ import { getModeTokens, spacing, radius } from '../theme/pastelDesignTokens';
 import { format } from './planner/utils/date';
 
 const VIEWS = [
-  { key: 'Month', label: 'Calendar', icon: Calendar },
+  { key: 'Month', label: 'Month', icon: Calendar },
   { key: 'Day', label: 'Board', icon: Clock },
   { key: 'Board', label: 'Board', icon: Kanban },
 ];

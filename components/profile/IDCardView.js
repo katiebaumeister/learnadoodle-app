@@ -1,105 +1,177 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Platform } from 'react-native';
+import React, { useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Alert } from 'react-native';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
-import { supabase } from '../../lib/supabase';
-import GeistCard from '../GeistCard';
-import { safeImageUri } from '../../lib/safeImageUri';
+import { Download } from 'lucide-react';
 
-export default function IDCardView({ child, familyId }) {
+const CARD_ROLES = {
+  student: { cardTitle: 'Student ID' },
+  parent: { cardTitle: 'Homeschool Teacher ID' },
+  tutor: { cardTitle: 'Tutor ID' },
+};
+
+function formatMemberId(familyId, childId, cardRole) {
+  const y = new Date().getFullYear();
+  const familyShort = (familyId || '').replace(/-/g, '').slice(-5).toUpperCase() || '00000';
+  if (cardRole === 'student' && childId) {
+    const childShort = (childId || '').replace(/-/g, '').slice(-2).toUpperCase() || '01';
+    return `LD-${y}-${familyShort}-${childShort}`;
+  }
+  return `LD-${y}-${familyShort}`;
+}
+
+function getYearDates() {
+  const y = new Date().getFullYear();
+  const start = new Date(y, 0, 1);
+  const end = new Date(y, 11, 31);
+  const fmt = (d) => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return { startDate: fmt(start), expiration: fmt(end) };
+}
+
+function formatGradeLevel(grade) {
+  if (grade == null || grade === '') return '';
+  const s = String(grade).trim();
+  const n = parseInt(s, 10);
+  if (Number.isNaN(n)) return s; // e.g. "Kindergarten", "Pre-K"
+  if (n === 0) return 'Kindergarten';
+  if (n >= 1 && n <= 12) {
+    const ord = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
+    return `${n}${ord} grade`;
+  }
+  return s;
+}
+
+export default function IDCardView({
+  child,
+  familyId,
+  cardRole = 'student',
+  onExport,
+}) {
   const { mode } = useSensoryMode();
   const tokens = getModeTokens(mode);
-  const [idCard, setIdCard] = useState(null);
+  const cardRef = useRef(null);
+  const roleConfig = CARD_ROLES[cardRole] || CARD_ROLES.student;
 
-  useEffect(() => {
-    loadIDCard();
-  }, [child?.id]);
+  const displayName = child?.first_name || child?.name || (cardRole === 'parent' ? 'Parent' : cardRole === 'tutor' ? 'Tutor' : 'Student');
+  const { startDate, expiration } = getYearDates();
+  const memberId = formatMemberId(familyId, cardRole === 'student' ? child?.id : null, cardRole);
+  const gradeRaw = cardRole === 'student' ? (child?.grade ?? child?.grade_level ?? '') : '';
+  const grade = formatGradeLevel(gradeRaw);
 
-  const loadIDCard = async () => {
+  const handleExportAsImage = async () => {
+    if (Platform.OS !== 'web') {
+      if (onExport) onExport();
+      else Alert.alert('Export', 'Image export is available on web. Open this page in a browser to download the ID as an image.');
+      return;
+    }
+    if (typeof window === 'undefined') return;
     try {
-      const { data, error } = await supabase
-        .from('child_documents')
-        .select('*')
-        .eq('child_id', child.id)
-        .eq('document_type', 'id_card')
-        .single();
-      
-      if (error && error.code !== 'PGRST116') {
-        throw error;
+      if (typeof window.html2canvas !== 'function') {
+        await new Promise((resolve, reject) => {
+          const existing = document.querySelector('script[src*="html2canvas"]');
+          if (existing) {
+            if (window.html2canvas) resolve();
+            else { existing.onload = resolve; existing.onerror = reject; }
+            return;
+          }
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('Failed to load html2canvas'));
+          document.head.appendChild(script);
+        });
       }
-      
-      setIdCard(data);
-    } catch (error) {
-      console.error('Error loading ID card:', error);
+      const el = cardRef.current;
+      if (!el) {
+        Alert.alert('Error', 'Could not find card element.');
+        return;
+      }
+      let domNode = el;
+      if (el._nativeNode) domNode = el._nativeNode;
+      else if (typeof el === 'object' && el.nodeType !== 1 && (el._reactInternalFiber || el._reactInternalInstance)) {
+        const fiber = el._reactInternalFiber || el._reactInternalInstance;
+        if (fiber?.stateNode) domNode = fiber.stateNode;
+      }
+      const canvas = await window.html2canvas(domNode, {
+        backgroundColor: '#ffffff',
+        scale: 4,
+        logging: false,
+        useCORS: true,
+        allowTaint: false,
+      });
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          Alert.alert('Error', 'Failed to create image.');
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const safeName = (displayName || 'card').replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
+        a.download = `learnadoodle-${cardRole}-id-${safeName}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if (onExport) onExport();
+      }, 'image/png', 1.0);
+    } catch (err) {
+      console.error('Export error:', err);
+      Alert.alert('Export failed', err?.message || 'Could not export as image.');
     }
   };
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: tokens.text }]}>Student ID Card</Text>
+      <View ref={cardRef} style={styles.card} collapsable={false}>
+        <View style={styles.logoRow}>
+          <Text style={styles.logoText}>learnadoodle</Text>
+        </View>
+        <Text style={styles.cardTitle}>{roleConfig.cardTitle}</Text>
+        <View style={[styles.underline, { backgroundColor: tokens.border }]} />
+
+        <View style={styles.fields}>
+          <View style={styles.fieldRow}>
+            <Text style={[styles.label, { color: tokens.text }]}>Name:</Text>
+            <Text style={[styles.value, { color: tokens.text }]}>{displayName}</Text>
+          </View>
+          <View style={styles.fieldRow}>
+            <Text style={[styles.label, { color: tokens.text }]}>Start date:</Text>
+            <Text style={[styles.value, { color: tokens.text }]}>{startDate}</Text>
+          </View>
+          <View style={styles.fieldRow}>
+            <Text style={[styles.label, { color: tokens.text }]}>Member ID:</Text>
+            <Text style={[styles.value, { color: tokens.text }]}>{memberId}</Text>
+          </View>
+          <View style={styles.fieldRow}>
+            <Text style={[styles.label, { color: tokens.text }]}>Expiration:</Text>
+            <Text style={[styles.value, { color: tokens.text }]}>{expiration}</Text>
+          </View>
+          {cardRole === 'student' && (
+            <View style={styles.fieldRow}>
+              <Text style={[styles.label, { color: tokens.text }]}>Grade:</Text>
+              <Text style={[styles.value, { color: tokens.text }]}>{grade || '—'}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={[styles.disclaimer, { borderTopColor: tokens.border }]}>
+          <Text style={[styles.disclaimerText, { color: tokens.textMuted }]}>
+            This ID is for educational discount purposes only.{'\n'}
+            Not a government-issued identification.{'\n'}
+            This is not proof of legal homeschooling status.
+          </Text>
+        </View>
       </View>
 
-      <GeistCard variant="large" style={[styles.idCard, { backgroundColor: tokens.surface, borderColor: tokens.border }]}>
-        <View style={styles.idCardContent}>
-          {/* ID Card Header */}
-          <View style={[styles.idHeader, { borderBottomColor: tokens.border }]}>
-            <Text style={[styles.idTitle, { color: tokens.text }]}>STUDENT IDENTIFICATION CARD</Text>
-            <Text style={[styles.idSubtitle, { color: tokens.textSecondary }]}>Learnadoodle</Text>
-          </View>
-
-          {/* ID Card Body */}
-          <View style={styles.idBody}>
-            <View style={styles.idLeft}>
-              {safeImageUri(child.avatar_url) ? (
-                <Image 
-                  source={{ uri: safeImageUri(child.avatar_url) }} 
-                  style={styles.avatar}
-                  onError={(e) => {
-                    if (Platform.OS === 'web' && e.nativeEvent) {
-                      e.preventDefault?.();
-                    }
-                  }}
-                />
-              ) : (
-                <View style={[styles.avatarPlaceholder, { backgroundColor: tokens.bgSubtle }]}>
-                  <Text style={[styles.avatarInitials, { color: tokens.text }]}>
-                    {(child.first_name || child.name || 'S').charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-              )}
-            </View>
-            
-            <View style={styles.idRight}>
-              <Text style={[styles.idName, { color: tokens.text }]}>
-                {child.first_name || child.name || 'Student Name'}
-              </Text>
-              {child.grade && (
-                <Text style={[styles.idInfo, { color: tokens.textSecondary }]}>
-                  Grade {child.grade}
-                </Text>
-              )}
-              {child.date_of_birth && (
-                <Text style={[styles.idInfo, { color: tokens.textSecondary }]}>
-                  DOB: {new Date(child.date_of_birth).toLocaleDateString()}
-                </Text>
-              )}
-              {familyId && (
-                <Text style={[styles.idInfo, { color: tokens.textSecondary }]}>
-                  ID: {child.id?.substring(0, 8).toUpperCase()}
-                </Text>
-              )}
-            </View>
-          </View>
-
-          {/* ID Card Footer */}
-          <View style={[styles.idFooter, { borderTopColor: tokens.border }]}>
-            <Text style={[styles.idFooterText, { color: tokens.textMuted }]}>
-              This card is valid for educational purposes only
-            </Text>
-          </View>
-        </View>
-      </GeistCard>
+      <TouchableOpacity
+        style={[styles.exportButton, { backgroundColor: '#1e40af', borderColor: '#1e40af' }]}
+        onPress={handleExportAsImage}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Download size={18} color="#ffffff" />
+        <Text style={styles.exportButtonText}>Export as image</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -108,101 +180,79 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     gap: spacing.lg,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  idCard: {
-    maxWidth: 600,
-    alignSelf: 'center',
+  card: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#bfdbfe',
+    padding: 20,
+    maxWidth: 340,
     width: '100%',
-    borderWidth: 2,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.08)',
+    }),
   },
-  idCardContent: {
-    padding: spacing.xl,
-  },
-  idHeader: {
-    borderBottomWidth: 2,
-    paddingBottom: spacing.md,
-    marginBottom: spacing.lg,
+  logoRow: {
     alignItems: 'center',
+    marginBottom: 2,
   },
-  idTitle: {
+  logoText: {
+    fontSize: 28,
+    fontWeight: '600',
+    color: '#60a5fa',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  cardTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: spacing.xs,
+    fontWeight: '600',
+    color: '#1e40af',
+    textAlign: 'center',
+    marginBottom: 6,
   },
-  idSubtitle: {
+  underline: {
+    height: 1,
+    marginBottom: 16,
+  },
+  fields: {
+    marginBottom: 4,
+  },
+  fieldRow: {
+    marginBottom: 8,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  value: {
     fontSize: 14,
-    fontWeight: '500',
   },
-  idBody: {
-    flexDirection: 'row',
-    gap: spacing.xl,
-    marginBottom: spacing.lg,
-  },
-  idLeft: {
-    flexShrink: 0,
-  },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: radius.md,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-  },
-  avatarPlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-  },
-  avatarInitials: {
-    fontSize: 48,
-    fontWeight: '700',
-  },
-  idRight: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  idName: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: spacing.sm,
-  },
-  idInfo: {
-    fontSize: 16,
-    marginBottom: spacing.xs,
-  },
-  idFooter: {
+  disclaimer: {
+    marginTop: 16,
+    paddingTop: 12,
     borderTopWidth: 1,
-    paddingTop: spacing.md,
-    alignItems: 'center',
   },
-  idFooterText: {
-    fontSize: 11,
+  disclaimerText: {
+    fontSize: 10,
+    lineHeight: 14,
     textAlign: 'center',
   },
+  exportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  exportButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
 });
-
-
-
-
-
-
-
-
-
-
-

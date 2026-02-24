@@ -2117,7 +2117,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     }
   }, []);
 
-  // Load month view into calendarDataCache and calendarEvents (used by planner/calendar tabs)
+  // Load month view into calendarDataCache and calendarEvents (used by planner/calendar tabs).
+  // Fetches month events and holidays in parallel so holidays appear with other events on load (no delay).
   const refreshCalendarData = useCallback(async (dateOrNull) => {
     if (!familyId) return Promise.resolve();
     const date = dateOrNull && (dateOrNull instanceof Date ? !isNaN(dateOrNull.getTime()) : true)
@@ -2126,14 +2127,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     const year = date.getFullYear();
     const month = date.getMonth();
     const monthKey = `${year}-${month}`;
+    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
     setCalendarDataLoading(true);
     try {
-      const { data, error } = await supabase.rpc('get_month_view', {
-        _family_id: familyId,
-        _year: year,
-        _month: month + 1,
-        _child_ids: propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null,
-      });
+      const [monthResult, holidaysResult] = await Promise.all([
+        supabase.rpc('get_month_view', {
+          _family_id: familyId,
+          _year: year,
+          _month: month + 1,
+          _child_ids: propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null,
+        }),
+        getHolidaysForRange(familyId, start, end),
+      ]);
+      const { data, error } = monthResult;
       if (error) throw error;
       const eventsByDate = data?.events_by_date || {};
       // Normalize: RPC returns date_local -> array of events; ensure each event has id, time for MonthGrid
@@ -2157,6 +2165,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       });
       setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
       setCalendarEvents((prev) => ({ ...prev, ...byDate }));
+      const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
+      setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
       setIsCalendarDataLoaded(true);
     } catch (err) {
       console.error('[WebContent] refreshCalendarData failed:', err);
@@ -2293,6 +2303,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     
     // Listen for event creation and deletion to refresh home page
     const handleEventCreated = async (event) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
       if (activeTab === 'home' && user) {
         console.log('[WebContent] Event created, refreshing home page');
         try {
@@ -2775,6 +2788,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       const eventId = eventDetail.eventId || eventDetail.id;
       const updatedEvent = eventDetail.updatedEvent || eventDetail.event;
       
+      // Invalidate Subjects "What's Next" so overview and detail stay in sync with planner
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        const subjectId = updatedEvent?.subject_id || eventDetail?.subject_id;
+        if (subjectId) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+        }
+      }
+      
       try {
         const { data: profileData } = await supabase
           .from('profiles')
@@ -3119,7 +3141,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         preloadingDetailsRef.current.add(subject.id);
         
         // Load in background
-        getSubjectDetail(subject.id, familyId)
+        getSubjectDetail(subject.id, familyId, null, propSession)
           .then(detailData => {
             setSubjectDetailCache(prevCache => {
               // Double-check it's still not cached (race condition protection)
@@ -3404,11 +3426,20 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       const clientY = position.y ?? 0;
       const existingMenu = document.getElementById('planner-event-context-menu');
       if (existingMenu) existingMenu.remove();
+      const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+      let menuItems = [];
+      if (isHoliday) {
+        menuItems.push({
+          text: 'View',
+          action: () => {
+            window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
+          },
+        });
+      } else {
       let eventId = ev._originalId || ev.originalId || ev.id;
       if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
         eventId = eventId.split('-day-')[0];
       }
-      const menuItems = [];
       menuItems.push({
         text: 'Edit Event',
         action: () => {
@@ -3529,6 +3560,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
           },
         });
       }
+      }
       const estimatedMenuHeight = menuItems.length * 48 + 16;
       const windowHeight = window.innerHeight;
       const estimatedMenuWidth = 200;
@@ -3580,22 +3612,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     }
   }, [activeTab, familyId, plannerDate, calendarDataCache, refreshCalendarData]);
 
-  // Fetch holidays for planner visible month (from global holiday table + custom)
-  useEffect(() => {
-    if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
-    if (!familyId) return;
-    const year = plannerDate.getFullYear();
-    const month = plannerDate.getMonth();
-    const monthKey = `${year}-${month}`;
-    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-    getHolidaysForRange(familyId, start, end).then(({ data, error }) => {
-      if (error) return;
-      setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: (data?.holidays || []) }));
-    });
-  }, [activeTab, familyId, plannerDate]);
-  
+  // Holidays are now fetched inside refreshCalendarData (in parallel with month events) so they appear on load with other events.
+
   // Home Page Modal State
   const [showHomeEventModal, setShowHomeEventModal] = useState(false);
   const [homeEventType, setHomeEventType] = useState('lesson');
@@ -6528,6 +6546,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         onEventComplete={async (event) => {
           if (!event?.id) return;
+          if (event?.type === 'holiday' || event?.event_type === 'holiday') return;
           const isCurrentlyDone = event.status === 'done';
           const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
           const dateKey = event.date_local || (event.start_ts && event.start_ts.split('T')[0]);
@@ -6555,6 +6574,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   targetMonth: plannerDate.getMonth(),
                 },
               }));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
             }
           } catch (err) {
             setCalendarEvents((prev) => ({ ...prev, [dateKey]: listForDate }));
@@ -6643,26 +6663,30 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             }}
             onNavigateToPlanner={(params) => {
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                if (onTabChange) onTabChange('planner');
                 const queryParams = new URLSearchParams();
                 if (params.subjectId) queryParams.set('subjectId', params.subjectId);
                 if (params.childId) queryParams.set('childId', params.childId);
                 if (params.date) queryParams.set('date', params.date);
-                if (onTabChange) {
-                  onTabChange('planner');
-                  window.location.href = `/planner?${queryParams.toString()}`;
-                } else {
-                  window.location.href = `/planner?${queryParams.toString()}`;
-                }
+                const view = params.view || 'month';
+                queryParams.set('view', view);
+                const path = `/planner?${queryParams.toString()}`;
+                window.history.replaceState({}, '', path);
+                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
               }
             }}
             onNavigateToLibrary={(subjectId) => {
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                if (onTabChange) {
-                  onTabChange('materials');
-                  window.location.href = `/materials?subjectId=${subjectId}`;
-                } else {
-                  window.location.href = `/materials?subjectId=${subjectId}`;
-                }
+                if (onTabChange) onTabChange('materials');
+                const path = subjectId ? `/materials?subjectId=${subjectId}` : '/materials';
+                window.history.replaceState({}, '', path);
+              }
+            }}
+            onNavigateToPlannerAttendance={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                if (onTabChange) onTabChange('planner');
+                window.history.replaceState({}, '', '/planner?view=attendance');
+                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
               }
             }}
           />
@@ -6971,6 +6995,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onNavigateToPlanner={(params) => {
                 if (onTabChange) {
                   onTabChange('planner');
+                }
+              }}
+              onNavigateToPlannerAttendance={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  if (onTabChange) onTabChange('planner');
+                  window.history.replaceState({}, '', '/planner?view=attendance');
+                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+                }
+              }}
+              onNavigateToLibrary={(subjectId) => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  if (onTabChange) onTabChange('materials');
+                  const path = subjectId ? `/materials?subjectId=${subjectId}` : '/materials';
+                  window.history.replaceState({}, '', path);
                 }
               }}
             />

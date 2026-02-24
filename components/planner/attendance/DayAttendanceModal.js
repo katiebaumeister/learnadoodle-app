@@ -58,8 +58,8 @@ export default function DayAttendanceModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.overlay}>
-        <View style={styles.box}>
+      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity style={styles.box} activeOpacity={1} onPress={() => {}}>
           <View style={styles.header}>
             <View>
               <Text style={styles.dateLabel}>{dateLabel}</Text>
@@ -114,8 +114,8 @@ export default function DayAttendanceModal({
               <Text style={styles.actionBtnTextSecondary}>Mark all events for the day as absent</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }

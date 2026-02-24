@@ -256,8 +256,8 @@ export default function ProgressForecastModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
+      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity style={styles.modal} activeOpacity={1} onPress={() => {}}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <TrendingUp size={24} color={colors.accent} />
@@ -305,8 +305,8 @@ export default function ProgressForecastModal({
               </View>
             </ScrollView>
           ) : null}
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }

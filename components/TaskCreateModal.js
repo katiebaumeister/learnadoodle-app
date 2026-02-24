@@ -1919,6 +1919,11 @@ export default function TaskCreateModal({
         window.dispatchEvent(new CustomEvent('eventCreated', { 
           detail: refreshDetail
         }));
+        // Refresh Subjects so subject detail (Timeline / Attendance) updates when lessons are added
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        if (subjectId) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+        }
         // Also dispatch refreshCalendar to ensure all views update, with target month/year
         // Add a small delay to ensure database transaction completes
         setTimeout(() => {

@@ -57,17 +57,27 @@ export default function ConfirmDialog({
   if (!visible) return null;
 
   const content = (
-    <View style={[styles.overlay, Platform.OS === 'web' && styles.overlayWebPortal]}>
-      <DialogContent
-        title={title}
-        message={message}
-        confirmLabel={confirmLabel}
-        cancelLabel={cancelLabel}
-        destructive={destructive}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
-    </View>
+    <TouchableOpacity
+      style={[styles.overlay, Platform.OS === 'web' && styles.overlayWebPortal]}
+      activeOpacity={1}
+      onPress={handleCancel}
+    >
+      <TouchableOpacity
+        style={styles.modal}
+        activeOpacity={1}
+        onPress={(e) => e?.stopPropagation?.()}
+      >
+        <DialogContent
+          title={title}
+          message={message}
+          confirmLabel={confirmLabel}
+          cancelLabel={cancelLabel}
+          destructive={destructive}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      </TouchableOpacity>
+    </TouchableOpacity>
   );
 
   if (Platform.OS === 'web' && typeof document !== 'undefined' && document.body) {

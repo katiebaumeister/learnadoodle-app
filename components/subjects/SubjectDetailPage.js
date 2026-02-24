@@ -28,6 +28,8 @@ import { getSubjectDetail } from '../../lib/services/subjectsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import { useSession } from '../../contexts/SessionContext';
 
+const ATTENDANCE_LIST_LIMIT = 10;
+
 export default function SubjectDetailPage({
   subjectId,
   familyId,
@@ -36,6 +38,7 @@ export default function SubjectDetailPage({
   onEditSubject,
   onNavigateToPlanner,
   onNavigateToLibrary,
+  onNavigateToPlannerAttendance,
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
 }) {
@@ -43,6 +46,7 @@ export default function SubjectDetailPage({
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
+  const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const loadingRef = useRef(false);
 
   useEffect(() => {
@@ -273,47 +277,17 @@ export default function SubjectDetailPage({
     return items.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
   }, [grades, eventOutcomes, subjectData?.events]);
 
-  // What's Next: upcoming events from today onwards (lesson, activity, assignment, project, exam)
-  const whatsNextEvents = useMemo(() => {
-    const events = subjectData?.events || [];
+  // What's Next in detail: only next 7 days (from current time); rest show "View more in Planner"
+  const { whatsNextInNext7Days, hasMoreBeyond7Days } = useMemo(() => {
+    const list = subjectData?.upcomingItems || [];
     const now = new Date();
-    now.setHours(0, 0, 0, 0); // Start of today
-    
-    const validTypes = ['lesson', 'activity', 'assignment', 'project', 'exam'];
-    
-    const filteredEvents = events
-      .filter(event => {
-        if (!event.start_ts || !event.id) return false;
-
-        const eventDate = new Date(event.start_ts);
-        eventDate.setHours(0, 0, 0, 0);
-        if (eventDate < now) return false; // Only upcoming / today+
-
-        const rawType = event.event_type || event.type || '';
-        const eventType = typeof rawType === 'string' ? rawType.toLowerCase() : '';
-        if (!validTypes.includes(eventType)) return false;
-
-        // Exclude canceled or backlog events if those flags exist
-        if (event.status === 'canceled' || event.is_backlog) return false;
-
-        return true;
-      })
-      .map(event => {
-        const eventDate = new Date(event.start_ts);
-        return {
-          id: event.id,
-          title: event.title || 'Untitled',
-          dueDate: event.start_ts,
-          childId: event.child_id,
-          eventType: event.event_type || event.type,
-          date: eventDate,
-        };
-      })
-      .sort((a, b) => a.date.getTime() - b.date.getTime())
-      .slice(0, 10);
-
-    return filteredEvents;
-  }, [subjectData?.events]);
+    const end = new Date(now);
+    end.setDate(end.getDate() + 7);
+    end.setHours(23, 59, 59, 999);
+    const inNext7 = list.filter(item => item.dueDate && new Date(item.dueDate) <= end);
+    const hasMore = list.some(item => item.dueDate && new Date(item.dueDate) > end);
+    return { whatsNextInNext7Days: inNext7, hasMoreBeyond7Days: hasMore };
+  }, [subjectData?.upcomingItems]);
 
   const hasAnyEvents = useMemo(() => {
     return (subjectData?.events || []).length > 0;
@@ -579,38 +553,67 @@ export default function SubjectDetailPage({
           </TouchableOpacity>
         </View>
 
-        {/* Section 1: Timeline / What's Next */}
+        {/* Section 1: Timeline / What's Next - next 7 days only; then link to Planner */}
         <View id="progress-section" style={styles.section}>
           <Text style={styles.sectionTitle}>Timeline / What's Next</Text>
-          {whatsNextEvents.length > 0 ? (
-            <View style={styles.timelineList}>
-              {whatsNextEvents.map((item) => (
+          {whatsNextInNext7Days.length > 0 ? (
+            <>
+              <View style={styles.timelineList}>
+                {whatsNextInNext7Days.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.timelineItem}
+                    onPress={() =>
+                      onNavigateToPlanner?.({
+                        subjectId: subject.id,
+                        childId: item.childId,
+                        date: item.dueDate,
+                      })
+                    }
+                  >
+                    <View style={styles.timelineItemContent}>
+                      <Text style={styles.timelineItemTitle}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.timelineItemDate}>
+                        {formatRelativeDate(item.dueDate)} ({formatDayOfWeek(item.dueDate)})
+                      </Text>
+                    </View>
+                    <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {hasMoreBeyond7Days && onNavigateToPlanner && (
                 <TouchableOpacity
-                  key={item.id}
-                  style={styles.timelineItem}
-                  onPress={() =>
-                    onNavigateToPlanner?.({
-                      subjectId: subject.id,
-                      childId: item.childId,
-                      date: item.dueDate,
-                    })
-                  }
+                  style={styles.attendanceViewTotalBtn}
+                  onPress={() => onNavigateToPlanner({ subjectId: subject.id })}
+                  activeOpacity={0.7}
                 >
-                  <View style={styles.timelineItemContent}>
-                    <Text style={styles.timelineItemTitle}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.timelineItemDate}>
-                      {formatRelativeDate(item.dueDate)} ({formatDayOfWeek(item.dueDate)})
-                    </Text>
-                  </View>
+                  <Calendar size={16} color={colors.accent || '#4F46E5'} />
+                  <Text style={styles.attendanceViewTotalText}>View more in Planner</Text>
                   <ChevronRight size={16} color={colors.muted || '#6B7280'} />
                 </TouchableOpacity>
-              ))}
-            </View>
+              )}
+            </>
           ) : (
             <>
-              {hasAnyEvents ? (
+              {hasMoreBeyond7Days && onNavigateToPlanner ? (
+                <View style={styles.emptyStateBox}>
+                  <Text style={styles.emptyStateBanner}>Nothing in the next 7 days</Text>
+                  <Text style={styles.emptyStateText}>
+                    Upcoming lessons are later. View the full schedule in Planner.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.attendanceViewTotalBtn}
+                    onPress={() => onNavigateToPlanner({ subjectId: subject.id })}
+                    activeOpacity={0.7}
+                  >
+                    <Calendar size={16} color={colors.accent || '#4F46E5'} />
+                    <Text style={styles.attendanceViewTotalText}>View in Planner</Text>
+                    <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                  </TouchableOpacity>
+                </View>
+              ) : hasAnyEvents ? (
                 <View style={styles.emptyStateBox}>
                   <Text style={styles.emptyStateBanner}>You're all caught up.</Text>
                   <Text style={styles.emptyStateText}>
@@ -657,7 +660,7 @@ export default function SubjectDetailPage({
                 </View>
               </View>
               <View style={styles.attendanceList}>
-                {attendanceRecords.slice(0, 10).map((record) => {
+                {(showAttendanceExpanded ? attendanceRecords : attendanceRecords.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                   const event = (subjectData?.events || []).find(e => e.id === record.event_id);
                   return (
                     <View key={record.id} style={styles.attendanceItem}>
@@ -671,12 +674,47 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
+              {attendanceRecords.length > ATTENDANCE_LIST_LIMIT && (
+                <TouchableOpacity
+                  style={styles.attendanceShowMoreBtn}
+                  onPress={() => setShowAttendanceExpanded((v) => !v)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.attendanceShowMoreText}>
+                    {showAttendanceExpanded
+                      ? 'Show less'
+                      : `Show more (${attendanceRecords.length - ATTENDANCE_LIST_LIMIT} more)`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {onNavigateToPlannerAttendance && (
+                <TouchableOpacity
+                  style={styles.attendanceViewTotalBtn}
+                  onPress={onNavigateToPlannerAttendance}
+                  activeOpacity={0.7}
+                >
+                  <Calendar size={16} color={colors.accent || '#4F46E5'} />
+                  <Text style={styles.attendanceViewTotalText}>View total attendance in Planner</Text>
+                  <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                </TouchableOpacity>
+              )}
             </>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
                 Attendance appears after you complete lessons or log time.
               </Text>
+              {onNavigateToPlannerAttendance && (
+                <TouchableOpacity
+                  style={styles.attendanceViewTotalBtn}
+                  onPress={onNavigateToPlannerAttendance}
+                  activeOpacity={0.7}
+                >
+                  <Calendar size={16} color={colors.accent || '#4F46E5'} />
+                  <Text style={styles.attendanceViewTotalText}>View attendance in Planner</Text>
+                  <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                </TouchableOpacity>
+              )}
             </View>
           )}
         </View>
@@ -1275,6 +1313,45 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceShowMoreBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+    borderRadius: 8,
+    backgroundColor: colors.bgSubtle || '#F3F4F6',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceShowMoreText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.accent || '#4F46E5',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceViewTotalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border || '#e5e7eb',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceViewTotalText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.accent || '#4F46E5',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendanceItemMinutes: {

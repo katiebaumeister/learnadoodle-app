@@ -544,6 +544,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           detail: { materialId: data.id, familyId } 
         }));
         window.dispatchEvent(new CustomEvent('refreshMaterials'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        if (data.subject_id) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
+        }
       }
       
       // Reload materials
@@ -937,6 +941,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           detail: { materialId: data.id, familyId, action: 'restored' } 
         }));
         window.dispatchEvent(new CustomEvent('refreshMaterials'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        if (data.subject_id) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
+        }
       }
       
       await loadMaterials();
@@ -996,6 +1004,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           detail: { materialId: data.id, familyId, permanent: true } 
         }));
         window.dispatchEvent(new CustomEvent('refreshMaterials'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        if (data.subject_id) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
+        }
       }
       
       // Delete storage file if it exists (use storage_path from RPC result or from item data)

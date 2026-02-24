@@ -12,6 +12,7 @@ import BlackoutDialog from './BlackoutDialog';
 import RescheduleModal from './RescheduleModal';
 import WeeklyReshuffleModal from './WeeklyReshuffleModal';
 import { proposeReschedule, getWeekStart, freezeWeek, getWeeklyPacket } from '../../lib/apiClient';
+import { getHolidaysForRange } from '../../lib/services/academicYearClient';
 import { rescheduleEvent, createEvent as createEventWithOffline, deleteEvent as deleteEventWithOffline } from '../../lib/services/plannerClientWithOffline';
 import * as offlineStorage from '../../lib/services/offlineStorage';
 import PlanYearWizard from '../year/PlanYearWizard';
@@ -174,7 +175,8 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
               const durMin = Math.max(5, Math.round((new Date(ev.end_ts).getTime() - eventDate.getTime()) / 60000));
               const heightPercent = (durMin / total) * 100;
               const isDragging = draggedEventId === ev.id;
-              const canDrag = !isBlackout && ev.status !== 'done';
+              const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+              const canDrag = !isBlackout && ev.status !== 'done' && !isHoliday;
               
               // Use View for both platforms with mouse drag handlers on web
               return (
@@ -332,8 +334,20 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     defaultChildId: null,
     defaultText: '',
   });
-  
+  const [weekHolidays, setWeekHolidays] = useState([]);
+
   const { data, loading } = useWeekData(weekStart, selectedChildIds, familyId);
+
+  // Fetch holidays for the visible week so they show on the week view
+  useEffect(() => {
+    if (!familyId) return;
+    const from = getLocalDateString(weekStart);
+    const to = getLocalDateString(addDays(weekStart, 6));
+    getHolidaysForRange(familyId, from, to).then(({ data: res, error }) => {
+      if (error) return;
+      setWeekHolidays(res?.holidays || []);
+    });
+  }, [familyId, weekStart]);
 
   // Memoize formatted month/year to prevent unnecessary recalculations
   const monthYearText = useMemo(() => {
@@ -1593,7 +1607,26 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       }
       eventsByDateNew[d].push(event);
     }
-    
+
+    // Add holidays for the week (from backend) so they show on the week view
+    for (const h of weekHolidays) {
+      const dateStr = typeof h.date === 'string' ? h.date.split('T')[0] : (h.date?.toISOString?.()?.split('T')[0] || null);
+      if (!dateStr) continue;
+      const holidayEvent = {
+        id: `holiday-${dateStr}-${(h.name || '').replace(/\s+/g, '-').slice(0, 30)}`,
+        date_local: dateStr,
+        title: h.name || 'Holiday',
+        event_type: 'holiday',
+        type: 'holiday',
+        start_ts: `${dateStr}T00:00:00`,
+        end_ts: `${dateStr}T00:30:00`,
+        start_local: '00:00',
+        end_local: '00:30',
+      };
+      if (!eventsByDateNew[dateStr]) eventsByDateNew[dateStr] = [];
+      eventsByDateNew[dateStr].push(holidayEvent);
+    }
+
     // Log eventsByDate for debugging
     if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
       const eventDates = Object.keys(eventsByDateNew);
@@ -1612,7 +1645,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       eventsByDate: eventsByDateNew,
       patternDaysByDate: patternDaysByDateNew
     };
-  }, [filtAvail, filtEvents, localEvents]);
+  }, [filtAvail, filtEvents, localEvents, weekHolidays]);
   
   // Compute version for force re-render - include date_local to catch day changes
   const eventsVersion = useMemo(() => {

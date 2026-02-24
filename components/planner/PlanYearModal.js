@@ -51,6 +51,7 @@ import {
   getPlanHealth,
   invalidatePlanHealthCache,
   computeSchedulePotential,
+  getPublicHolidaysForRange,
 } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 const BG = '#ffffff';
@@ -277,6 +278,14 @@ export default function PlanYearModal({
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [startDateCalendarMonth, setStartDateCalendarMonth] = useState(() => new Date());
   const [endDateCalendarMonth, setEndDateCalendarMonth] = useState(() => new Date());
+  // Inline date range picker (Google Flights-style): keep modal open, drag range
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
+  const [rangePickerCalendarMonth, setRangePickerCalendarMonth] = useState(() => new Date());
+  const [rangePickerMode, setRangePickerMode] = useState('idle'); // 'idle' | 'picking' | 'adjusting'
+  const [rangePickerAnchorDate, setRangePickerAnchorDate] = useState(null);
+  const [rangePickerActiveHandle, setRangePickerActiveHandle] = useState(null); // 'start' | 'end'
+  const [rangePickerHoverDate, setRangePickerHoverDate] = useState(null);
+  const rangePickerPointerDownRef = useRef(false);
   const [showNewHolidayDatePicker, setShowNewHolidayDatePicker] = useState(false);
   const [showNewBreakStartPicker, setShowNewBreakStartPicker] = useState(false);
   const [showNewBreakEndPicker, setShowNewBreakEndPicker] = useState(false);
@@ -320,6 +329,10 @@ export default function PlanYearModal({
   // Plan health (includes manual counted events for "Manual instructional events counted" panel)
   const [planHealth, setPlanHealth] = useState(null);
   const [holidaysCollapsed, setHolidaysCollapsed] = useState(true);
+  const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState([]); // dates (YYYY-MM-DD) to exclude from US public holidays
+  const [showPublicHolidaysPicker, setShowPublicHolidaysPicker] = useState(false);
+  const [publicHolidaysList, setPublicHolidaysList] = useState([]);
+  const [publicHolidaysLoading, setPublicHolidaysLoading] = useState(false);
   const [sectionWhoExpanded, setSectionWhoExpanded] = useState(false);
   const [sectionScheduleExpanded, setSectionScheduleExpanded] = useState(false);
   const [sectionDatesExpanded, setSectionDatesExpanded] = useState(false);
@@ -331,6 +344,170 @@ export default function PlanYearModal({
   const scheduleSectionYRef = useRef(0);
   const datesSectionYRef = useRef(0);
   const schedulePotentialFetchedRef = useRef(false);
+
+  // --- Date range picker (Google Flights-style): preview and commit ---
+  const rangePickerPreview = useMemo(() => {
+    const s = startDate || '';
+    const e = endDate || '';
+    if (rangePickerMode === 'idle') return { start: s, end: e };
+    if (rangePickerMode === 'picking' && rangePickerAnchorDate) {
+      const hover = rangePickerHoverDate || rangePickerAnchorDate;
+      const a = rangePickerAnchorDate;
+      return { start: a < hover ? a : hover, end: a < hover ? hover : a };
+    }
+    if (rangePickerMode === 'adjusting' && rangePickerActiveHandle) {
+      const hover = rangePickerHoverDate || (rangePickerActiveHandle === 'start' ? s : e);
+      if (rangePickerActiveHandle === 'start') {
+        const start = hover && e ? (hover <= e ? hover : e) : (hover || s);
+        const end = hover && e && hover > e ? hover : e;
+        return { start, end };
+      }
+      const end = hover && s ? (hover >= s ? hover : s) : (hover || e);
+      const start = hover && s && hover < s ? hover : s;
+      return { start, end };
+    }
+    return { start: s, end: e };
+  }, [startDate, endDate, rangePickerMode, rangePickerAnchorDate, rangePickerActiveHandle, rangePickerHoverDate]);
+
+  const commitRangePicker = useCallback((finalStart, finalEnd) => {
+    if (finalStart) setStartDate(finalStart);
+    if (finalEnd) setEndDate(finalEnd);
+    setRangePickerMode('idle');
+    setRangePickerAnchorDate(null);
+    setRangePickerActiveHandle(null);
+    setRangePickerHoverDate(null);
+    rangePickerPointerDownRef.current = false;
+  }, []);
+
+  const handleRangePickerDayPointerDown = useCallback((ymd) => {
+    // Second click while picking: commit range (anchor → this day)
+    if (rangePickerMode === 'picking' && rangePickerAnchorDate) {
+      const a = rangePickerAnchorDate;
+      const s = a <= ymd ? a : ymd;
+      const e = a <= ymd ? ymd : a;
+      commitRangePicker(s, e);
+      return;
+    }
+    if (rangePickerMode === 'adjusting') {
+      setRangePickerHoverDate(ymd);
+    }
+    rangePickerPointerDownRef.current = true;
+    const hasRange = startDate && endDate;
+    if (!hasRange || startDate > endDate) {
+      setRangePickerMode('picking');
+      setRangePickerAnchorDate(ymd);
+      setRangePickerActiveHandle(null);
+      setRangePickerHoverDate(ymd);
+      return;
+    }
+    if (ymd === startDate) {
+      setRangePickerMode('adjusting');
+      setRangePickerActiveHandle('start');
+      setRangePickerAnchorDate(null);
+      setRangePickerHoverDate(ymd);
+      return;
+    }
+    if (ymd === endDate) {
+      setRangePickerMode('adjusting');
+      setRangePickerActiveHandle('end');
+      setRangePickerAnchorDate(null);
+      setRangePickerHoverDate(ymd);
+      return;
+    }
+    const inRange = ymd >= startDate && ymd <= endDate;
+    if (inRange) {
+      const dStart = Math.abs((new Date(ymd + 'T12:00:00') - new Date(startDate + 'T12:00:00')) / 86400000);
+      const dEnd = Math.abs((new Date(ymd + 'T12:00:00') - new Date(endDate + 'T12:00:00')) / 86400000);
+      const handle = dStart <= dEnd ? 'start' : 'end';
+      setRangePickerMode('adjusting');
+      setRangePickerActiveHandle(handle);
+      setRangePickerAnchorDate(null);
+      setRangePickerHoverDate(ymd);
+      return;
+    }
+    setRangePickerMode('picking');
+    setRangePickerAnchorDate(ymd);
+    setRangePickerActiveHandle(null);
+    setRangePickerHoverDate(ymd);
+  }, [startDate, endDate]);
+
+  const handleRangePickerDayPointerUp = useCallback((ymd) => {
+    if (!rangePickerPointerDownRef.current) return;
+    rangePickerPointerDownRef.current = false;
+    const hover = rangePickerHoverDate || ymd;
+    if (rangePickerMode === 'picking' && rangePickerAnchorDate) {
+      const a = rangePickerAnchorDate;
+      const s = a <= hover ? a : hover;
+      const e = a <= hover ? hover : a;
+      commitRangePicker(s, e);
+      return;
+    }
+    if (rangePickerMode === 'adjusting' && rangePickerActiveHandle) {
+      const s = startDate || '';
+      const e = endDate || '';
+      if (rangePickerActiveHandle === 'start') {
+        const newStart = hover && e ? (hover <= e ? hover : e) : (hover || s);
+        const newEnd = hover && e && hover > e ? hover : e;
+        commitRangePicker(newStart, newEnd);
+      } else {
+        const newEnd = hover && s ? (hover >= s ? hover : s) : (hover || e);
+        const newStart = hover && s && hover < s ? hover : s;
+        commitRangePicker(newStart, newEnd);
+      }
+    }
+  }, [rangePickerMode, rangePickerAnchorDate, rangePickerActiveHandle, rangePickerHoverDate, startDate, endDate, commitRangePicker]);
+
+  const handleRangePickerDayHover = useCallback((ymd) => {
+    setRangePickerHoverDate(ymd);
+  }, []);
+
+  // Global pointer up: commit range when user releases outside a day cell; Escape: cancel preview / close picker
+  useEffect(() => {
+    if (!showDateRangePicker) return;
+    const onPointerUp = () => {
+      if (rangePickerMode !== 'idle' && rangePickerPointerDownRef.current) {
+        rangePickerPointerDownRef.current = false;
+        const hover = rangePickerHoverDate;
+        if (rangePickerMode === 'picking' && rangePickerAnchorDate && hover) {
+          const a = rangePickerAnchorDate;
+          commitRangePicker(a <= hover ? a : hover, a <= hover ? hover : a);
+        } else if (rangePickerMode === 'adjusting' && rangePickerActiveHandle) {
+          const s = startDate || '';
+          const e = endDate || '';
+          if (rangePickerActiveHandle === 'start') {
+            const newStart = hover && e ? (hover <= e ? hover : e) : (hover || s);
+            const newEnd = hover && e && hover > e ? hover : e;
+            commitRangePicker(newStart, newEnd);
+          } else {
+            const newEnd = hover && s ? (hover >= s ? hover : s) : (hover || e);
+            const newStart = hover && s && hover < s ? hover : s;
+            commitRangePicker(newStart, newEnd);
+          }
+        }
+      }
+    };
+    const onKeyDown = (ev) => {
+      if (ev.key === 'Escape') {
+        if (rangePickerMode !== 'idle') {
+          setRangePickerMode('idle');
+          setRangePickerAnchorDate(null);
+          setRangePickerActiveHandle(null);
+          setRangePickerHoverDate(null);
+          rangePickerPointerDownRef.current = false;
+        } else {
+          setShowDateRangePicker(false);
+        }
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('keydown', onKeyDown);
+      return () => {
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('keydown', onKeyDown);
+      };
+    }
+  }, [showDateRangePicker, rangePickerMode, rangePickerAnchorDate, rangePickerActiveHandle, rangePickerHoverDate, startDate, endDate, commitRangePicker]);
 
   const baseSubjectList = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
   const subjectsForCurrentSelection =
@@ -433,6 +610,7 @@ export default function PlanYearModal({
 
   // When we have academicYearId, load full year + plan to populate form (for "Edit plan" from banner)
   const loadedYearIdRef = useRef(null);
+  const savedTargetsAppliedRef = useRef(false);
   const onCloseRef = useRef(onClose);
   const onCompleteRef = useRef(onComplete);
   useEffect(() => {
@@ -472,6 +650,12 @@ export default function PlanYearModal({
       setStartDate(data.start_date || '');
       setEndDate(data.end_date || '');
       setMode(data.mode || 'FIXED_END');
+      if (data.holiday_settings) {
+        setFollowGlobalHolidays(data.holiday_settings.follow_global_holidays !== false);
+        setCountryCode(data.holiday_settings.holiday_country_code || 'US');
+        setRegionCode(data.holiday_settings.holiday_region || null);
+        setExcludedPublicHolidayDates(Array.isArray(data.holiday_settings.excluded_holiday_dates) ? data.holiday_settings.excluded_holiday_dates : []);
+      }
       if (data.plan) {
         const p = data.plan;
         setStartDate(p.start_date || data.start_date || '');
@@ -524,6 +708,7 @@ export default function PlanYearModal({
   useEffect(() => {
     if (!visible) {
       loadedYearIdRef.current = null;
+      savedTargetsAppliedRef.current = false;
       setLoadError(null);
       setPlanCreatedAt(null);
       setPlanUpdatedAt(null);
@@ -532,6 +717,38 @@ export default function PlanYearModal({
       setPreviousPlansLoading(true); // so next open shows loading until plans are fetched (avoids "add new" right after creating a plan)
     }
   }, [visible]);
+
+  // When opening for a new plan (no existing plan loaded), pre-fill dates and requirement from family/child saved targets (Edit Child / onboarding school year)
+  useEffect(() => {
+    if (!visible || !familyId || academicYearId || initialAcademicYearId || savedTargetsAppliedRef.current) return;
+    let cancelled = false;
+    (async () => {
+      const { data: ay, error } = await supabase
+        .from('academic_years')
+        .select('id, start_date, end_date, target_instructional_days, target_instructional_hours')
+        .eq('family_id', familyId)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (cancelled || error || !ay) return;
+      const hasDates = ay.start_date || ay.end_date;
+      const hasTargetDays = ay.target_instructional_days != null;
+      const hasTargetHours = ay.target_instructional_hours != null;
+      if (!hasDates && !hasTargetDays && !hasTargetHours) return;
+      if (cancelled) return;
+      savedTargetsAppliedRef.current = true;
+      if (ay.start_date) setStartDate(ay.start_date);
+      if (ay.end_date) setEndDate(ay.end_date);
+      if (hasTargetDays) {
+        setPlanConstraintMode('days');
+        setPlanTargetDays(String(ay.target_instructional_days));
+      } else if (hasTargetHours) {
+        setPlanConstraintMode('hours');
+        setPlanTargetHours(String(ay.target_instructional_hours));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, familyId, academicYearId, initialAcademicYearId]);
 
   // Default selected subjects to all when modal opens (skip when opening with a specific plan so load can set subjects)
   const prevVisibleRef = useRef(false);
@@ -767,6 +984,7 @@ export default function PlanYearModal({
           setFollowGlobalHolidays(yearData.holiday_settings?.follow_global_holidays || true);
           setCountryCode(yearData.holiday_settings?.holiday_country_code || 'US');
           setRegionCode(yearData.holiday_settings?.holiday_region || null);
+          setExcludedPublicHolidayDates(Array.isArray(yearData.holiday_settings?.excluded_holiday_dates) ? yearData.holiday_settings.excluded_holiday_dates : []);
         }
       }
     } catch (err) {
@@ -814,13 +1032,14 @@ export default function PlanYearModal({
           holiday_country_code: countryCode,
           holiday_region: regionCode,
           provider: 'NAGER_DATE',
+          excluded_holiday_dates: excludedPublicHolidayDates || [],
         },
         custom_holidays: [
           ...customHolidays.map(h => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
           ...expandBreaksToHolidayDates(customBreaks),
         ],
       };
-      
+
       const { data, error } = await recalculateAcademicYear(input);
       
       if (error) throw error;
@@ -875,6 +1094,7 @@ export default function PlanYearModal({
         end_date: effectiveEndDate,
         follow_public_holidays: followGlobalHolidays,
         holiday_region: regionCode ? `${countryCode}:${regionCode}` : countryCode,
+        excluded_holiday_dates: excludedPublicHolidayDates?.length ? excludedPublicHolidayDates : undefined,
         custom_holidays: customHolidays.map(h => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
         custom_breaks: (customBreaks || []).map(b => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
         target_instructional_days: effectiveTargetInstructionalDays,
@@ -1038,6 +1258,7 @@ export default function PlanYearModal({
               holiday_country_code: countryCode,
               holiday_region: regionCode,
               provider: 'NAGER_DATE',
+              excluded_holiday_dates: excludedPublicHolidayDates || [],
             },
             custom_holidays: [],
           };
@@ -1069,6 +1290,7 @@ export default function PlanYearModal({
             holiday_country_code: countryCode,
             holiday_region: regionCode,
             provider: 'NAGER_DATE',
+            excluded_holiday_dates: excludedPublicHolidayDates || [],
           },
           custom_holidays: customHolidays.map(h => ({
             date: h.date,
@@ -1272,12 +1494,12 @@ export default function PlanYearModal({
   if (checkingHomeschool) {
     return (
       <Modal visible={visible} transparent animationType="fade">
-        <View style={styles.overlay}>
-          <View style={styles.modal}>
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+          <TouchableOpacity style={styles.modal} activeOpacity={1} onPress={() => {}}>
             <ActivityIndicator size="large" color={ACCENT} />
             <Text style={styles.loadingText}>Checking setup...</Text>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     );
   }
@@ -1300,8 +1522,16 @@ export default function PlanYearModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={[styles.overlay, pickerOnly && styles.pickerOverlay]}>
-        <View style={[styles.modal, pickerOnly && styles.pickerModal, pickerOnly && (Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.05)' } : { shadowOpacity: 0.08, elevation: 4 })]}>
+      <TouchableOpacity
+        style={[styles.overlay, pickerOnly && styles.pickerOverlay]}
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <TouchableOpacity
+          style={[styles.modal, pickerOnly && styles.pickerModal, pickerOnly && (Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.05)' } : { shadowOpacity: 0.08, elevation: 4 })]}
+          activeOpacity={1}
+          onPress={() => {}}
+        >
           {!pickerOnly && (
           <View style={styles.modalHeader}>
             <View style={styles.modalHeaderLeft}>
@@ -1964,15 +2194,15 @@ export default function PlanYearModal({
                 </TouchableOpacity>
                 {sectionDatesExpanded && (
                 <>
-                {/* Start Date and End Date on same row */}
+                {/* Start Date and End Date on same row — clicking opens inline range picker (Google Flights-style) */}
                 <View style={[styles.dateRow, { marginTop: 12 }]}>
                   <View style={[styles.inputGroup, styles.inputGroupFlex]}>
                   <Text style={[styles.label, { fontSize: 15 }]}>Start Date</Text>
                     <TouchableOpacity
                       style={styles.datePickerTrigger}
                       onPress={() => {
-                        setStartDateCalendarMonth(startDate ? dateStringToDate(startDate) : new Date());
-                        setShowStartDatePicker(true);
+                        setRangePickerCalendarMonth(startDate ? dateStringToDate(startDate) : new Date());
+                        setShowDateRangePicker(true);
                       }}
                     >
                       <Text style={[styles.datePickerTriggerText, !startDate && styles.datePickerPlaceholder]}>
@@ -1987,8 +2217,8 @@ export default function PlanYearModal({
                       <TouchableOpacity
                         style={styles.datePickerTrigger}
                         onPress={() => {
-                          setEndDateCalendarMonth(endDate ? dateStringToDate(endDate) : new Date());
-                          setShowEndDatePicker(true);
+                          setRangePickerCalendarMonth(endDate ? dateStringToDate(endDate) : new Date());
+                          setShowDateRangePicker(true);
                         }}
                       >
                         <Text style={[styles.datePickerTriggerText, !endDate && styles.datePickerPlaceholder]}>
@@ -1999,6 +2229,130 @@ export default function PlanYearModal({
                   </View>
                 )}
                 </View>
+                {/* Inline date range picker: drag to select range, stays open inside modal */}
+                {showDateRangePicker && (
+                  <View style={styles.rangePickerContainer}>
+                    <View style={styles.rangePickerHeader}>
+                      <Text style={styles.rangePickerTitle}>Select date range</Text>
+                      <TouchableOpacity
+                        onPress={() => { setShowDateRangePicker(false); setRangePickerMode('idle'); setRangePickerAnchorDate(null); setRangePickerActiveHandle(null); setRangePickerHoverDate(null); }}
+                        style={styles.rangePickerCloseBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <X size={18} color={SUB} />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.rangePickerCalendarsRow}>
+                      {[0, 1].map((monthOffset) => {
+                        const base = new Date(rangePickerCalendarMonth.getFullYear(), rangePickerCalendarMonth.getMonth() + monthOffset, 1);
+                        const year = base.getFullYear();
+                        const month = base.getMonth();
+                        const firstDay = new Date(year, month, 1);
+                        const startDateGrid = new Date(firstDay);
+                        startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
+                        const days = [];
+                        const current = new Date(startDateGrid);
+                        for (let i = 0; i < 42; i++) {
+                          days.push(new Date(current));
+                          current.setDate(current.getDate() + 1);
+                        }
+                        const previewStart = rangePickerPreview.start;
+                        const previewEnd = rangePickerPreview.end;
+                        return (
+                          <View key={monthOffset} style={styles.rangePickerMonth}>
+                            <Text style={styles.calendarMonthTitle}>
+                              {base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                            </Text>
+                            <View style={styles.calendarDayHeaders}>
+                              {WEEKDAY_LABELS.map((day) => (
+                                <View key={day} style={styles.calendarDayHeader}>
+                                  <Text style={styles.calendarDayHeaderText}>{day}</Text>
+                                </View>
+                              ))}
+                            </View>
+                            <View>
+                              {[0, 1, 2, 3, 4, 5].map((week) => (
+                                <View key={week} style={styles.calendarWeekRow}>
+                                  {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                                    const isCurrentMonth = day.getMonth() === month;
+                                    const ymd = toLocalYYYYMMDD(day);
+                                    const isToday = ymd === toLocalYYYYMMDD(new Date());
+                                    const isRangeStart = previewStart && ymd === previewStart;
+                                    const isRangeEnd = previewEnd && ymd === previewEnd;
+                                    const isInRange = previewStart && previewEnd && ymd > previewStart && ymd < previewEnd;
+                                    const isSingleDay = isRangeStart && isRangeEnd;
+                                    const cellStyle = [
+                                      styles.calendarDayCell,
+                                      isRangeStart && !isSingleDay && styles.calendarDayCellRangeStart,
+                                      isRangeEnd && !isSingleDay && styles.calendarDayCellRangeEnd,
+                                      isSingleDay && styles.calendarDayCellSelected,
+                                      isInRange && styles.calendarDayCellInRange,
+                                      isToday && !isRangeStart && !isRangeEnd && styles.calendarDayCellToday,
+                                    ];
+                                    return (
+                                      <TouchableOpacity
+                                        key={idx}
+                                        style={cellStyle}
+                                        onPressIn={() => handleRangePickerDayPointerDown(ymd)}
+                                        onPressOut={() => handleRangePickerDayPointerUp(ymd)}
+                                        {...(Platform.OS === 'web' && {
+                                          onMouseEnter: () => handleRangePickerDayHover(ymd),
+                                        })}
+                                        activeOpacity={1}
+                                      >
+                                        <Text style={[
+                                          styles.calendarDayText,
+                                          (isRangeStart || isRangeEnd) && styles.calendarDayTextSelected,
+                                          !isCurrentMonth && styles.calendarDayTextMuted,
+                                        ]}>
+                                          {day.getDate()}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </View>
+                              ))}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                    <View style={styles.calendarNavRow}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const d = new Date(rangePickerCalendarMonth);
+                          d.setMonth(d.getMonth() - 1);
+                          setRangePickerCalendarMonth(d);
+                        }}
+                        style={styles.calendarNavButton}
+                      >
+                        <ChevronLeft size={20} color={FG} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const today = new Date();
+                          setRangePickerCalendarMonth(today);
+                          setStartDate(toLocalYYYYMMDD(today));
+                          if (mode === 'FIXED_END') setEndDate(toLocalYYYYMMDD(today));
+                          setShowDateRangePicker(false);
+                        }}
+                        style={styles.calendarNavButton}
+                      >
+                        <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const d = new Date(rangePickerCalendarMonth);
+                          d.setMonth(d.getMonth() + 1);
+                          setRangePickerCalendarMonth(d);
+                        }}
+                        style={styles.calendarNavButton}
+                      >
+                        <ChevronRight size={20} color={FG} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
 
                 {/* Target Days (TARGET_DAYS mode) */}
                 {mode === 'TARGET_DAYS' && (
@@ -2120,8 +2474,35 @@ export default function PlanYearModal({
                 </TouchableOpacity>
                 {!holidaysCollapsed && (
                 <>
-                <View style={[styles.settingRowInline, { flexDirection: 'column', alignItems: 'flex-start', marginBottom: 12 }]}>
-                  <Text style={[styles.label, { fontSize: 15, marginBottom: 4 }]}>Follow U.S. public holidays?</Text>
+                <View style={[styles.settingRowInline, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
+                    <Text style={[styles.label, { fontSize: 15, marginRight: 4 }]}>Follow </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (followGlobalHolidays) {
+                          setShowPublicHolidaysPicker(true);
+                          const start = startDate || new Date().toISOString().slice(0, 10);
+                          let end = endDate;
+                          if (!end) {
+                            const e = new Date(start);
+                            e.setFullYear(e.getFullYear() + 1);
+                            end = e.toISOString().slice(0, 10);
+                          }
+                          setPublicHolidaysLoading(true);
+                          getPublicHolidaysForRange(countryCode || 'US', start, end).then(({ data: res }) => {
+                            setPublicHolidaysList(res?.holidays || []);
+                            setPublicHolidaysLoading(false);
+                          });
+                        }
+                      }}
+                      activeOpacity={0.7}
+                      style={{ flexDirection: 'row', alignItems: 'center' }}
+                      {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
+                    >
+                      <Text style={[styles.label, { fontSize: 15, color: followGlobalHolidays ? ACCENT : SUB, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }]}>U.S. public holidays</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.label, { fontSize: 15, marginLeft: 4 }]}>?</Text>
+                  </View>
                   <TouchableOpacity
                     style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
                     onPress={() => setFollowGlobalHolidays(!followGlobalHolidays)}
@@ -2795,6 +3176,62 @@ export default function PlanYearModal({
             </Modal>
           )}
 
+          {/* U.S. public holidays picker: choose which holidays to include */}
+          {showPublicHolidaysPicker && (
+            <Modal animationType="fade" transparent visible={showPublicHolidaysPicker} onRequestClose={() => setShowPublicHolidaysPicker(false)}>
+              <TouchableOpacity style={styles.calendarOverlay} activeOpacity={1} onPress={() => setShowPublicHolidaysPicker(false)}>
+                <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.calendarModal, { maxWidth: 420, maxHeight: '80%' }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>U.S. public holidays</Text>
+                    <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} hitSlop={12}>
+                      <X size={22} color={SUB} />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={[styles.mutedText, { marginBottom: 12 }]}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
+                  {publicHolidaysLoading ? (
+                    <View style={{ padding: 24, alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color={ACCENT} />
+                    </View>
+                  ) : (
+                    <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator>
+                      {publicHolidaysList.map((h) => {
+                        const dateStr = (h.date || '').slice(0, 10);
+                        const isIncluded = !excludedPublicHolidayDates.includes(dateStr);
+                        return (
+                          <TouchableOpacity
+                            key={`${dateStr}-${h.name}`}
+                            onPress={() => {
+                              if (isIncluded) {
+                                setExcludedPublicHolidayDates((prev) => [...prev, dateStr]);
+                              } else {
+                                setExcludedPublicHolidayDates((prev) => prev.filter((d) => d !== dateStr));
+                              }
+                            }}
+                            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                            activeOpacity={0.7}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isIncluded ? ACCENT : BORDER, backgroundColor: isIncluded ? ACCENT : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+                              {isIncluded ? <Check size={14} color="#fff" strokeWidth={3} /> : null}
+                            </View>
+                            <Text style={[styles.label, { flex: 1, fontSize: 14 }]}>{h.name}</Text>
+                            <Text style={[styles.mutedText, { fontSize: 13 }]}>{dateStr}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      {publicHolidaysList.length === 0 && !publicHolidaysLoading && (
+                        <Text style={[styles.mutedText, { padding: 16 }]}>No holidays in this date range.</Text>
+                      )}
+                    </ScrollView>
+                  )}
+                  <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} style={[styles.createButton, { marginTop: 16 }]} activeOpacity={0.9}>
+                    <Text style={styles.createButtonText}>Done</Text>
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
+          )}
+
           {/* Custom Break Start Date Calendar Picker */}
           {showNewBreakStartPicker && (
             <Modal animationType="fade" transparent visible={showNewBreakStartPicker} onRequestClose={() => setShowNewBreakStartPicker(false)}>
@@ -2913,8 +3350,8 @@ export default function PlanYearModal({
             )
           }
           </View>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
       <ConfirmDialog
         visible={showClearConfirm}
         title="Remove generated placeholders?"
@@ -3440,6 +3877,50 @@ const styles = StyleSheet.create({
   calendarDayCellToday: {
     borderWidth: 2,
     borderColor: ACCENT,
+  },
+  calendarDayCellInRange: {
+    backgroundColor: ACCENT_LIGHT,
+  },
+  calendarDayCellRangeStart: {
+    backgroundColor: ACCENT,
+    borderTopLeftRadius: 6,
+    borderBottomLeftRadius: 6,
+  },
+  calendarDayCellRangeEnd: {
+    backgroundColor: ACCENT,
+    borderTopRightRadius: 6,
+    borderBottomRightRadius: 6,
+  },
+  rangePickerContainer: {
+    marginTop: 0,
+    marginBottom: 24,
+    padding: 16,
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  rangePickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  rangePickerTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+  },
+  rangePickerCloseBtn: {
+    padding: 4,
+  },
+  rangePickerCalendarsRow: {
+    flexDirection: 'row',
+    gap: 24,
+    flexWrap: 'wrap',
+  },
+  rangePickerMonth: {
+    minWidth: 280,
   },
   calendarDayText: {
     fontSize: 13,

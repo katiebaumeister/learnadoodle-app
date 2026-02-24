@@ -57,6 +57,7 @@ class HolidaySettings(BaseModel):
     holiday_country_code: Optional[str] = None  # e.g., "US", "AU"
     holiday_region: Optional[str] = None
     provider: str = "NAGER_DATE"  # NAGER_DATE | GOOGLE_ICS | CALENDARIFIC
+    excluded_holiday_dates: Optional[List[str]] = None  # YYYY-MM-DD dates to exclude from global list
 
 
 class RecalculateInput(BaseModel):
@@ -106,6 +107,7 @@ class ApplyToCalendarInput(BaseModel):
     allowed_weekdays: List[int] = [1, 2, 3, 4, 5]
     follow_public_holidays: bool = True
     holiday_region: Optional[str] = None  # e.g. "US" or "US:NATIONAL"
+    excluded_holiday_dates: Optional[List[str]] = None  # YYYY-MM-DD to exclude from global holidays
     custom_holidays: List[HolidayEntry] = []
     custom_breaks: List[CustomBreakEntry] = []
     target_instructional_days: int = 180
@@ -280,16 +282,18 @@ def get_holidays_for_year(
     include_global: bool = False,
     country_code: Optional[str] = None,
     region: Optional[str] = None,
-    provider: str = "NAGER_DATE"
+    provider: str = "NAGER_DATE",
+    excluded_holiday_dates: Optional[List[str]] = None,
 ) -> List[Dict]:
-    """Get all holidays for an academic year (custom + optionally global)"""
+    """Get all holidays for an academic year (custom + optionally global). Excluded dates are not included from global list."""
     holidays = []
-    
+    excluded_set = set(excluded_holiday_dates or [])
+
     # Get custom holidays from database
     holidays_resp = supabase.table("holidays").select("*").eq(
         "academic_year_id", academic_year_id
     ).execute()
-    
+
     if holidays_resp.data:
         for h in holidays_resp.data:
             d = h["holiday_date"]
@@ -299,38 +303,41 @@ def get_holidays_for_year(
                 "type": h.get("type", "CUSTOM_HOLIDAY"),
                 "source_id": h.get("source_id")
             })
-    
+
     # If global holidays enabled, fetch and merge
     if include_global and country_code:
         # Get year from academic_year
         year_resp = supabase.table("academic_years").select("start_date, end_date").eq(
             "id", academic_year_id
         ).single().execute()
-        
+
         if year_resp.data:
             start_date = datetime.fromisoformat(year_resp.data["start_date"]).date()
             end_date = datetime.fromisoformat(year_resp.data["end_date"]).date()
-            
+
             # Fetch for both years if the year spans two calendar years
             years_to_fetch = set([start_date.year, end_date.year])
-            
+
             for year in years_to_fetch:
                 global_holidays = fetch_global_holidays(
                     country_code, year, provider, region, None
                 )
-                
+
                 for gh in global_holidays:
+                    date_str = gh.date.isoformat()
+                    if date_str in excluded_set:
+                        continue
                     # Only include if within academic year range
                     if start_date <= gh.date <= end_date:
                         # Check if already exists (by source_id)
                         if not any(h.get("source_id") == gh.source_id for h in holidays):
                             holidays.append({
-                                "date": gh.date.isoformat(),
+                                "date": date_str,
                                 "name": gh.name,
                                 "type": "GLOBAL_HOLIDAY",
                                 "source_id": gh.source_id
                             })
-    
+
     return holidays
 
 
@@ -639,9 +646,10 @@ async def save_academic_year(
                 "follow_global_holidays": body.holiday_settings.follow_global_holidays,
                 "holiday_country_code": body.holiday_settings.holiday_country_code,
                 "holiday_region": body.holiday_settings.holiday_region,
-                "provider": body.holiday_settings.provider
+                "provider": body.holiday_settings.provider,
+                "excluded_holiday_dates": body.holiday_settings.excluded_holiday_dates or [],
             }
-            
+
             supabase.table("academic_year_holiday_settings").upsert(
                 settings_data,
                 on_conflict="academic_year_id"
@@ -1344,10 +1352,20 @@ async def get_holidays_for_range(
                     "academic_year_id", row["id"]
                 ).limit(1).execute()
                 holiday_settings = (settings_resp.data[0] if settings_resp.data and len(settings_resp.data) > 0 else None)
-                include_global = holiday_settings.get("follow_global_holidays", False) if holiday_settings else False
-                country_code = holiday_settings.get("holiday_country_code") if holiday_settings else None
-                region = holiday_settings.get("holiday_region") if holiday_settings else None
-                provider = (holiday_settings.get("provider") or "NAGER_DATE") if holiday_settings else "NAGER_DATE"
+                # When no holiday_settings row exists, default to US public holidays so calendar shows e.g. Presidents Day
+                if holiday_settings is None:
+                    include_global = True
+                    country_code = "US"
+                    region = None
+                    provider = "NAGER_DATE"
+                    excluded_holiday_dates = []
+                else:
+                    include_global = holiday_settings.get("follow_global_holidays", False)
+                    country_code = holiday_settings.get("holiday_country_code") or "US"
+                    region = holiday_settings.get("holiday_region")
+                    provider = holiday_settings.get("provider") or "NAGER_DATE"
+                    raw_excluded = holiday_settings.get("excluded_holiday_dates")
+                    excluded_holiday_dates = list(raw_excluded) if isinstance(raw_excluded, list) else []
                 holidays = get_holidays_for_year(
                     supabase,
                     row["id"],
@@ -1355,6 +1373,7 @@ async def get_holidays_for_range(
                     country_code=country_code,
                     region=region,
                     provider=provider,
+                    excluded_holiday_dates=excluded_holiday_dates or None,
                 )
             except Exception as year_err:
                 log_event("academic_year.holidays_for_range.year_error", user_id=user["id"], academic_year_id=row["id"], error=str(year_err))
@@ -1637,21 +1656,26 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
         settings_row = (settings_resp.data[0] if settings_resp.data and len(settings_resp.data) > 0 else None)
         holiday_settings = None
         if settings_row:
+            raw_excluded = settings_row.get("excluded_holiday_dates")
+            excluded_list = list(raw_excluded) if isinstance(raw_excluded, list) else None
             holiday_settings = HolidaySettings(
                 follow_global_holidays=settings_row.get("follow_global_holidays", False),
                 holiday_country_code=settings_row.get("holiday_country_code"),
                 holiday_region=settings_row.get("holiday_region"),
-                provider=settings_row.get("provider", "NAGER_DATE")
+                provider=settings_row.get("provider", "NAGER_DATE"),
+                excluded_holiday_dates=excluded_list,
             )
-        
+
         # Get holidays
+        excluded_dates = (holiday_settings.excluded_holiday_dates if holiday_settings else None) or None
         holidays = get_holidays_for_year(
             supabase,
             academic_year_id,
             include_global=holiday_settings.follow_global_holidays if holiday_settings else False,
             country_code=holiday_settings.holiday_country_code if holiday_settings else None,
             region=holiday_settings.holiday_region if holiday_settings else None,
-            provider=holiday_settings.provider if holiday_settings else "NAGER_DATE"
+            provider=holiday_settings.provider if holiday_settings else "NAGER_DATE",
+            excluded_holiday_dates=excluded_dates,
         )
         
         # Calculate counts
@@ -1731,6 +1755,7 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
                 "holiday_country_code": holiday_settings.holiday_country_code,
                 "holiday_region": holiday_settings.holiday_region,
                 "provider": holiday_settings.provider,
+                "excluded_holiday_dates": holiday_settings.excluded_holiday_dates or [],
             },
             "holidays": [{"date": _str_date(h.get("date")), "name": h.get("name", ""), "type": h.get("type", "CUSTOM_HOLIDAY"), "source_id": h.get("source_id")} for h in holidays],
             "counts": {k: (None if isinstance(v, float) and not math.isfinite(v) else v) for k, v in (counts or {}).items()},
@@ -1818,9 +1843,11 @@ def _build_holiday_dates_for_apply(
     custom_holidays: List[Dict],
     custom_breaks: List[Dict],
     supabase,
+    excluded_holiday_dates: Optional[List[str]] = None,
 ) -> set:
     """Build set of holiday dates for apply_to_calendar (custom + breaks expanded + global)."""
     holiday_dates = set()
+    excluded_set = set(excluded_holiday_dates or [])
     for ch in custom_holidays:
         holiday_dates.add(date.fromisoformat(ch["date"]))
     for br in custom_breaks:
@@ -1839,6 +1866,8 @@ def _build_holiday_dates_for_apply(
                 country_code, year, "NAGER_DATE", region_code, None
             )
             for gh in global_holidays:
+                if gh.date.isoformat() in excluded_set:
+                    continue
                 if start_date_obj <= gh.date <= end_date_obj:
                     holiday_dates.add(gh.date)
     return holiday_dates
@@ -1885,6 +1914,7 @@ async def apply_to_calendar(
             custom_holidays_dict,
             custom_breaks_dict,
             supabase,
+            excluded_holiday_dates=body.excluded_holiday_dates or None,
         )
 
         use_blocks = body.blocks and len(body.blocks) > 0
@@ -2026,6 +2056,17 @@ async def apply_to_calendar(
                 plan_data["subject_targets"] = body.subject_targets
             supabase.table("academic_year_plan").upsert(plan_data, on_conflict="academic_year_id").execute()
             supabase.table("academic_years").update({"allowed_weekdays": allowed_weekdays_for_persist}).eq("id", academic_year_id).execute()
+            # Persist holiday settings (including exclusions) so calendar and holidays_for_range use them
+            holiday_region = body.holiday_region or "US"
+            country_code = holiday_region.split(":")[0] if ":" in holiday_region else holiday_region
+            supabase.table("academic_year_holiday_settings").upsert({
+                "academic_year_id": academic_year_id,
+                "follow_global_holidays": body.follow_public_holidays,
+                "holiday_country_code": country_code,
+                "holiday_region": body.holiday_region,
+                "provider": "NAGER_DATE",
+                "excluded_holiday_dates": body.excluded_holiday_dates or [],
+            }, on_conflict="academic_year_id").execute()
 
         # Timezone for plan times: prefer client (browser), then family DB, else UTC
         family_tz = None

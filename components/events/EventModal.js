@@ -25,8 +25,19 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
     }
   }, [visible, schedulingMode]);
 
+  const isHolidayEvent = (id, initial) => {
+    if (id && typeof id === 'string' && id.startsWith('holiday-')) return true;
+    const t = (initial?.event_type || initial?.type || '').toLowerCase();
+    return t === 'holiday';
+  };
+
   useEffect(() => {
     if (visible && eventId) {
+      if (isHolidayEvent(eventId, initialEvent)) {
+        setEvent(initialEvent || null);
+        setLoading(false);
+        return;
+      }
       // Set initialEvent optimistically for immediate display
       if (initialEvent) {
         setEvent(initialEvent);
@@ -44,7 +55,8 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
   
   const loadEvent = useCallback(async (forceUseDb = false) => {
     if (!eventId) return;
-    
+    if (isHolidayEvent(eventId, initialEvent)) return;
+
     if (!event && !initialEvent) {
       setLoading(true);
     }
@@ -297,6 +309,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
                   onEditingChange={handleEditingChange}
                   onClose={onClose}
                   initialSchedulingMode={schedulingMode}
+                  readOnly={isHolidayEvent(eventId, event)}
                 />
               ) : (
                 <View style={styles.loadingContainer}>

@@ -187,6 +187,7 @@ export default function TodaysLearningTimeGrouped({
       // Dispatch refresh event for other components (skip home refresh since we handle it in parent)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
       }
     } catch (error) {
       // Revert optimistic update on error

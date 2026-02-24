@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -15,6 +15,7 @@ import AddSubjectModal from '../AddSubjectModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
 import ConfirmDialog from '../ConfirmDialog';
+import IDCardView from '../profile/IDCardView';
 
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null }) {
   const { mode } = useSensoryMode();
@@ -141,6 +142,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [inviteUrlToShow, setInviteUrlToShow] = useState(null);
   const [inviteUrlCopied, setInviteUrlCopied] = useState(false);
 
+  // ID card modal: 'parent' | 'child' | 'tutor', selected member (or null to show picker), list of candidates
+  const [showIdCardModal, setShowIdCardModal] = useState(false);
+  const [idCardRole, setIdCardRole] = useState(null);
+  const [idCardCandidates, setIdCardCandidates] = useState([]);
+  const [idCardSelected, setIdCardSelected] = useState(null);
+
+  // Children list from DB (includes archived) so Family page shows all children even if API filters or fails
+  const [childrenFromDb, setChildrenFromDb] = useState(null);
+  const [childrenFetchKey, setChildrenFetchKey] = useState(0);
+
   const styles = createStyles(tokens);
 
   // Copy to clipboard helper
@@ -222,6 +233,41 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setFamilyId(propFamilyId);
     }
   }, [propFamilyId]);
+
+  // Load children directly from Supabase (including archived) so everyone shows on Family page
+  useEffect(() => {
+    const fid = family?.id || familyId || propFamilyId;
+    if (!fid) {
+      setChildrenFromDb(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('children')
+          .select('*')
+          .eq('family_id', fid);
+        if (cancelled) return;
+        if (error) {
+          setChildrenFromDb(null);
+          return;
+        }
+        const list = (data || []).map((c) => ({
+          id: c.id,
+          name: c.first_name || c.name || 'Child',
+          first_name: c.first_name || c.name || 'Child',
+          grade: c.grade ?? c.grade_level ?? c.grade_label,
+          grade_level: c.grade_level ?? c.grade,
+          archived: c.archived === true,
+        }));
+        setChildrenFromDb(list);
+      } catch (_) {
+        if (!cancelled) setChildrenFromDb(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [family?.id, familyId, propFamilyId, childrenFetchKey]);
 
   // Update profile when prop changes
   useEffect(() => {
@@ -855,7 +901,29 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const tutors = (family?.members || []).filter(
     (m) => (m.member_role || m.role) === 'tutor'
   );
-  const children = family?.children || [];
+  const children = (childrenFromDb != null ? childrenFromDb : family?.children || []);
+
+  const openIdCardModal = (role, candidates) => {
+    if (!candidates || candidates.length === 0) {
+      const label = role === 'parent' ? 'parents' : role === 'child' ? 'children' : 'tutors';
+      toast.push(`Add a ${label.slice(0, -1)} first to generate an ID card.`, 'info');
+      return;
+    }
+    setIdCardRole(role);
+    setIdCardCandidates(candidates);
+    setIdCardSelected(candidates.length === 1 ? candidates[0] : null);
+    setShowIdCardModal(true);
+  };
+
+  const normalizeMemberForIdCard = (member, role) => {
+    if (role === 'child') return member;
+    if (role === 'parent') {
+      const name = family?.family_name || member.email || 'Parent';
+      return { id: member.id, first_name: name, name, avatar_url: member.avatar_url };
+    }
+    const name = member.name || member.email || 'Tutor';
+    return { id: member.id, first_name: name, name, avatar_url: member.avatar_url };
+  };
 
   const CONNECTION_PROVIDERS = [
     {
@@ -1654,20 +1722,32 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             {/* Parents Section */}
             <View style={styles.membersSectionRow}>
               <Text style={styles.subsectionTitle}>Parents</Text>
-              {parents.length < 2 && (
-                <TouchableOpacity 
-                  style={styles.membersInviteButton} 
-                  onPress={() => {
-                    setShowParentInviteModal(true);
-                    setParentInviteEmail('');
-                    setError(null);
-                  }} 
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#374151" />
-                  <Text style={styles.membersInviteButtonText}>Invite Parent</Text>
-                </TouchableOpacity>
-              )}
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {parents.length > 0 && (
+                  <TouchableOpacity 
+                    style={styles.membersInviteButton} 
+                    onPress={() => openIdCardModal('parent', parents)} 
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <CreditCard size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                  </TouchableOpacity>
+                )}
+                {parents.length < 2 && (
+                  <TouchableOpacity 
+                    style={styles.membersInviteButton} 
+                    onPress={() => {
+                      setShowParentInviteModal(true);
+                      setParentInviteEmail('');
+                      setError(null);
+                    }} 
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Plus size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Invite Parent</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
             <View style={styles.subsectionDivider} />
             
@@ -1685,6 +1765,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
               <Text style={styles.subsectionTitle}>Children</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
+                {children.length > 0 && (
+                  <TouchableOpacity 
+                    style={styles.membersInviteButton} 
+                    onPress={() => openIdCardModal('child', children)} 
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <CreditCard size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity 
                   style={styles.membersInviteButton} 
                   onPress={() => setShowAddChildModal(true)} 
@@ -1739,18 +1829,30 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             {/* Tutors Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
               <Text style={styles.subsectionTitle}>Tutors</Text>
-              <TouchableOpacity 
-                style={styles.membersInviteButton} 
-                onPress={() => {
-                  setShowTutorInviteModal(true);
-                  setTutorInviteEmail('');
-                  setError(null);
-                }} 
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Plus size={16} color="#374151" />
-                <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {tutors.length > 0 && (
+                  <TouchableOpacity 
+                    style={styles.membersInviteButton} 
+                    onPress={() => openIdCardModal('tutor', tutors)} 
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <CreditCard size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity 
+                  style={styles.membersInviteButton} 
+                  onPress={() => {
+                    setShowTutorInviteModal(true);
+                    setTutorInviteEmail('');
+                    setError(null);
+                  }} 
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color="#374151" />
+                  <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <View style={styles.subsectionDivider} />
             
@@ -3250,11 +3352,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               return { ...prevFamily, children: updatedChildren };
             });
           }
+          setChildrenFetchKey(k => k + 1);
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshChildren'));
           const loadFamily = async () => { try { const { data, error: err } = await getFamilyMembers(); if (!err && data) { setFamily(data); if (onFamilyUpdate) onFamilyUpdate(data); } } catch (err) {} };
           loadFamily();
         }}
         onChildDeleted={() => {
+          setChildrenFetchKey(k => k + 1);
           const loadFamily = async () => { try { const { data, error: err } = await getFamilyMembers(); if (!err && data) { setFamily(data); if (onFamilyUpdate) onFamilyUpdate(data); } } catch (err) {} };
           loadFamily();
         }}
@@ -3265,11 +3369,107 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         onClose={() => setShowAddChildModal(false)}
         familyId={family?.id || familyId}
         onChildAdded={() => {
+          setChildrenFetchKey(k => k + 1);
           const loadFamily = async () => { try { const { data, error: err } = await getFamilyMembers(); if (!err && data) { setFamily(data); if (onFamilyUpdate) onFamilyUpdate(data); } } catch (err) {} };
           loadFamily();
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshChildren'));
         }}
       />
+
+      {/* ID Card Modal */}
+      <Modal
+        visible={showIdCardModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setShowIdCardModal(false);
+          setIdCardRole(null);
+          setIdCardCandidates([]);
+          setIdCardSelected(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowIdCardModal(false);
+            setIdCardRole(null);
+            setIdCardCandidates([]);
+            setIdCardSelected(null);
+          }}
+        >
+          <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
+            {idCardSelected ? (
+              <>
+                <View style={{ position: 'absolute', top: 16, right: 16, zIndex: 1 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowIdCardModal(false);
+                      setIdCardRole(null);
+                      setIdCardCandidates([]);
+                      setIdCardSelected(null);
+                    }}
+                    style={styles.childInviteModalClose}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={20} color="#6b7280" />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={{ maxHeight: '70vh' }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+                  <IDCardView
+                    child={normalizeMemberForIdCard(idCardSelected, idCardRole)}
+                    familyId={family?.id || familyId}
+                    cardRole={idCardRole === 'child' ? 'student' : idCardRole}
+                  />
+                </ScrollView>
+              </>
+            ) : (
+              <>
+            <View style={styles.childInviteModalHeader}>
+              <View style={{ width: 36, height: 36 }} />
+              <TouchableOpacity
+                onPress={() => {
+                  setShowIdCardModal(false);
+                  setIdCardRole(null);
+                  setIdCardCandidates([]);
+                  setIdCardSelected(null);
+                }}
+                style={styles.childInviteModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+              <>
+                <Text style={styles.childInviteDescription}>
+                  Select a {idCardRole === 'child' ? 'child' : idCardRole === 'parent' ? 'parent' : 'tutor'} to generate their ID card:
+                </Text>
+                <ScrollView style={styles.childInviteList} contentContainerStyle={styles.childInviteListContent}>
+                  {idCardCandidates.map((member) => {
+                    const label = idCardRole === 'child'
+                      ? (member.name || member.first_name || 'Child')
+                      : idCardRole === 'parent'
+                        ? (family?.family_name || member.email || 'Parent')
+                        : (member.name || member.email || 'Tutor');
+                    return (
+                      <TouchableOpacity
+                        key={member.id}
+                        style={styles.childInviteItem}
+                        onPress={() => setIdCardSelected(member)}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.childInviteItemName}>{label}</Text>
+                        <ChevronRight size={22} color="#6b7280" />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       <AddSubjectModal 
         visible={showAddSubjectModal} 
@@ -3303,8 +3503,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setChildInviteEmail('');
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.childInviteModal}>
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowChildInviteModal(false);
+            setChildInviteStep('select');
+            setSelectedChildForInvite(null);
+            setChildInviteEmail('');
+          }}
+        >
+          <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.childInviteModalHeader}>
               {childInviteStep === 'select' ? (
                 <View style={{ width: 36, height: 36 }} />
@@ -3394,8 +3603,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </View>
               </>
             )}
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Invite URL Success Modal */}
@@ -3405,8 +3614,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         animationType="fade"
         onRequestClose={() => setShowInviteUrlModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.inviteUrlModal}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowInviteUrlModal(false)}>
+          <TouchableOpacity style={styles.inviteUrlModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.inviteUrlModalHeader}>
               <Text style={styles.inviteUrlModalTitle}>Invite Sent Successfully!</Text>
               <TouchableOpacity
@@ -3487,8 +3696,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <Text style={styles.inviteUrlDoneButtonText}>Done</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Parent Invite Modal */}
@@ -3502,8 +3711,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setError(null);
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.childInviteModal}>
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowParentInviteModal(false);
+            setParentInviteEmail('');
+            setError(null);
+          }}
+        >
+          <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.childInviteModalHeader}>
               <Text style={styles.childInviteModalTitle}>Invite Parent</Text>
               <TouchableOpacity
@@ -3563,8 +3780,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 )}
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Tutor Invite Modal */}
@@ -3578,8 +3795,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setError(null);
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.childInviteModal}>
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowTutorInviteModal(false);
+            setTutorInviteEmail('');
+            setError(null);
+          }}
+        >
+          <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.childInviteModalHeader}>
               <Text style={styles.childInviteModalTitle}>Invite Tutor</Text>
               <TouchableOpacity
@@ -3639,8 +3864,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 )}
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       <ConfirmDialog
@@ -6675,7 +6900,7 @@ function createStyles(tokens) {
       }),
     },
     childInviteDescription: {
-      fontSize: 18,
+      fontSize: 22,
       fontWeight: '600',
       color: '#000000',
       marginBottom: 4,
