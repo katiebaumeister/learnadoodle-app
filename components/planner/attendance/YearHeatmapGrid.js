@@ -30,7 +30,7 @@ export default function YearHeatmapGrid({
   const [hoveredCellKey, setHoveredCellKey] = useState(null);
   const cellSize = TOKENS.hmCell;
   const gap = TOKENS.hmGap;
-  const labelWidth = 52;
+  const labelWidth = 76;
   const rowSpacing = gap + 4;
   const monthRowHeight = 22;
   const isWeb = Platform.OS === 'web';
@@ -70,26 +70,35 @@ export default function YearHeatmapGrid({
       <View style={styles.heatmapWrap}>
         <View style={[styles.labelColumn, { width: labelWidth }]}>
           <View style={[styles.monthRowPlaceholder, { height: monthRowHeight }]} />
-          {children.map((child) => (
-            <View key={child.id} style={[styles.labelRow, { height: cellSize + rowSpacing, marginBottom: rowSpacing }]}>
-              {onChildNamePress ? (
-                <TouchableOpacity
-                  onPress={() => onChildNamePress(child)}
-                  activeOpacity={0.7}
-                  style={styles.nameLabelTouchable}
-                  {...(Platform.OS === 'web' && { accessibilityRole: 'button', accessibilityLabel: `View attendance for ${child.first_name || child.name || 'Child'}` })}
-                >
-                  <Text style={styles.nameLabel} numberOfLines={1}>
-                    {child.first_name || child.name || 'Child'}
+          {children.map((child) => {
+            const summary = childSummaries.find((s) => s.childId === child.id);
+            const totalDays = summary?.daysAttended ?? 0;
+            return (
+              <View key={child.id} style={[styles.labelRow, { height: cellSize + rowSpacing, marginBottom: rowSpacing }]}>
+                <View style={styles.nameAndTotal}>
+                  {onChildNamePress ? (
+                    <TouchableOpacity
+                      onPress={() => onChildNamePress(child)}
+                      activeOpacity={0.7}
+                      style={styles.nameLabelTouchable}
+                      {...(Platform.OS === 'web' && { accessibilityRole: 'button', accessibilityLabel: `View attendance for ${child.first_name || child.name || 'Child'}` })}
+                    >
+                      <Text style={styles.nameLabel} numberOfLines={1}>
+                        {child.first_name || child.name || 'Child'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={styles.nameLabel} numberOfLines={1}>
+                      {child.first_name || child.name || 'Child'}
+                    </Text>
+                  )}
+                  <Text style={styles.totalLabel} numberOfLines={1}>
+                    Total: {totalDays}
                   </Text>
-                </TouchableOpacity>
-              ) : (
-                <Text style={styles.nameLabel} numberOfLines={1}>
-                  {child.first_name || child.name || 'Child'}
-                </Text>
-              )}
-            </View>
-          ))}
+                </View>
+              </View>
+            );
+          })}
         </View>
         <ScrollView
           ref={scrollRef}
@@ -243,6 +252,12 @@ const styles = StyleSheet.create({
   },
   monthRowPlaceholder: { marginBottom: 6 },
   labelRow: { justifyContent: 'center' },
+  nameAndTotal: { gap: 2 },
+  totalLabel: {
+    fontSize: 11,
+    color: TOKENS.textFaint,
+    maxWidth: 76,
+  },
   scroll: { flex: 1, minWidth: 0 },
   scrollContent: { paddingRight: 16 },
   grid: {},
@@ -250,7 +265,7 @@ const styles = StyleSheet.create({
   monthLabel: { alignItems: 'center' },
   monthText: { fontSize: 14, fontWeight: '600', color: TOKENS.text },
   row: { flexDirection: 'row', alignItems: 'flex-start' },
-  nameLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, maxWidth: 52 },
+  nameLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, maxWidth: 76 },
   nameLabelTouchable: {
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),

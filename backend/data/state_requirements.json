@@ -108,6 +108,32 @@
       "type": "required"
     }
   ],
+  "DC": [
+    {
+      "id": "attendance",
+      "label": "Attendance tracking",
+      "detail": "Track instructional time. DC requires meeting minimum hours per year; check OSSE for current hour requirements.",
+      "type": "required"
+    },
+    {
+      "id": "notice",
+      "label": "Notice of intent",
+      "detail": "Submit to OSSE as required",
+      "type": "required"
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio of student work",
+      "detail": "Maintain samples of work",
+      "type": "required"
+    },
+    {
+      "id": "hours",
+      "label": "Minimum hours per year",
+      "detail": "Check OSSE for current requirements",
+      "type": "info"
+    }
+  ],
   "DE": [
     {
       "id": "attendance",

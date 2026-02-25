@@ -102,7 +102,8 @@ def regenerate_block(
     )
     whole_family_sentinel = None  # key (d, None) for whole-family event on date d
 
-    # Fetch existing overwrite-safe placeholders for this block only (include soft-deleted so we can undelete on re-apply)
+    # Fetch existing overwrite-safe placeholders for this block only (include soft-deleted so we can undelete on re-apply).
+    # CRITICAL: only touch empty slots — exclude rows with curriculum_lesson_id set (filled slots are user-owned).
     existing_res = (
         supabase.table("events")
         .select("id, start_ts, end_ts, child_id, child_ids, subject_id, title, deleted_at")
@@ -111,6 +112,7 @@ def regenerate_block(
         .eq("source_block_id", block_id)
         .eq("is_placeholder", True)
         .eq("generated_by", "plan_year")
+        .is_("curriculum_lesson_id", "null")
         .execute()
     )
     existing = existing_res.data or []

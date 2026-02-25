@@ -13,7 +13,6 @@ import {
   Edit2,
   Calendar,
   Clock,
-  AlertTriangle,
   FileText,
   BookOpen,
   ChevronRight,
@@ -24,10 +23,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
-import { getSubjectDetail } from '../../lib/services/subjectsClient';
-import { parseChildIds } from '../../lib/services/subjectsClient';
+import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
 import { useSession } from '../../contexts/SessionContext';
-
 const ATTENDANCE_LIST_LIMIT = 10;
 
 export default function SubjectDetailPage({
@@ -41,6 +38,7 @@ export default function SubjectDetailPage({
   onNavigateToPlannerAttendance,
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
+  initialScrollToSectionId = null,
 }) {
   const session = useSession();
   const [loading, setLoading] = useState(!preloadedSubjectData);
@@ -159,6 +157,12 @@ export default function SubjectDetailPage({
     }
   }, []);
 
+  useEffect(() => {
+    if (!initialScrollToSectionId) return;
+    const t = setTimeout(() => scrollToSection(initialScrollToSectionId), 300);
+    return () => clearTimeout(t);
+  }, [initialScrollToSectionId, scrollToSection]);
+
   const handleAddLesson = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('openTaskCreateModal', {
@@ -184,13 +188,11 @@ export default function SubjectDetailPage({
   const attendanceRecords = subjectData?.attendanceRecords || [];
   const grades = subjectData?.grades || [];
   const eventOutcomes = subjectData?.eventOutcomes || [];
-  const complianceItems = subjectData?.complianceItems || [];
 
   // Metrics (with proper null/undefined handling)
   const progressPercent = subjectData?.progressPercent ?? null;
   const attendanceRate30 = subjectData?.attendanceRate30 ?? null;
   const avgGradePercent = subjectData?.avgGradePercent ?? null;
-  const complianceReady = subjectData?.complianceReady ?? null;
 
   // Get assigned children (IDs)
   const assignedChildren = useMemo(() => {
@@ -200,22 +202,6 @@ export default function SubjectDetailPage({
     }
     return [...new Set((subjectData?.events || []).map(e => e.child_id).filter(Boolean))];
   }, [subject, subjectData?.events]);
-
-  // Assigned children as full objects (for state / compliance)
-  const assignedChildObjects = useMemo(
-    () => children.filter(c => assignedChildren.includes(c.id)),
-    [children, assignedChildren]
-  );
-
-  // State from child settings (first assigned child with a state set) — used to default compliance
-  const effectiveComplianceState = useMemo(() => {
-    const firstWithState = assignedChildObjects.find(
-      c => c.standards || c.standards_state || c.state_code || c.state
-    );
-    return firstWithState
-      ? (firstWithState.standards || firstWithState.standards_state || firstWithState.state_code || firstWithState.state)
-      : null;
-  }, [assignedChildObjects]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
 
@@ -312,26 +298,6 @@ export default function SubjectDetailPage({
   const hasAnyEvents = useMemo(() => {
     return (subjectData?.events || []).length > 0;
   }, [subjectData?.events]);
-
-  // Process compliance by requirement type
-  const complianceByType = useMemo(() => {
-    const grouped = {};
-    complianceItems.forEach(item => {
-      const req = item.state_requirements;
-      if (!req) return;
-      const type = req.requirement_type || 'Other';
-      if (!grouped[type]) {
-        grouped[type] = [];
-      }
-      grouped[type].push({
-        id: item.id,
-        title: req.requirement_title,
-        description: req.requirement_description,
-        status: item.status,
-      });
-    });
-    return grouped;
-  }, [complianceItems]);
 
   const handleOpenEventDetails = useCallback((eventId, initialEvent) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -524,72 +490,6 @@ export default function SubjectDetailPage({
                   }}
                 >
                   <Text style={styles.summaryTileActionText}>Add assignment</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Compliance Tile */}
-          <TouchableOpacity
-            style={styles.summaryTile}
-            onPress={() => {
-              if (complianceReady && complianceReady.met !== undefined && complianceReady.total !== undefined) {
-                scrollToSection('compliance-section');
-              } else {
-                scrollToSection('compliance-section');
-              }
-            }}
-          >
-            <Text style={styles.summaryTileLabel}>Compliance</Text>
-            {complianceReady && complianceReady.met !== undefined && complianceReady.total !== undefined ? (
-              <>
-                <Text style={styles.summaryTileValue}>{complianceReady.met}/{complianceReady.total} ready</Text>
-                <Text style={styles.summaryTileCaption}>requirements</Text>
-              </>
-            ) : complianceItems.length > 0 ? (
-              <>
-                <Text style={styles.summaryTileValue}>Ready to track</Text>
-                <Text style={styles.summaryTileSubtext}>Requirements update as you log work.</Text>
-                <TouchableOpacity
-                  style={styles.summaryTileAction}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    scrollToSection('compliance-section');
-                  }}
-                >
-                  <Text style={styles.summaryTileActionText}>View checklist</Text>
-                </TouchableOpacity>
-              </>
-            ) : effectiveComplianceState ? (
-              <>
-                <Text style={styles.summaryTileValue}>State: {effectiveComplianceState}</Text>
-                <Text style={styles.summaryTileSubtext}>From child settings. Generate requirements to track.</Text>
-                <TouchableOpacity
-                  style={styles.summaryTileAction}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('openSettings', { detail: { tab: 'compliance', stateCode: effectiveComplianceState } }));
-                    }
-                  }}
-                >
-                  <Text style={styles.summaryTileActionText}>Generate requirements</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <Text style={styles.summaryTileValue}>Not configured</Text>
-                <Text style={styles.summaryTileSubtext}>Choose a state in child settings to generate requirements.</Text>
-                <TouchableOpacity
-                  style={styles.summaryTileAction}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('openSettings', { detail: { tab: 'compliance' } }));
-                    }
-                  }}
-                >
-                  <Text style={styles.summaryTileActionText}>Set state</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -844,61 +744,7 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section 4: Compliance */}
-        <View id="compliance-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Compliance</Text>
-          {Object.keys(complianceByType).length > 0 ? (
-            Object.entries(complianceByType).map(([type, items]) => (
-              <View key={type} style={styles.complianceGroup}>
-                <Text style={styles.complianceGroupTitle}>{type}</Text>
-                {items.map((item) => {
-                  const statusConfig = {
-                    met: { color: '#10B981', label: 'On track' },
-                    on_track: { color: '#10B981', label: 'On track' },
-                    completed: { color: '#10B981', label: 'On track' },
-                    needs_attention: { color: '#F59E0B', label: 'Needs attention' },
-                    not_started: { color: '#9CA3AF', label: 'Not started' },
-                  };
-                  const config = statusConfig[item.status] || statusConfig.not_started;
-                  return (
-                    <View key={item.id} style={styles.complianceItem}>
-                      <View style={[styles.complianceStatusPill, { backgroundColor: config.color + '20' }]}>
-                        <Text style={[styles.complianceStatusText, { color: config.color }]}>
-                          {config.label}
-                        </Text>
-                      </View>
-                      <Text style={styles.complianceItemText}>{item.title}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-            ))
-          ) : (
-            <View style={styles.emptyStateBox}>
-              <Text style={styles.emptyStateText}>
-                {effectiveComplianceState
-                  ? `State: ${effectiveComplianceState} (from child settings). Generate requirements to see your checklist here.`
-                  : 'Compliance becomes clearer as you log lessons, work, and portfolio items. Set a state in child settings or below.'}
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyStateButton}
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openSettings', {
-                      detail: { tab: 'compliance', stateCode: effectiveComplianceState || undefined },
-                    }));
-                  }
-                }}
-              >
-                <Text style={styles.emptyStateButtonText}>
-                  {effectiveComplianceState ? 'Generate requirements' : 'View state requirements'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {/* Section 5: Materials Snapshot */}
+        {/* Section 4: Materials Snapshot */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Materials Snapshot</Text>
@@ -1518,49 +1364,6 @@ const styles = StyleSheet.create({
     color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  complianceGroup: {
-    marginBottom: 20,
-  },
-  complianceGroupTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  complianceItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  complianceStatusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  complianceStatusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  complianceItemText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   viewAllButton: {

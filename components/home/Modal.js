@@ -7,7 +7,8 @@ const Modal = ({
   title, 
   children, 
   ariaLabelledBy,
-  ariaDescribedBy 
+  ariaDescribedBy,
+  maxWidth,
 }) => {
   const modalRef = useRef(null);
   const previousActiveElement = useRef(null);
@@ -71,7 +72,7 @@ const Modal = ({
       >
         <TouchableOpacity
           ref={modalRef}
-          style={styles.modal}
+          style={[styles.modal, maxWidth != null && { maxWidth }]}
           activeOpacity={1}
           onPress={() => {}}
           role="dialog"
@@ -144,9 +145,10 @@ const styles = {
     fontWeight: '500',
   },
   content: {
+    flex: 1,
     padding: 24,
     maxHeight: '60vh',
-    overflowY: 'auto',
+    overflow: 'hidden',
   },
 };
 

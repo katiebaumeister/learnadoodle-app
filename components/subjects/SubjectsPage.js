@@ -14,6 +14,12 @@ import {
   Plus,
   BookOpen,
   X,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  Calendar,
+  Clock,
+  GraduationCap,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
@@ -21,6 +27,7 @@ import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
+import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 
 export default function SubjectsPage({
   familyId,
@@ -57,6 +64,10 @@ export default function SubjectsPage({
   );
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
+  const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
+  const [expandedSummaryMetric, setExpandedSummaryMetric] = useState(null);
+  const [openComplianceRequirement, setOpenComplianceRequirement] = useState(null);
+  const [complianceRowHoverKey, setComplianceRowHoverKey] = useState(null);
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
 
@@ -183,12 +194,257 @@ export default function SubjectsPage({
     return filtered;
   }, [subjects, searchQuery, selectedChildFilter]);
 
+  // Overall averages across filtered subjects (for compact summary card)
+  const overallSummary = useMemo(() => {
+    const list = filteredSubjects || [];
+    if (list.length === 0) return null;
+
+    const progressValues = list.map(s => s.progressPercent).filter(v => v != null && !Number.isNaN(v));
+    const progress = progressValues.length > 0
+      ? Math.round(progressValues.reduce((a, b) => a + b, 0) / progressValues.length)
+      : null;
+
+    let attendance = null;
+    let grades = null;
+    let complianceMet = 0;
+    let complianceTotal = 0;
+    list.forEach(subject => {
+      const detail = subjectDetailCache[subject.id];
+      if (detail) {
+        if (detail.attendanceRate30 != null && !Number.isNaN(detail.attendanceRate30)) {
+          attendance = (attendance ?? 0) + detail.attendanceRate30;
+        }
+        if (detail.avgGradePercent != null && !Number.isNaN(detail.avgGradePercent)) {
+          grades = (grades ?? 0) + detail.avgGradePercent;
+        }
+        if (detail.complianceReady && typeof detail.complianceReady.met === 'number' && typeof detail.complianceReady.total === 'number') {
+          complianceMet += detail.complianceReady.met;
+          complianceTotal += detail.complianceReady.total;
+        }
+      }
+    });
+    const attendanceCount = list.filter(s => {
+      const d = subjectDetailCache[s.id];
+      return d && d.attendanceRate30 != null && !Number.isNaN(d.attendanceRate30);
+    }).length;
+    const gradesCount = list.filter(s => {
+      const d = subjectDetailCache[s.id];
+      return d && d.avgGradePercent != null && !Number.isNaN(d.avgGradePercent);
+    }).length;
+    attendance = attendanceCount > 0 ? Math.round(attendance / attendanceCount) : null;
+    grades = gradesCount > 0 ? Math.round(grades / gradesCount) : null;
+
+    const contextLabel = selectedChildFilter === 'all'
+      ? 'All children'
+      : (children.find(c => c.id === selectedChildFilter)?.first_name || children.find(c => c.id === selectedChildFilter)?.name || 'Child');
+
+    return {
+      progress,
+      attendance,
+      grades,
+      compliance: complianceTotal > 0 ? { met: complianceMet, total: complianceTotal } : null,
+      contextLabel,
+    };
+  }, [filteredSubjects, subjectDetailCache, selectedChildFilter, children]);
+
+  const getChildName = useCallback((childId) => {
+    const c = children.find(x => x.id === childId);
+    return c?.first_name || c?.name || 'Unknown';
+  }, [children]);
+
+  // Saved state(s) for selected child/children (from child settings) — only show compliance for these
+  const effectiveComplianceStateCodes = useMemo(() => {
+    const list = selectedChildFilter === 'all'
+      ? (children || [])
+      : (children || []).filter(c => c.id === selectedChildFilter);
+    const codes = new Set();
+    list.forEach(c => {
+      const state = c.standards_state || c.standards || c.state_code || c.state;
+      if (state && String(state).trim()) codes.add(String(state).trim().toUpperCase());
+    });
+    return [...codes];
+  }, [children, selectedChildFilter]);
+
+  // Preview data for expanded summary sections
+  const summaryProgressDetail = useMemo(() => {
+    const list = filteredSubjects || [];
+    let earliestNext = null;
+    let currentFocus = null;
+    let coreGoal = null;
+    list.forEach(s => {
+      if (s.nextItem && s.nextItem.dueDate) {
+        const d = new Date(s.nextItem.dueDate);
+        if (!earliestNext || d < new Date(earliestNext.dueDate)) {
+          earliestNext = { ...s.nextItem, subjectName: s.name, subjectId: s.id };
+        }
+      }
+      if (s.currentFocus && !currentFocus) currentFocus = s.currentFocus;
+      if (s.coreGoal && !coreGoal) coreGoal = s.coreGoal;
+    });
+    return {
+      progress: overallSummary?.progress ?? null,
+      nextItem: earliestNext,
+      currentFocus,
+      coreGoal,
+    };
+  }, [filteredSubjects, overallSummary]);
+
+  const summaryAttendanceDetail = useMemo(() => {
+    const merged = [];
+    (filteredSubjects || []).forEach(subject => {
+      const detail = subjectDetailCache[subject.id];
+      if (!detail?.attendanceRecords?.length || !detail?.events?.length) return;
+      const eventMap = (detail.events || []).reduce((acc, e) => { acc[e.id] = e; return acc; }, {});
+      detail.attendanceRecords.forEach(ar => {
+        const event = eventMap[ar.event_id];
+        merged.push({
+          day_date: ar.day_date,
+          minutes: ar.minutes || 0,
+          status: ar.status,
+          eventTitle: event?.title || 'Lesson',
+          subjectName: subject.name,
+          subjectId: subject.id,
+        });
+      });
+    });
+    merged.sort((a, b) => (b.day_date || '').localeCompare(a.day_date || ''));
+    return merged.slice(0, 5);
+  }, [filteredSubjects, subjectDetailCache]);
+
+  const summaryGradesDetail = useMemo(() => {
+    const merged = [];
+    const subjectMap = (filteredSubjects || []).reduce((acc, s) => { acc[s.id] = s.name; return acc; }, {});
+    (filteredSubjects || []).forEach(subject => {
+      const detail = subjectDetailCache[subject.id];
+      if (!detail) return;
+      (detail.grades || []).forEach(g => {
+        const date = g.created_at || g.day_date;
+        const possible = g.possible != null && g.possible > 0 ? g.possible : null;
+        const score = g.score != null ? g.score : null;
+        const percent = possible && score != null ? Math.round((score / possible) * 100) : null;
+        merged.push({
+          date,
+          score,
+          possible,
+          grade: g.grade,
+          percent,
+          subjectName: subject.name,
+          subjectId: subject.id,
+        });
+      });
+      (detail.eventOutcomes || []).filter(eo => eo.grade != null).forEach(eo => {
+        merged.push({
+          date: eo.created_at,
+          score: null,
+          possible: null,
+          grade: eo.grade,
+          percent: null,
+          subjectName: subject.name,
+          subjectId: subject.id,
+        });
+      });
+    });
+    merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    return merged.slice(0, 5);
+  }, [filteredSubjects, subjectDetailCache]);
+
+  // One row per requirement type per state (what's applicable by state), no duplicate rows per subject/child.
+  // Only include states that are saved for the selected child/children (effectiveComplianceStateCodes).
+  // When a single child is selected, only count that child's compliance items; when "All Children", include every child and every state per child.
+  const summaryComplianceDetail = useMemo(() => {
+    const savedStateSet = new Set((effectiveComplianceStateCodes || []).map(s => s.toUpperCase()));
+    const filterByChildId = selectedChildFilter !== 'all' ? selectedChildFilter : null;
+    const byState = {};
+    let totalMet = 0;
+    let totalTotal = 0;
+    const stateCodes = new Set();
+    const childIds = new Set();
+    (filteredSubjects || []).forEach(subject => {
+      const detail = subjectDetailCache[subject.id];
+      if (!detail?.complianceItems?.length) return;
+      detail.complianceItems.forEach(item => {
+        if (filterByChildId && item.child_id !== filterByChildId) return;
+        const req = item.state_requirements;
+        if (!req) return;
+        const stateCode = (item.state_code || '').toUpperCase() || 'Other';
+        if (savedStateSet.size > 0 && !savedStateSet.has(stateCode)) return;
+        stateCodes.add(stateCode);
+        if (item.child_id) childIds.add(item.child_id);
+        const type = (req.requirement_type || 'Other').toLowerCase();
+        if (!byState[stateCode]) byState[stateCode] = {};
+        if (!byState[stateCode][type]) {
+          byState[stateCode][type] = {
+            title: req.requirement_title,
+            description: req.requirement_description,
+            metCount: 0,
+            totalCount: 0,
+          };
+        }
+        const row = byState[stateCode][type];
+        row.totalCount += 1;
+        if (item.status === 'met' || item.status === 'on_track' || item.status === 'completed') row.metCount += 1;
+        totalMet += (item.status === 'met' || item.status === 'on_track' || item.status === 'completed') ? 1 : 0;
+        totalTotal += 1;
+      });
+    });
+    const stateLabel = [...stateCodes].sort().join(', ') || '';
+    const studentLabel = [...childIds].map(id => getChildName(id)).filter(Boolean).join(', ') || '';
+
+    const statesTotal = Object.keys(byState).length;
+    let statesComplete = 0;
+    let typesComplete = 0;
+    let typesTotal = 0;
+    Object.values(byState).forEach(byType => {
+      let stateComplete = true;
+      Object.values(byType).forEach(row => {
+        typesTotal += 1;
+        if (row.totalCount > 0 && row.metCount >= row.totalCount) typesComplete += 1;
+        else stateComplete = false;
+      });
+      if (stateComplete && Object.keys(byType).length > 0) statesComplete += 1;
+    });
+
+    return {
+      byState,
+      summary: { met: totalMet, total: totalTotal, stateLabel, studentLabel },
+      summaryTop: { statesComplete, statesTotal, typesComplete, typesTotal },
+      hasData: totalTotal > 0,
+    };
+  }, [filteredSubjects, subjectDetailCache, getChildName, effectiveComplianceStateCodes, selectedChildFilter]);
+
   const handleSubjectClick = (subject) => {
     setSelectedSubjectId(subject.id);
   };
 
   const handleBack = () => {
     setSelectedSubjectId(null);
+    setPendingScrollToSectionId(null);
+  };
+
+  const openSubjectToSection = (subjectId, sectionId) => {
+    setPendingScrollToSectionId(sectionId);
+    setSelectedSubjectId(subjectId);
+    setExpandedSummaryMetric(null);
+  };
+
+  // Map API requirement_type + title to modal config key (seed id)
+  const getRequirementKey = (type, title) => {
+    const t = (type || '').toLowerCase();
+    const titleLower = (title || '').toLowerCase();
+    if (t === 'attendance') return 'attendance';
+    if (t === 'notification') return 'notice';
+    if (t === 'portfolio') return 'portfolio';
+    if (t === 'testing') return 'testing';
+    if (t === 'record_keeping') {
+      if (titleLower.includes('curriculum')) return 'curriculum';
+      return 'hours';
+    }
+    if (t === 'other') {
+      if (titleLower.includes('quarterly')) return 'quarterly_reports';
+      if (titleLower.includes('annual assessment')) return 'annual_assessment';
+      return 'annual_assessment';
+    }
+    return t || 'other';
   };
 
   const handleAddSyllabus = (subject) => {
@@ -241,6 +497,7 @@ export default function SubjectsPage({
         familyId={familyId}
         children={children}
         preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
+        initialScrollToSectionId={pendingScrollToSectionId}
         onSubjectDataUpdate={(data) => {
           const updatedCache = {
             ...subjectDetailCache,
@@ -372,6 +629,122 @@ export default function SubjectsPage({
         </View>
       )}
 
+      {/* Compact overall summary: Progress | Attendance | Grades | Compliance (expandable) */}
+      {!loading && !error && filteredSubjects.length > 0 && overallSummary && (
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryCardContext} numberOfLines={1}>
+            {overallSummary.contextLabel} · overall
+          </Text>
+          <View style={styles.summaryCardRow}>
+            {(['progress', 'attendance', 'grades']).map((key, idx) => {
+              const isExpanded = expandedSummaryMetric === key;
+              const label = key.charAt(0).toUpperCase() + key.slice(1);
+              const value = key === 'progress' ? (overallSummary.progress != null ? `${overallSummary.progress}%` : '—')
+                : key === 'attendance' ? (overallSummary.attendance != null ? `${overallSummary.attendance}%` : '—')
+                : (overallSummary.grades != null ? `${overallSummary.grades}%` : '—');
+              return (
+                <React.Fragment key={key}>
+                  <TouchableOpacity
+                    style={[styles.summaryCardItem, isExpanded && styles.summaryCardItemExpanded]}
+                    onPress={() => setExpandedSummaryMetric(isExpanded ? null : key)}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.summaryCardLabel, isExpanded && styles.summaryCardLabelExpanded]}>{label}</Text>
+                    <View style={styles.summaryCardValueRow}>
+                      <Text style={[
+                        key === 'progress' ? styles.summaryCardValuePrimary : styles.summaryCardValue,
+                        isExpanded && styles.summaryCardValueExpanded,
+                      ]}>{value}</Text>
+                      {isExpanded ? <ChevronUp size={12} color="#6BB3E8" /> : <ChevronDown size={12} color="#64748B" />}
+                    </View>
+                  </TouchableOpacity>
+                </React.Fragment>
+              );
+            })}
+          </View>
+
+          {/* Expanded preview panels */}
+          {expandedSummaryMetric === 'progress' && (
+            <View style={styles.summaryExpandPanel}>
+              <Text style={styles.summaryExpandTitle}>Progress</Text>
+              {summaryProgressDetail.progress != null && (
+                <Text style={styles.summaryExpandValue}>{summaryProgressDetail.progress}%</Text>
+              )}
+              {summaryProgressDetail.nextItem && (
+                <View style={styles.summaryExpandRow}>
+                  <Calendar size={14} color="#64748B" />
+                  <Text style={styles.summaryExpandText}>
+                    Upcoming: {summaryProgressDetail.nextItem.title} ({summaryProgressDetail.nextItem.subjectName})
+                  </Text>
+                  <Text style={styles.summaryExpandMuted}>
+                    {summaryProgressDetail.nextItem.dueDate ? new Date(summaryProgressDetail.nextItem.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                  </Text>
+                </View>
+              )}
+              {(summaryProgressDetail.currentFocus || summaryProgressDetail.coreGoal) && (
+                <>
+                  {summaryProgressDetail.currentFocus && (
+                <Text style={styles.summaryExpandSub}>Current: {summaryProgressDetail.currentFocus}</Text>
+                  )}
+                  {summaryProgressDetail.coreGoal && (
+                <Text style={styles.summaryExpandSub}>Goal: {summaryProgressDetail.coreGoal}</Text>
+                  )}
+                </>
+              )}
+              {!summaryProgressDetail.nextItem && !summaryProgressDetail.currentFocus && !summaryProgressDetail.coreGoal && (
+                <Text style={styles.summaryExpandMuted}>Add syllabi or subject units and goals to see updates here.</Text>
+              )}
+            </View>
+          )}
+
+          {expandedSummaryMetric === 'attendance' && (
+            <View style={styles.summaryExpandPanel}>
+              <Text style={styles.summaryExpandTitle}>Recent attendance</Text>
+              {summaryAttendanceDetail.length === 0 ? (
+                <Text style={styles.summaryExpandMuted}>No recent attendance.</Text>
+              ) : (
+                summaryAttendanceDetail.map((ar, i) => (
+                  <View key={i} style={styles.summaryExpandRowAttendance}>
+                    <Clock size={14} color="#64748B" />
+                    <Text style={styles.summaryExpandText} numberOfLines={1}>{ar.eventTitle}</Text>
+                    <Text style={styles.summaryExpandMinutes}>{ar.minutes} min</Text>
+                    <View style={styles.summaryExpandSubjectChip}>
+                      <Text style={styles.summaryExpandSubjectChipText}>{ar.subjectName}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+          )}
+
+          {expandedSummaryMetric === 'grades' && (
+            <View style={styles.summaryExpandPanel}>
+              <Text style={styles.summaryExpandTitle}>Recent grades</Text>
+              {summaryGradesDetail.length === 0 ? (
+                <View style={styles.summaryGradesEmpty}>
+                  <GraduationCap size={20} color="#94A3B8" strokeWidth={1.5} />
+                  <Text style={styles.summaryGradesEmptyText}>No grades yet</Text>
+                  <Text style={styles.summaryGradesEmptySub}>Grades will appear here once you add assignments with scores.</Text>
+                </View>
+              ) : (
+                summaryGradesDetail.map((g, i) => (
+                  <View key={i} style={styles.summaryExpandRow}>
+                    <Text style={styles.summaryExpandText} numberOfLines={1}>
+                      {g.percent != null ? `${g.percent}%` : g.grade || '—'} · {g.subjectName}
+                    </Text>
+                    <Text style={styles.summaryExpandMuted}>
+                      {g.date ? new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </View>
+          )}
+
+        </View>
+      )}
+
       {/* Content */}
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -433,6 +806,14 @@ export default function SubjectsPage({
           ))}
         </ScrollView>
       )}
+      <ComplianceRequirementModal
+        open={openComplianceRequirement != null}
+        onClose={() => setOpenComplianceRequirement(null)}
+        requirement={openComplianceRequirement}
+        familyId={familyId}
+        children={children}
+        onOpenAttendanceView={onNavigateToPlannerAttendance}
+      />
     </View>
   );
 }
@@ -529,6 +910,274 @@ const styles = StyleSheet.create({
     marginBottom: 0,
     marginHorizontal: 24,
   },
+  summaryCard: {
+    marginHorizontal: 24,
+    marginTop: 20,
+    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+  },
+  summaryCardContext: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    opacity: 0.9,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  summaryCardRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  summaryCardItem: {
+    flex: 1,
+    paddingVertical: 4,
+  },
+  summaryCardLabel: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  summaryCardValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  summaryCardValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  summaryCardValuePrimary: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  summaryCardItemExpanded: {
+    borderRadius: 6,
+    padding: 4,
+  },
+  summaryCardLabelExpanded: {
+    color: '#6BB3E8',
+  },
+  summaryCardValueExpanded: {
+    color: '#6BB3E8',
+  },
+  summaryExpandPanel: {
+    marginTop: 20,
+    paddingTop: 16,
+    paddingBottom: 4,
+    paddingHorizontal: 4,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.2)',
+  },
+  summaryExpandTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  summaryExpandValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 6,
+  },
+  summaryExpandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+    flexWrap: 'wrap',
+  },
+  summaryExpandRowAttendance: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    ...(Platform.OS === 'web' && {
+      cursor: 'default',
+      transition: 'background-color 0.15s ease',
+    }),
+  },
+  summaryExpandMinutes: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  summaryExpandSubjectChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(148, 163, 184, 0.2)',
+  },
+  summaryExpandSubjectChipText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  summaryGradesEmpty: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 6,
+  },
+  summaryGradesEmptyText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748B',
+  },
+  summaryGradesEmptySub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    textAlign: 'center',
+    maxWidth: 260,
+  },
+  summaryExpandText: {
+    fontSize: 12,
+    color: '#334155',
+    flex: 1,
+  },
+  summaryExpandSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  summaryExpandMuted: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+  summaryExpandLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 10,
+    paddingVertical: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  summaryExpandLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#60a5fa',
+  },
+  summaryComplianceSummary: {
+    marginBottom: 12,
+  },
+  summaryComplianceProgressWrap: {
+    marginTop: 6,
+  },
+  summaryComplianceProgressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(148, 163, 184, 0.25)',
+    overflow: 'hidden',
+  },
+  summaryComplianceProgressFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: '#6366F1',
+  },
+  summaryComplianceDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  summaryComplianceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(148, 163, 184, 0.4)',
+  },
+  summaryComplianceDotComplete: {
+    backgroundColor: '#6366F1',
+  },
+  summaryComplianceSection: {
+    marginTop: 12,
+  },
+  summaryComplianceSectionTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  summaryComplianceGroup: {
+    marginBottom: 8,
+    gap: 8,
+  },
+  summaryComplianceGroupTitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginBottom: 4,
+  },
+  summaryComplianceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 4,
+    minHeight: 44,
+  },
+  summaryComplianceCheckboxWrap: {
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  summaryComplianceRowPressable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingRight: 4,
+    borderRadius: 6,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  summaryComplianceRowPressableHover: {
+    backgroundColor: 'rgba(148, 163, 184, 0.08)',
+  },
+  summaryComplianceCheckbox: {
+    fontSize: 14,
+    color: '#64748B',
+    lineHeight: 20,
+  },
+  summaryComplianceRowContent: {
+    flexShrink: 1,
+  },
+  summaryComplianceRowTitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#1E293B',
+  },
+  summaryComplianceRowSubtext: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -568,8 +1217,8 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
   },
   filterChipText: {
     fontSize: 12,
@@ -687,7 +1336,7 @@ const styles = StyleSheet.create({
   subjectsList: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingTop: 6,
   },
   subjectsListContent: {
     paddingBottom: 40,
