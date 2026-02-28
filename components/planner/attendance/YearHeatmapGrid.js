@@ -15,6 +15,48 @@ function getDayKey(year, month, day) {
   return `${year}-${m}-${d}`;
 }
 
+/** Parse YYYY-MM-DD to { year, month, day }. */
+function parseDateKey(key) {
+  if (!key || key.length < 10) return null;
+  const y = parseInt(key.slice(0, 4), 10);
+  const m = parseInt(key.slice(5, 7), 10) - 1;
+  const d = parseInt(key.slice(8, 10), 10);
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return null;
+  return { year: y, month: m, day: d };
+}
+
+/** Build list of months from range start to end (inclusive). Each: { index, label, year, monthIndex, firstDay, lastDay, width, ... }. */
+function buildMonthsInRange(yearStart, yearEnd, cellSize, gap) {
+  const start = parseDateKey(yearStart);
+  const end = parseDateKey(yearEnd);
+  if (!start || !end) return [];
+  const months = [];
+  let idx = 0;
+  for (let y = start.year; y <= end.year; y++) {
+    const monthStart = y === start.year ? start.month : 0;
+    const monthEnd = y === end.year ? end.month : 11;
+    for (let m = monthStart; m <= monthEnd; m++) {
+      const totalDays = getDaysInMonth(y, m);
+      const firstDay = (y === start.year && m === start.month) ? start.day : 1;
+      const lastDay = (y === end.year && m === end.month) ? end.day : totalDays;
+      const numDays = lastDay - firstDay + 1;
+      const width = (cellSize + gap) * numDays - gap;
+      months.push({
+        index: idx,
+        label: `${MONTH_LABELS[m]} ${y}`,
+        year: y,
+        monthIndex: m,
+        firstDay,
+        lastDay,
+        totalDays,
+        width,
+      });
+      idx += 1;
+    }
+  }
+  return months;
+}
+
 export default function YearHeatmapGrid({
   yearStart,
   yearEnd,
@@ -34,28 +76,26 @@ export default function YearHeatmapGrid({
   const rowSpacing = gap + 4;
   const monthRowHeight = 22;
   const isWeb = Platform.OS === 'web';
-
-  const now = new Date();
-  const displayYear = now.getFullYear();
-  const currentMonthIndex = now.getMonth();
+  const monthGap = 10;
 
   const months = useMemo(() => {
-    return MONTH_LABELS.map((label, i) => {
-      const daysInMonth = getDaysInMonth(displayYear, i);
-      const width = (cellSize + gap) * daysInMonth - gap;
-      return { index: i, label, year: displayYear, daysInMonth, width };
-    });
-  }, [displayYear, cellSize]);
+    return buildMonthsInRange(yearStart, yearEnd, cellSize, gap);
+  }, [yearStart, yearEnd, cellSize, gap]);
 
-  const monthGap = 10;
+  const now = new Date();
+  const todayKey = getDayKey(now.getFullYear(), now.getMonth(), now.getDate());
 
   const initialScrollX = useMemo(() => {
     let x = 0;
-    for (let i = 0; i < currentMonthIndex; i++) {
-      x += months[i].width + monthGap;
+    for (let i = 0; i < months.length; i++) {
+      const m = months[i];
+      const startKey = getDayKey(m.year, m.monthIndex, m.firstDay);
+      const endKey = getDayKey(m.year, m.monthIndex, m.lastDay);
+      if (todayKey >= startKey && todayKey <= endKey) break;
+      x += m.width + monthGap;
     }
     return x;
-  }, [months, currentMonthIndex]);
+  }, [months, todayKey]);
 
   useEffect(() => {
     if (scrollRef.current == null || initialScrollX <= 0) return;
@@ -121,8 +161,8 @@ export default function YearHeatmapGrid({
                 <View key={child.id} style={[styles.row, { marginBottom: rowSpacing }]}>
                   {months.map((m) => (
                     <View key={m.index} style={[styles.daysRow, { width: m.width, marginRight: monthGap }]}>
-                      {Array.from({ length: m.daysInMonth }, (_, i) => i + 1).map((day) => {
-                        const key = getDayKey(m.year, m.index, day);
+                      {Array.from({ length: m.lastDay - m.firstDay + 1 }, (_, i) => m.firstDay + i).map((day) => {
+                        const key = getDayKey(m.year, m.monthIndex, day);
                         const status = statusMap[key] || 'noEvents';
                         const color = ATTENDANCE_COLORS[status] || (status === 'partial' ? ATTENDANCE_COLORS.present : ATTENDANCE_COLORS.noEvents);
                         const isNone = status === 'noEvents';

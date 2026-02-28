@@ -37,10 +37,17 @@ import {
   Target,
   AlertTriangle,
   Check,
-  Info
+  Info,
+  LayoutGrid,
+  Upload,
+  List,
+  Sparkles,
+  ArrowRight,
+  Paperclip,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import ConfirmDialog from '../ConfirmDialog';
+import { useToast } from '../Toast';
 import {
   createDefaultAcademicYear,
   recalculateAcademicYear,
@@ -54,16 +61,19 @@ import {
   getPublicHolidaysForRange,
 } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
+import { t, s, STRINGS } from '../../lib/i18n/strings';
+import { buildCurriculum, commitCurriculum } from '../../lib/services/curriculumClient';
+import { getMaterials } from '../../lib/services/materialsClient';
 const BG = '#ffffff';
 const FG = '#111827';
 const SUB = '#6b7280';
 const BORDER = '#e5e7eb';
 const CARD_BORDER = '#E6EAF2';
 const MUTED = '#9ca3af';
-const ACCENT = '#4285f4';
-const ACCENT_LIGHT = '#e8f0fe';
-const HIGHLIGHT_BG = '#dbeafe';
-const HIGHLIGHT_BORDER = '#3b82f6';
+const ACCENT = '#6BB3E8';
+const ACCENT_LIGHT = 'rgba(133,196,242,0.2)';
+const HIGHLIGHT_BG = 'rgba(107,179,232,0.15)';
+const HIGHLIGHT_BORDER = '#6BB3E8';
 const ERROR = '#ef4444';
 const SUCCESS = '#10b981';
 const WARNING = '#d97706';
@@ -77,7 +87,17 @@ const ELIGIBILITY_CARD_BORDER = '#DDEAF5';
 const ACCENT_BAR = '#81C1E1';
 const SECONDARY_BTN_BORDER = '#CFE3F4';
 const CARD_PADDING = 20;
-const SECTION_SPACING = 16;
+const SECTION_SPACING = 20;
+// Design tokens for Plan My Year step 1 (3-zone, depth, cards)
+const SURFACE_ELEVATED = '#f8fafc';
+const SURFACE_SUBTLE = '#f1f5f9';
+const BORDER_SUBTLE = '#e2e8f0';
+const BORDER_STRONG = '#cbd5e1';
+const BRAND_500 = '#6BB3E8';
+const BRAND_600 = '#5A9FD6';
+const TEXT_SECONDARY = '#64748b';
+const SECTION_GAP = 28;
+const OPTION_GAP = 16;
 const LABEL_INPUT_GAP = 6;
 const INPUT_GAP = 12;
 
@@ -112,15 +132,20 @@ function buildPlanYearName(options) {
   const {
     children = [],
     subjects = [],
-    planForChildId,
+    planForChildIds = [],
     blocks = [],
     selectedSubjectIds = [],
-    useAllSubjects,
     startDate,
     endDate,
   } = options;
-  const child = planForChildId ? (children || []).find((c) => String(c.id) === String(planForChildId)) : null;
-  const studentName = child ? (child.first_name || child.name || 'Student') : 'Whole family';
+  const childList = (children || []);
+  const studentName =
+    planForChildIds.length === 0
+      ? 'Whole family'
+      : planForChildIds
+          .map((id) => childList.find((c) => String(c.id) === String(id))?.first_name || childList.find((c) => String(c.id) === String(id))?.name || 'Child')
+          .filter(Boolean)
+          .join(', ') || 'Whole family';
   const subjectIds =
     blocks.length > 0
       ? [...new Set(blocks.map((b) => b.subject_id).filter(Boolean))]
@@ -131,12 +156,10 @@ function buildPlanYearName(options) {
     .filter(Boolean);
   const subjectLabel =
     subjectIds.length === 0
-      ? useAllSubjects
-        ? 'All subjects'
-        : 'No subjects'
+      ? 'No subject'
       : names.length > 2
         ? names.slice(0, 2).join(', ') + ` +${names.length - 2}`
-        : names.join(', ') || 'Subjects';
+        : names.join(', ') || 'Subject';
   const dateRange =
     startDate && endDate ? `${formatDateDisplay(startDate)} – ${formatDateDisplay(endDate)}` : '';
   return [studentName, subjectLabel || 'Subjects', dateRange].filter(Boolean).join(' · ');
@@ -147,6 +170,99 @@ function toLocalYYYYMMDD(d) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/** Client-side parse of pasted plain text: one topic per line, optional unit/section headers. No backend call. */
+function parsePastedListToCurriculum(pastedText, studentIds, startDateISO) {
+  const lines = pastedText
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  let currentUnitTitle = null;
+  const lessons = [];
+  const unitHeaderRe = /^Unit\s+\d+\s*:/i;
+  const topicsIncludeRe = /^Topics?\s+may\s+include\s*:/i;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const looksLikeUnitHeader =
+      unitHeaderRe.test(line) ||
+      topicsIncludeRe.test(line) ||
+      (line.endsWith(':') && line.length < 80);
+    if (looksLikeUnitHeader) {
+      currentUnitTitle = line.replace(/:$/, '').trim() || line;
+    } else {
+      lessons.push({
+        title: line,
+        sequence_index: lessons.length + 1,
+        unit_topic: currentUnitTitle || undefined,
+        minutes_est: 60,
+      });
+    }
+  }
+  if (lessons.length === 0) return null;
+  const firstUnitTitle = lines.find((l) => unitHeaderRe.test(l) || topicsIncludeRe.test(l));
+  const unitTitle = (firstUnitTitle && firstUnitTitle.replace(/:$/, '').trim()) || 'Pasted list';
+  const schedule_map = lessons.map((_, i) => ({
+    sequence_index: i + 1,
+    recommended_day_offset: i,
+  }));
+  return {
+    unit: {
+      title: unitTitle,
+      student_ids: studentIds,
+      source_type: 'topic',
+      total_minutes_est: lessons.length * 60,
+      weeks_est: Math.max(1, Math.ceil(lessons.length / 5)),
+    },
+    lessons,
+    pacing: {
+      start_date: startDateISO,
+      strategy: 'fit_openings',
+      schedule_map,
+    },
+  };
+}
+
+/** JS getDay(): 0=Sun, 1=Mon, …, 6=Sat. Block weekdays use same convention. */
+function getBlockOccurrenceDates(block, startDateYmd, endDateYmd, exclusionRanges) {
+  if (!startDateYmd || !endDateYmd || !/^\d{4}-\d{2}-\d{2}$/.test(startDateYmd) || !/^\d{4}-\d{2}-\d{2}$/.test(endDateYmd)) return [];
+  const weekdays = (block.weekdays || []).map((w) => (w != null ? parseInt(w, 10) : null)).filter((w) => Number.isInteger(w));
+  if (weekdays.length === 0) return [];
+  const start = dateStringToDate(startDateYmd);
+  const end = dateStringToDate(endDateYmd);
+  const out = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    const ymd = toLocalYYYYMMDD(cur);
+    const dayOfWeek = cur.getDay();
+    if (!weekdays.includes(dayOfWeek)) {
+      cur.setDate(cur.getDate() + 1);
+      continue;
+    }
+    const inExclusion = (exclusionRanges || []).some(([s, e]) => ymd >= s && ymd <= e);
+    if (!inExclusion) out.push(ymd);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
+/** "09:00" / "10:00" -> "9–10am" */
+function formatTimeRange(startTime, endTime) {
+  const parse = (s) => {
+    if (!s || typeof s !== 'string') return { h: 9, m: 0 };
+    const parts = s.trim().split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parts[1] ? parseInt(parts[1].replace(/\D/g, ''), 10) : 0;
+    return { h: Number.isNaN(h) ? 9 : Math.max(0, Math.min(23, h)), m: Number.isNaN(m) ? 0 : Math.max(0, Math.min(59, m)) };
+  };
+  const start = parse(startTime || '09:00');
+  const end = parse(endTime || '10:00');
+  const fmt = (t) => {
+    if (t.m === 0) return t.h === 12 ? '12pm' : t.h === 0 ? '12am' : t.h < 12 ? `${t.h}am` : `${t.h - 12}pm`;
+    return t.h === 12 ? `12:${String(t.m).padStart(2, '0')}pm` : t.h === 0 ? `12:${String(t.m).padStart(2, '0')}am` : t.h < 12 ? `${t.h}:${String(t.m).padStart(2, '0')}am` : `${t.h - 12}:${String(t.m).padStart(2, '0')}pm`;
+  };
+  return `${fmt(start)}–${fmt(end)}`;
 }
 
 /** Parse "09:00" or "09:30" to minutes since midnight. */
@@ -238,10 +354,16 @@ export default function PlanYearModal({
   fullSubjects = [],
   onClose,
   onComplete,
+  onOpenBuildCurriculum = null,
   initialAcademicYearId = null,
+  initialPlanSummaryData = null,
   openForNewPlan = false,
+  fromSubjectDetail = false,
   highlightFromPlanHealth = false,
+  initialSubjectId = null,
+  initialMaterialId = null,
 }) {
+  const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -290,13 +412,14 @@ export default function PlanYearModal({
   const [recalculating, setRecalculating] = useState(false);
   
   // Phase 2: Who / which subjects / replace prompt
-  const [planForChildId, setPlanForChildId] = useState(null); // null = whole family
-  const [useAllSubjects, setUseAllSubjects] = useState(true); // true = all subjects, false = specific (use selectedSubjectIds)
-  const [selectedSubjectIds, setSelectedSubjectIds] = useState([]); // empty = all selected
+  const [planForChildIds, setPlanForChildIds] = useState([]); // [] = whole family, [id, ...] = those assignees
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState([]); // single subject per plan: 0 or 1 id
   const [existingPlaceholdersCount, setExistingPlaceholdersCount] = useState(0);
   const [replacePlaceholders, setReplacePlaceholders] = useState(true);
   const [clearingPlan, setClearingPlan] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showDeletePlanConfirm, setShowDeletePlanConfirm] = useState(false);
+  const [deletingPlan, setDeletingPlan] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [suggestionAccepted, setSuggestionAccepted] = useState(false);
   const [extendSuggestionAccepted, setExtendSuggestionAccepted] = useState(false);
@@ -321,13 +444,38 @@ export default function PlanYearModal({
   // Plan health (includes manual counted events for "Manual instructional events counted" panel)
   const [planHealth, setPlanHealth] = useState(null);
   const [holidaysCollapsed, setHolidaysCollapsed] = useState(true);
+  const [complianceCollapsed, setComplianceCollapsed] = useState(true);
   const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState([]); // dates (YYYY-MM-DD) to exclude from US public holidays
   const [showPublicHolidaysPicker, setShowPublicHolidaysPicker] = useState(false);
   const [publicHolidaysList, setPublicHolidaysList] = useState([]);
   const [publicHolidaysLoading, setPublicHolidaysLoading] = useState(false);
+  const [planSource, setPlanSource] = useState('placeholders'); // 'placeholders' | 'upload' | 'link' | 'paste'
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [pastedText, setPastedText] = useState('');
+  const [materials, setMaterials] = useState([]);
+  const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [selectedMaterialId, setSelectedMaterialId] = useState(null);
+  const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
+  const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 300 });
+  const materialButtonRef = useRef(null);
+  const [sectionSourceExpanded, setSectionSourceExpanded] = useState(true);
   const [sectionWhoExpanded, setSectionWhoExpanded] = useState(false);
   const [sectionScheduleExpanded, setSectionScheduleExpanded] = useState(false);
   const [sectionDatesExpanded, setSectionDatesExpanded] = useState(false);
+  const [planStep, setPlanStep] = useState('source'); // 'source' | 'logistics' | 'preview'
+  const [showPlanManagerView, setShowPlanManagerView] = useState(false); // when true and pickerOnly, show Edit plan list; when false and pickerOnly, show entry choice (Plan Manager / Create New Plan)
+  const [planSummaryYearId, setPlanSummaryYearId] = useState(null); // when set, show plan summary view (like event summary) before editing
+  const [editingFromSummary, setEditingFromSummary] = useState(false); // true when we opened logistics from "Edit Plan" on plan summary (header = Edit > Review, Back = to summary)
+  const [planSummaryData, setPlanSummaryData] = useState(null);
+  const [planSummaryLoading, setPlanSummaryLoading] = useState(false);
+  const [planSummaryError, setPlanSummaryError] = useState(null);
+  const [showPreviewScreen, setShowPreviewScreen] = useState(false);
+  const [parsedContent, setParsedContent] = useState(null); // { unit, lessons, pacing } from buildCurriculum for upload/link/paste
+  const [parsingContent, setParsingContent] = useState(false);
+  const [parseContentError, setParseContentError] = useState(null);
+  const [hoverSourceKey, setHoverSourceKey] = useState(null); // for step 1 option hover (web)
+  const [entryChoiceHoverKey, setEntryChoiceHoverKey] = useState(null); // 'edit' | 'create' for arrow on hover
+  const [footerCancelHover, setFooterCancelHover] = useState(false);
   const [dismissedConflictKeys, setDismissedConflictKeys] = useState(() => new Set());
   const [highlightBlockIndex, setHighlightBlockIndex] = useState(null);
 
@@ -336,21 +484,54 @@ export default function PlanYearModal({
   const scheduleSectionYRef = useRef(0);
   const datesSectionYRef = useRef(0);
   const schedulePotentialFetchedRef = useRef(false);
+  const planSummaryCacheRef = useRef(new Map()); // yearId -> full academic year data for instant summary display
+  const preloadedSummaryIdsRef = useRef(new Set());
+  const subjectPlanResolvedRef = useRef(false); // when from subject details, avoid re-running plan-for-subject search
 
   const baseSubjectList = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
   const subjectsForCurrentSelection =
-    planForChildId
-      ? baseSubjectList.filter((s) => subjectMatchesChild(s, planForChildId))
-      : baseSubjectList.filter((s) => subjectAppliesToAllChildren(s, children));
-  const effectiveSubjectIds =
-    useAllSubjects
-      ? subjectsForCurrentSelection.map((s) => s.id)
-      : selectedSubjectIds.filter((id) => subjectsForCurrentSelection.some((s) => s.id === id));
+    planForChildIds.length === 0
+      ? baseSubjectList.filter((s) => subjectAppliesToAllChildren(s, children))
+      : baseSubjectList.filter((s) => planForChildIds.every((childId) => subjectMatchesChild(s, childId)));
+  const effectiveSubjectIds = selectedSubjectIds.filter((id) =>
+    subjectsForCurrentSelection.some((s) => s.id === id)
+  );
 
   const blockConflicts = useMemo(
     () => getBlockConflicts(blocks, children, baseSubjectList),
     [blocks, children, baseSubjectList]
   );
+
+  // Preview: exact dates and times that will get slots (for display under "X eligible days" and on preview screen)
+  const previewSlotLines = useMemo(() => {
+    if (!startDate || !endDate || blocks.length === 0) return [];
+    const exclusionRanges = [
+      ...(customHolidays || []).map((h) => [h.date, h.date]),
+      ...(customBreaks || []).map((b) => [b.start || b.startDate, b.end || b.endDate].filter(Boolean)).filter((r) => r.length === 2),
+    ];
+    const lines = [];
+    const childList = children || [];
+    blocks.forEach((block) => {
+      const subjectName = (baseSubjectList || []).find((s) => String(s.id) === String(block.subject_id))?.name || 'Subject';
+      const timeLabel = block.all_day ? 'All day' : formatTimeRange(block.start_time, block.end_time);
+      const blockChildIds = Array.isArray(block.child_ids) ? block.child_ids : (planForChildIds.length > 0 ? planForChildIds : []);
+      const childNames = blockChildIds.length > 0
+        ? blockChildIds.map((cid) => childList.find((c) => String(c.id) === String(cid))?.first_name || childList.find((c) => String(c.id) === String(cid))?.name || 'Child').join(', ')
+        : (planForChildIds.length > 0 ? planForChildIds.map((id) => childList.find((c) => String(c.id) === String(id))?.first_name || childList.find((c) => String(c.id) === String(id))?.name || 'Child').join(', ') : 'Whole family');
+      const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
+      dates.forEach((ymd) => {
+        lines.push({
+          date: ymd,
+          dateLabel: formatDateDisplay(ymd),
+          timeLabel,
+          subjectName,
+          childNames,
+        });
+      });
+    });
+    lines.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
+    return lines;
+  }, [blocks, startDate, endDate, customHolidays, customBreaks, baseSubjectList, children, planForChildIds]);
 
   // When modal opens (without an explicit academic year id), load latest academic year so "Apply again" replaces instead of duplicating — unless openForNewPlan (header button: create new)
   useEffect(() => {
@@ -391,9 +572,10 @@ export default function PlanYearModal({
   }, [visible, initialAcademicYearId]);
 
   // When true, user chose "Create new plan" from picker — show full form even with no plan selected
-  const [startCreatingNew, setStartCreatingNew] = useState(false);
+  // When opening for new plan with no year, go straight to METHOD (screen 1); no entry/loading flash
+  const [startCreatingNew, setStartCreatingNew] = useState(() => !!(openForNewPlan && !initialAcademicYearId));
 
-  // Fetch list of plans (academic years that have an academic_year_plan) for "Edit plan" picker
+  // Fetch all academic years for this family for "Edit plan" picker (show every plan/year ever created, not only those with a plan row)
   const [previousPlans, setPreviousPlans] = useState([]);
   const [previousPlansLoading, setPreviousPlansLoading] = useState(true); // true so we don't skip to "create new" before fetch completes
   useEffect(() => {
@@ -401,25 +583,11 @@ export default function PlanYearModal({
     let cancelled = false;
     setPreviousPlansLoading(true);
     (async () => {
-      const { data: planRows, error: planErr } = await supabase
-        .from('academic_year_plan')
-        .select('academic_year_id')
-        .eq('family_id', familyId);
-      if (cancelled || planErr || !planRows?.length) {
-        if (!cancelled) {
-          setPreviousPlansLoading(false);
-          setPreviousPlans([]);
-        }
-        return;
-      }
-      const yearIds = planRows.map((r) => r.academic_year_id).filter(Boolean);
       const { data: rows, error: err } = await supabase
         .from('academic_years')
         .select('id, year_name, start_date, end_date, updated_at')
         .eq('family_id', familyId)
-        .in('id', yearIds)
-        .order('start_date', { ascending: false })
-        .limit(20);
+        .order('start_date', { ascending: false });
       if (!cancelled) {
         setPreviousPlansLoading(false);
         if (err) setPreviousPlans([]);
@@ -429,12 +597,156 @@ export default function PlanYearModal({
     return () => { cancelled = true; };
   }, [visible, openForNewPlan, familyId]);
 
-  // When no plan exists, open straight to the new plan form (skip the "No previous plans" picker screen)
+  // Preload plan summary data for each plan in the list so switching to summary doesn't flash loading
   useEffect(() => {
-    if (visible && openForNewPlan && !academicYearId && !previousPlansLoading && previousPlans.length === 0) {
-      setStartCreatingNew(true);
+    if (!familyId || !previousPlans.length || previousPlansLoading) return;
+    previousPlans.forEach((ay) => {
+      const id = ay.id;
+      if (!id || preloadedSummaryIdsRef.current.has(id)) return;
+      preloadedSummaryIdsRef.current.add(id);
+      getAcademicYear(id).then(({ data }) => {
+        if (data) planSummaryCacheRef.current.set(id, data);
+      });
+    });
+  }, [familyId, previousPlans, previousPlansLoading]);
+
+  // When modal closes, defer clearing plan summary state until after close animation so we don't flash YOUR PLANS list
+  useEffect(() => {
+    if (!visible) {
+      setEditingFromSummary(false);
+      subjectPlanResolvedRef.current = false;
+      const t = setTimeout(() => {
+        setPlanSummaryYearId(null);
+        setPlanSummaryData(null);
+        setPlanSummaryError(null);
+      }, 320);
+      return () => clearTimeout(t);
     }
-  }, [visible, openForNewPlan, academicYearId, previousPlansLoading, previousPlans.length]);
+  }, [visible]);
+
+  // When opening from subject details, show YOUR PLANS list directly (skip "Editing or creating?" choice)
+  useEffect(() => {
+    if (visible && fromSubjectDetail) {
+      setShowPlanManagerView(true);
+    }
+  }, [visible, fromSubjectDetail]);
+
+  // When opening from subject details and no plan exists, default to screen one of add new plan (skip empty YOUR PLANS modal)
+  useEffect(() => {
+    if (visible && fromSubjectDetail && !previousPlansLoading && previousPlans.length === 0) {
+      setStartCreatingNew(true);
+      setPlanStep('source');
+    }
+  }, [visible, fromSubjectDetail, previousPlansLoading, previousPlans]);
+
+  // When opened from subject details with a subject, find a plan that includes this subject and open its summary if any
+  useEffect(() => {
+    if (!visible || !fromSubjectDetail || !initialSubjectId || !familyId) return;
+    if (previousPlansLoading || previousPlans.length === 0) {
+      if (!previousPlansLoading && previousPlans.length === 0) subjectPlanResolvedRef.current = true;
+      return;
+    }
+    if (subjectPlanResolvedRef.current) return;
+    subjectPlanResolvedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      const subjectId = String(initialSubjectId);
+      for (const ay of previousPlans) {
+        if (!ay?.id || cancelled) break;
+        const cached = planSummaryCacheRef.current.get(ay.id);
+        if (cached?.plan?.blocks?.some((b) => String(b?.subject_id) === subjectId)) {
+          if (!cancelled) {
+            planSummaryCacheRef.current.set(ay.id, cached);
+            setPlanSummaryData(cached);
+            setPlanSummaryLoading(false);
+            setPlanSummaryError(null);
+            setPlanSummaryYearId(ay.id);
+          }
+          return;
+        }
+        const { data } = await getAcademicYear(ay.id);
+        if (cancelled) return;
+        if (data?.plan?.blocks?.some((b) => String(b?.subject_id) === subjectId)) {
+          if (data) planSummaryCacheRef.current.set(ay.id, data);
+          setPlanSummaryData(data || null);
+          setPlanSummaryLoading(false);
+          setPlanSummaryError(null);
+          setPlanSummaryYearId(ay.id);
+          return;
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, fromSubjectDetail, initialSubjectId, familyId, previousPlans, previousPlansLoading]);
+
+  // When opening from event details (Edit Plan) or plan health with a specific plan, go straight to plan summary view
+  const openedToPlanSummaryRef = useRef(false);
+  useEffect(() => {
+    if (!visible) {
+      openedToPlanSummaryRef.current = false;
+      return;
+    }
+    if (initialAcademicYearId && !openForNewPlan && !openedToPlanSummaryRef.current) {
+      openedToPlanSummaryRef.current = true;
+      if (initialPlanSummaryData) {
+        planSummaryCacheRef.current.set(initialAcademicYearId, initialPlanSummaryData);
+        setPlanSummaryData(initialPlanSummaryData);
+        setPlanSummaryLoading(false);
+        setPlanSummaryError(null);
+      }
+      setPlanSummaryYearId(initialAcademicYearId);
+    }
+  }, [visible, initialAcademicYearId, initialPlanSummaryData, openForNewPlan]);
+
+  // When user selects a plan from the list, show summary immediately from cache if available, then refresh in background
+  useEffect(() => {
+    if (!planSummaryYearId || !familyId) {
+      setPlanSummaryData(null);
+      setPlanSummaryError(null);
+      return;
+    }
+    const cached = planSummaryCacheRef.current.get(planSummaryYearId);
+    if (cached) {
+      setPlanSummaryData(cached);
+      setPlanSummaryError(null);
+      setPlanSummaryLoading(false);
+    } else {
+      setPlanSummaryLoading(true);
+      setPlanSummaryError(null);
+    }
+    let cancelled = false;
+    getAcademicYear(planSummaryYearId).then(({ data, error }) => {
+      if (cancelled) return;
+      setPlanSummaryLoading(false);
+      if (error) {
+        if (!cached) {
+          setPlanSummaryData(null);
+          setPlanSummaryError(error.message || 'Failed to load plan.');
+        }
+      } else {
+        if (data) planSummaryCacheRef.current.set(planSummaryYearId, data);
+        setPlanSummaryData(data || null);
+        setPlanSummaryError(null);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [planSummaryYearId, familyId]);
+
+  // When an event is deleted and plan summary is open, refetch so "Dates with events" updates immediately
+  useEffect(() => {
+    if (typeof window === 'undefined' || !planSummaryYearId || !familyId) return;
+    const handler = () => {
+      planSummaryCacheRef.current.delete(planSummaryYearId);
+      getAcademicYear(planSummaryYearId).then(({ data, error }) => {
+        if (!error && data) {
+          planSummaryCacheRef.current.set(planSummaryYearId, data);
+          setPlanSummaryData(data);
+        }
+      });
+    };
+    window.addEventListener('eventDeleted', handler);
+    return () => window.removeEventListener('eventDeleted', handler);
+  }, [planSummaryYearId, familyId]);
 
   // When we have academicYearId, load full year + plan to populate form (for "Edit plan" from banner)
   const loadedYearIdRef = useRef(null);
@@ -502,8 +814,7 @@ export default function PlanYearModal({
             )
           );
           if (subjectIdsFromPlan.length > 0) {
-            setUseAllSubjects(false);
-            setSelectedSubjectIds(subjectIdsFromPlan);
+            setSelectedSubjectIds([subjectIdsFromPlan[0]]);
           }
           const childIdSet = new Set();
           planBlocks.forEach((b) => {
@@ -512,11 +823,7 @@ export default function PlanYearModal({
             });
           });
           const distinctChildIds = Array.from(childIdSet);
-          if (distinctChildIds.length === 1) {
-            setPlanForChildId(distinctChildIds[0]);
-          } else {
-            setPlanForChildId(null);
-          }
+          setPlanForChildIds(distinctChildIds.length > 0 ? distinctChildIds : []);
         }
         if (planBlocks.length > 0) {
           setBlocks(planBlocks.map((b) => ({
@@ -541,8 +848,12 @@ export default function PlanYearModal({
       setPlanCreatedAt(null);
       setPlanUpdatedAt(null);
       setYearLoadInProgress(false);
-      setStartCreatingNew(false);
-      setPreviousPlansLoading(true); // so next open shows loading until plans are fetched (avoids "add new" right after creating a plan)
+      // Defer so we don't flash "Create new plan" first screen during close animation
+      const t = setTimeout(() => {
+        setStartCreatingNew(false);
+        setPreviousPlansLoading(true);
+      }, 350);
+      return () => clearTimeout(t);
     }
   }, [visible]);
 
@@ -578,11 +889,33 @@ export default function PlanYearModal({
     return () => { cancelled = true; };
   }, [visible, familyId, academicYearId, initialAcademicYearId]);
 
-  // Default selected subjects to all when modal opens (skip when opening with a specific plan so load can set subjects)
+  // When opening with initial subject (e.g. from "Generate curriculum"), scope to that subject
+  useEffect(() => {
+    if (!visible || !initialSubjectId) return;
+    const subjectExists = baseSubjectList.some((s) => String(s.id) === String(initialSubjectId));
+    if (subjectExists) {
+      setSelectedSubjectIds([initialSubjectId]);
+    }
+  }, [visible, initialSubjectId, baseSubjectList]);
+
+  // When opening with initial material (e.g. from Library "Build curriculum from this"), start in upload mode with that material
+  useEffect(() => {
+    if (!visible || !initialMaterialId) return;
+    setPlanSource('upload');
+    setSelectedMaterialId(initialMaterialId);
+  }, [visible, initialMaterialId]);
+
+  // When modal opens for new plan (no existing plan), default assignee to first child and leave subject unselected
   const prevVisibleRef = useRef(false);
   useEffect(() => {
-    if (visible && !prevVisibleRef.current && baseSubjectList.length > 0 && !initialAcademicYearId) {
-      setSelectedSubjectIds(baseSubjectList.map((s) => s.id));
+    if (visible && !prevVisibleRef.current && !initialAcademicYearId) {
+      const childList = children || [];
+      if (childList.length > 0) {
+        setPlanForChildIds([childList[0].id]);
+      }
+      if (baseSubjectList.length > 0 && !initialSubjectId) {
+        setSelectedSubjectIds([]);
+      }
     }
     if (visible && !prevVisibleRef.current) {
       const isEditPlanMode = !!initialAcademicYearId;
@@ -592,21 +925,173 @@ export default function PlanYearModal({
       setSectionDatesExpanded(true);
     }
     if (!visible) {
-      setSuggestionAccepted(false);
-      setExtendSuggestionAccepted(false);
-      setAcceptedExtendDate(null);
-      setDismissedConflictKeys(new Set());
-      setHighlightBlockIndex(null);
+      // Defer view resets so we don't flash "Plan Manager / Create New Plan" during close animation
+      const t = setTimeout(() => {
+        setSuggestionAccepted(false);
+        setExtendSuggestionAccepted(false);
+        setAcceptedExtendDate(null);
+        setDismissedConflictKeys(new Set());
+        setHighlightBlockIndex(null);
+        setPlanStep('source');
+        setShowPlanManagerView(false);
+        setShowPreviewScreen(false);
+        setShowMaterialDropdown(false);
+        setParsedContent(null);
+        setParsingContent(false);
+        setParseContentError(null);
+      }, 350);
+      return () => clearTimeout(t);
     }
     prevVisibleRef.current = visible;
   }, [visible, baseSubjectList, initialAcademicYearId]);
 
-  // When switching to a specific child, prune selectedSubjectIds to only subjects for that child
+  // When switching assignee, prune selectedSubjectIds to valid subjects (keep at most one)
   useEffect(() => {
     if (subjectsForCurrentSelection.length === 0) return;
     const validIds = new Set(subjectsForCurrentSelection.map((s) => s.id));
-    setSelectedSubjectIds((prev) => (prev.some((id) => !validIds.has(id)) ? prev.filter((id) => validIds.has(id)) : prev));
-  }, [planForChildId, subjectsForCurrentSelection]);
+    setSelectedSubjectIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id)).slice(0, 1);
+      return next.length !== prev.length || (next[0] !== prev[0]) ? next : prev;
+    });
+  }, [planForChildIds, subjectsForCurrentSelection]);
+
+  // Clear parsed content when source or input changes so user re-parses
+  useEffect(() => {
+    if (planSource === 'upload' || planSource === 'link' || planSource === 'paste') {
+      setParsedContent(null);
+      setParseContentError(null);
+    }
+  }, [planSource, sourceUrl, pastedText, selectedMaterialId]);
+
+  // Load materials when upload is selected (for inline select)
+  const loadMaterialsForUpload = useCallback(async () => {
+    if (!familyId) return;
+    setLoadingMaterials(true);
+    try {
+      const data = await getMaterials(familyId, {});
+      setMaterials(data || []);
+    } catch (err) {
+      console.error('[PlanYearModal] Error loading materials:', err);
+      setMaterials([]);
+    } finally {
+      setLoadingMaterials(false);
+    }
+  }, [familyId]);
+
+  useEffect(() => {
+    if (visible && planSource === 'upload' && familyId) {
+      loadMaterialsForUpload();
+    }
+  }, [visible, planSource, familyId, loadMaterialsForUpload]);
+
+  // Refetch materials when user saves a new material (from Add Material modal opened via event)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => {
+      if (planSource === 'upload' && familyId) loadMaterialsForUpload();
+    };
+    window.addEventListener('materialSaved', handler);
+    return () => window.removeEventListener('materialSaved', handler);
+  }, [planSource, familyId, loadMaterialsForUpload]);
+
+  /** Parse content for upload/link/paste so the next screen can use it to plan events. */
+  const handleParseContent = useCallback(async () => {
+    if (planSource === 'upload' && !selectedMaterialId) {
+      setParseContentError('Please select a material.');
+      return;
+    }
+    if (planSource === 'link' && !sourceUrl.trim()) {
+      setParseContentError('Please enter a source URL.');
+      return;
+    }
+    if (planSource === 'paste' && !pastedText.trim()) {
+      setParseContentError('Please paste your list of dates and events.');
+      return;
+    }
+    const studentIds = planForChildIds.length > 0 ? planForChildIds : (children || []).map((c) => c.id);
+    if (!studentIds.length) {
+      setParseContentError('Add at least one child in your family to continue.');
+      return;
+    }
+    setParsingContent(true);
+    setParseContentError(null);
+    try {
+      const startDateObj = startDate ? new Date(startDate + 'T12:00:00') : new Date();
+      const startDateISO = startDateObj.toISOString().split('T')[0];
+
+      if (planSource === 'paste') {
+        const preview = parsePastedListToCurriculum(pastedText.trim(), studentIds, startDateISO);
+        if (!preview?.unit || !preview?.lessons?.length) {
+          setParseContentError('No lines found. Paste a list of topics, one per line.');
+        } else {
+          setParsedContent(preview);
+        }
+        setParsingContent(false);
+        return;
+      }
+
+      let weeks = 1;
+      if (startDate && endDate) {
+        const end = new Date(endDate + 'T12:00:00');
+        const start = new Date(startDate + 'T12:00:00');
+        weeks = Math.max(1, Math.ceil((end - start) / (7 * 24 * 60 * 60 * 1000)));
+      }
+      const buildPayload = {
+        mode: planSource === 'link' ? 'link' : 'material',
+        topic: null,
+        source_url: planSource === 'link' ? sourceUrl.trim() : null,
+        material_id: planSource === 'upload' ? selectedMaterialId : null,
+        student_ids: studentIds,
+        constraints: {
+          weeks,
+          minutes_per_day: 60,
+          weekdays_only: true,
+          difficulty: 'standard',
+          start_date: startDateISO,
+        },
+      };
+      const { data: preview, error: buildError } = await buildCurriculum(buildPayload);
+      if (buildError) {
+        throw new Error(buildError.message || buildError.detail || 'Failed to parse content');
+      }
+      if (!preview?.unit || !preview?.lessons?.length) {
+        throw new Error('No lessons were generated. Try adjusting your content.');
+      }
+      setParsedContent(preview);
+    } catch (err) {
+      setParseContentError(err?.message || 'Failed to parse content');
+    } finally {
+      setParsingContent(false);
+    }
+  }, [planSource, sourceUrl, pastedText, selectedMaterialId, planForChildIds, children, startDate, endDate]);
+
+  // When user selects a content source (paste/link/upload), auto-fill dates if empty and expand Who & subjects + Dates so they see what will be used
+  const prevPlanSourceRef = useRef(planSource);
+  useEffect(() => {
+    const isContentSource = planSource === 'paste' || planSource === 'link' || planSource === 'upload';
+    if (!isContentSource) {
+      prevPlanSourceRef.current = planSource;
+      return;
+    }
+    prevPlanSourceRef.current = planSource;
+    setSectionWhoExpanded(true);
+    setSectionDatesExpanded(true);
+
+    // Default dates when empty: start = today, end = 2 months from now
+    let defaultStart = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null;
+    if (!defaultStart) {
+      const today = new Date();
+      defaultStart = toLocalYYYYMMDD(today);
+      setStartDate(defaultStart);
+    }
+    const needEnd = !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(endDate);
+    if (needEnd) {
+      const startObj = new Date((defaultStart || startDate) + 'T12:00:00');
+      const endObj = new Date(startObj);
+      endObj.setMonth(endObj.getMonth() + 2);
+      setEndDate(toLocalYYYYMMDD(endObj));
+    }
+  }, [planSource, startDate, endDate]);
 
   // Auto-sync blocks to required subjects: one block per effective subject (require all)
   const effectiveSubjectIdsKey = effectiveSubjectIds.slice().sort().join(',');
@@ -615,7 +1100,7 @@ export default function PlanYearModal({
       setBlocks([]);
       return;
     }
-    const childIds = planForChildId ? [planForChildId] : [];
+    const childIds = planForChildIds.length > 0 ? planForChildIds : [];
     setBlocks((prevBlocks) => {
       const bySubject = new Map(prevBlocks.map((b) => [b.subject_id, b]));
       return effectiveSubjectIds.map((subjectId) => {
@@ -636,7 +1121,7 @@ export default function PlanYearModal({
         };
       });
     });
-  }, [effectiveSubjectIdsKey, effectiveSubjectIds.length, planForChildId]);
+  }, [effectiveSubjectIdsKey, effectiveSubjectIds.length, planForChildIds]);
 
   useEffect(() => {
     syncBlocksFromEffectiveSubjects();
@@ -663,7 +1148,7 @@ export default function PlanYearModal({
       }
       setComputingPotential(true);
       try {
-        const planChildrenIds = planForChildId ? [planForChildId] : (children || []).map((c) => c.id).filter(Boolean);
+        const planChildrenIds = planForChildIds.length > 0 ? planForChildIds : (children || []).map((c) => c.id).filter(Boolean);
         const { data, error } = await computeSchedulePotential({
           family_id: familyId,
           start_date: startDate,
@@ -698,7 +1183,7 @@ export default function PlanYearModal({
         setComputingPotential(false);
       }
     }, delay);
-  }, [familyId, startDate, endDate, blocks, customHolidays, customBreaks, followGlobalHolidays, countryCode, regionCode, planConstraintMode, planTargetDays, planTargetHours, planForChildId, children, planHealth?.subject_targets]);
+  }, [familyId, startDate, endDate, blocks, customHolidays, customBreaks, followGlobalHolidays, countryCode, regionCode, planConstraintMode, planTargetDays, planTargetHours, planForChildIds, children, planHealth?.subject_targets]);
 
   useEffect(() => {
     if (!visible) {
@@ -884,7 +1369,7 @@ export default function PlanYearModal({
   const childrenCount = Array.isArray(children) ? children.length : 0;
   const subjectsCount = subjectsForCurrentSelection.length;
   const selectedCount = selectedSubjectIds.length;
-  const preconditionsMet = childrenCount > 0 && subjectsCount > 0 && (useAllSubjects || selectedCount > 0 || blocks.length > 0);
+  const preconditionsMet = childrenCount > 0 && subjectsCount > 0 && (selectedSubjectIds.length === 1 || blocks.length > 0);
 
   const eligibleCount = calculatedResult?.instructional_days ?? 0;
   const excludedCount = calculatedResult?.non_instructional_days ?? 0;
@@ -908,10 +1393,9 @@ export default function PlanYearModal({
       const year_name = buildPlanYearName({
         children,
         subjects: baseSubjectList,
-        planForChildId,
+        planForChildIds,
         blocks,
         selectedSubjectIds,
-        useAllSubjects,
         startDate,
         endDate: effectiveEndDate,
       });
@@ -926,11 +1410,11 @@ export default function PlanYearModal({
         custom_holidays: customHolidays.map(h => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
         custom_breaks: (customBreaks || []).map(b => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
         target_instructional_days: effectiveTargetInstructionalDays,
-        subjects: useAllSubjects ? subjectsForCurrentSelection.map((s) => s.id) : selectedSubjectIds,
+        subjects: selectedSubjectIds,
         constraint_mode: planConstraintMode,
         target_days: planConstraintMode === 'days' ? (parseInt(planTargetDays, 10) || null) : null,
         target_hours: planConstraintMode === 'hours' ? (parseFloat(planTargetHours) || null) : null,
-        child_id: planForChildId || null,
+        child_id: planForChildIds.length === 1 ? planForChildIds[0] : null,
         replace_placeholders: replacePlaceholdersChoice,
         blocks: blocks.length > 0 ? blocks.map((b) => ({
           block_id: b.block_id,
@@ -943,6 +1427,8 @@ export default function PlanYearModal({
         })) : [],
         subject_targets: planHealth?.subject_targets ?? undefined,
         year_name,
+        // When user chose "Create new plan" from picker, always create a new academic year so it appears in the list
+        force_new_plan: startCreatingNew,
         // Always send timezone so plan times (e.g. 9 AM) are stored correctly; never fall back to UTC
         timezone: (function getClientTimezone() {
           try {
@@ -965,18 +1451,67 @@ export default function PlanYearModal({
       const { data: healthData } = await getPlanHealth(familyId, academicYearId ?? undefined);
       if (healthData) setPlanHealth(healthData);
 
-      const message = data?.totals
-        ? `Updated ${data.totals.updated ?? 0}, added ${data.totals.inserted ?? 0}, removed ${data.totals.deleted ?? 0} placeholders across ${data?.planned_days ?? 0} days.`
-        : `Created ${data?.created ?? 0} lesson placeholders across ${data?.planned_days ?? 0} days.`;
+      const added = data?.totals?.inserted ?? data?.created ?? 0;
+      const skipped = data?.skipped_overlap ?? data?.totals?.skipped ?? 0;
+      const skippedDates = Array.isArray(data?.skipped_dates) ? data.skipped_dates : [];
+      let message;
+      let toastType = 'success';
+      if (added === 0 && skipped > 0) {
+        const dateList = skippedDates.length > 0
+          ? skippedDates.map((d) => (d && d.length >= 10 ? formatDateDisplay(d) : d)).join(', ')
+          : '';
+        message = dateList
+          ? `No new events added. The scheduled time is already in use on ${dateList}. Try a different time in your plan.`
+          : 'No new events added. The scheduled time is already in use on those days. Try a different time in your plan.';
+        toastType = 'warning';
+      } else if (skipped > 0) {
+        const dateList = skippedDates.length > 0
+          ? skippedDates.map((d) => (d && d.length >= 10 ? formatDateDisplay(d) : d)).join(', ')
+          : '';
+        message = dateList
+          ? `${added} new lesson${added !== 1 ? 's' : ''} added. ${skipped} not added (time in use on ${dateList}).`
+          : `${added} new lesson${added !== 1 ? 's' : ''} added. ${skipped} not added — time already in use.`;
+        toastType = 'warning';
+      } else {
+        message = added === 1 ? '1 new lesson added' : `${added} new lessons added`;
+      }
       loadedYearIdRef.current = null;
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        // Force immediate calendar refetch so new plan events show without page refresh
+        const startYmd = startDate && String(startDate).trim();
+        const detail = { forceInvalidate: true, skipHomeRefresh: true };
+        if (startYmd && /^\d{4}-\d{2}-\d{2}$/.test(startYmd)) {
+          const [y, m] = startYmd.split('-').map(Number);
+          detail.targetYear = y;
+          detail.targetMonth = m - 1; // 0-based
+        }
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail }));
         // Tell open event modal to refetch so plan time updates show immediately (delay so DB commit is visible)
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
         }, 350);
+        // Delayed refresh so planner shows new events after modal closes and DB is committed
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { ...detail, forceInvalidate: true } }));
+        }, 400);
+        // Also refetch visible month so planner updates regardless of which month is in view
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true, skipHomeRefresh: true } }));
+        }, 600);
       }
-      setTimeout(() => Alert.alert('Success', message), 0);
+      toast.push(message, toastType);
+      // Refetch placeholder count so Danger Zone shows updated "Remove current plan including X slots" if user stays in modal
+      if (academicYearId && familyId) {
+        const { count, error: countErr } = await supabase
+          .from('events')
+          .select('*', { count: 'exact', head: true })
+          .eq('family_id', familyId)
+          .eq('academic_year_id', academicYearId)
+          .eq('is_placeholder', true)
+          .eq('generated_by', 'plan_year')
+          .is('deleted_at', null);
+        if (!countErr && count != null) setExistingPlaceholdersCount(count);
+      }
       setTimeout(() => {
         onCompleteRef.current?.();
         onCloseRef.current?.();
@@ -985,7 +1520,7 @@ export default function PlanYearModal({
       const errMsg = err?.message || err?.detail || 'Failed to apply to calendar';
       setError(errMsg);
       loadedYearIdRef.current = null;
-      setTimeout(() => Alert.alert('Apply failed', errMsg), 0);
+      toast.push(errMsg, 'error');
       setTimeout(() => onCloseRef.current?.(), 50);
     } finally {
       setSaving(false);
@@ -1031,8 +1566,8 @@ export default function PlanYearModal({
       setError('Not enough instructional days. Add more weekdays in Scheduled Class Days or extend your end date.');
       return;
     }
-    if (blocks.length === 0 && !useAllSubjects && selectedCount === 0) {
-      setError('Select at least one subject in Who & Subjects, or add scheduled class days.');
+    if (blocks.length === 0 && selectedSubjectIds.length === 0) {
+      setError('Select one subject in Who & Subjects, or add scheduled class days.');
       return;
     }
     if (blocks.length > 0 && blocks.some((b) => !b.subject_id)) {
@@ -1046,6 +1581,138 @@ export default function PlanYearModal({
     }
 
     await runApplyToCalendar(replacePlaceholders);
+  };
+
+  /** Phase 3: Inline build + commit for link/paste (no modal). Upload still opens Build Curriculum modal. */
+  const handleCreateUnitAndSchedule = async () => {
+    if (planSource === 'upload') {
+      if (!selectedMaterialId) {
+        setError('Please select a material from your uploads, or add one with "Upload or add material".');
+        return;
+      }
+      const firstSubjectId = effectiveSubjectIds?.[0] ?? null;
+      const firstSubject = baseSubjectList?.find((s) => s.id === firstSubjectId);
+      onOpenBuildCurriculum?.({
+        initialInputMode: 'material',
+        initialMaterialId: selectedMaterialId,
+        initialSubjectId: firstSubjectId ?? undefined,
+        initialSubjectName: firstSubject?.name ?? undefined,
+        initialStartDate: startDate || undefined,
+        initialEndDate: endDate || undefined,
+      });
+      return;
+    }
+    if (planSource === 'link' && !sourceUrl.trim()) {
+      setError('Please enter a source URL.');
+      return;
+    }
+    if (planSource === 'paste' && !pastedText.trim()) {
+      setError('Please paste your list of dates and events.');
+      return;
+    }
+    const studentIds = planForChildIds.length > 0 ? planForChildIds : (children || []).map((c) => c.id);
+    if (!studentIds.length) {
+      setError('Add at least one child in Who & subjects.');
+      return;
+    }
+    const firstSubjectId = effectiveSubjectIds?.[0] ?? null;
+    const firstSubject = baseSubjectList?.find((s) => s.id === firstSubjectId);
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      let filteredPreview = null;
+      if ((planSource === 'link' || planSource === 'paste') && parsedContent?.unit && parsedContent?.lessons?.length) {
+        filteredPreview = { ...parsedContent, lessons: parsedContent.lessons };
+      }
+      if (!filteredPreview) {
+        const startDateObj = startDate ? new Date(startDate + 'T12:00:00') : new Date();
+        const startDateISO = startDateObj.toISOString().split('T')[0];
+        let weeks = 1;
+        if (startDate && endDate) {
+          const end = new Date(endDate + 'T12:00:00');
+          const start = new Date(startDate + 'T12:00:00');
+          weeks = Math.max(1, Math.ceil((end - start) / (7 * 24 * 60 * 60 * 1000)));
+        }
+        const buildPayload = {
+          mode: planSource === 'link' ? 'link' : 'topic',
+          topic: planSource === 'paste' ? pastedText.trim() : null,
+          source_url: planSource === 'link' ? sourceUrl.trim() : null,
+          student_ids: studentIds,
+          constraints: {
+            weeks,
+            minutes_per_day: 60,
+            weekdays_only: true,
+            difficulty: 'standard',
+            start_date: startDateISO,
+          },
+        };
+        const { data: preview, error: buildError } = await buildCurriculum(buildPayload);
+        if (buildError) {
+          throw new Error(buildError.message || buildError.detail || 'Failed to build curriculum');
+        }
+        if (!preview?.unit || !preview?.lessons?.length) {
+          throw new Error('No lessons were generated. Try adjusting your link or pasted text.');
+        }
+        filteredPreview = { ...preview, lessons: preview.lessons };
+      }
+      if (firstSubject?.name && filteredPreview?.unit) {
+        filteredPreview.unit = {
+          ...filteredPreview.unit,
+          subject_tags: [firstSubject.name],
+        };
+      }
+
+      const { data: commitData, error: commitError } = await commitCurriculum({
+        preview: filteredPreview,
+        create_calendar_events: true,
+        add_to_backlog: false,
+        lesson_backlog_map: {},
+        prefer_placeholder_slots: true,
+        placement: {
+          strategy: 'fit_openings',
+          prefer_mornings: false,
+          prefer_afternoons: false,
+          prefer_evenings: false,
+          prefer_weekdays: [],
+        },
+      });
+
+      if (commitError) {
+        throw new Error(commitError.message || commitError.detail || 'Failed to schedule lessons');
+      }
+      if (!commitData) {
+        throw new Error('Server did not return commit result.');
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      }
+
+      const slotsUsed = commitData?.slots_used ?? 0;
+      const eventsCreated = commitData?.events_created ?? 0;
+      const hasEvents = (commitData?.event_ids?.length ?? 0) > 0;
+      if (hasEvents && (slotsUsed > 0 || eventsCreated > 0)) {
+        if (slotsUsed > 0 && eventsCreated > 0) {
+          toast.push(t('buildCurriculum.notices.usedSlotsAndFallback', { used: slotsUsed, fallback: eventsCreated }), 'success');
+        } else if (slotsUsed > 0) {
+          toast.push(t('buildCurriculum.notices.usedSlots', { used: slotsUsed }), 'success');
+        } else {
+          toast.push(STRINGS.buildCurriculum?.notices?.noSlotsFound ?? 'Lessons scheduled.', 'success');
+        }
+      } else {
+        toast.push(STRINGS.buildCurriculum?.notices?.noSlotsFound ?? 'Lessons created.', 'success');
+      }
+
+      onComplete?.();
+    } catch (err) {
+      const message = err?.message || 'Failed to create unit and schedule';
+      setError(message);
+      toast.push(message, 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSave = async (isDraft = false) => {
@@ -1098,10 +1765,9 @@ export default function PlanYearModal({
         const year_name = buildPlanYearName({
           children,
           subjects: baseSubjectList,
-          planForChildId,
+          planForChildIds,
           blocks,
           selectedSubjectIds,
-          useAllSubjects,
           startDate,
           endDate: effectiveEnd,
         });
@@ -1187,11 +1853,11 @@ export default function PlanYearModal({
   };
 
   const addBlock = () => {
-    const subj = useAllSubjects ? subjectsForCurrentSelection?.[0] : (subjectsForCurrentSelection?.find((s) => selectedSubjectIds.includes(s.id)) || subjectsForCurrentSelection?.[0]);
+    const subj = subjectsForCurrentSelection?.find((s) => selectedSubjectIds.includes(s.id)) || subjectsForCurrentSelection?.[0];
     const block = {
       block_id: crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}`,
       subject_id: subj?.id || '',
-      child_ids: planForChildId ? [planForChildId] : [],
+      child_ids: planForChildIds.length > 0 ? [...planForChildIds] : [],
       weekdays: [],
       start_time: '09:00',
       end_time: '10:00',
@@ -1201,11 +1867,11 @@ export default function PlanYearModal({
   };
 
   const addBlocksFromSubjects = () => {
-    const ids = useAllSubjects ? (subjectsForCurrentSelection?.map((s) => s.id) || []) : (selectedSubjectIds?.length ? selectedSubjectIds : subjectsForCurrentSelection?.map((s) => s.id) || []);
+    const ids = selectedSubjectIds?.length ? selectedSubjectIds : (subjectsForCurrentSelection?.[0] ? [subjectsForCurrentSelection[0].id] : []);
     const newBlocks = ids.slice(0, 10).map((subjectId) => ({
       block_id: crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${subjectId}`,
       subject_id: subjectId,
-      child_ids: planForChildId ? [planForChildId] : [],
+      child_ids: planForChildIds.length > 0 ? [...planForChildIds] : [],
       weekdays: [],
       start_time: '09:00',
       end_time: '10:00',
@@ -1216,7 +1882,7 @@ export default function PlanYearModal({
 
   const cycleBlockSubject = (idx) => {
     const block = blocks[idx];
-    const ids = useAllSubjects ? (subjectsForCurrentSelection?.map((s) => s.id) || []) : (selectedSubjectIds?.length ? selectedSubjectIds : subjectsForCurrentSelection?.map((s) => s.id) || []);
+    const ids = selectedSubjectIds?.length ? selectedSubjectIds : (subjectsForCurrentSelection?.map((s) => s.id) || []);
     if (ids.length === 0) return;
     const i = ids.indexOf(block.subject_id);
     const next = ids[(i + 1) % ids.length];
@@ -1249,12 +1915,12 @@ export default function PlanYearModal({
       }
       if (isWeb) {
         window.alert(deletePlan && data?.plan_deleted
-          ? `Plan and ${data?.deleted ?? 0} placeholder${data?.deleted !== 1 ? 's' : ''} removed.`
-          : `Removed ${data?.deleted ?? 0} generated placeholder${data?.deleted !== 1 ? 's' : ''}. Customized lessons were kept.`);
+          ? `Plan and ${data?.deleted ?? 0} instructional slot${data?.deleted !== 1 ? 's' : ''} removed.`
+          : `Removed ${data?.deleted ?? 0} instructional slot${data?.deleted !== 1 ? 's' : ''}. ${STRINGS.planMyYear.toasts.skippedFilled}`);
       } else {
         Alert.alert('Done', deletePlan && data?.plan_deleted
-          ? `Plan and ${data?.deleted ?? 0} placeholder${data?.deleted !== 1 ? 's' : ''} removed.`
-          : `Removed ${data?.deleted ?? 0} generated placeholder${data?.deleted !== 1 ? 's' : ''}. Customized lessons were kept.`);
+          ? `Plan and ${data?.deleted ?? 0} instructional slot${data?.deleted !== 1 ? 's' : ''} removed.`
+          : `Removed ${data?.deleted ?? 0} instructional slot${data?.deleted !== 1 ? 's' : ''}. ${STRINGS.planMyYear.toasts.skippedFilled}`);
       }
     } catch (err) {
       setError(err?.message || err?.detail || 'Failed to remove plan');
@@ -1273,8 +1939,8 @@ export default function PlanYearModal({
     const confirmClear = await new Promise((resolve) => {
       Alert.alert(
         'Remove generated placeholders?',
-        'This removes only generated placeholder lessons. Customized lessons will remain.',
-        [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove placeholders', style: 'destructive', onPress: () => resolve(true) }]
+        'This removes only generated instructional slots. Scheduled lessons will remain.',
+        [{ text: STRINGS.global.actions.cancel, style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove placeholders', style: 'destructive', onPress: () => resolve(true) }]
       );
     });
     if (!confirmClear) return;
@@ -1299,7 +1965,7 @@ export default function PlanYearModal({
       setFastPathYearId(null);
       setAcademicYearId(null);
       setSelectedSubjectIds([]);
-      setPlanForChildId(null);
+      setPlanForChildIds([]);
       setBlocks([]);
       setDismissedConflictKeys(new Set());
       setSchedulePotential(null);
@@ -1335,74 +2001,670 @@ export default function PlanYearModal({
   const editPlanLoading = isHomeschool && (initialAcademicYearId || academicYearId) && loadedYearIdRef.current !== (initialAcademicYearId || academicYearId);
   const headerMetaRaw = editPlanLoading
     ? 'Loading…'
-    : [startDate && endDate ? `${formatDateDisplay(startDate)} – ${formatDateDisplay(endDate)}` : null, planForChildId ? (children || []).find((c) => String(c.id) === String(planForChildId))?.first_name || (children || []).find((c) => String(c.id) === String(planForChildId))?.name : null, effectiveSubjectIds?.length ? (baseSubjectList || []).filter((s) => effectiveSubjectIds.includes(s.id)).map((s) => s.name).slice(0, 3).join(', ') + (effectiveSubjectIds.length > 3 ? '…' : '') : null].filter(Boolean).join(' • ');
+    : [startDate && endDate ? `${formatDateDisplay(startDate)} – ${formatDateDisplay(endDate)}` : null, planForChildIds.length > 0 ? planForChildIds.map((id) => (children || []).find((c) => String(c.id) === String(id))?.first_name || (children || []).find((c) => String(c.id) === String(id))?.name).filter(Boolean).join(', ') : null, effectiveSubjectIds?.length ? (baseSubjectList || []).filter((s) => effectiveSubjectIds.includes(s.id)).map((s) => s.name).slice(0, 3).join(', ') + (effectiveSubjectIds.length > 3 ? '…' : '') : null].filter(Boolean).join(' • ');
   const headerMeta = (headerMetaRaw && headerMetaRaw.trim() && headerMetaRaw.trim() !== '.') ? headerMetaRaw : null;
+  const stepSourceComplete = true; // Choose method always has a selection (default: placeholders)
   const step0Complete = preconditionsMet;
   const step1Complete = effectiveSubjectIds.length > 0 && blocks.length >= effectiveSubjectIds.length;
   const step2Complete = !!startDate && (mode !== 'FIXED_END' || !!endDate);
   const step3Complete = false; // Breaks optional, always "future" until we're on it
-  const completed = [step0Complete, step1Complete, step2Complete, step3Complete];
+  const completed = [stepSourceComplete, step0Complete, step1Complete, step2Complete, step3Complete];
   const currentStepIndex = completed.findIndex((c) => !c);
-  const currentStep = currentStepIndex >= 0 ? currentStepIndex : 3;
-  const sectionStepLabels = ['Subjects', 'Schedule', 'Dates', 'Breaks'];
+  const currentStep = currentStepIndex >= 0 ? currentStepIndex : 4;
+  const sectionStepLabels = [
+    STRINGS.planMyYear?.sections?.useASource?.title ?? 'Choose method',
+    'Who & subjects',
+    STRINGS.planMyYear.sections.blocks.title,
+    STRINGS.planMyYear.sections.dates.title,
+    STRINGS.planMyYear.sections.breaks.title,
+  ];
 
   const pickerOnly = openForNewPlan && !academicYearId && !startCreatingNew;
 
   return (
     <Modal visible={visible} transparent animationType="fade">
       <TouchableOpacity
-        style={[styles.overlay, pickerOnly && styles.pickerOverlay]}
+        style={styles.overlay}
         activeOpacity={1}
         onPress={onClose}
       >
         <TouchableOpacity
-          style={[styles.modal, pickerOnly && styles.pickerModal, pickerOnly && (Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.05)' } : { shadowOpacity: 0.08, elevation: 4 })]}
+          style={[
+            styles.modal,
+            pickerOnly && styles.pickerModal,
+            pickerOnly && showPlanManagerView && styles.pickerModalPlanSummary,
+            pickerOnly && (Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.05)' } : { shadowOpacity: 0.08, elevation: 4 }),
+          ]}
           activeOpacity={1}
           onPress={() => {}}
         >
-          {!pickerOnly && (
+          {!pickerOnly ? (
           <View style={styles.modalHeader}>
-            <View style={styles.modalHeaderLeft}>
-              <View style={styles.modalHeaderTitleRow}>
-                <View style={styles.modalHeaderIconWrap}>
-                  <Calendar size={20} color={SUB} />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.modalHeaderTitle}>{openForNewPlan && !academicYearId ? 'Plan My Year' : 'Edit Plan'}</Text>
-                  {headerMeta != null && headerMeta !== '' ? <Text style={styles.modalHeaderMeta}>{headerMeta}</Text> : null}
-                </View>
-              </View>
+            <View style={styles.breadcrumbRow}>
+              {editingFromSummary ? (
+                <>
+                  <Text style={[styles.breadcrumbStep, planStep === 'logistics' && styles.breadcrumbStepCurrent]}>Edit</Text>
+                  <Text style={[styles.breadcrumbSeparator]}>{'  -->  '}</Text>
+                  <Text style={[styles.breadcrumbStep, planStep === 'preview' && styles.breadcrumbStepCurrent]}>Review</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.breadcrumbStep, planStep === 'source' && styles.breadcrumbStepCurrent]}>1. Method</Text>
+                  <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
+                  <Text style={[styles.breadcrumbStep, planStep === 'logistics' && styles.breadcrumbStepCurrent]}>2. Logistics</Text>
+                  <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
+                  <Text style={[styles.breadcrumbStep, planStep === 'preview' && styles.breadcrumbStepCurrent]}>3. Review</Text>
+                </>
+              )}
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButtonHeader} hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}>
               <X size={22} color={FG} />
             </TouchableOpacity>
           </View>
-          )}
-          {!pickerOnly && isHomeschool && (
-            <View style={styles.sectionProgress}>
-              {sectionStepLabels.map((label, i) => {
-                const isCompleted = completed[i];
-                const isCurrent = i === currentStep;
-                const isFuture = !isCompleted && !isCurrent;
-                const prefix = isCompleted ? '✓ ' : isCurrent ? '● ' : '';
-                const safeLabel = (label != null && String(label).trim() !== '.') ? String(label) : (sectionStepLabels[i] || '');
-                return (
-                  <Text
-                    key={safeLabel || i}
-                    style={[
-                      styles.sectionProgressStep,
-                      isCompleted && styles.sectionProgressStepCompleted,
-                      isCurrent && styles.sectionProgressStepCurrent,
-                      isFuture && styles.sectionProgressStepFuture,
-                    ]}
-                  >
-                    {`${prefix}${safeLabel}`}
-                  </Text>
-                );
-              })}
+          ) : null}
+          {planSummaryYearId ? (
+            <ScrollView style={styles.content} contentContainerStyle={styles.planSummaryContentContainer} showsVerticalScrollIndicator={false}>
+              <View style={styles.pickerBody}>
+                {planSummaryLoading ? (
+                  <>
+                    <View style={[styles.pickerHeader, styles.planSummaryHeaderRow, styles.planSummaryPadded]}>
+                      <Text style={styles.planSummaryModalTitle}>Plan summary</Text>
+                    </View>
+                    <View style={styles.planSummaryDividerFullWrap}>
+                      <View style={styles.planSummaryDividerFull} />
+                    </View>
+                    <View style={[styles.pickerLoading, styles.planSummaryPadded]}>
+                      <ActivityIndicator size="small" color={ACCENT} />
+                      <Text style={[styles.mutedText, { marginTop: 8 }]}>Loading plan…</Text>
+                    </View>
+                  </>
+                ) : planSummaryError ? (
+                  <>
+                    <View style={[styles.pickerHeader, styles.planSummaryHeaderRow, styles.planSummaryPadded]}>
+                      <Text style={styles.planSummaryModalTitle}>Plan summary</Text>
+                    </View>
+                    <View style={styles.planSummaryDividerFullWrap}>
+                      <View style={styles.planSummaryDividerFull} />
+                    </View>
+                    <View style={[styles.errorBox, styles.planSummaryPadded]}>
+                      <Text style={styles.errorText}>{planSummaryError}</Text>
+                      <TouchableOpacity onPress={() => { setPlanSummaryYearId(null); setPlanSummaryData(null); setPlanSummaryError(null); setAcademicYearId(null); setEditingFromSummary(false); }} style={{ marginTop: 12 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <Text style={{ fontSize: 14, color: ACCENT, fontWeight: '600' }}>Back to list</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : planSummaryData ? (() => {
+                  const data = planSummaryData;
+                  const planStart = data.plan?.start_date || data.start_date || '';
+                  const planEnd = data.plan?.end_date || data.end_date || '';
+                  const blocks = Array.isArray(data.plan?.blocks) ? data.plan.blocks : [];
+                  const childIds = Array.from(new Set(blocks.flatMap((b) => b.child_ids || []).filter(Boolean)));
+                  const subjectIds = Array.from(new Set(blocks.map((b) => b.subject_id).filter(Boolean)));
+                  const assigneeNames = childIds.length > 0
+                    ? childIds.map((id) => children.find((c) => String(c.id) === String(id))?.first_name || children.find((c) => String(c.id) === String(id))?.name || 'Child').filter(Boolean)
+                    : (blocks.length > 0 ? ['Whole family'] : []);
+                  const subjectNames = subjectIds.map((id) => baseSubjectList.find((s) => String(s.id) === String(id))?.name).filter(Boolean);
+                  const planSlotLabelsForTitle = Array.isArray(data.plan?.plan_slot_labels) ? data.plan.plan_slot_labels : [];
+                  const unitTopics = [...new Set(planSlotLabelsForTitle.map((l) => (l.unit || '').trim()).filter(Boolean))];
+                  const summaryTitleParts = [
+                    assigneeNames.length ? assigneeNames.join(', ') : 'Whole family',
+                    subjectNames.length ? subjectNames.join(', ') : 'No subject',
+                    unitTopics.length ? unitTopics.join(', ') : null,
+                    planStart && planEnd ? `${formatDateDisplay(planStart)} – ${formatDateDisplay(planEnd)}` : '',
+                  ].filter(Boolean);
+                  const summaryTitle = data.year_name || (summaryTitleParts.length > 0
+                    ? summaryTitleParts.join(' · ')
+                    : 'Academic year');
+                  const p = data.plan || {};
+                  const constraintMode = p.constraint_mode === 'hours' ? 'hours' : p.constraint_mode === 'days' ? 'days' : 'none';
+                  const targetDays = p.target_days != null ? p.target_days : null;
+                  const targetHours = p.target_hours != null ? p.target_hours : null;
+                  const holidaySettings = data.holiday_settings || {};
+                  const followPublic = holidaySettings.follow_global_holidays !== false;
+                  const holidayCountry = holidaySettings.holiday_country_code || 'US';
+                  const hasHolidays = !!data.holiday_settings;
+                  const targetLabel = constraintMode === 'days' && targetDays != null ? `${targetDays} days` : constraintMode === 'hours' && targetHours != null ? `${targetHours} hours` : null;
+                  const holidaysLabel = hasHolidays ? (followPublic ? `Public holidays: On (${holidayCountry})` : 'Public holidays: Off') : null;
+                  const fieldWrap = { marginRight: 12, marginBottom: 12 };
+                  const planSlotLabels = Array.isArray(data.plan?.plan_slot_labels) ? data.plan.plan_slot_labels : [];
+                  const planEventDates = Array.isArray(data.plan?.plan_event_dates) ? data.plan.plan_event_dates : (Array.isArray(data.plan?.plan_slot_dates) ? data.plan.plan_slot_dates : []);
+                  const eventExistsKey = (ymd, subjectId, startLocal) => {
+                    const s = startLocal == null ? '' : String(startLocal).trim().replace(/^(\d):/, '0$1:');
+                    return `${ymd}|${String(subjectId)}|${s}`;
+                  };
+                  const existingEventKeys = new Set(
+                    planEventDates.map((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local || ''))
+                  );
+                  const summarySlotLines = (() => {
+                    if (!planStart || !planEnd || blocks.length === 0) return [];
+                    const exclusionRanges = [];
+                    const lines = [];
+                    blocks.forEach((block) => {
+                      const subjectName = (baseSubjectList || []).find((s) => String(s.id) === String(block.subject_id))?.name || 'Subject';
+                      const timeLabel = block.all_day ? 'All day' : formatTimeRange(block.start_time, block.end_time);
+                      const startLocal = block.all_day ? null : (block.start_time || '09:00');
+                      const dates = getBlockOccurrenceDates(block, planStart, planEnd, exclusionRanges);
+                      dates.forEach((ymd) => {
+                        const key = eventExistsKey(ymd, block.subject_id, startLocal);
+                        if (existingEventKeys.size > 0 && !existingEventKeys.has(key)) return;
+                        const line = {
+                          date: ymd,
+                          dateLabel: formatDateDisplay(ymd),
+                          timeLabel,
+                          subjectName,
+                          subjectId: block.subject_id,
+                          startLocal,
+                          academicYearId: planSummaryYearId,
+                        };
+                        const label = planSlotLabels.find(
+                          (l) => l.date_ymd === ymd && String(l.subject_id) === String(block.subject_id) && (startLocal == null ? l.start_local == null : (l.start_local === startLocal || (l.start_local && startLocal && l.start_local.replace(/^0/, '') === startLocal.replace(/^0/, ''))))
+                        );
+                        if (label && (label.unit || '').trim()) line.unitTopic = (label.unit || '').trim();
+                        const matchingEvent = planEventDates.find((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local) === key);
+                        if (matchingEvent && matchingEvent.has_attachment) line.hasAttachment = true;
+                        lines.push(line);
+                      });
+                    });
+                    lines.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
+                    return lines;
+                  })();
+                  return (
+                    <>
+                      <View style={[styles.pickerHeader, styles.planSummaryHeaderRow, styles.planSummaryPadded]}>
+                        <Text style={styles.planSummaryModalTitle} numberOfLines={2}>{summaryTitle}</Text>
+                      </View>
+                      <View style={styles.planSummaryDividerFullWrap}>
+                        <View style={styles.planSummaryDividerFull} />
+                      </View>
+                      {summarySlotLines.length > 0 ? (
+                        <>
+                          <View style={[styles.planSummaryPadded, { marginTop: 4, marginBottom: 8 }]}>
+                            <Text style={styles.planSummaryDatesSectionLabel}>Dates with events</Text>
+                          </View>
+                          <View style={styles.planSummaryDatesList}>
+                            {summarySlotLines.map((line, idx) => {
+                              const dispatchOpenSlot = () => {
+                                if (typeof window !== 'undefined') {
+                                  const detail = {
+                                    dateYmd: line.date,
+                                    startLocal: line.startLocal,
+                                    subjectId: line.subjectId,
+                                    academicYearId: line.academicYearId,
+                                    subjectName: line.subjectName,
+                                  };
+                                  if (__DEV__) console.log('[PlanYearModal] Dispatching openEventForPlanSlot', detail);
+                                  window.dispatchEvent(new CustomEvent('openEventForPlanSlot', { detail }));
+                                }
+                              };
+                              return (
+                              <TouchableOpacity
+                                key={`${line.date}-${line.subjectName}-${idx}`}
+                                style={styles.planSummaryDateRow}
+                                onPress={dispatchOpenSlot}
+                                activeOpacity={0.7}
+                                hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }}
+                                {...(Platform.OS === 'web' && {
+                                  cursor: 'pointer',
+                                  onClick: (e) => { e.stopPropagation(); e.preventDefault(); dispatchOpenSlot(); },
+                                })}
+                              >
+                                <View style={styles.planSummaryDateRowInner}>
+                                  <Text style={styles.planSummaryDateRowText} numberOfLines={1}>
+                                    {line.dateLabel}{line.timeLabel ? ` · ${line.timeLabel}` : ''}{line.subjectName ? ` · ${line.subjectName}` : ''}{line.unitTopic ? ` · ${line.unitTopic}` : ''}
+                                  </Text>
+                                  {line.hasAttachment ? (
+                                    <View style={styles.planSummaryDateRowAttachment}>
+                                      <Paperclip size={14} color={MUTED} strokeWidth={2} />
+                                    </View>
+                                  ) : null}
+                                </View>
+                              </TouchableOpacity>
+                            );
+                            })}
+                          </View>
+                        </>
+                      ) : null}
+                      <View style={styles.planSummaryFooterStrip}>
+                        <TouchableOpacity onPress={() => { setPlanSummaryYearId(null); setPlanSummaryData(null); setPlanSummaryError(null); setAcademicYearId(null); setEditingFromSummary(false); }} style={styles.cancelButton} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Text style={[styles.cancelText, styles.pickerCancelText]}>Back to list</Text>
+                        </TouchableOpacity>
+                        <View style={styles.planSummaryFooterRight}>
+                          <TouchableOpacity
+                            onPress={() => setShowDeletePlanConfirm(true)}
+                            style={styles.cancelButton}
+                            disabled={deletingPlan}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.cancelText, styles.pickerCancelText]}>Delete Plan</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => { setAcademicYearId(planSummaryYearId); setPlanSummaryYearId(null); setPlanSummaryData(null); setPlanSummaryError(null); setShowPlanManagerView(false); setPlanStep('logistics'); setEditingFromSummary(true); }}
+                            style={styles.primaryButton}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.primaryButtonText}>Edit Plan</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </>
+                  );
+                })() : null}
+              </View>
+            </ScrollView>
+          ) : planStep === 'preview' ? (
+            <View style={{ flex: 1, minHeight: 0 }}>
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.contentContainer, { padding: 16 }]} showsVerticalScrollIndicator={true}>
+                <Text style={[styles.sectionTitle, { marginBottom: 4 }]}>Preview instructional slots</Text>
+                <Text style={[styles.mutedText, { marginBottom: 16 }]}>
+                  {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
+                </Text>
+                {previewSlotLines.map((line, idx) => (
+                  <View key={`${line.date}-${line.subjectName}-${idx}`} style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}>
+                    <Text style={[styles.label, { marginBottom: 2 }]}>{line.dateLabel} · {line.timeLabel}</Text>
+                    <Text style={[styles.mutedText, { fontSize: 14 }]}>{line.subjectName}{line.childNames ? ` · ${line.childNames}` : ''}</Text>
+                  </View>
+                ))}
+              </ScrollView>
             </View>
-          )}
-
+          ) : pickerOnly && !showPlanManagerView ? (
+            <View style={styles.entryChoiceBody}>
+              <View style={styles.entryChoiceHeaderRow}>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity onPress={onClose} style={styles.closeButtonHeader} hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}>
+                  <X size={22} color={FG} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.entryChoiceSubtitle}>Editing an existing plan or creating a new one?</Text>
+              <TouchableOpacity
+                onPress={() => setShowPlanManagerView(true)}
+                style={styles.entryChoiceButtonSecondary}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && {
+                  cursor: 'pointer',
+                  onMouseEnter: () => setEntryChoiceHoverKey('edit'),
+                  onMouseLeave: () => setEntryChoiceHoverKey(null),
+                })}
+              >
+                <View style={styles.entryChoiceButtonInner}>
+                  <Calendar size={20} color={SUB} style={styles.entryChoiceIcon} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.entryChoiceButtonText}>Edit Existing Plan</Text>
+                    <Text style={styles.entryChoiceButtonSubtext}>View and edit existing plans</Text>
+                  </View>
+                  {Platform.OS === 'web' && entryChoiceHoverKey === 'edit' && (
+                    <ArrowRight size={18} color={SUB} style={{ marginLeft: 8 }} />
+                  )}
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setStartCreatingNew(true)}
+                style={styles.entryChoiceButtonPrimary}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && {
+                  cursor: 'pointer',
+                  onMouseEnter: () => setEntryChoiceHoverKey('create'),
+                  onMouseLeave: () => setEntryChoiceHoverKey(null),
+                })}
+              >
+                <View style={styles.entryChoiceButtonInner}>
+                  <Sparkles size={20} color="#FFFFFF" style={styles.entryChoiceIcon} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.entryChoiceButtonTextPrimary}>Create New Plan</Text>
+                    <Text style={styles.entryChoiceButtonSubtextPrimary}>Start with method, then logistics and review</Text>
+                  </View>
+                  {Platform.OS === 'web' && entryChoiceHoverKey === 'create' && (
+                    <ArrowRight size={18} color="rgba(255,255,255,0.9)" style={{ marginLeft: 8 }} />
+                  )}
+                </View>
+              </TouchableOpacity>
+            </View>
+          ) : pickerOnly && showPlanManagerView ? (
+            <ScrollView style={styles.content} contentContainerStyle={styles.planListContentContainer} showsVerticalScrollIndicator={false}>
+              <View style={styles.planListHeader}>
+                <View style={styles.planListHeaderTextBlock}>
+                  <Text style={styles.planListHeaderTitle}>YOUR PLANS</Text>
+                  <Text style={styles.planListHeaderSubtitle}>Select to see details and/or make changes</Text>
+                </View>
+              </View>
+              {loadError && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{loadError}</Text>
+                </View>
+              )}
+              {error && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              )}
+              <View style={styles.pickerBody}>
+                {previousPlansLoading ? (
+                  <View style={styles.pickerLoading}>
+                    <ActivityIndicator size="small" color={ACCENT} />
+                    <Text style={[styles.mutedText, { marginTop: 8 }]}>Loading previous plans…</Text>
+                  </View>
+                ) : previousPlans.length > 0 ? (
+                  <>
+                    <ScrollView
+                      style={{ maxHeight: 320 }}
+                      contentContainerStyle={{ paddingRight: 4, paddingBottom: 8 }}
+                      showsVerticalScrollIndicator={true}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      <View style={{ gap: 20 }}>
+                      {previousPlans.map((ay) => {
+                        const lines = parsePlanCardLines(ay);
+                        const isSelected = planSummaryYearId === ay.id;
+                        return (
+                          <TouchableOpacity
+                            key={ay.id}
+                            onPress={() => setPlanSummaryYearId(ay.id)}
+                            style={[styles.planListItem, isSelected && styles.planListItemSelected]}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <View style={styles.planCardTitleRow}>
+                              {lines.line2 ? <Text style={styles.planCardTitle} numberOfLines={1}>{lines.line2}</Text> : null}
+                              {lines.line3 ? <Text style={styles.planCardDateInline} numberOfLines={1}>{lines.line3}</Text> : null}
+                            </View>
+                            {lines.line1 ? (
+                              <View style={styles.planCardChildRow}>
+                                <View style={styles.planCardChildDot} />
+                                <Text style={styles.planCardOwner} numberOfLines={1}>{lines.line1}</Text>
+                              </View>
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                      </View>
+                    </ScrollView>
+                  </>
+                ) : (
+                  <Text style={[styles.mutedText, { fontSize: 17, marginTop: 28, marginBottom: 16 }]}>Nothing to see here (yet). Create a new plan to get started.</Text>
+                )}
+              </View>
+            </ScrollView>
+          ) : planStep === 'source' ? (
+            <ScrollView style={styles.content} contentContainerStyle={[styles.contentContainer, styles.sourceStepContent]} showsVerticalScrollIndicator={false}>
+              <View>
+                <View style={{ gap: OPTION_GAP }}>
+                  {(['placeholders', 'upload', 'paste']).map((key) => {
+                    const opt = STRINGS.planMyYear?.sections?.useASource?.options?.[key];
+                    const label = opt?.label ?? (key === 'placeholders' ? 'Add just a cadence for now' : key === 'upload' ? 'Upload material' : 'Paste list');
+                    const description = opt?.description ?? '';
+                    const isSelected = planSource === key;
+                    const isHover = Platform.OS === 'web' && hoverSourceKey === key && !isSelected;
+                    const IconComponent = key === 'placeholders' ? LayoutGrid : key === 'upload' ? Upload : List;
+                    return (
+                      <TouchableOpacity
+                        key={key}
+                        onPress={() => setPlanSource(key)}
+                        activeOpacity={0.9}
+                        style={[
+                          styles.sourceOptionTile,
+                          isSelected && styles.sourceOptionTileSelected,
+                          isHover && styles.sourceOptionTileHover,
+                        ]}
+                        onMouseEnter={Platform.OS === 'web' ? () => setHoverSourceKey(key) : undefined}
+                        onMouseLeave={Platform.OS === 'web' ? () => setHoverSourceKey(null) : undefined}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <View style={[styles.sourceOptionRadioOuter, isSelected && styles.sourceOptionRadioSelected]}>
+                          {isSelected ? <View style={styles.sourceOptionRadioInner} /> : null}
+                        </View>
+                        <View style={styles.sourceOptionIconWrap}>
+                          <IconComponent size={18} color={MUTED} />
+                        </View>
+                        <View style={styles.sourceOptionBody}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                            <Text style={styles.sourceOptionTitle}>{label}</Text>
+                            {key === 'placeholders' && (
+                              <View style={styles.sourceOptionBadge}>
+                                <Text style={styles.sourceOptionBadgeText}>Default</Text>
+                              </View>
+                            )}
+                          </View>
+                          {description ? (
+                            <Text style={styles.sourceOptionDescription}>{description}</Text>
+                          ) : null}
+                        </View>
+                        {isSelected && (
+                          <View style={styles.sourceOptionCheckWrap}>
+                            <Check size={18} color={BRAND_500} strokeWidth={2.5} />
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {planSource === 'paste' && (
+                  <View style={[styles.inputGroup, { marginTop: 16 }]}>
+                    <Text style={styles.label}>Plain text input</Text>
+                    <TextInput
+                      style={[styles.input, { marginTop: LABEL_INPUT_GAP, minHeight: 120, textAlignVertical: 'top' }]}
+                      placeholder="Paste a list of dates and events; we'll create structured events here."
+                      placeholderTextColor={MUTED}
+                      value={pastedText}
+                      onChangeText={setPastedText}
+                      multiline
+                      numberOfLines={5}
+                      {...(Platform.OS === 'web' && { cursor: 'text' })}
+                    />
+                  </View>
+                )}
+                {planSource === 'upload' && (
+                  <View style={{ marginTop: 16 }}>
+                    <Text style={[styles.label, { marginBottom: 8 }]}>Select material <Text style={{ color: ERROR }}>*</Text></Text>
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 12, width: '100%' }}>
+                      <TouchableOpacity
+                        ref={materialButtonRef}
+                        {...(Platform.OS === 'web' ? { 'data-material-selector': 'true' } : {})}
+                        style={{
+                          flex: 1,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          borderWidth: 1,
+                          borderColor: BORDER,
+                          borderRadius: 8,
+                          backgroundColor: BG,
+                          minHeight: 40,
+                        }}
+                        onPress={() => {
+                          const willShow = !showMaterialDropdown;
+                          if (willShow && Platform.OS === 'web') {
+                            const calculatePosition = () => {
+                              let node = materialButtonRef.current?._nativeNode || materialButtonRef.current;
+                              if (!node?.getBoundingClientRect) {
+                                const sel = typeof document !== 'undefined' && document.querySelector?.('[data-material-selector="true"]');
+                                if (sel) node = sel;
+                              }
+                              if (node?.getBoundingClientRect) {
+                                const rect = node.getBoundingClientRect();
+                                const maxH = 300;
+                                const spaceBelow = (typeof window !== 'undefined' ? window.innerHeight : 0) - rect.bottom;
+                                const spaceAbove = rect.top;
+                                if (spaceBelow < 200 && spaceAbove > spaceBelow) {
+                                  setMaterialDropdownPosition({ top: rect.top - Math.min(maxH, spaceAbove - 10), left: rect.left, width: Math.max(rect.width, 200), maxHeight: Math.min(maxH, spaceAbove - 10) });
+                                } else {
+                                  setMaterialDropdownPosition({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 200), maxHeight: Math.min(maxH, spaceBelow - 10) });
+                                }
+                                return true;
+                              }
+                              return false;
+                            };
+                            if (!calculatePosition()) setTimeout(calculatePosition, 10);
+                          }
+                          setShowMaterialDropdown(willShow);
+                        }}
+                        disabled={loadingMaterials}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        {loadingMaterials ? (
+                          <Text style={[styles.mutedText, { fontSize: 14 }]}>Loading…</Text>
+                        ) : (
+                          <Text style={[styles.radioLabel, !selectedMaterialId && { color: MUTED }]} numberOfLines={1}>
+                            {selectedMaterialId
+                              ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select material...')
+                              : 'Select material...'}
+                          </Text>
+                        )}
+                        <ChevronDown size={16} color={MUTED} />
+                      </TouchableOpacity>
+                      {selectedMaterialId && (
+                        <TouchableOpacity
+                          onPress={() => { setSelectedMaterialId(null); setError(null); }}
+                          style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: BORDER }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={[styles.mutedText, { fontSize: 13 }]}>Clear</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    {showMaterialDropdown && Platform.OS === 'web' && materialDropdownPosition.top > 0 && (() => {
+                      let ReactDOM;
+                      try { ReactDOM = require('react-dom'); } catch (_) {}
+                      const dropdownContent = (
+                        <View
+                          style={{
+                            position: 'fixed',
+                            top: materialDropdownPosition.top,
+                            left: materialDropdownPosition.left,
+                            width: materialDropdownPosition.width || 200,
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: 'rgba(15,23,42,0.08)',
+                            padding: 4,
+                            maxHeight: materialDropdownPosition.maxHeight || 300,
+                            zIndex: 99999,
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                          }}
+                        >
+                          <ScrollView
+                            style={{ maxHeight: (materialDropdownPosition.maxHeight || 300) - 8 }}
+                            nestedScrollEnabled
+                            showsVerticalScrollIndicator={true}
+                          >
+                            {materials.length === 0 ? (
+                              <Text style={[styles.mutedText, { padding: 12, fontSize: 13 }]}>No materials yet. Add one below.</Text>
+                            ) : (
+                              materials.map((material) => (
+                                <TouchableOpacity
+                                  key={material.id}
+                                  style={{
+                                    paddingVertical: 8,
+                                    paddingHorizontal: 10,
+                                    borderRadius: 4,
+                                    backgroundColor: selectedMaterialId === material.id ? ACCENT_LIGHT : 'transparent',
+                                  }}
+                                  onPress={() => {
+                                    setSelectedMaterialId(material.id);
+                                    setError(null);
+                                    setShowMaterialDropdown(false);
+                                  }}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text style={[styles.radioLabel, selectedMaterialId === material.id && { color: ACCENT, fontWeight: '600' }]}>
+                                    {material.title || material.provider_name || 'Untitled Material'}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))
+                            )}
+                          </ScrollView>
+                        </View>
+                      );
+                      if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                        return ReactDOM.createPortal(dropdownContent, document.body);
+                      }
+                      return dropdownContent;
+                    })()}
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                          const firstSubjectId = effectiveSubjectIds?.[0] ?? null;
+                          const firstSubject = baseSubjectList?.find((s) => s.id === firstSubjectId);
+                          window.dispatchEvent(new CustomEvent('openAddMaterialModal', {
+                            detail: {
+                              subjectId: firstSubjectId ?? undefined,
+                              subjectName: firstSubject?.name ?? undefined,
+                              childIds: planForChildIds.length > 0 ? planForChildIds : (children || []).map((c) => c.id),
+                            },
+                          }));
+                        }
+                      }}
+                      style={[styles.editButton, { alignSelf: 'flex-start', marginTop: 4 }]}
+                      activeOpacity={0.8}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.editButtonText}>Upload or add material</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {/* Parsed content block for upload/link/paste: generate preview before Next */}
+                {(planSource === 'upload' || planSource === 'link' || planSource === 'paste') && (
+                  <View style={{ marginTop: 24 }}>
+                    <Text style={[styles.label, { marginBottom: 8 }]}>Parsed content</Text>
+                    {parsingContent ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 8 }}>
+                        <ActivityIndicator size="small" color={ACCENT} />
+                        <Text style={[styles.mutedText, { fontSize: 14 }]}>Parsing content…</Text>
+                      </View>
+                    ) : parseContentError ? (
+                      <View>
+                        <Text style={[styles.mutedText, { color: ERROR, marginBottom: 8 }]}>{parseContentError}</Text>
+                        <TouchableOpacity
+                          onPress={handleParseContent}
+                          style={[styles.editButton, { alignSelf: 'flex-start' }]}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.editButtonText}>Try again</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : parsedContent ? (
+                      <View style={{ paddingVertical: 12, paddingHorizontal: 0 }}>
+                        <Text style={[styles.radioLabel, { marginBottom: 4 }]}>
+                          {parsedContent.unit?.title || 'Unit'} · {parsedContent.lessons?.length ?? 0} lesson{(parsedContent.lessons?.length ?? 0) !== 1 ? 's' : ''}
+                        </Text>
+                        {parsedContent.lessons?.length > 0 && (
+                          <View style={{ marginTop: 8, maxHeight: 160 }}>
+                            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                              {parsedContent.lessons.slice(0, 20).map((lesson, idx) => (
+                                <Text key={idx} style={[styles.mutedText, { fontSize: 13, marginBottom: 4 }]} numberOfLines={1}>
+                                  {idx + 1}. {lesson.title || 'Untitled lesson'}
+                                </Text>
+                              ))}
+                              {(parsedContent.lessons?.length ?? 0) > 20 && (
+                                <Text style={[styles.mutedText, { fontSize: 13 }]}>… and {(parsedContent.lessons?.length ?? 0) - 20} more</Text>
+                              )}
+                            </ScrollView>
+                          </View>
+                        )}
+                        <TouchableOpacity
+                          onPress={() => { setParsedContent(null); setParseContentError(null); }}
+                          style={[styles.editButton, { alignSelf: 'flex-start', marginTop: 8 }]}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.editButtonText}>Parse again</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={handleParseContent}
+                        style={[styles.primaryButton, { alignSelf: 'flex-start' }]}
+                        disabled={(planSource === 'upload' && !selectedMaterialId) || (planSource === 'link' && !sourceUrl.trim()) || (planSource === 'paste' && !pastedText.trim())}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.primaryButtonText}>Parse content</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+          ) : (
+            <>
           <ScrollView ref={scrollRef} style={styles.content} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
             {loadError && (
               <View style={styles.errorBox}>
@@ -1415,87 +2677,8 @@ export default function PlanYearModal({
               </View>
             )}
 
-            {/* Picker-only initial view: EDIT PLAN header + plan cards + OR + Create new plan */}
-            {pickerOnly && (
-              <View style={styles.pickerBody}>
-                {previousPlansLoading ? (
-                  <View style={styles.pickerLoading}>
-                    <ActivityIndicator size="small" color={ACCENT} />
-                    <Text style={[styles.mutedText, { marginTop: 8 }]}>Loading previous plans…</Text>
-                  </View>
-                ) : previousPlans.length > 0 ? (
-                  <>
-                    <View style={styles.pickerHeader}>
-                      <View style={{ marginRight: 8 }}>
-                        <Calendar size={18} color={SUB} />
-                      </View>
-                      <Text style={styles.pickerTitle}>Edit plan</Text>
-                    </View>
-                    <View style={styles.pickerDivider} />
-                    <View style={{ gap: 20 }}>
-                      {previousPlans.map((ay) => {
-                        const lines = parsePlanCardLines(ay);
-                        return (
-                          <TouchableOpacity
-                            key={ay.id}
-                            onPress={() => setAcademicYearId(ay.id)}
-                            style={styles.planCard}
-                            activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && {
-                              cursor: 'pointer',
-                              onMouseEnter: (e) => {
-                                const node = e.currentTarget;
-                                if (node) {
-                                  node.style.borderColor = '#81C1E1';
-                                  node.style.backgroundColor = '#F4FAFF';
-                                }
-                              },
-                              onMouseLeave: (e) => {
-                                const node = e.currentTarget;
-                                if (node) {
-                                  node.style.borderColor = '#E3EEF8';
-                                  node.style.backgroundColor = '#F8FBFF';
-                                }
-                              },
-                            })}
-                          >
-                            <Text style={styles.planCardLine1}>{lines.line1}</Text>
-                            {lines.line2 ? <Text style={styles.planCardLine2}>{lines.line2}</Text> : null}
-                            {lines.line3 ? <Text style={styles.planCardLine3}>{lines.line3}</Text> : null}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    <View style={styles.pickerHeader}>
-                      <View style={{ marginRight: 8 }}>
-                        <Calendar size={18} color={SUB} />
-                      </View>
-                      <Text style={styles.pickerTitle}>Edit plan</Text>
-                    </View>
-                    <View style={styles.pickerDivider} />
-                    <Text style={[styles.mutedText, { marginBottom: 16 }]}>No previous plans. Create your first year plan.</Text>
-                    <TouchableOpacity
-                      onPress={() => setStartCreatingNew(true)}
-                      style={styles.pickerCreateButton}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text style={styles.pickerCreateButtonText}>Create new plan</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-            )}
-
-            {!pickerOnly && (
-            isHomeschool && (initialAcademicYearId || academicYearId) && (loadedYearIdRef.current !== (initialAcademicYearId || academicYearId) || yearLoadInProgress) ? (
-              <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator size="large" color={ACCENT} />
-                <Text style={styles.loadingText}>Loading plan…</Text>
-              </View>
-            ) : !isHomeschool ? (
+            {/* Logistics step: always show form (no full-page blocking; plan summary shows loading inside card) */}
+            {!isHomeschool ? (
               // Fast Path: Non-Homeschool
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Here's your year</Text>
@@ -1528,7 +2711,12 @@ export default function PlanYearModal({
                   <View style={styles.card}>
                     <Text style={styles.sectionTitle}>Current Plan summary</Text>
                     <View style={{ borderTopWidth: 1, borderTopColor: CARD_BORDER, paddingTop: 12, marginTop: 6 }}>
-                      {planConstraintMode === 'days' && (
+                      {(yearLoadInProgress || loadedYearIdRef.current !== (initialAcademicYearId || academicYearId)) ? (
+                        <View style={{ paddingVertical: 24, alignItems: 'center', justifyContent: 'center' }}>
+                          <ActivityIndicator size="small" color={ACCENT} />
+                          <Text style={[styles.loadingText, { marginTop: 8 }]}>Loading plan…</Text>
+                        </View>
+                      ) : planConstraintMode === 'days' ? (
                         <>
                           <View style={styles.summaryRow}>
                             <Text style={styles.summaryLabel}>Target:</Text>
@@ -1645,8 +2833,7 @@ export default function PlanYearModal({
                             );
                           })()}
                         </>
-                      )}
-                      {planConstraintMode === 'hours' && planHealth?.target_hours != null && (
+                      ) : planConstraintMode === 'hours' && planHealth?.target_hours != null ? (
                         <>
                           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Target:</Text><Text style={styles.summaryValue}>{planHealth.target_hours} hours</Text></View>
                           <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Planned:</Text><Text style={styles.summaryValue}>{planHealth.planned_hours ?? 0} hours</Text></View>
@@ -1662,167 +2849,389 @@ export default function PlanYearModal({
                             </Text>
                           )}
                         </>
-                      )}
-                      {planConstraintMode === 'none' && (
+                      ) : planConstraintMode === 'none' ? (
                         <>
                           {headerMeta ? <Text style={[styles.summaryValue, { marginBottom: 4 }]}>{headerMeta}</Text> : null}
                           <Text style={[styles.mutedText, { fontSize: 13, marginTop: 4 }]}>No day/hour requirement set.</Text>
                         </>
-                      )}
+                      ) : null}
                     </View>
                   </View>
                 )}
 
-                <View style={styles.card}>
-                <TouchableOpacity
-                  style={styles.collapsibleHeader}
-                  onPress={() => setSectionWhoExpanded(!sectionWhoExpanded)}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.sectionTitle}>1. WHO & SUBJECTS</Text>
-                  {sectionWhoExpanded ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-                </TouchableOpacity>
-                {sectionWhoExpanded && (
-                <>
-                {!academicYearId && (
-                  <Text style={[styles.mutedText, { marginBottom: 20 }]}>
-                    You can create multiple plans and edit or delete previous plans at any time. Make edits to subjects or children in the Family tab. Whole family plans only include subjects that are attached to all children.
-                  </Text>
-                )}
-                <View style={Platform.OS === 'web' ? styles.twoColumnRow : undefined}>
-                  <View style={Platform.OS === 'web' ? styles.twoColumnHalf : undefined}>
-                <View style={[styles.inputGroup, { marginBottom: 12 }]}>
-                  <Text style={[styles.label, { fontSize: 15 }]}>Who are we planning for?</Text>
-                  <View style={styles.radioRow}>
-                    <TouchableOpacity
-                      style={[styles.radioOption, planForChildId === null && styles.radioOptionActive]}
-                      onPress={() => setPlanForChildId(null)}
-                    >
-                      <Text style={[styles.radioLabel, planForChildId === null && styles.radioLabelActive]}>Whole family plan</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.radioOption, planForChildId !== null && styles.radioOptionActive]}
-                      onPress={() => setPlanForChildId(children?.[0]?.id ?? null)}
-                    >
-                      <Text style={[styles.radioLabel, planForChildId !== null && styles.radioLabelActive]}>Specific child</Text>
-                    </TouchableOpacity>
+                <View style={{ marginBottom: 10 }}>
+                <View style={[styles.inputGroup, { marginBottom: 4 }]}>
+                  <Text style={[styles.logisticsLabel]}>Assignee(s) <Text style={{ color: ERROR }}>*</Text></Text>
+                  {children?.length > 0 && (
+                    <Text style={[styles.logisticsLabel, { color: MUTED, marginTop: 2, marginBottom: 4 }]}>Choose one or multiple. Subject choices will update based on selection.</Text>
+                  )}
+                  <View style={styles.childChips}>
+                    {children?.map((c) => {
+                      const isSelected = planForChildIds.length === 0 || planForChildIds.includes(c.id);
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          style={[styles.childChip, isSelected && styles.childChipActive]}
+                          onPress={() => {
+                            if (planForChildIds.includes(c.id)) {
+                              const next = planForChildIds.filter((id) => id !== c.id);
+                              setPlanForChildIds(next);
+                            } else {
+                              setPlanForChildIds(planForChildIds.length === 0 ? [c.id] : [...planForChildIds, c.id]);
+                            }
+                          }}
+                        >
+                          <Text style={[styles.childChipText, isSelected && styles.childChipTextActive]}>
+                            {c.first_name || c.name || 'Child'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
-                  {planForChildId === null && children?.length > 0 && (
-                    <Text style={[styles.mutedText, { marginTop: 8 }]}>
-                      This plan is for {children.length === 1
-                        ? (children[0].first_name || children[0].name || 'your child') + '.'
-                        : children.map((c) => c.first_name || c.name || 'Child').slice(0, -1).join(', ') + (children.length === 2 ? ' and ' : ', and ') + (children[children.length - 1].first_name || children[children.length - 1].name || 'Child') + '.'}
-                </Text>
-                  )}
-                  {planForChildId !== null && children?.length > 1 && (
-                    <View style={styles.childSelectRow}>
-                      <Text style={styles.label}>Children</Text>
-                      <View style={styles.childChips}>
-                        {children.map((c) => (
-                          <TouchableOpacity
-                            key={c.id}
-                            style={[styles.childChip, planForChildId === c.id && styles.childChipActive]}
-                            onPress={() => setPlanForChildId(c.id)}
-                          >
-                            <Text style={[styles.childChipText, planForChildId === c.id && styles.childChipTextActive]}>
-                              {c.first_name || c.name || 'Child'}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  )}
                 </View>
-                  </View>
-
-                  <View style={Platform.OS === 'web' ? styles.twoColumnHalf : undefined}>
-                <View style={[styles.inputGroup, { marginBottom: 0 }]}>
-                  <Text style={[styles.label, { fontSize: 15 }]}>Which subjects should receive placeholders?</Text>
-                  <View style={styles.radioRow}>
-                    <TouchableOpacity
-                      style={[styles.radioOption, useAllSubjects && styles.radioOptionActive]}
-                      onPress={() => setUseAllSubjects(true)}
-                    >
-                      <Text style={[styles.radioLabel, useAllSubjects && styles.radioLabelActive]}>All subjects</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.radioOption, !useAllSubjects && styles.radioOptionActive]}
-                      onPress={() => {
-                        setUseAllSubjects(false);
-                        if (selectedSubjectIds.length === 0 && subjectsForCurrentSelection?.length > 0) {
-                          setSelectedSubjectIds(subjectsForCurrentSelection.map((s) => s.id));
-                        }
-                      }}
-                    >
-                      <Text style={[styles.radioLabel, !useAllSubjects && styles.radioLabelActive]}>Specific subjects</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {!useAllSubjects && subjectsForCurrentSelection?.length > 0 && (
-                    <View style={styles.subjectSelectRow}>
-                      <Text style={styles.label}>Subjects</Text>
-                      <View style={styles.subjectChips}>
+                <View style={[styles.inputGroup, { marginTop: 12, marginBottom: 0 }]}>
+                  <Text style={[styles.logisticsLabel]}>Subjects <Text style={{ color: ERROR }}>*</Text></Text>
+                  {!children?.length && (
+                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>Select assignee(s) first</Text>
+                  )}
+                  {children?.length > 0 && subjectsForCurrentSelection?.length === 0 && (
+                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>No subjects for these assignees</Text>
+                  )}
+                  {children?.length > 0 && subjectsForCurrentSelection?.length > 0 && (
+                    <>
+                      <Text style={[styles.logisticsLabel, { color: MUTED, marginTop: 2, marginBottom: 4 }]}>Only one subject per plan.</Text>
+                      <View style={[styles.childChips, styles.subjectsChipsRow]}>
                         {subjectsForCurrentSelection.map((s) => {
                           const isSelected = selectedSubjectIds.includes(s.id);
                           return (
                             <TouchableOpacity
                               key={s.id}
-                              style={[styles.subjectChip, isSelected && styles.subjectChipActive]}
+                              style={[styles.childChip, isSelected && styles.childChipActive]}
                               onPress={() => {
-                                setSelectedSubjectIds(prev =>
-                                  isSelected ? prev.filter(id => id !== s.id) : [...prev, s.id]
-                                );
+                                setSelectedSubjectIds(isSelected ? [] : [s.id]);
                               }}
                             >
-                              <Text style={[styles.subjectChipText, isSelected && styles.subjectChipTextActive]}>
+                              <Text style={[styles.childChipText, isSelected && styles.childChipTextActive]}>
                                 {s.name}
                               </Text>
                             </TouchableOpacity>
                           );
                         })}
                       </View>
+                    </>
+                  )}
+                </View>
+                </View>
+
+                <View style={[styles.inputGroup, { marginBottom: 4 }]}>
+                  <Text style={[styles.logisticsLabel]}>Date range <Text style={{ color: ERROR }}>*</Text></Text>
+                  <View style={styles.dateRangeCard} onLayout={(e) => { datesSectionYRef.current = e.nativeEvent.layout.y; }}>
+                  <View style={styles.dateRangeRow}>
+                    <View style={styles.dateRangeSide}>
+                      <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() - 1); setStartDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
+                        <ChevronLeft size={20} color={startDate ? FG : MUTED} />
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.dateRangeDateWrap} onPress={() => { setStartDateCalendarMonth(startDate ? dateStringToDate(startDate) : new Date()); setShowStartDatePicker(true); }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <Text style={styles.dateRangeDate}>{startDate ? formatDateDisplay(startDate) : 'Select date'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() + 1); setStartDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
+                        <ChevronRight size={20} color={startDate ? FG : MUTED} />
+                      </TouchableOpacity>
                     </View>
-                  )}
-                  {useAllSubjects && subjectsCount > 0 && (
-                    <Text style={[styles.mutedText, { marginTop: 8 }]}>
-                      {subjectsForCurrentSelection.map((s) => s.name || 'Subject').join(', ')} will receive placeholders.
-                    </Text>
-                  )}
-                  {subjectsForCurrentSelection.length === 0 && (
-                    <Text style={[styles.mutedText, { marginTop: 8 }]}>
-                      {planForChildId ? 'No subjects assigned to this child. Add subjects in Profile or switch to Whole family plan.' : 'Add subjects above to select them.'}
-                    </Text>
-                  )}
-                </View>
+                    <Text style={styles.dateRangeArrowLabel}>→</Text>
+                    {mode === 'FIXED_END' ? (
+                      <View style={styles.dateRangeSide}>
+                        <TouchableOpacity onPress={() => { if (!endDate) return; const d = new Date(endDate + 'T12:00:00'); d.setDate(d.getDate() - 1); setEndDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!endDate} {...(Platform.OS === 'web' && { cursor: endDate ? 'pointer' : 'default' })}>
+                          <ChevronLeft size={20} color={endDate ? FG : MUTED} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.dateRangeDateWrap} onPress={() => { setEndDateCalendarMonth(endDate ? dateStringToDate(endDate) : new Date()); setShowEndDatePicker(true); }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Text style={styles.dateRangeDate}>{endDate ? formatDateDisplay(endDate) : 'Select date'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (!endDate) return; const d = new Date(endDate + 'T12:00:00'); d.setDate(d.getDate() + 1); setEndDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!endDate} {...(Platform.OS === 'web' && { cursor: endDate ? 'pointer' : 'default' })}>
+                          <ChevronRight size={20} color={endDate ? FG : MUTED} />
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
                   </View>
                 </View>
-                {!preconditionsMet && (
-                  <View style={styles.preconditionWarning}>
-                    <Text style={styles.preconditionWarningText}>
-                      Add at least 1 child and 1 subject to generate a year plan.
-                    </Text>
+
+                {/* Target Days (TARGET_DAYS mode) */}
+                {mode === 'TARGET_DAYS' && (
+                  <View style={styles.inputGroup}>
+                    <Text style={[styles.logisticsLabel]}>Target Instructional Days</Text>
+                    <TextInput
+                      style={[styles.input, focusedInput === 'targetDays' && styles.inputFocused]}
+                      value={targetDays}
+                      onChangeText={setTargetDays}
+                      placeholder="180"
+                      keyboardType="numeric"
+                      placeholderTextColor={MUTED}
+                      onFocus={() => setFocusedInput('targetDays')}
+                      onBlur={() => setFocusedInput(null)}
+                    />
                   </View>
                 )}
-                </>
+
+                {/* Target Hours (TARGET_HOURS mode) */}
+                {mode === 'TARGET_HOURS' && (
+                  <>
+                    <View style={styles.inputGroup}>
+                      <Text style={[styles.logisticsLabel]}>Target Instructional Hours</Text>
+                      <TextInput
+                        style={[styles.input, focusedInput === 'targetHours' && styles.inputFocused]}
+                        value={targetHours}
+                        onChangeText={setTargetHours}
+                        placeholder="1080"
+                        keyboardType="numeric"
+                        placeholderTextColor={MUTED}
+                        onFocus={() => setFocusedInput('targetHours')}
+                        onBlur={() => setFocusedInput(null)}
+                      />
+                    </View>
+                    <View style={styles.inputGroup}>
+                      <Text style={[styles.logisticsLabel]}>Hours per Instructional Day</Text>
+                      <TextInput
+                        style={[styles.input, focusedInput === 'hoursPerDay' && styles.inputFocused]}
+                        value={hoursPerDay}
+                        onChangeText={setHoursPerDay}
+                        placeholder="6.0"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor={MUTED}
+                        onFocus={() => setFocusedInput('hoursPerDay')}
+                        onBlur={() => setFocusedInput(null)}
+                      />
+                    </View>
+                  </>
                 )}
+
+                {/* Compliance: collapsible, default collapsed */}
+                <View style={styles.fieldSection}>
+                  <TouchableOpacity
+                    style={styles.collapsibleSectionHeader}
+                    onPress={() => setComplianceCollapsed(!complianceCollapsed)}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.fieldSectionLabel, { marginBottom: 0 }]}>Compliance</Text>
+                    {complianceCollapsed ? <ChevronDown size={20} color={MUTED} /> : <ChevronUp size={20} color={MUTED} />}
+                  </TouchableOpacity>
+                  {!complianceCollapsed && (
+                  <View style={[styles.inputGroup, { marginBottom: 0, marginTop: 10 }]}>
+                    <View style={styles.radioRow}>
+                      <TouchableOpacity
+                        style={[styles.radioOption, planConstraintMode === 'none' && styles.radioOptionActive]}
+                        onPress={() => setPlanConstraintMode('none')}
+                      >
+                        <Text style={[styles.radioLabel, planConstraintMode === 'none' && styles.radioLabelActive]}>None</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.radioOption, planConstraintMode === 'days' && styles.radioOptionActive]}
+                        onPress={() => setPlanConstraintMode('days')}
+                      >
+                        <Text style={[styles.radioLabel, planConstraintMode === 'days' && styles.radioLabelActive]}>I need X instructional days</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.radioOption, planConstraintMode === 'hours' && styles.radioOptionActive]}
+                        onPress={() => setPlanConstraintMode('hours')}
+                      >
+                        <Text style={[styles.radioLabel, planConstraintMode === 'hours' && styles.radioLabelActive]}>I need X instructional hours</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {planConstraintMode === 'days' && (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={[styles.logisticsLabel, { marginBottom: 6 }]}>Target days</Text>
+                        <TextInput
+                          style={[styles.input, focusedInput === 'planTargetDays' && styles.inputFocused]}
+                          value={planTargetDays}
+                          onChangeText={setPlanTargetDays}
+                          placeholder="180"
+                          keyboardType="numeric"
+                          placeholderTextColor={MUTED}
+                          onFocus={() => setFocusedInput('planTargetDays')}
+                          onBlur={() => setFocusedInput(null)}
+                        />
+                      </View>
+                    )}
+                    {planConstraintMode === 'hours' && (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={[styles.logisticsLabel, { marginBottom: 6 }]}>Target hours</Text>
+                        <TextInput
+                          style={[styles.input, focusedInput === 'planTargetHours' && styles.inputFocused]}
+                          value={planTargetHours}
+                          onChangeText={setPlanTargetHours}
+                          placeholder="1000"
+                          keyboardType="numeric"
+                          placeholderTextColor={MUTED}
+                          onFocus={() => setFocusedInput('planTargetHours')}
+                          onBlur={() => setFocusedInput(null)}
+                        />
+                      </View>
+                    )}
+                  </View>
+                  )}
+                </View>
+
+                {/* Holidays & breaks: collapsible, default collapsed */}
+                <View style={styles.fieldSection}>
+                  <TouchableOpacity
+                    style={styles.collapsibleSectionHeader}
+                    onPress={() => setHolidaysCollapsed(!holidaysCollapsed)}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.fieldSectionLabel, { marginBottom: 0 }]}>Holidays & breaks</Text>
+                    {holidaysCollapsed ? <ChevronDown size={20} color={MUTED} /> : <ChevronUp size={20} color={MUTED} />}
+                  </TouchableOpacity>
+                  {!holidaysCollapsed && (
+                  <>
+                  <View style={[styles.settingRowInline, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', marginTop: 10 }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
+                      <Text style={[styles.logisticsLabel, { marginBottom: 0, marginRight: 4 }]}>Follow </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (followGlobalHolidays) {
+                            setShowPublicHolidaysPicker(true);
+                            const start = startDate || new Date().toISOString().slice(0, 10);
+                            let end = endDate;
+                            if (!end) {
+                              const e = new Date(start);
+                              e.setFullYear(e.getFullYear() + 1);
+                              end = e.toISOString().slice(0, 10);
+                            }
+                            setPublicHolidaysLoading(true);
+                            getPublicHolidaysForRange(countryCode || 'US', start, end).then(({ data: res }) => {
+                              setPublicHolidaysList(res?.holidays || []);
+                              setPublicHolidaysLoading(false);
+                            });
+                          }
+                        }}
+                        activeOpacity={0.7}
+                        style={{ flexDirection: 'row', alignItems: 'center' }}
+                        {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
+                      >
+                        <Text style={[styles.logisticsLabel, { marginBottom: 0, color: followGlobalHolidays ? ACCENT : SUB, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }]}>U.S. public holidays</Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.logisticsLabel, { marginBottom: 0, marginLeft: 4 }]}>?</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
+                      onPress={() => setFollowGlobalHolidays(!followGlobalHolidays)}
+                      activeOpacity={0.8}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={[styles.customToggleThumb, followGlobalHolidays && styles.customToggleThumbOn]} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Custom Holidays */}
+                  <View style={[styles.inputGroup, { marginBottom: 10 }]}>
+                    <Text style={[styles.logisticsLabel]}>Custom holidays</Text>
+                    <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 8 }]}>e.g. March 8 Birthday</Text>
+                  <View style={styles.holidayInputRow}>
+                    <TouchableOpacity
+                      style={[styles.datePickerTrigger, { flex: 1, marginRight: 8 }]}
+                      onPress={() => {
+                        setNewHolidayDateCalendarMonth(newHolidayDate ? dateStringToDate(newHolidayDate) : new Date());
+                        setShowNewHolidayDatePicker(true);
+                      }}
+                    >
+                      <Text style={[styles.datePickerTriggerText, !newHolidayDate && styles.datePickerPlaceholder]}>
+                        {newHolidayDate ? formatDateDisplay(newHolidayDate) : 'Date'}
+                      </Text>
+                      <ChevronDown size={18} color={SUB} />
+                    </TouchableOpacity>
+                    <TextInput
+                      style={[styles.input, { flex: 2, marginRight: 8 }, focusedInput === 'newHolidayName' && styles.inputFocused]}
+                      value={newHolidayName}
+                      onChangeText={setNewHolidayName}
+                      placeholder="Holiday name"
+                      placeholderTextColor={MUTED}
+                      onFocus={() => setFocusedInput('newHolidayName')}
+                      onBlur={() => setFocusedInput(null)}
+                    />
+                    <TouchableOpacity
+                      style={styles.holidayAddButton}
+                      onPress={addCustomHoliday}
+                    >
+                      <Plus size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                  </View>
+
+                  {customHolidays.map((holiday, index) => (
+                    <View key={index} style={styles.holidayItem}>
+                      <Text style={styles.holidayDate}>{holiday.date}</Text>
+                      <Text style={styles.holidayName}>{holiday.name}</Text>
+                      <TouchableOpacity
+                        onPress={() => removeCustomHoliday(index)}
+                        style={styles.deleteButton}
+                      >
+                        <Trash2 size={16} color={ERROR} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  </View>
+
+                  <View style={[styles.inputGroup, { marginBottom: 0 }]}>
+                    <Text style={[styles.logisticsLabel]}>Custom breaks (date ranges)</Text>
+                    <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 8 }]}>e.g. March 8-15 Family trip</Text>
+                  <View style={styles.holidayInputRow}>
+                    <TouchableOpacity
+                      style={[styles.datePickerTrigger, { flex: 1, marginRight: 6 }]}
+                      onPress={() => {
+                        setNewBreakStartCalendarMonth(newBreakStart ? dateStringToDate(newBreakStart) : new Date());
+                        setShowNewBreakStartPicker(true);
+                      }}
+                    >
+                      <Text style={[styles.datePickerTriggerText, !newBreakStart && styles.datePickerPlaceholder]}>
+                        {newBreakStart ? formatDateDisplay(newBreakStart) : 'Start'}
+                      </Text>
+                      <ChevronDown size={18} color={SUB} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.datePickerTrigger, { flex: 1, marginRight: 6 }]}
+                      onPress={() => {
+                        setNewBreakEndCalendarMonth(newBreakEnd ? dateStringToDate(newBreakEnd) : new Date());
+                        setShowNewBreakEndPicker(true);
+                      }}
+                    >
+                      <Text style={[styles.datePickerTriggerText, !newBreakEnd && styles.datePickerPlaceholder]}>
+                        {newBreakEnd ? formatDateDisplay(newBreakEnd) : 'End'}
+                      </Text>
+                      <ChevronDown size={18} color={SUB} />
+                    </TouchableOpacity>
+                    <TextInput
+                      style={[styles.input, { flex: 1, marginRight: 8 }, focusedInput === 'newBreakName' && styles.inputFocused]}
+                      value={newBreakName}
+                      onChangeText={setNewBreakName}
+                      placeholder="Break name"
+                      placeholderTextColor={MUTED}
+                      onFocus={() => setFocusedInput('newBreakName')}
+                      onBlur={() => setFocusedInput(null)}
+                    />
+                    <TouchableOpacity style={styles.holidayAddButton} onPress={addCustomBreak}>
+                      <Plus size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                  </View>
+                  {customBreaks.map((br, index) => (
+                    <View key={index} style={styles.holidayItem}>
+                      <Text style={styles.holidayDate}>{br.start} – {br.end}</Text>
+                      <Text style={styles.holidayName}>{br.name}</Text>
+                      <TouchableOpacity onPress={() => removeCustomBreak(index)} style={styles.deleteButton}>
+                        <Trash2 size={16} color={ERROR} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  </View>
+                  </>
+                  )}
                 </View>
 
                 {/* Scheduled class days */}
                 {effectiveSubjectIds.length > 0 && (
-                  <View style={styles.card} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
-                      <TouchableOpacity
-                        style={styles.collapsibleHeader}
-                        onPress={() => setSectionScheduleExpanded(!sectionScheduleExpanded)}
-                        activeOpacity={0.7}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.sectionTitle}>2. SCHEDULED CLASS DAYS</Text>
-                        {sectionScheduleExpanded ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-                      </TouchableOpacity>
-                      {sectionScheduleExpanded && (
+                  <View style={{ marginTop: 4, marginBottom: SECTION_SPACING }} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
                       <View style={styles.scheduleBlocksInner}>
-                      <Text style={[styles.mutedText, { marginBottom: 20 }]}>Set expected days and time for every subject. For the purpose of totaling instructional hours, we will use the time frame to calculate totals.</Text>
-                      <Text style={[styles.label, { marginBottom: 12, fontSize: 15 }]}>When does each subject meet?</Text>
+                      <Text style={[styles.logisticsLabel, { marginBottom: 8 }]}>Cadence <Text style={{ color: ERROR }}>*</Text></Text>
                       {blocks.map((block, idx) => {
                       const subj = baseSubjectList.find((s) => s.id === block.subject_id);
                       const weekdays = block.weekdays || [];
@@ -2006,330 +3415,18 @@ export default function PlanYearModal({
                       );
                     })}
                     </View>
-                      )}
                   </View>
                 )}
 
-                <View style={styles.card} onLayout={(e) => { datesSectionYRef.current = e.nativeEvent.layout.y; }}>
-                <TouchableOpacity
-                  style={styles.collapsibleHeader}
-                  onPress={() => setSectionDatesExpanded(!sectionDatesExpanded)}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                <Text style={styles.sectionTitle}>3. DATES & REQUIREMENTS</Text>
-                {sectionDatesExpanded ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-                </TouchableOpacity>
-                {sectionDatesExpanded && (
-                <>
-                {/* Start Date and End Date — same as Add Event modal: each opens its own calendar modal */}
-                <View style={[styles.dateRow, { marginTop: 12 }]}>
-                  <View style={[styles.inputGroup, styles.inputGroupFlex]}>
-                  <Text style={[styles.label, { fontSize: 15 }]}>Start Date</Text>
-                    <TouchableOpacity
-                      style={styles.datePickerTrigger}
-                      onPress={() => {
-                        setStartDateCalendarMonth(startDate ? dateStringToDate(startDate) : new Date());
-                        setShowStartDatePicker(true);
-                      }}
-                    >
-                      <Text style={[styles.datePickerTriggerText, !startDate && styles.datePickerPlaceholder]}>
-                        {startDate ? formatDateDisplay(startDate) : 'Select date'}
-                      </Text>
-                      <ChevronDown size={18} color={SUB} />
-                    </TouchableOpacity>
-                </View>
-                {mode === 'FIXED_END' && (
-                    <View style={[styles.inputGroup, styles.inputGroupFlex]}>
-                    <Text style={[styles.label, { fontSize: 15 }]}>End Date</Text>
-                      <TouchableOpacity
-                        style={styles.datePickerTrigger}
-                        onPress={() => {
-                          setEndDateCalendarMonth(endDate ? dateStringToDate(endDate) : new Date());
-                          setShowEndDatePicker(true);
-                        }}
-                      >
-                        <Text style={[styles.datePickerTriggerText, !endDate && styles.datePickerPlaceholder]}>
-                          {endDate ? formatDateDisplay(endDate) : 'Select date'}
-                        </Text>
-                        <ChevronDown size={18} color={SUB} />
-                      </TouchableOpacity>
-                  </View>
-                )}
-                </View>
-
-                {/* Target Days (TARGET_DAYS mode) */}
-                {mode === 'TARGET_DAYS' && (
-                  <View style={styles.inputGroup}>
-                    <Text style={[styles.label, { fontSize: 15 }]}>Target Instructional Days</Text>
-                    <TextInput
-                      style={[styles.input, focusedInput === 'targetDays' && styles.inputFocused]}
-                      value={targetDays}
-                      onChangeText={setTargetDays}
-                      placeholder="180"
-                      keyboardType="numeric"
-                      placeholderTextColor={MUTED}
-                      onFocus={() => setFocusedInput('targetDays')}
-                      onBlur={() => setFocusedInput(null)}
-                    />
-                  </View>
-                )}
-
-                {/* Target Hours (TARGET_HOURS mode) */}
-                {mode === 'TARGET_HOURS' && (
-                  <>
-                    <View style={styles.inputGroup}>
-                      <Text style={[styles.label, { fontSize: 15 }]}>Target Instructional Hours</Text>
-                      <TextInput
-                        style={[styles.input, focusedInput === 'targetHours' && styles.inputFocused]}
-                        value={targetHours}
-                        onChangeText={setTargetHours}
-                        placeholder="1080"
-                        keyboardType="numeric"
-                        placeholderTextColor={MUTED}
-                        onFocus={() => setFocusedInput('targetHours')}
-                        onBlur={() => setFocusedInput(null)}
-                      />
-                    </View>
-                    <View style={styles.inputGroup}>
-                      <Text style={[styles.label, { fontSize: 15 }]}>Hours per Instructional Day</Text>
-                      <TextInput
-                        style={[styles.input, focusedInput === 'hoursPerDay' && styles.inputFocused]}
-                        value={hoursPerDay}
-                        onChangeText={setHoursPerDay}
-                        placeholder="6.0"
-                        keyboardType="decimal-pad"
-                        placeholderTextColor={MUTED}
-                        onFocus={() => setFocusedInput('hoursPerDay')}
-                        onBlur={() => setFocusedInput(null)}
-                      />
-                    </View>
-                  </>
-                )}
-
-                {/* Your requirement: target for block-driven flow (days/hours) */}
-                <View style={[styles.inputGroup, { marginBottom: 4 }]}>
-                  <Text style={[styles.label, { fontSize: 15, marginBottom: 8 }]}>Your requirement</Text>
-                  <View style={styles.radioRow}>
-                    <TouchableOpacity
-                      style={[styles.radioOption, planConstraintMode === 'none' && styles.radioOptionActive]}
-                      onPress={() => setPlanConstraintMode('none')}
-                    >
-                      <Text style={[styles.radioLabel, planConstraintMode === 'none' && styles.radioLabelActive]}>None</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.radioOption, planConstraintMode === 'days' && styles.radioOptionActive]}
-                      onPress={() => setPlanConstraintMode('days')}
-                    >
-                      <Text style={[styles.radioLabel, planConstraintMode === 'days' && styles.radioLabelActive]}>I need X instructional days</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.radioOption, planConstraintMode === 'hours' && styles.radioOptionActive]}
-                      onPress={() => setPlanConstraintMode('hours')}
-                    >
-                      <Text style={[styles.radioLabel, planConstraintMode === 'hours' && styles.radioLabelActive]}>I need X instructional hours</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {planConstraintMode === 'days' && (
-                    <View style={{ marginTop: 20 }}>
-                      <Text style={[styles.label, { marginBottom: 8, fontSize: 15 }]}>Target days</Text>
-                      <TextInput
-                        style={[styles.input, focusedInput === 'planTargetDays' && styles.inputFocused]}
-                        value={planTargetDays}
-                        onChangeText={setPlanTargetDays}
-                        placeholder="180"
-                        keyboardType="numeric"
-                        placeholderTextColor={MUTED}
-                        onFocus={() => setFocusedInput('planTargetDays')}
-                        onBlur={() => setFocusedInput(null)}
-                      />
-                </View>
-                  )}
-                  {planConstraintMode === 'hours' && (
-                    <View style={{ marginTop: 20 }}>
-                      <Text style={[styles.label, { marginBottom: 8, fontSize: 15 }]}>Target hours</Text>
-                      <TextInput
-                        style={[styles.input, focusedInput === 'planTargetHours' && styles.inputFocused]}
-                        value={planTargetHours}
-                        onChangeText={setPlanTargetHours}
-                        placeholder="1000"
-                        keyboardType="numeric"
-                        placeholderTextColor={MUTED}
-                        onFocus={() => setFocusedInput('planTargetHours')}
-                        onBlur={() => setFocusedInput(null)}
-                      />
-                    </View>
-                  )}
-                </View>
-
-                </>
-                )}
-
-                </View>
-
-                <View style={styles.card}>
-                <TouchableOpacity
-                  style={styles.collapsibleHeader}
-                  onPress={() => setHolidaysCollapsed(!holidaysCollapsed)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.sectionTitle}>4. HOLIDAYS & BREAKS</Text>
-                  {holidaysCollapsed ? <ChevronDown size={20} color={MUTED} /> : <ChevronUp size={20} color={MUTED} />}
-                </TouchableOpacity>
-                {!holidaysCollapsed && (
-                <>
-                <View style={[styles.settingRowInline, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap' }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
-                    <Text style={[styles.label, { fontSize: 15, marginRight: 4 }]}>Follow </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        if (followGlobalHolidays) {
-                          setShowPublicHolidaysPicker(true);
-                          const start = startDate || new Date().toISOString().slice(0, 10);
-                          let end = endDate;
-                          if (!end) {
-                            const e = new Date(start);
-                            e.setFullYear(e.getFullYear() + 1);
-                            end = e.toISOString().slice(0, 10);
-                          }
-                          setPublicHolidaysLoading(true);
-                          getPublicHolidaysForRange(countryCode || 'US', start, end).then(({ data: res }) => {
-                            setPublicHolidaysList(res?.holidays || []);
-                            setPublicHolidaysLoading(false);
-                          });
-                        }
-                      }}
-                      activeOpacity={0.7}
-                      style={{ flexDirection: 'row', alignItems: 'center' }}
-                      {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
-                    >
-                      <Text style={[styles.label, { fontSize: 15, color: followGlobalHolidays ? ACCENT : SUB, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }]}>U.S. public holidays</Text>
-                    </TouchableOpacity>
-                    <Text style={[styles.label, { fontSize: 15, marginLeft: 4 }]}>?</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
-                    onPress={() => setFollowGlobalHolidays(!followGlobalHolidays)}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={[styles.customToggleThumb, followGlobalHolidays && styles.customToggleThumbOn]} />
-                  </TouchableOpacity>
-                </View>
-
-                {/* Custom Holidays */}
-                <View style={[styles.inputGroup, { marginBottom: 12 }]}>
-                  <Text style={[styles.label, { fontSize: 15 }]}>Custom Holidays</Text>
-                  <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 12 }]}>e.g. March 8 Birthday</Text>
-                  <View style={styles.holidayInputRow}>
-                    <TouchableOpacity
-                      style={[styles.datePickerTrigger, { flex: 1, marginRight: 8 }]}
-                      onPress={() => {
-                        setNewHolidayDateCalendarMonth(newHolidayDate ? dateStringToDate(newHolidayDate) : new Date());
-                        setShowNewHolidayDatePicker(true);
-                      }}
-                    >
-                      <Text style={[styles.datePickerTriggerText, !newHolidayDate && styles.datePickerPlaceholder]}>
-                        {newHolidayDate ? formatDateDisplay(newHolidayDate) : 'Date'}
-                      </Text>
-                      <ChevronDown size={18} color={SUB} />
-                    </TouchableOpacity>
-                    <TextInput
-                      style={[styles.input, { flex: 2, marginRight: 8 }, focusedInput === 'newHolidayName' && styles.inputFocused]}
-                      value={newHolidayName}
-                      onChangeText={setNewHolidayName}
-                      placeholder="Holiday name"
-                      placeholderTextColor={MUTED}
-                      onFocus={() => setFocusedInput('newHolidayName')}
-                      onBlur={() => setFocusedInput(null)}
-                    />
-                    <TouchableOpacity
-                      style={styles.holidayAddButton}
-                      onPress={addCustomHoliday}
-                    >
-                      <Plus size={18} color="#ffffff" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {customHolidays.map((holiday, index) => (
-                    <View key={index} style={styles.holidayItem}>
-                      <Text style={styles.holidayDate}>{holiday.date}</Text>
-                      <Text style={styles.holidayName}>{holiday.name}</Text>
-                      <TouchableOpacity
-                        onPress={() => removeCustomHoliday(index)}
-                        style={styles.deleteButton}
-                      >
-                        <Trash2 size={16} color={ERROR} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-
-                <View style={[styles.inputGroup, { marginBottom: 0 }]}>
-                  <Text style={[styles.label, { fontSize: 15 }]}>Custom breaks (date ranges)</Text>
-                  <Text style={[styles.mutedText, { marginTop: 2, marginBottom: 12 }]}>e.g. March 8-15 Family trip</Text>
-                  <View style={styles.holidayInputRow}>
-                    <TouchableOpacity
-                      style={[styles.datePickerTrigger, { flex: 1, marginRight: 6 }]}
-                      onPress={() => {
-                        setNewBreakStartCalendarMonth(newBreakStart ? dateStringToDate(newBreakStart) : new Date());
-                        setShowNewBreakStartPicker(true);
-                      }}
-                    >
-                      <Text style={[styles.datePickerTriggerText, !newBreakStart && styles.datePickerPlaceholder]}>
-                        {newBreakStart ? formatDateDisplay(newBreakStart) : 'Start'}
-                      </Text>
-                      <ChevronDown size={18} color={SUB} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.datePickerTrigger, { flex: 1, marginRight: 6 }]}
-                      onPress={() => {
-                        setNewBreakEndCalendarMonth(newBreakEnd ? dateStringToDate(newBreakEnd) : new Date());
-                        setShowNewBreakEndPicker(true);
-                      }}
-                    >
-                      <Text style={[styles.datePickerTriggerText, !newBreakEnd && styles.datePickerPlaceholder]}>
-                        {newBreakEnd ? formatDateDisplay(newBreakEnd) : 'End'}
-                      </Text>
-                      <ChevronDown size={18} color={SUB} />
-                    </TouchableOpacity>
-                    <TextInput
-                      style={[styles.input, { flex: 1, marginRight: 8 }, focusedInput === 'newBreakName' && styles.inputFocused]}
-                      value={newBreakName}
-                      onChangeText={setNewBreakName}
-                      placeholder="Break name"
-                      placeholderTextColor={MUTED}
-                      onFocus={() => setFocusedInput('newBreakName')}
-                      onBlur={() => setFocusedInput(null)}
-                    />
-                    <TouchableOpacity style={styles.holidayAddButton} onPress={addCustomBreak}>
-                      <Plus size={18} color="#ffffff" />
-                    </TouchableOpacity>
-                  </View>
-                  {customBreaks.map((br, index) => (
-                    <View key={index} style={styles.holidayItem}>
-                      <Text style={styles.holidayDate}>{br.start} – {br.end}</Text>
-                      <Text style={styles.holidayName}>{br.name}</Text>
-                      <TouchableOpacity onPress={() => removeCustomBreak(index)} style={styles.deleteButton}>
-                        <Trash2 size={16} color={ERROR} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-                </>
-                )}
-                </View>
-
-                {/* Eligibility summary card — empty state or result */}
-                <View style={[styles.eligibilityCard, { marginTop: 0 }]}>
+                <View style={[styles.eligibilityCard, { marginTop: 12 }, blocks.length > 0 && schedulePotential && !computingPotential && !recalculating && styles.eligibilityCardTinted]}>
                     {blocks.length === 0 && (
                       <View style={styles.eligibilityCardEmpty}>
                         <View style={styles.eligibilityChipRow}>
                           <Info size={14} color={MUTED} />
                           <Text style={styles.eligibilityChipText}>Waiting for schedule</Text>
                         </View>
-                        <Text style={styles.eligibilityCardTitle}>Eligibility summary</Text>
-                        <Text style={styles.eligibilityCardMain}>Add class days to calculate your balance.</Text>
+                        <Text style={styles.eligibilityCardTitle}>{STRINGS.planMyYear.sections.preview.title}</Text>
+                        <Text style={styles.eligibilityCardMain}>Add a subject and class days to calculate your balance.</Text>
                         <Text style={styles.eligibilityCardSecondary}>Once schedule days are set, we'll show if you meet your target.</Text>
                       </View>
                     )}
@@ -2339,8 +3436,8 @@ export default function PlanYearModal({
                           <Info size={14} color={MUTED} />
                           <Text style={styles.eligibilityChipText}>Waiting for schedule</Text>
                         </View>
-                        <Text style={styles.eligibilityCardTitle}>Eligibility summary</Text>
-                        <Text style={styles.eligibilityCardMain}>Add class days to calculate your balance.</Text>
+                        <Text style={styles.eligibilityCardTitle}>{STRINGS.planMyYear.sections.preview.title}</Text>
+                        <Text style={styles.eligibilityCardMain}>Add a subject and class days to calculate your balance.</Text>
                         <Text style={styles.eligibilityCardSecondary}>Once schedule days are set, we'll show if you meet your target.</Text>
                       </View>
                     )}
@@ -2352,9 +3449,11 @@ export default function PlanYearModal({
                     )}
                     {blocks.length > 0 && schedulePotential && !computingPotential && !recalculating && (
                       <View style={styles.eligibilityCardFilled}>
-                        {/* Row A — Summary */}
                         <View style={styles.eligibilitySummaryRow}>
-                          <Text style={styles.eligibilitySummaryNumber}>{eligibleCount ?? schedulePotential.projected_days ?? 0} eligible days</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Check size={16} color={ACCENT} strokeWidth={2.5} />
+                            <Text style={styles.eligibilitySummaryNumber}>{eligibleCount ?? schedulePotential.projected_days ?? 0} eligible instructional days</Text>
+                          </View>
                           {(planConstraintMode === 'days' && (schedulePotential.target_days ?? planTargetDays) != null) && (
                             <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_days ?? planTargetDays} days</Text>
                           )}
@@ -2362,6 +3461,9 @@ export default function PlanYearModal({
                             <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_hours ?? planTargetHours} hours</Text>
                           )}
                         </View>
+                        <Text style={[styles.eligibilityCardSecondary, { marginTop: 2, fontSize: 12 }]}>
+                          Based on selected cadence and date range.
+                        </Text>
                         {followGlobalHolidays && (schedulePotential.days_excluded_holidays ?? 0) > 0 && (
                           <Text style={[styles.eligibilityCardSecondary, { marginTop: 4 }]}>
                             {schedulePotential.days_excluded_holidays === 1
@@ -2369,8 +3471,24 @@ export default function PlanYearModal({
                               : `${schedulePotential.days_excluded_holidays} days excluded due to holidays`}
                           </Text>
                         )}
-                        {/* No requirement: baseline / deleted lesson message — only when health is for this plan (id + date range match) */}
+                        {/* Exact days and times that will get slots */}
+                        {previewSlotLines.length > 0 && (
+                          <View style={{ marginTop: 12 }}>
+                            <Text style={[styles.eligibilityCardSecondary, { marginBottom: 6, fontWeight: '600', color: SUB }]}>Slots to be created</Text>
+                            <View style={{ maxHeight: 200 }}>
+                              <ScrollView showsVerticalScrollIndicator={true} nestedScrollEnabled>
+                                {previewSlotLines.map((line, idx) => (
+                                  <Text key={`${line.date}-${line.subjectName}-${idx}`} style={[styles.eligibilityCardSecondary, { marginBottom: 2 }]}>
+                                    {[line.dateLabel, line.timeLabel, line.subjectName].filter(Boolean).join(' ') || '—'}
+                                  </Text>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          </View>
+                        )}
+                        {/* No requirement: baseline / deleted lesson message — only when health is for this plan and there are still some placeholders (so "removed one" makes sense) */}
                         {planIdForHealth &&
+                          existingPlaceholdersCount > 0 &&
                           planHealth?.academic_year_id === planIdForHealth &&
                           (!endDate || (planHealth?.end_date && planHealth.end_date.slice(0, 10) === endDate.slice(0, 10))) &&
                           planConstraintMode === 'none' &&
@@ -2378,7 +3496,7 @@ export default function PlanYearModal({
                           planHealth.current_scheduled_days < planHealth.baseline_scheduled_days &&
                           planHealth.deleted_dates?.length > 0 && (
                           <Text style={[styles.eligibilityCardSecondary, { color: ERROR, marginTop: 6 }]}>
-                            You deleted a lesson on {new Date(planHealth.deleted_dates[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, schedule one to achieve original scheduled total school days.
+                            You removed an instructional slot on {new Date(planHealth.deleted_dates[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}. Schedule one to achieve your original total school days.
                           </Text>
                         )}
                         {/* Row B — Status pill + supporting (days mode) */}
@@ -2562,7 +3680,7 @@ export default function PlanYearModal({
                             <>
                               <Trash2 size={16} color={ERROR} />
                               <Text style={styles.clearPlanButtonText}>
-                                Remove current plan including {existingPlaceholdersCount} lessons
+                                Remove current plan including {existingPlaceholdersCount} instructional slots
                               </Text>
                             </>
                           )}
@@ -2575,9 +3693,10 @@ export default function PlanYearModal({
                 </View>
                 )}
               </View>
-            )
             )}
           </ScrollView>
+            </>
+          )}
 
           {/* Start Date Calendar Picker (same as Add Event modal) */}
           {showStartDatePicker && (
@@ -2928,8 +4047,8 @@ export default function PlanYearModal({
                       )}
                     </ScrollView>
                   )}
-                  <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} style={[styles.createButton, { marginTop: 16 }]} activeOpacity={0.9}>
-                    <Text style={styles.createButtonText}>Done</Text>
+                  <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} style={[styles.primaryButton, { marginTop: 16 }]} activeOpacity={0.9}>
+                    <Text style={styles.primaryButtonText}>Done</Text>
                   </TouchableOpacity>
                 </TouchableOpacity>
               </TouchableOpacity>
@@ -2998,9 +4117,27 @@ export default function PlanYearModal({
             </Modal>
           )}
 
-          {/* Footer - Build Curriculum style: Cancel + rounded primary, no icons */}
+          {/* Footer - Build Curriculum style: Cancel + rounded primary, no icons. Hidden on entry choice and when showing plan summary. */}
+          {!(pickerOnly && !showPlanManagerView) && !planSummaryYearId && (
           <View style={[styles.footer, pickerOnly && styles.pickerFooter]}>
-            {pickerOnly ? (
+            {planStep === 'preview' ? (
+              <>
+                <TouchableOpacity onPress={() => setPlanStep('logistics')} style={styles.cancelButton}>
+                  <Text style={styles.cancelText}>Back</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryButton, (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled]}
+                  onPress={handleApplyToCalendar}
+                  disabled={saving || loading || !preconditionsMet || !feasible}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color={BG} />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>{academicYearId ? STRINGS.planMyYear.primaryActions.updateSlots : STRINGS.planMyYear.primaryActions.generateSlots}</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : pickerOnly ? (
               <>
                 <TouchableOpacity onPress={onClose} style={styles.cancelButton}>
                   <Text style={[styles.cancelText, styles.pickerCancelText]}>Cancel</Text>
@@ -3014,29 +4151,72 @@ export default function PlanYearModal({
                   <Text style={styles.pickerCreateButtonText}>Create new plan</Text>
                 </TouchableOpacity>
               </>
+            ) : planStep === 'source' ? (
+              <>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.cancelButton}
+                  onMouseEnter={Platform.OS === 'web' ? () => setFooterCancelHover(true) : undefined}
+                  onMouseLeave={Platform.OS === 'web' ? () => setFooterCancelHover(false) : undefined}
+                >
+                  <Text style={[styles.cancelText, footerCancelHover && Platform.OS === 'web' && { textDecorationLine: 'underline' }]}>{STRINGS.global.actions.cancel}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    ((planSource === 'upload' && !selectedMaterialId) || (planSource === 'link' && !sourceUrl.trim()) || (planSource === 'paste' && !pastedText.trim()) || ((planSource === 'upload' || planSource === 'link' || planSource === 'paste') && !parsedContent)) ? styles.primaryButtonDisabled : undefined,
+                  ]}
+                  onPress={() => setPlanStep('logistics')}
+                  disabled={(planSource === 'upload' && !selectedMaterialId) || (planSource === 'link' && !sourceUrl.trim()) || (planSource === 'paste' && !pastedText.trim()) || ((planSource === 'upload' || planSource === 'link' || planSource === 'paste') && !parsedContent)}
+                >
+                  <Text style={styles.primaryButtonText}>Next</Text>
+                </TouchableOpacity>
+              </>
             ) : (
               <>
             <TouchableOpacity
-              onPress={onClose}
+              onPress={() => {
+                if (editingFromSummary) {
+                  setPlanSummaryYearId(academicYearId);
+                  setPlanSummaryData(planSummaryCacheRef.current.get(academicYearId) || null);
+                  setShowPlanManagerView(true);
+                  setEditingFromSummary(false);
+                } else {
+                  setPlanStep('source');
+                }
+              }}
               style={styles.cancelButton}
             >
-              <Text style={styles.cancelText}>Cancel</Text>
+              <Text style={styles.cancelText}>Back</Text>
             </TouchableOpacity>
             {isHomeschool ? (
+              (planSource === 'upload' && onOpenBuildCurriculum) || planSource === 'link' || planSource === 'paste' ? (
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    (saving || loading || (planSource === 'upload' && !selectedMaterialId) || (planSource === 'link' && !sourceUrl.trim()) || (planSource === 'paste' && !pastedText.trim())) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleCreateUnitAndSchedule}
+                  disabled={saving || loading || (planSource === 'upload' && !selectedMaterialId) || (planSource === 'link' && !sourceUrl.trim()) || (planSource === 'paste' && !pastedText.trim())}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color={BG} />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>{STRINGS.buildCurriculum?.actions?.createUnitAndSchedule ?? 'Create unit & schedule'}</Text>
+                  )}
+                </TouchableOpacity>
+              ) : (
             <TouchableOpacity
                 style={[
                   styles.primaryButton,
                   (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled,
                 ]}
-                onPress={handleApplyToCalendar}
+                onPress={() => setPlanStep('preview')}
                 disabled={saving || loading || !preconditionsMet || !feasible}
               >
-                {saving ? (
-                  <ActivityIndicator size="small" color={BG} />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Apply to calendar</Text>
-                )}
+                <Text style={styles.primaryButtonText}>Preview instructional slots</Text>
               </TouchableOpacity>
+              )
             ) : (
               <TouchableOpacity
                 style={[styles.primaryButton, saving && styles.buttonDisabled]}
@@ -3054,19 +4234,58 @@ export default function PlanYearModal({
             )
           }
           </View>
+          )}
         </TouchableOpacity>
       </TouchableOpacity>
       <ConfirmDialog
         visible={showClearConfirm}
-        title="Remove generated placeholders?"
-        message="This removes only generated placeholder lessons. Customized lessons will remain."
-        confirmLabel="OK"
-        cancelLabel="Cancel"
+        title={STRINGS.planMyYear?.confirmations?.removeSlots?.title ?? 'Remove instructional slots?'}
+        message={STRINGS.planMyYear?.confirmations?.removeSlots?.body ?? 'This removes only generated instructional slots. Scheduled lessons will remain.'}
+        confirmLabel={STRINGS.planMyYear?.confirmations?.removeSlots?.confirmLabel ?? 'Remove instructional slots'}
+        cancelLabel={STRINGS.global.actions.cancel}
         onConfirm={async () => {
           setShowClearConfirm(false);
           await performClearPlan();
         }}
         onCancel={() => setShowClearConfirm(false)}
+      />
+      <ConfirmDialog
+        visible={showDeletePlanConfirm}
+        title="Delete plan?"
+        message="This will permanently remove this plan and its instructional slots from the calendar. You cannot undo this."
+        confirmLabel="Delete plan"
+        cancelLabel={STRINGS.global.actions.cancel}
+        onConfirm={async () => {
+          setShowDeletePlanConfirm(false);
+          if (!planSummaryYearId || !familyId) return;
+          setDeletingPlan(true);
+          try {
+            const { data, error } = await clearPlaceholders(familyId, planSummaryYearId, { deletePlan: true });
+            if (error) {
+              toast.push(error.message || 'Failed to delete plan.', 'error');
+              return;
+            }
+            if (data?.plan_deleted) {
+              planSummaryCacheRef.current.delete(planSummaryYearId);
+              preloadedSummaryIdsRef.current.delete(planSummaryYearId);
+              setPreviousPlans((prev) => prev.filter((p) => String(p.id) !== String(planSummaryYearId)));
+              setPlanSummaryYearId(null);
+              setPlanSummaryData(null);
+              setPlanSummaryError(null);
+              toast.push('Plan deleted.', 'success');
+              if (typeof window !== 'undefined') {
+                invalidatePlanHealthCache();
+                window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                setTimeout(() => window.dispatchEvent(new CustomEvent('refreshCalendar')), 150);
+              }
+              onClose?.();
+            }
+          } finally {
+            setDeletingPlan(false);
+          }
+        }}
+        onCancel={() => setShowDeletePlanConfirm(false)}
       />
     </Modal>
   );
@@ -3081,20 +4300,107 @@ const PICKER_CREATE_HOVER = '#6FB4D8';
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
   },
+  // Removed overlayBlur: app shell/sidebar use .glass (backdrop-filter), so modal blur stacked = double blur. Use dim only.
   pickerOverlay: {
-    ...(Platform.OS === 'web' && { backdropFilter: 'blur(3px)' }),
+    // Reserved for picker-specific overlay tweaks if needed
   },
   pickerModal: {
-    maxWidth: 520,
+    maxWidth: 640,
     width: '100%',
-    paddingHorizontal: 28,
-    paddingTop: 24,
-    paddingBottom: 24,
+    paddingHorizontal: 40,
+    paddingTop: 20,
+    paddingBottom: 36,
+    borderRadius: 28,
+  },
+  pickerModalPlanSummary: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  pickerHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER_SUBTLE,
+    backgroundColor: SURFACE_ELEVATED,
+  },
+  entryChoiceBody: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    gap: 14,
+  },
+  entryChoiceHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginBottom: 4,
+  },
+  entryChoiceSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: MUTED,
+    textAlign: 'center',
+    marginBottom: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  entryChoiceButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+  },
+  entryChoiceIcon: {
+    marginRight: 12,
+  },
+  entryChoiceButtonSecondary: {
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    backgroundColor: SURFACE_ELEVATED,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  entryChoiceButtonPrimary: {
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    borderWidth: 0,
+    backgroundColor: PRIMARY_BTN,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      backgroundImage: `linear-gradient(135deg, ${PRIMARY_BTN}, #9DD1F7)`,
+    }),
+  },
+  entryChoiceButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: FG,
+    marginBottom: 2,
+  },
+  entryChoiceButtonSubtext: {
+    fontSize: 13,
+    color: TEXT_SECONDARY,
+  },
+  entryChoiceButtonTextPrimary: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  entryChoiceButtonSubtextPrimary: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.92)',
   },
   pickerBody: {
     flex: 1,
@@ -3109,10 +4415,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  pickerHeaderTextBlock: {
+    flex: 1,
+  },
   pickerTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: FG,
+    marginBottom: 2,
+  },
+  pickerSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: MUTED,
   },
   pickerDivider: {
     height: 1,
@@ -3123,11 +4438,241 @@ const styles = StyleSheet.create({
     backgroundColor: PICKER_CARD_BG,
     borderWidth: 1,
     borderColor: PICKER_CARD_BORDER,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
     ...(Platform.OS === 'web' && {
-      transition: 'border-color 0.2s ease, background-color 0.2s ease',
+      transition: 'border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease',
+    }),
+  },
+  planCardSelected: {
+    backgroundColor: 'rgba(79,140,255,0.08)',
+    borderColor: 'rgba(79,140,255,0.4)',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 8px 20px rgba(0,0,0,0.05)',
+    }),
+    ...(Platform.OS !== 'web' && {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.05,
+      shadowRadius: 12,
+      elevation: 4,
+    }),
+  },
+  planListItem: {
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER_SUBTLE,
+  },
+  planListItemSelected: {
+    backgroundColor: 'rgba(79,140,255,0.06)',
+  },
+  planCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+    minWidth: 0,
+  },
+  planCardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: FG,
+    flex: 1,
+    minWidth: 0,
+  },
+  planCardDateInline: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: MUTED,
+    flexShrink: 0,
+  },
+  planCardChildRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
+  planCardChildDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#14b8a6',
+    flexShrink: 0,
+  },
+  planCardOwner: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: MUTED,
+    flex: 1,
+    minWidth: 0,
+  },
+  planCardDate: {
+    fontSize: 13,
+    color: MUTED,
+  },
+  planSummaryHeaderRow: {
+    paddingVertical: 16,
+    paddingHorizontal: 0,
+    marginBottom: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  planSummaryModalTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: FG,
+    flex: 1,
+    marginRight: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planSummaryDivider: {
+    height: 1,
+    backgroundColor: CARD_BORDER,
+    marginBottom: 16,
+    marginHorizontal: -20,
+    alignSelf: 'stretch',
+  },
+  planSummaryContentContainer: {
+    paddingTop: 12,
+    paddingBottom: 0,
+    paddingHorizontal: 0,
+  },
+  planSummaryPadded: {
+    paddingHorizontal: 40,
+  },
+  planSummaryDividerFullWrap: {
+    marginBottom: 12,
+    alignSelf: 'stretch',
+  },
+  planSummaryDividerFull: {
+    height: 1,
+    backgroundColor: CARD_BORDER,
+    width: '100%',
+  },
+  planSummaryDatesSectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: MUTED,
+    marginBottom: 4,
+  },
+  planSummaryDatesList: {
+    paddingHorizontal: 40,
+    paddingBottom: 12,
+  },
+  planSummaryDateRow: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER_SUBTLE,
+  },
+  planSummaryDateRowInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  planSummaryDateRowText: {
+    flex: 1,
+    fontSize: 14,
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planSummaryDateRowAttachment: {
+    flexShrink: 0,
+    paddingLeft: 4,
+  },
+  planSummaryFooterStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    gap: 12,
+    backgroundColor: SURFACE_ELEVATED,
+    borderTopWidth: 1,
+    borderTopColor: BORDER_SUBTLE,
+    marginTop: 12,
+  },
+  planSummaryFooterRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  planSummaryFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingVertical: 12,
+    minHeight: 0,
+  },
+  planSummaryFooterButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: PRIMARY_BTN,
+    ...(Platform.OS === 'web' && {
+      backgroundImage: `linear-gradient(135deg, ${PRIMARY_BTN}, #9DD1F7)`,
+      boxShadow: '0 12px 30px rgba(133,196,242,0.35)',
+      transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+      cursor: 'pointer',
+    }),
+  },
+  planSummaryFooterButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planSummaryFooterBack: {
+    paddingVertical: 10,
+    paddingHorizontal: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+  },
+  planSummaryField: {
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    padding: 10,
+    minWidth: 0,
+  },
+  planSummaryFieldLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: MUTED,
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planSummaryFieldValue: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    backgroundColor: '#e0f2fe',
+    alignSelf: 'flex-start',
+  },
+  planSummaryFieldValueText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   planCardLine1: {
@@ -3156,24 +4701,34 @@ const styles = StyleSheet.create({
   },
   pickerCreateButton: {
     paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: PICKER_CREATE_BG,
+    paddingHorizontal: 20,
+    borderRadius: 12,
     alignSelf: 'flex-start',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: PRIMARY_BTN,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(129,193,225,.25)',
-      transition: 'background-color 0.2s ease, transform 0.2s ease',
+      backgroundImage: `linear-gradient(135deg, ${PRIMARY_BTN}, #9DD1F7)`,
+      boxShadow: '0 12px 30px rgba(133,196,242,0.35)',
+      transition: 'transform 0.2s ease, box-shadow 0.2s ease',
     }),
   },
   pickerCreateButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   pickerFooter: {
-    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: BORDER_SUBTLE,
+    paddingVertical: 16,
+    paddingHorizontal: 28,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: SURFACE_ELEVATED,
     gap: 12,
   },
   pickerCancelText: {
@@ -3181,23 +4736,23 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   modal: {
-    width: Platform.OS === 'web' ? 720 : '100%',
+    width: Platform.OS === 'web' ? 760 : '100%',
     maxWidth: '100%',
-    width: 720,
+    width: 760,
     maxWidth: '100%',
     maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
     backgroundColor: BG,
-    borderRadius: 16,
+    borderRadius: 24,
     ...Platform.select({
       web: {
-        boxShadow: '0 10px 20px rgba(0, 0, 0, 0.15)',
+        boxShadow: '0 30px 60px rgba(0, 0, 0, 0.12), 0 10px 30px rgba(0, 0, 0, 0.08)',
       },
       default: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
-        elevation: 8,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.12,
+        shadowRadius: 24,
+        elevation: 12,
       },
     }),
     overflow: 'hidden',
@@ -3213,14 +4768,13 @@ const styles = StyleSheet.create({
   },
   modalHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: CARD_PADDING,
-    paddingTop: 20,
-    paddingBottom: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: CARD_BORDER,
-    backgroundColor: BG,
+    borderBottomColor: BORDER_SUBTLE,
+    backgroundColor: SURFACE_ELEVATED,
   },
   modalHeaderLeft: { flex: 1, minWidth: 0 },
   modalHeaderTitleRow: {
@@ -3232,16 +4786,42 @@ const styles = StyleSheet.create({
     marginRight: 2,
   },
   modalHeaderTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '600',
     color: FG,
     marginBottom: 2,
   },
   modalHeaderMeta: {
-    fontSize: 13,
-    color: MUTED,
+    fontSize: 14,
+    color: TEXT_SECONDARY,
+    lineHeight: 20,
   },
   closeButtonHeader: { padding: 6, marginRight: -6 },
+  breadcrumbRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    flex: 1,
+    minWidth: 0,
+  },
+  breadcrumbStep: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: MUTED,
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  breadcrumbStepCurrent: {
+    color: BRAND_500,
+    fontWeight: '700',
+  },
+  breadcrumbSeparator: {
+    fontSize: 17,
+    color: BORDER_STRONG,
+    fontWeight: '400',
+  },
   sectionProgress: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -3280,6 +4860,12 @@ const styles = StyleSheet.create({
     marginBottom: SECTION_SPACING,
     ...(Platform.OS === 'web' && { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }),
     ...(Platform.OS !== 'web' && { elevation: 2 }),
+  },
+  cardFlat: {
+    paddingTop: CARD_PADDING,
+    paddingHorizontal: CARD_PADDING,
+    paddingBottom: 12,
+    marginBottom: SECTION_SPACING,
   },
   summaryRow: {
     flexDirection: 'row',
@@ -3331,6 +4917,44 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 24,
   },
+  planListContentContainer: {
+    paddingTop: 0,
+    paddingBottom: 20,
+    paddingLeft: 24,
+    paddingRight: 24,
+  },
+  planListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 20,
+    marginHorizontal: -24,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER_SUBTLE,
+    backgroundColor: SURFACE_ELEVATED,
+  },
+  planListHeaderTextBlock: {
+    flex: 1,
+  },
+  planListHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: FG,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planListHeaderSubtitle: {
+    fontSize: 14,
+    color: TEXT_SECONDARY,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -3339,7 +4963,7 @@ const styles = StyleSheet.create({
     marginTop: 0,
     textTransform: 'uppercase',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   description: {
@@ -3347,6 +4971,9 @@ const styles = StyleSheet.create({
     color: SUB,
     marginBottom: 20,
     lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   editButton: {
     padding: 12,
@@ -3376,7 +5003,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: FG,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   customToggleTrack: {
@@ -3458,13 +5085,41 @@ const styles = StyleSheet.create({
     flex: 1,
     marginBottom: 0,
   },
+  /** Add Event–style container: rounded gray block for related fields (e.g. Compliance, Holidays) */
+  fieldSection: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: '#f9fafb',
+  },
+  fieldSectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: FG,
+    marginBottom: 10,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  /** Scope section: smaller, more subtle labels */
+  logisticsLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: MUTED,
+    marginBottom: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   label: {
     fontSize: 13,
     fontWeight: '500',
     color: FG,
     marginBottom: 8,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   input: {
@@ -3475,6 +5130,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: FG,
     backgroundColor: '#fafbfc',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   inputFocused: {
     borderColor: ACCENT,
@@ -3493,10 +5151,177 @@ const styles = StyleSheet.create({
   datePickerTriggerText: {
     fontSize: 14,
     color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   datePickerPlaceholder: {
     fontSize: 14,
     color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dateRangeCard: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    marginTop: 8,
+    marginBottom: 14,
+  },
+  dateRangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  dateRangeSide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dateRangeArrow: {
+    padding: 4,
+  },
+  dateRangeDateWrap: {
+    minWidth: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateRangeDate: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dateRangeArrowLabel: {
+    fontSize: 14,
+    color: MUTED,
+    fontWeight: '500',
+  },
+  dateRangeTodayWrap: {
+    marginTop: 6,
+    alignSelf: 'center',
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  dateNavBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: BORDER,
+    gap: 8,
+  },
+  dateNavBarLabel: {
+    fontSize: 12,
+    color: MUTED,
+    marginRight: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dateNavBarArrow: {
+    padding: 4,
+  },
+  dateNavBarDateWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateNavBarDate: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dateNavBarTodayWrap: {
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  dateNavBarToday: {
+    fontSize: 12,
+    color: MUTED,
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  selectContainer: {
+    position: 'relative',
+    zIndex: 1000,
+    marginTop: 8,
+  },
+  selectTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#fafbfc',
+    minHeight: 44,
+  },
+  selectTriggerText: {
+    color: FG,
+    fontSize: 14,
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  selectTriggerPlaceholder: {
+    color: MUTED,
+  },
+  selectOptions: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    backgroundColor: BG,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    maxHeight: 220,
+    zIndex: 10001,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+    }),
+    ...(Platform.OS !== 'web' && { elevation: 10000 }),
+  },
+  selectOption: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+  },
+  selectOptionActive: {
+    backgroundColor: ACCENT_LIGHT,
+  },
+  selectOptionText: {
+    color: FG,
+    fontSize: 14,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  selectOptionTextActive: {
+    fontWeight: '600',
+    color: ACCENT,
   },
   calendarOverlay: {
     flex: 1,
@@ -3563,6 +5388,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: SUB,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   calendarWeekRow: {
     flexDirection: 'row',
@@ -3646,27 +5474,36 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   blockRowSubject: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   blockRowLine: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 12,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 10,
   },
   blockTimeInline: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    ...(Platform.OS === 'web' && { marginLeft: 'auto' }),
   },
   collapsibleHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 0,
+  },
+  collapsibleSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    paddingHorizontal: 0,
   },
   holidayItem: {
     flexDirection: 'row',
@@ -3683,25 +5520,31 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   weekdayChipSmall: {
-    paddingVertical: 6,
+    paddingVertical: 8,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: BORDER_SUBTLE,
     borderRadius: 20,
-    backgroundColor: BG,
+    backgroundColor: SURFACE_SUBTLE,
   },
   weekdayChipSmallActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#60a5fa',
+    backgroundColor: '#dbeafe',
   },
   weekdayChipSmallText: {
     fontSize: 12,
     color: SUB,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   weekdayChipSmallTextActive: {
-    color: '#6BB3E8',
-    fontWeight: '700',
+    color: '#2563eb',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   blockTimeRow: {
     flexDirection: 'row',
@@ -3717,6 +5560,9 @@ const styles = StyleSheet.create({
     color: SUB,
     fontSize: 12,
     marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   blockTimeInputWrap: {
     minHeight: 44,
@@ -3727,11 +5573,17 @@ const styles = StyleSheet.create({
     color: SUB,
     marginRight: 12,
     minWidth: 100,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   holidayName: {
     flex: 1,
     fontSize: 13,
     color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   deleteButton: {
     padding: 4,
@@ -3757,6 +5609,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: FG,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   preconditionButton: {
     flexDirection: 'row',
@@ -3767,6 +5622,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: ACCENT,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   preconditionWarning: {
     paddingVertical: 8,
@@ -3778,6 +5636,9 @@ const styles = StyleSheet.create({
   preconditionWarningText: {
     fontSize: 13,
     color: ERROR,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   previewRow: {
     padding: 16,
@@ -3795,6 +5656,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: FG,
     marginLeft: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   previewFeasibilityError: {
     fontSize: 13,
@@ -3825,10 +5689,150 @@ const styles = StyleSheet.create({
     borderColor: CHIP_SELECTED_BORDER,
     ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(107,179,232,0.2)' }),
   },
+  /** Choose method option: no fixed height so label + description can wrap fully */
+  sourceOptionCard: {
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    backgroundColor: BG,
+    minHeight: 56,
+  },
+  /** Flat variant for step 1 (no border) - legacy */
+  sourceOptionCardFlat: {
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+    backgroundColor: BG,
+    minHeight: 56,
+  },
+  /** Step 1: content zone padding */
+  sourceStepContent: {
+    paddingHorizontal: 28,
+    paddingTop: SECTION_GAP,
+    paddingBottom: 24,
+  },
+  sourceSectionDivider: {
+    height: 1,
+    backgroundColor: BORDER_SUBTLE,
+    marginBottom: 8,
+  },
+  sourceSectionLabel: {
+    fontSize: 13,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: MUTED,
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  sourceSectionDescription: {
+    fontSize: 14,
+    color: TEXT_SECONDARY,
+    marginBottom: 28,
+    lineHeight: 20,
+  },
+  /** Selectable option tile - unselected */
+  sourceOptionTile: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    alignSelf: 'stretch',
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: BORDER_STRONG,
+    backgroundColor: SURFACE_SUBTLE,
+    minHeight: 56,
+    position: 'relative',
+    ...(Platform.OS === 'web' && {
+      transition: 'border 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease',
+      cursor: 'pointer',
+    }),
+  },
+  sourceOptionTileSelected: {
+    backgroundColor: BG,
+    borderWidth: 2,
+    borderColor: BRAND_500,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 6px 18px rgba(0,0,0,0.06)',
+    }),
+    ...(Platform.OS !== 'web' && { elevation: 2 }),
+  },
+  sourceOptionTileHover: {
+    ...(Platform.OS === 'web' && {
+      backgroundColor: BG,
+      borderColor: BORDER_STRONG,
+    }),
+    ...(Platform.OS === 'web' && { transform: [{ translateY: -1 }] }),
+  },
+  sourceOptionRadioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: BORDER_STRONG,
+    marginRight: 12,
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sourceOptionRadioSelected: {
+    borderColor: BRAND_500,
+    backgroundColor: BRAND_500,
+  },
+  sourceOptionRadioInner: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: BG,
+  },
+  sourceOptionIconWrap: {
+    marginRight: 12,
+    marginTop: 2,
+  },
+  sourceOptionBody: { flex: 1, minWidth: 0 },
+  sourceOptionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: FG,
+  },
+  sourceOptionBadge: {
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#fef3c7',
+  },
+  sourceOptionBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#b45309',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sourceOptionDescription: {
+    fontSize: 13,
+    color: MUTED,
+    lineHeight: 20,
+  },
+  sourceOptionCheckWrap: {
+    position: 'absolute',
+    top: 18,
+    right: 20,
+  },
   radioLabel: {
     fontSize: 13,
     color: SUB,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   radioLabelActive: {
     color: CHIP_SELECTED_TEXT,
@@ -3844,25 +5848,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: LABEL_INPUT_GAP,
+    marginTop: 4,
+  },
+  subjectsChipsRow: {
+    marginTop: 10,
   },
   childChip: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    height: 36,
-    minHeight: 36,
-    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 20,
-    backgroundColor: BG,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
   },
   childChipActive: {
     backgroundColor: CHIP_SELECTED_BG,
     borderColor: CHIP_SELECTED_BORDER,
     ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(107,179,232,0.2)' }),
   },
-  childChipText: { fontSize: 13, color: SUB, fontWeight: '500' },
+  childChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   childChipTextActive: { color: CHIP_SELECTED_TEXT, fontWeight: '700' },
   subjectChips: {
     flexDirection: 'row',
@@ -3886,12 +5897,22 @@ const styles = StyleSheet.create({
     borderColor: CHIP_SELECTED_BORDER,
     ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(107,179,232,0.2)' }),
   },
-  subjectChipText: { fontSize: 13, color: SUB, fontWeight: '500' },
+  subjectChipText: {
+    fontSize: 13,
+    color: SUB,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   subjectChipTextActive: { color: CHIP_SELECTED_TEXT, fontWeight: '700' },
   mutedText: {
     fontSize: 13,
     color: MUTED,
     marginTop: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   dangerZone: {
     marginTop: 24,
@@ -3960,41 +5981,51 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: CARD_PADDING,
-    paddingVertical: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
     gap: 12,
     backgroundColor: BG,
     borderTopWidth: 1,
-    borderTopColor: CARD_BORDER,
+    borderTopColor: BORDER_SUBTLE,
   },
   cancelButton: {
-    paddingVertical: 10,
+    paddingVertical: 6,
     paddingHorizontal: 12,
   },
   cancelText: {
-    color: MUTED,
+    color: TEXT_SECONDARY,
     fontSize: 14,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      textDecorationLine: 'none',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   primaryButton: {
-    backgroundColor: PRIMARY_BTN,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    minHeight: 40,
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
     alignSelf: 'flex-end',
+    backgroundColor: PRIMARY_BTN,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      boxShadow: '0 4px 12px rgba(133, 196, 242, 0.35)',
       cursor: 'pointer',
     }),
+    ...(Platform.OS !== 'web' && { elevation: 2 }),
+  },
+  primaryButtonDisabled: {
+    opacity: 0.4,
+    ...(Platform.OS === 'web' && { boxShadow: 'none' }),
   },
   primaryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '500',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   buttonDisabled: {
@@ -4039,11 +6070,15 @@ const styles = StyleSheet.create({
     color: MUTED,
   },
   eligibilityCard: {
-    padding: 16,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: ELIGIBILITY_CARD_BORDER,
-    backgroundColor: ELIGIBILITY_CARD_BG,
+    borderColor: BORDER_SUBTLE,
+    backgroundColor: '#f9fafb',
+  },
+  eligibilityCardTinted: {
+    backgroundColor: '#f9fafb',
+    borderColor: BORDER_SUBTLE,
   },
   eligibilityCardEmpty: {
     flexDirection: 'column',
@@ -4060,6 +6095,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityCardTitle: {
     fontSize: 12,
@@ -4069,18 +6107,27 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     width: '100%',
     marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityCardMain: {
     fontSize: 14,
     fontWeight: '600',
     color: FG,
     width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityCardSecondary: {
     fontSize: 13,
     color: MUTED,
     marginTop: 2,
     width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityCardFilled: {
     gap: 8,
@@ -4092,11 +6139,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityTargetMuted: {
     fontSize: 13,
     color: MUTED,
     marginTop: 10,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityStatusRow: {
     marginTop: 0,
@@ -4120,6 +6173,9 @@ const styles = StyleSheet.create({
   eligibilityPillText: {
     fontSize: 12,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eligibilityRecommendationRow: {
     marginTop: 10,

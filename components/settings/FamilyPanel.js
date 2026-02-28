@@ -30,6 +30,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [familyId, setFamilyId] = useState(propFamilyId);
   const [hoveredChildId, setHoveredChildId] = useState(null);
+  const [familyNameRowHovered, setFamilyNameRowHovered] = useState(false);
   const [logoutHovered, setLogoutHovered] = useState(false);
   
   // Profile state
@@ -44,6 +45,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [profileUsername, setProfileUsername] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const lastProfileSaveRef = useRef(0);
+  const preferencesLoadedRef = useRef(false);
+  const skipPreferencesSaveRef = useRef(true);
   
   // Notification preferences state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -81,6 +84,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [activeSection, setActiveSection] = useState('members');
   
   // Modal state
+  const [showComingSoonModal, setShowComingSoonModal] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [editingSubjectInModal, setEditingSubjectInModal] = useState(null);
@@ -130,6 +134,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [parentInviteEmail, setParentInviteEmail] = useState('');
   const [parentInviteResultUrl, setParentInviteResultUrl] = useState(null);
   const [invitingParent, setInvitingParent] = useState(false);
+
+  // Family name inline edit (Parents section)
+  const [isEditingFamilyName, setIsEditingFamilyName] = useState(false);
+  const [editingFamilyNameValue, setEditingFamilyNameValue] = useState('');
+  const [savingFamilyName, setSavingFamilyName] = useState(false);
   
   // Tutor invite state
   const [showTutorInviteModal, setShowTutorInviteModal] = useState(false);
@@ -322,6 +331,113 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setFamilyName(family.family_name);
     }
   }, [family]);
+
+  // Load preferences and notification preferences from DB
+  useEffect(() => {
+    if (!user?.id || !familyId) return;
+    let cancelled = false;
+    skipPreferencesSaveRef.current = true;
+    (async () => {
+      try {
+        const { data: profileRow } = await supabase
+          .from('profiles')
+          .select('app_preferences')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (cancelled) return;
+        const ap = profileRow?.app_preferences || {};
+        if (typeof ap === 'object') {
+          setSoundEffectsEnabled(ap.sound_effects !== false);
+          setAnimationsEnabled(ap.animations !== false);
+          setMotivationalMessagesEnabled(ap.motivational_messages !== false);
+          setDarkMode(ap.dark_mode === 'on' || ap.dark_mode === 'off' || ap.dark_mode === 'system' ? ap.dark_mode : 'off');
+        }
+        const { data: notifRow } = await supabase
+          .from('notification_preferences')
+          .select('notification_types, email_notifications_enabled')
+          .eq('user_id', user.id)
+          .eq('family_id', familyId)
+          .maybeSingle();
+        if (cancelled) return;
+        if (notifRow?.notification_types && typeof notifRow.notification_types === 'object') {
+          const nt = notifRow.notification_types;
+          setNotifDailyUpdates(nt.daily_updates !== false);
+          setNotifWeeklyProgress(nt.weekly_progress === true);
+          setNotifPlanningInsights(nt.planning_insights !== false);
+          setNotifMotivation(nt.motivation !== false);
+          setNotifParentGuidance(nt.parent_guidance === true);
+          setNotifProductUpdates(nt.product_updates !== false);
+          setNotifAnnouncements(nt.announcements === true);
+        }
+        setNotificationsEnabled(notifRow?.email_notifications_enabled !== false);
+      } catch (_) {
+        // Silently fail; defaults remain
+      } finally {
+        if (!cancelled) {
+          preferencesLoadedRef.current = true;
+          setTimeout(() => { skipPreferencesSaveRef.current = false; }, 0);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, familyId]);
+
+  // Persist app preferences to profiles when they change
+  useEffect(() => {
+    if (!preferencesLoadedRef.current || skipPreferencesSaveRef.current || !user?.id) return;
+    supabase
+      .from('profiles')
+      .update({
+        app_preferences: {
+          sound_effects: soundEffectsEnabled,
+          animations: animationsEnabled,
+          motivational_messages: motivationalMessagesEnabled,
+          dark_mode: darkMode,
+        },
+      })
+      .eq('id', user.id)
+      .then(({ error }) => {
+        if (error) console.warn('Failed to save app preferences:', error.message);
+      });
+  }, [soundEffectsEnabled, animationsEnabled, motivationalMessagesEnabled, darkMode, user?.id]);
+
+  // Persist notification preferences to DB when they change
+  useEffect(() => {
+    if (!preferencesLoadedRef.current || skipPreferencesSaveRef.current || !user?.id || !familyId) return;
+    supabase
+      .from('notification_preferences')
+      .upsert(
+        {
+          user_id: user.id,
+          family_id: familyId,
+          email_notifications_enabled: notificationsEnabled,
+          notification_types: {
+            daily_updates: notifDailyUpdates,
+            weekly_progress: notifWeeklyProgress,
+            planning_insights: notifPlanningInsights,
+            motivation: notifMotivation,
+            parent_guidance: notifParentGuidance,
+            product_updates: notifProductUpdates,
+            announcements: notifAnnouncements,
+          },
+        },
+        { onConflict: 'user_id,family_id' }
+      )
+      .then(({ error }) => {
+        if (error) console.warn('Failed to save notification preferences:', error.message);
+      });
+  }, [
+    notificationsEnabled,
+    notifDailyUpdates,
+    notifWeeklyProgress,
+    notifPlanningInsights,
+    notifMotivation,
+    notifParentGuidance,
+    notifProductUpdates,
+    notifAnnouncements,
+    user?.id,
+    familyId,
+  ]);
 
   // Sync preloaded subjects when prop changes
   useEffect(() => {
@@ -1759,15 +1875,95 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             <View style={styles.subsectionDivider} />
             
-            {parents.length === 0 ? (
-              <Text style={styles.membersEmptyText}>
+            {/* Family name row: always show so it's editable */}
+            <View
+              style={styles.memberRow}
+              {...(Platform.OS === 'web' && !isEditingFamilyName && {
+                onMouseEnter: () => setFamilyNameRowHovered(true),
+                onMouseLeave: () => setFamilyNameRowHovered(false),
+              })}
+            >
+              {isEditingFamilyName ? (
+                <>
+                  <TextInput
+                    style={styles.familyNameEditInput}
+                    value={editingFamilyNameValue}
+                    onChangeText={setEditingFamilyNameValue}
+                    placeholder="Family name"
+                    placeholderTextColor="#9ca3af"
+                    autoFocus
+                    editable={!savingFamilyName}
+                  />
+                  <View style={styles.memberRowActions}>
+                    <TouchableOpacity
+                      style={styles.memberRowActionButton}
+                      onPress={() => {
+                        setIsEditingFamilyName(false);
+                        setEditingFamilyNameValue('');
+                      }}
+                      disabled={savingFamilyName}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <X size={18} color="#374151" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.memberRowActionButton, savingFamilyName && { opacity: 0.6 }]}
+                      onPress={async () => {
+                        const trimmed = editingFamilyNameValue.trim();
+                        if (savingFamilyName || !familyId) return;
+                        setSavingFamilyName(true);
+                        try {
+                          const { error: err } = await supabase
+                            .from('family')
+                            .update({ family_name: trimmed || null })
+                            .eq('id', familyId);
+                          if (err) throw err;
+                          setFamily((prev) => (prev ? { ...prev, family_name: trimmed || undefined } : prev));
+                          if (onFamilyUpdate) onFamilyUpdate({ ...family, family_name: trimmed || undefined });
+                          setFamilyName(trimmed || '');
+                          setIsEditingFamilyName(false);
+                          setEditingFamilyNameValue('');
+                          toast.push('Family name saved', 'success');
+                        } catch (e) {
+                          console.warn('[FamilyPanel] Error saving family name:', e);
+                          toast.push('Could not save family name', 'error');
+                        } finally {
+                          setSavingFamilyName(false);
+                        }
+                      }}
+                      disabled={savingFamilyName}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Check size={18} color="#16a34a" />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.memberRowName}>{family?.family_name || 'Family'}</Text>
+                  <View style={styles.memberRowActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.memberRowActionButton,
+                        familyNameRowHovered && styles.memberRowActionButtonHovered,
+                      ]}
+                      onPress={() => {
+                        setEditingFamilyNameValue(family?.family_name || '');
+                        setIsEditingFamilyName(true);
+                      }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Pencil size={16} color="#374151" />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+            {parents.length === 0 && (
+              <Text style={[styles.membersEmptyText, { marginTop: 8 }]}>
                 {profile?.role === 'parent' ? 'No other parents yet' : 'No parents found'}
               </Text>
-            ) : parents.map((member) => (
-              <View key={member.id} style={styles.memberRow}>
-                <Text style={styles.memberRowName}>{family?.family_name || member.email || 'Parent'}</Text>
-              </View>
-            ))}
+            )}
             
             {/* Children Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
@@ -3236,8 +3432,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]} onPress={() => setActiveSection('connections')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>Connected accounts</Text>
+            <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={styles.sidebarButtonText}>Connected accounts</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'preferences' && styles.sidebarButtonActive]} onPress={() => setActiveSection('preferences')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'preferences' && styles.sidebarButtonTextActive]}>Preferences</Text>
@@ -3256,7 +3452,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.sidebarSubscriptionContent}>
               <View style={styles.sidebarSubscriptionInfo}>
                 <TouchableOpacity 
-                  onPress={() => setActiveSection('doodlemax')}
+                  onPress={() => setShowComingSoonModal(true)}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
@@ -3345,6 +3541,36 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       </View>
 
       {/* Modals */}
+      <Modal
+        visible={showComingSoonModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowComingSoonModal(false)}
+      >
+        <View style={styles.comingSoonModalOverlay}>
+          <View style={styles.comingSoonModalContent}>
+            <TouchableOpacity
+              style={styles.comingSoonModalClose}
+              onPress={() => setShowComingSoonModal(false)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={24} color="#64748b" />
+            </TouchableOpacity>
+            <Text style={styles.comingSoonModalTitle}>Coming soon</Text>
+            <Text style={styles.comingSoonModalText}>
+              This feature is in development. Stay tuned for updates!
+            </Text>
+            <TouchableOpacity
+              style={styles.comingSoonModalButton}
+              onPress={() => setShowComingSoonModal(false)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.comingSoonModalButtonText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <EditChildModal
         visible={showEditChildModal}
         onClose={() => { setShowEditChildModal(false); setEditingChild(null); }}
@@ -4064,6 +4290,22 @@ function createStyles(tokens) {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
+    familyNameEditInput: {
+      flex: 1,
+      marginRight: 16,
+      fontSize: 16,
+      fontWeight: '500',
+      color: '#374151',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#fff',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
     memberRowActions: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -4297,6 +4539,52 @@ function createStyles(tokens) {
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
+    },
+    comingSoonModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    comingSoonModalContent: {
+      backgroundColor: '#ffffff',
+      borderRadius: 16,
+      padding: 24,
+      width: '90%',
+      maxWidth: 400,
+      alignItems: 'center',
+    },
+    comingSoonModalClose: {
+      position: 'absolute',
+      top: 16,
+      right: 16,
+      padding: 4,
+    },
+    comingSoonModalTitle: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: '#111827',
+      marginBottom: 12,
+      textAlign: 'center',
+    },
+    comingSoonModalText: {
+      fontSize: 15,
+      color: '#6b7280',
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    comingSoonModalButton: {
+      backgroundColor: tokens?.primary ?? '#3b82f6',
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 10,
+      minWidth: 100,
+      alignItems: 'center',
+    },
+    comingSoonModalButtonText: {
+      color: '#ffffff',
+      fontSize: 16,
+      fontWeight: '600',
     },
     aboutPageContainer: {
       maxWidth: 800,

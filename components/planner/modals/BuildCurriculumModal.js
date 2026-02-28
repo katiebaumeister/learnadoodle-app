@@ -21,6 +21,8 @@ import { colors } from '../../../theme/colors';
 import { buildCurriculum, commitCurriculum } from '../../../lib/services/curriculumClient';
 import { getMaterials } from '../../../lib/services/materialsClient';
 import { supabase } from '../../../lib/supabase';
+import { useToast } from '../../Toast';
+import { STRINGS, t } from '../../../lib/i18n/strings';
 
 // Date formatting helper
 function fmt(d) {
@@ -164,6 +166,12 @@ export default function BuildCurriculumModal({
   selectedChildIds = null,
   onClose,
   onComplete,
+  initialSubjectId = null,
+  initialSubjectName = null,
+  initialMaterialId = null,
+  initialInputMode = null,
+  initialSourceUrl = null,
+  initialTopic = null,
 }) {
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(0);
@@ -216,9 +224,11 @@ export default function BuildCurriculumModal({
   const [placementStrategy, setPlacementStrategy] = useState('fit_openings');
   const [preferMornings, setPreferMornings] = useState(false);
   const [addToBacklog, setAddToBacklog] = useState(false);
+  const [useAvailableSlots, setUseAvailableSlots] = useState(true);
   const [preferAfternoons, setPreferAfternoons] = useState(false);
   const [preferEvenings, setPreferEvenings] = useState(false);
   const [preferWeekdays, setPreferWeekdays] = useState([]);
+  const toast = useToast();
 
   // Load materials when modal opens and material mode is selected
   useEffect(() => {
@@ -227,13 +237,14 @@ export default function BuildCurriculumModal({
     }
   }, [visible, inputMode, familyId]);
 
-  // Reset state when modal opens
+  // Reset state when modal opens; honor initial input mode/URL/topic when opening from Plan My Year
   useEffect(() => {
     if (visible) {
-      setInputMode('material');
-      setTopic('');
-      setSourceUrl('');
-      setSelectedMaterialId(null);
+      const inputModeFromPlan = initialInputMode === 'link' || initialInputMode === 'topic' || initialInputMode === 'material' ? initialInputMode : 'material';
+      setInputMode(initialInputMode != null ? inputModeFromPlan : 'material');
+      setTopic(initialTopic != null && initialTopic !== '' ? initialTopic : '');
+      setSourceUrl(initialSourceUrl != null && initialSourceUrl !== '' ? initialSourceUrl : '');
+      setSelectedMaterialId(initialMaterialId || null);
       setSelectedStudentIds(selectedChildIds || (children.length > 0 ? [children[0].id] : []));
       setWeeks(1);
       setCustomWeeks('');
@@ -254,7 +265,7 @@ export default function BuildCurriculumModal({
       setPreview(null);
       setSelectedLessonIndices(new Set());
     }
-  }, [visible, selectedChildIds, children]);
+  }, [visible, selectedChildIds, children, initialMaterialId, initialInputMode, initialSourceUrl, initialTopic]);
 
   const loadMaterials = async () => {
     if (!familyId) return;
@@ -1484,6 +1495,12 @@ export default function BuildCurriculumModal({
         lessons: selectedLessons,
         pacing: updatedPacing,
       };
+      if (initialSubjectName && filteredPreview.unit) {
+        filteredPreview.unit = {
+          ...filteredPreview.unit,
+          subject_tags: [initialSubjectName],
+        };
+      }
 
       // Commit curriculum
       const { data, error: commitError } = await commitCurriculum({
@@ -1491,6 +1508,7 @@ export default function BuildCurriculumModal({
         create_calendar_events: true,  // Always true - per-lesson backlog status handled separately
         add_to_backlog: false,  // Global flag not used when per-lesson is specified
         lesson_backlog_map: selectedBacklogMap,  // Map of lesson index to backlog status
+        prefer_placeholder_slots: useAvailableSlots,
         placement: {
           strategy: placementStrategy,
           prefer_mornings: preferMornings,
@@ -1521,6 +1539,19 @@ export default function BuildCurriculumModal({
       // Success - refresh calendar and close
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      }
+
+      const slotsUsed = data?.slots_used ?? 0;
+      const eventsCreated = data?.events_created ?? 0;
+      const hasCalendarEvents = (data?.event_ids?.length ?? 0) > 0;
+      if (hasCalendarEvents && (slotsUsed > 0 || eventsCreated > 0)) {
+        if (slotsUsed > 0 && eventsCreated > 0) {
+          toast.push(t('buildCurriculum.notices.usedSlotsAndFallback', { used: slotsUsed, fallback: eventsCreated }), 'success');
+        } else if (slotsUsed > 0) {
+          toast.push(t('buildCurriculum.notices.usedSlots', { used: slotsUsed }), 'success');
+        } else {
+          toast.push(STRINGS.buildCurriculum.notices.noSlotsFound, 'success');
+        }
       }
 
       if (onComplete) {
@@ -2203,6 +2234,13 @@ export default function BuildCurriculumModal({
 
       {!addToBacklog && (
         <>
+          <View style={[styles.inputSection, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }]}>
+            <View style={{ flex: 1, minWidth: 200 }}>
+              <Text style={styles.label}>{STRINGS.buildCurriculum.placement.useSlots.label}</Text>
+              <Text style={[styles.helperText, { marginTop: 2 }]}>{STRINGS.buildCurriculum.placement.useSlots.helper}</Text>
+            </View>
+            <Switch value={useAvailableSlots} onValueChange={setUseAvailableSlots} trackColor={{ false: '#d1d5db', true: '#a78bfa' }} thumbColor="#fff" />
+          </View>
           <View style={styles.inputSection}>
             <Text style={styles.label}>Strategy <Text style={styles.optionalLabel}>(optional)</Text></Text>
             <View style={styles.strategyRow}>
@@ -2319,7 +2357,7 @@ export default function BuildCurriculumModal({
                 {loading ? (
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Apply Changes</Text>
+                  <Text style={styles.primaryButtonText}>{STRINGS.buildCurriculum.actions.createUnitAndSchedule}</Text>
                 )}
               </TouchableOpacity>
             ) : (

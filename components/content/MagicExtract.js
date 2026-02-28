@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { Sparkles, X, Plus } from 'lucide-react';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
+import { Sparkles, X, Plus, BookOpen } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { apiRequest } from '../../lib/apiClient';
+import { STRINGS } from '../../lib/i18n/strings';
 
 /**
  * Magic Extract Component
@@ -68,7 +69,7 @@ export default function MagicExtract({ uploadId, onExtracted }) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Magic Extract</Text>
+              <Text style={styles.modalTitle}>{STRINGS.magicExtract.modal.title}</Text>
               <TouchableOpacity
                 onPress={() => {
                   setShowModal(false);
@@ -81,8 +82,9 @@ export default function MagicExtract({ uploadId, onExtracted }) {
 
             {!results ? (
               <>
+                <Text style={styles.modalSubtitle}>{STRINGS.magicExtract.modal.subtitle}</Text>
                 <Text style={styles.modalText}>
-                  Extract assignments and/or lessons from this PDF using AI.
+                  {STRINGS.magicExtract.modal.helper}
                 </Text>
 
                 <Text style={styles.label}>Extract Type</Text>
@@ -123,9 +125,25 @@ export default function MagicExtract({ uploadId, onExtracted }) {
               </>
             ) : (
               <ScrollView style={styles.resultsContainer}>
+                {/* Primary: Attach to course — opens Plan My Year */}
+                <TouchableOpacity
+                  style={styles.attachToCourseButton}
+                  onPress={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'magic_extract' } }));
+                    }
+                    setShowModal(false);
+                    setResults(null);
+                  }}
+                >
+                  <BookOpen size={18} color="#fff" />
+                  <Text style={styles.attachToCourseButtonText}>{STRINGS.magicExtract.actions.attachToCourse}</Text>
+                </TouchableOpacity>
+                <Text style={[styles.modalText, { marginBottom: 16 }]}>Add these drafts to a unit or backlog via Plan My Year.</Text>
+
                 {results.assignments && results.assignments.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Assignments</Text>
+                    <Text style={styles.sectionTitle}>{STRINGS.magicExtract.sections.draftAssignments}</Text>
                     {results.assignments.map((assignment, idx) => (
                       <View key={idx} style={styles.itemCard}>
                         <Text style={styles.itemTitle}>{assignment.title}</Text>
@@ -145,11 +163,11 @@ export default function MagicExtract({ uploadId, onExtracted }) {
                           )}
                         </View>
                         <TouchableOpacity
-                          style={styles.createButton}
+                          style={styles.createButtonSecondary}
                           onPress={() => handleCreateFromExtracted(assignment, 'assignment')}
                         >
                           <Plus size={14} color={colors.text} />
-                          <Text style={styles.createButtonText}>Create Assignment</Text>
+                          <Text style={styles.createButtonSecondaryText}>Create assignment (calendar)</Text>
                         </TouchableOpacity>
                       </View>
                     ))}
@@ -158,7 +176,7 @@ export default function MagicExtract({ uploadId, onExtracted }) {
 
                 {results.lessons && results.lessons.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Lessons</Text>
+                    <Text style={styles.sectionTitle}>{STRINGS.magicExtract.sections.draftLessons}</Text>
                     {results.lessons.map((lesson, idx) => (
                       <View key={idx} style={styles.itemCard}>
                         <Text style={styles.itemTitle}>{lesson.title}</Text>
@@ -178,11 +196,11 @@ export default function MagicExtract({ uploadId, onExtracted }) {
                           )}
                         </View>
                         <TouchableOpacity
-                          style={styles.createButton}
+                          style={styles.createButtonSecondary}
                           onPress={() => handleCreateFromExtracted(lesson, 'lesson')}
                         >
                           <Plus size={14} color={colors.text} />
-                          <Text style={styles.createButtonText}>Create Lesson</Text>
+                          <Text style={styles.createButtonSecondaryText}>Create lesson (calendar)</Text>
                         </TouchableOpacity>
                       </View>
                     ))}
@@ -193,7 +211,7 @@ export default function MagicExtract({ uploadId, onExtracted }) {
                  (!results.lessons || results.lessons.length === 0) && (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyText}>
-                      No content extracted. Try a different extract type.
+                      {STRINGS.magicExtract.empty.body}
                     </Text>
                   </View>
                 )}
@@ -258,10 +276,49 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
   },
+  modalSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.text,
+    marginBottom: 6,
+  },
   modalText: {
     fontSize: 14,
     color: colors.muted,
     marginBottom: 20,
+  },
+  attachToCourseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#5b21b6',
+    borderRadius: 10,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
+  },
+  attachToCourseButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  createButtonSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignSelf: 'flex-start',
+  },
+  createButtonSecondaryText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.muted,
   },
   label: {
     fontSize: 14,

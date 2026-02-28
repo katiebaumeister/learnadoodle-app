@@ -121,9 +121,6 @@ const styles = StyleSheet.create({
     backgroundColor: paper,
     borderRadius: radius,
     padding: 24,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05)',
-    }),
   },
   title: {
     fontSize: 18,

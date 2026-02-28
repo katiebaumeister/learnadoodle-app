@@ -4,8 +4,9 @@ import { Check, BookOpen, Calculator, FlaskConical, Palette, Music, Dumbbell, Co
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import CompletionRing from './CompletionRing';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
+import { STRINGS } from '../../lib/i18n/strings';
 
-export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
+export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], hideSlotBadge = false }) {
   // Holidays should not be clickable, movable, or show time
   const isHoliday = ev?.type === 'holiday' || ev?.event_type === 'holiday';
   const effectiveHideTime = hideTime || isHoliday;
@@ -73,7 +74,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       case 'exam':
         return '#FCE7F3'; // Soft Pink
       case 'holiday':
-        return '#FEF3C7'; // Soft Amber (day off)
+        return 'transparent'; // No fill; text uses Learnadoodle blue
       default:
         return '#F2F4F7'; // Default Warm Gray
     }
@@ -97,7 +98,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       case 'exam':
         return '#F9D5E8'; // More saturated Soft Pink
       case 'holiday':
-        return '#FDE68A'; // More saturated Amber
+        return 'transparent';
       default:
         return '#E5E7EB'; // Default more saturated Warm Gray
     }
@@ -121,7 +122,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       case 'exam':
         return '#BE185D'; // Pink accent
       case 'holiday':
-        return '#B45309'; // Amber accent
+        return '#6BB3E8'; // Learnadoodle blue
       default:
         return '#111827'; // Default dark text
     }
@@ -213,8 +214,25 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     }
 
     // 2) Fallback: derive from full timestamps if start_local is missing
-    const startStr = ev.start || ev.start_ts || ev.start_at;
+    let startStr = ev.start || ev.start_ts || ev.start_at;
     if (!startStr) {
+      // Holiday/synthetic events (e.g. holiday-2026-02-12-...) have no time; don't warn
+      if (ev?.type === 'holiday' || ev?.event_type === 'holiday' || (ev?.id && String(ev.id).startsWith('holiday-'))) {
+        return null;
+      }
+      // Use normalized ev.time (set from start_local in month view) if it looks like a time
+      if (typeof ev.time === 'string' && ev.time.match(/(\d{1,2})(?::(\d{2}))?(?:\s*(AM|PM))?/i)) {
+        const match = ev.time.match(/(\d{1,2})(?::(\d{2}))?(?:\s*(AM|PM))?/i);
+        if (match) {
+          let hours = parseInt(match[1], 10);
+          const minutes = (match[2] ?? '00').padStart(2, '0');
+          const periodRaw = match[3];
+          const period = periodRaw ? periodRaw.toUpperCase() : (hours >= 12 ? 'PM' : 'AM');
+          if (hours > 12 && !periodRaw) hours -= 12;
+          else if (hours === 0 && !periodRaw) hours = 12;
+          return minutes === '00' ? `${hours} ${period}` : `${hours}:${minutes} ${period}`;
+        }
+      }
       // Log only if no time source found (potential issue)
       console.warn('[EventChip] No time source found:', { eventId: ev.id, hasStartLocal: !!ev.start_local, start_local: ev.start_local });
       return null;
@@ -480,6 +498,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
   const isPlaceholder = ev?.is_placeholder === true;
+  const isEmptySlot = isPlaceholder && ev?.generated_by === 'plan_year' && !ev?.curriculum_lesson_id;
+  const isFilledSlot = !!(ev?.curriculum_lesson_id);
+  const slotBadgeLabel = hideSlotBadge ? null : (isFilledSlot ? null : (isEmptySlot ? STRINGS.calendarSlotActions.emptySlot.title : (isPlaceholder ? 'Placeholder' : null)));
   // Lesson that does not count toward 180-day/hour requirement (show muted + tooltip)
   const isExcludedFromPlan = ((ev?.event_type || ev?.type || '').toLowerCase() === 'lesson') && ev?.counts_toward_plan === false;
 
@@ -642,9 +663,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {isPlaceholder && (
-                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-                    <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+                {slotBadgeLabel && (
+                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+                    <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
                   </View>
                 )}
                 {isExcludedFromPlan && (
@@ -743,9 +764,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {isPlaceholder && (
-                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-                    <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+                {slotBadgeLabel && (
+                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+                    <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
                   </View>
                 )}
                 {isExcludedFromPlan && (
@@ -955,9 +976,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           >
             {ev.title || 'Untitled Event'}
           </Text>
-          {isPlaceholder && (
-            <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-              <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+          {slotBadgeLabel && (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+              <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
             </View>
           )}
           {isExcludedFromPlan && (
@@ -1225,9 +1246,9 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         >
           {ev.title || 'Untitled Event'}
         </Text>
-        {isPlaceholder && (
-          <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-            <Text style={{ fontSize: 9, color: '#6B7280', fontWeight: '500' }}>Placeholder</Text>
+        {slotBadgeLabel && (
+          <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
+            <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
           </View>
         )}
         {isExcludedFromPlan && (

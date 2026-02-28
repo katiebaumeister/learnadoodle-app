@@ -9,8 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  Linking,
 } from 'react-native';
-import { FileQuestion } from 'lucide-react';
+import { FileQuestion, Download } from 'lucide-react';
 import Modal from '../home/Modal';
 import { COMPLIANCE_MODAL_CONFIG, type ConfigField, type ComplianceDraft } from './complianceModalConfig';
 import {
@@ -18,7 +19,8 @@ import {
   saveComplianceRequirementDraft,
 } from '../../lib/services/complianceService';
 import { openPlannerAttendance } from '../../lib/services/complianceLinks';
-import { getAttendanceLogs } from '../../lib/services/recordsClient';
+import { getAttendanceLogs, getStateRequirementMetrics } from '../../lib/services/recordsClient';
+import { buildPrintHtml, formatPeriodLabelFromRange } from '../planner/attendance/AttendanceExportModal';
 
 export type ComplianceRequirement = {
   id: string;
@@ -60,8 +62,24 @@ export default function ComplianceRequirementModal({
   const [loading, setLoading] = useState(true);
   const [attendanceSummary, setAttendanceSummary] = useState<Record<string, { daysPresent: number; daysAbsent: number }> | null>(null);
   const [attendanceSummaryLoading, setAttendanceSummaryLoading] = useState(false);
+  const [exportingChildId, setExportingChildId] = useState<string | null>(null);
+  const [stateMetrics, setStateMetrics] = useState<Record<string, unknown> | null>(null);
 
   const config = requirement ? COMPLIANCE_MODAL_CONFIG[requirement.id] : null;
+
+  // Load state requirement metrics when modal opens with a state (enriches guidance and source link)
+  useEffect(() => {
+    if (!open || !requirement?.stateCode) {
+      setStateMetrics(null);
+      return;
+    }
+    let cancelled = false;
+    getStateRequirementMetrics(requirement.stateCode).then((metrics) => {
+      if (!cancelled && metrics) setStateMetrics(metrics as Record<string, unknown>);
+      else if (!cancelled) setStateMetrics(null);
+    });
+    return () => { cancelled = true; };
+  }, [open, requirement?.stateCode]);
   const dirty =
     Object.keys(draft).length !== Object.keys(initialDraft).length ||
     Object.keys(draft).some((k) => draft[k] !== initialDraft[k]);
@@ -85,6 +103,12 @@ export default function ComplianceRequirementModal({
     if (open && requirement) loadDraft();
   }, [open, requirement, loadDraft]);
 
+  // Stable key so we only re-fetch when the set of children actually changes, not when parent re-renders with new array refs
+  const attendanceChildIdsKey = React.useMemo(() => {
+    const ids = childrenProp.length > 0 ? childrenProp.map((c) => c.id) : childIds;
+    return ids.length > 0 ? [...ids].sort().join(',') : '';
+  }, [childrenProp, childIds]);
+
   useEffect(() => {
     if (!open || requirement?.id !== 'attendance' || !familyId) {
       setAttendanceSummary(null);
@@ -105,10 +129,12 @@ export default function ComplianceRequirementModal({
         logs.forEach((log) => {
           const cid = log.child_id;
           if (!byChild[cid]) byChild[cid] = { present: new Set(), absent: new Set() };
-          const day = (log.day_date || '').slice(0, 10);
+          const raw = log.day_date;
+          const day = typeof raw === 'string' ? raw.slice(0, 10) : raw instanceof Date ? raw.toISOString().slice(0, 10) : '';
           if (!day) return;
-          if (log.status === 'present') byChild[cid].present.add(day);
-          else if (log.status === 'absent') byChild[cid].absent.add(day);
+          const status = (log.status || '').toLowerCase();
+          if (status === 'present' || status === 'partial') byChild[cid].present.add(day);
+          else if (status === 'absent') byChild[cid].absent.add(day);
         });
         const summary: Record<string, { daysPresent: number; daysAbsent: number }> = {};
         Object.keys(byChild).forEach((cid) => {
@@ -121,7 +147,7 @@ export default function ComplianceRequirementModal({
       })
       .catch(() => setAttendanceSummary(null))
       .finally(() => setAttendanceSummaryLoading(false));
-  }, [open, familyId, requirement?.id, childrenProp, childIds]);
+  }, [open, familyId, requirement?.id, attendanceChildIdsKey]);
 
   const updateDraft = useCallback((key: string, value: unknown) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -151,25 +177,141 @@ export default function ComplianceRequirementModal({
     onClose();
   }, [onOpenAttendanceView, onClose]);
 
+  const formatDateLabel = useCallback((dateKey: string) => {
+    const d = new Date(dateKey + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, []);
+
+  const handleExportChildAttendance = useCallback(
+    async (childId: string) => {
+      if (!familyId || Platform.OS !== 'web' || typeof window === 'undefined') return;
+      const child = childrenProp.find((c) => c.id === childId);
+      if (!child) return;
+      setExportingChildId(childId);
+      try {
+        const end = new Date();
+        const start = new Date();
+        start.setFullYear(start.getFullYear() - 1);
+        start.setDate(start.getDate() + 1);
+        const startStr = start.toISOString().split('T')[0];
+        const endStr = end.toISOString().split('T')[0];
+        const logs = await getAttendanceLogs(familyId, [childId], { start: startStr, end: endStr });
+        const statusByDay: Record<string, 'present' | 'absent'> = {};
+        (logs || []).forEach((log: { day_date?: string; status?: string }) => {
+          const day = typeof log.day_date === 'string' ? log.day_date.slice(0, 10) : '';
+          if (!day) return;
+          const s = (log.status || '').toLowerCase();
+          if (s === 'present' || s === 'partial') statusByDay[day] = 'present';
+          else if (s === 'absent') statusByDay[day] = 'absent';
+        });
+        const exportRows: Array<{ dateKey: string; dateLabel: string; childStatuses: Record<string, string> }> = [];
+        const d = new Date(start);
+        while (d <= end) {
+          const dateKey = d.toISOString().split('T')[0];
+          if (dateKey > endStr) break;
+          exportRows.push({
+            dateKey,
+            dateLabel: formatDateLabel(dateKey),
+            childStatuses: { [childId]: statusByDay[dateKey] || undefined },
+          });
+          d.setDate(d.getDate() + 1);
+        }
+        const reportTitle = `Attendance Report — ${(child as { first_name?: string; name?: string }).first_name || (child as { first_name?: string; name?: string }).name || 'Child'}`;
+        const periodLabel = formatPeriodLabelFromRange(exportRows[0]?.dateKey ?? startStr, exportRows[exportRows.length - 1]?.dateKey ?? endStr);
+        const html = buildPrintHtml(exportRows, [child], {
+          pageTitle: reportTitle,
+          periodLabel,
+          generatedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          singleChild: child,
+        });
+        const w = window.open('', '_blank');
+        if (w) {
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+        }
+      } finally {
+        setExportingChildId(null);
+      }
+    },
+    [familyId, childrenProp, formatDateLabel]
+  );
+
   if (!open) return null;
 
   const title = requirement?.label ?? 'Compliance';
   const typeLabel = requirement?.type ? BADGE_LABELS[requirement.type] ?? requirement.type : null;
-  const stateGuidance = requirement?.detail ?? '';
   const stateCode = requirement?.stateCode ?? '';
   const isAttendance = requirement?.id === 'attendance';
 
+  // State guidance: last verified, source link, and full metric defaults list (no attendance_definition)
+  const lastVerified = (() => {
+    if (!stateMetrics) return null;
+    const a = stateMetrics.attendance as { last_verified_at?: string } | undefined;
+    const h = stateMetrics.hours as { last_verified_at?: string } | undefined;
+    const t = stateMetrics.testing as { last_verified_at?: string } | undefined;
+    return a?.last_verified_at ?? h?.last_verified_at ?? t?.last_verified_at ?? null;
+  })();
+  const metricsSourceUrl = (() => {
+    if (!stateMetrics) return null;
+    const a = stateMetrics.attendance as { source_url?: string } | undefined;
+    const h = stateMetrics.hours as { source_url?: string } | undefined;
+    const t = stateMetrics.testing as { source_url?: string } | undefined;
+    return a?.source_url ?? h?.source_url ?? t?.source_url ?? null;
+  })();
+
+  const formatMetricValue = (val: unknown): string => {
+    if (val === null || val === undefined) return 'None found';
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+    if (typeof val === 'number') return String(val);
+    if (Array.isArray(val)) return val.length ? val.join(', ') : 'None found';
+    if (typeof val === 'object') {
+      const entries = Object.entries(val).filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object');
+      if (entries.length === 0) return 'None found';
+      return entries.map(([k, v]) => `${k}: ${v}`).join('; ');
+    }
+    return String(val);
+  };
+
+  const metricsList = (() => {
+    if (!stateMetrics) return null;
+    const att = (stateMetrics.attendance as { metric_defaults?: Record<string, unknown> } | undefined)?.metric_defaults;
+    const hrs = (stateMetrics.hours as { metric_defaults?: Record<string, unknown> } | undefined)?.metric_defaults;
+    const tst = (stateMetrics.testing as { metric_defaults?: Record<string, unknown> } | undefined)?.metric_defaults;
+    const hoursReq = hrs?.hours_requirement as Record<string, unknown> | undefined;
+    const minHoursPerYear = att?.min_hours_per_year ?? hrs?.min_hours_per_year;
+    const minDaysPerYear = att?.min_days_per_year ?? hrs?.min_days_per_year;
+    const minHoursPerDay = hoursReq?.min_hours_per_day ?? hrs?.min_hours_per_day ?? att?.min_hours_per_day;
+    const evaluationRequired = tst?.evaluation_required;
+    const windowSimple = tst?.window_simple;
+    const testingGrades = tst?.testing_grades;
+    return [
+      { label: 'State', value: stateCode || 'None found' },
+      { label: 'Min hours per year', value: formatMetricValue(minHoursPerYear) },
+      { label: 'Min days per year', value: formatMetricValue(minDaysPerYear) },
+      { label: 'Min hours per day', value: formatMetricValue(minHoursPerDay) },
+      { label: 'Evaluation required', value: formatMetricValue(evaluationRequired) },
+      { label: 'Window simple', value: formatMetricValue(windowSimple) },
+      { label: 'Testing grades', value: formatMetricValue(testingGrades) },
+    ];
+  })();
+
+  const hasStateGuidanceContent = Boolean(lastVerified || metricsSourceUrl || (metricsList && stateCode));
+
   const renderAttendanceLayout = () => (
     <>
-      <View style={styles.attendanceMetadataRow}>
-        {typeLabel ? <View style={styles.attendancePill}><Text style={styles.attendancePillText}>{typeLabel}</Text></View> : null}
-        {stateCode ? <View style={styles.attendanceStateChip}><Text style={styles.attendanceStateChipText}>{stateCode}</Text></View> : null}
-      </View>
+      <Text style={styles.attendanceIntroBody}>
+        We mark a day as attended if an event marked as "Count as instructional time" is completed. You can control attendance markings further in{' '}
+        <Text style={styles.inlineLink} onPress={handleOpenAttendanceView}>
+          Attendance
+        </Text>
+        {' '}for full day or individual events.
+      </Text>
       <View style={styles.attendanceHeaderDivider} />
 
       <ScrollView style={styles.bodyScroll} contentContainerStyle={styles.bodyScrollContent} showsVerticalScrollIndicator={false}>
         {(attendanceSummaryLoading || childrenProp.length > 0 || (attendanceSummary && Object.keys(attendanceSummary).length > 0)) && (
-          <View style={styles.card}>
+          <View style={[styles.card, styles.cardStableHeight]}>
             <Text style={styles.cardLabel}>Current attendance</Text>
             {attendanceSummaryLoading ? (
               <Text style={styles.attendanceSummaryMuted}>Loading…</Text>
@@ -179,19 +321,63 @@ export default function ComplianceRequirementModal({
                 const name = (child as { first_name?: string; name?: string }).first_name || (child as { first_name?: string; name?: string }).name || 'Child';
                 const daysPresent = s?.daysPresent ?? 0;
                 const daysAbsent = s?.daysAbsent ?? 0;
+                const isExporting = exportingChildId === child.id;
                 return (
-                  <Text key={child.id} style={styles.attendanceSummaryRow}>
-                    {name}: {daysPresent} day{daysPresent !== 1 ? 's' : ''} attended{daysAbsent > 0 ? `, ${daysAbsent} absent` : ''}
-                  </Text>
+                  <View key={child.id} style={styles.attendanceSummaryRowWrap}>
+                    <Text style={styles.attendanceSummaryRow}>
+                      {name}: {daysPresent} day{daysPresent !== 1 ? 's' : ''} attended{daysAbsent > 0 ? `, ${daysAbsent} absent` : ''}
+                    </Text>
+                    {Platform.OS === 'web' && (
+                      <TouchableOpacity
+                        style={styles.attendanceExportIconWrap}
+                        onPress={() => handleExportChildAttendance(child.id)}
+                        disabled={isExporting}
+                        activeOpacity={0.7}
+                        accessibilityLabel={`Export attendance report for ${name}`}
+                        {...(Platform.OS === 'web' && { cursor: isExporting ? 'wait' : 'pointer' })}
+                      >
+                        <Download size={18} color={isExporting ? '#94A3B8' : '#60a5fa'} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 );
               })
             ) : null}
           </View>
         )}
-        <View style={styles.card}>
+        <View style={[styles.card, styles.cardStableHeight]}>
           <Text style={styles.cardLabel}>State guidance</Text>
-          {stateGuidance ? (
-            <Text style={styles.cardBody} id="compliance-modal-desc">{stateGuidance}</Text>
+          {hasStateGuidanceContent ? (
+            <>
+              <Text style={styles.cardBody} id="compliance-modal-desc">
+                Default values last verified {lastVerified ?? '—'}. Please check state sources for more info{' '}
+                {metricsSourceUrl ? (
+                  <Text
+                    style={styles.inlineLink}
+                    onPress={() => {
+                      if (Platform.OS === 'web' && typeof window !== 'undefined') window.open(metricsSourceUrl!, '_blank', 'noopener,noreferrer');
+                      else Linking.openURL(metricsSourceUrl!).catch(() => {});
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}
+                  >
+                    (source)
+                  </Text>
+                ) : (
+                  <Text style={styles.cardBody}>(no link)</Text>
+                )}
+                {' '}and edit below if desired.
+              </Text>
+              {metricsList && metricsList.length > 0 ? (
+                <View style={{ marginTop: 12 }}>
+                  {metricsList.map(({ label, value }) => (
+                    <View key={label} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                      <Text style={[styles.cardBody, { fontWeight: '600', minWidth: 160 }]}>{label}:</Text>
+                      <Text style={styles.cardBody}> {value}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </>
           ) : (
             <View style={styles.emptyStateRow}>
               <FileQuestion size={18} color="#94A3B8" />
@@ -201,17 +387,6 @@ export default function ComplianceRequirementModal({
               </TouchableOpacity>
             </View>
           )}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>How Learnadoodle tracks attendance</Text>
-          <Text style={styles.cardBody}>
-            We mark a day as attended if an event marked as "Count as instructional time" is completed. You can control attendance markings further in{' '}
-            <Text style={styles.inlineLink} onPress={handleOpenAttendanceView}>
-              Attendance
-            </Text>
-            {' '}for full day or individual events.
-          </Text>
         </View>
 
       </ScrollView>
@@ -242,9 +417,40 @@ export default function ComplianceRequirementModal({
       <ScrollView style={styles.bodyScroll} contentContainerStyle={styles.bodyScrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>State guidance</Text>
-          <Text style={styles.sectionBody} id="compliance-modal-desc">
-            {stateGuidance || 'No state guidance loaded yet.'}
-          </Text>
+          {hasStateGuidanceContent ? (
+            <>
+              <Text style={styles.sectionBody} id="compliance-modal-desc">
+                Default values last verified {lastVerified ?? '—'}. Please check state sources for more info{' '}
+                {metricsSourceUrl ? (
+                  <Text
+                    style={styles.inlineLink}
+                    onPress={() => {
+                      if (Platform.OS === 'web' && typeof window !== 'undefined') window.open(metricsSourceUrl!, '_blank', 'noopener,noreferrer');
+                      else Linking.openURL(metricsSourceUrl!).catch(() => {});
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}
+                  >
+                    (source)
+                  </Text>
+                ) : (
+                  <Text style={styles.sectionBody}>(no link)</Text>
+                )}
+                {' '}and edit below if desired.
+              </Text>
+              {metricsList && metricsList.length > 0 ? (
+                <View style={{ marginTop: 12 }}>
+                  {metricsList.map(({ label, value }) => (
+                    <View key={label} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                      <Text style={[styles.sectionBody, { fontWeight: '600', minWidth: 160 }]}>{label}:</Text>
+                      <Text style={styles.sectionBody}> {value}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.sectionBody}>No state guidance loaded yet.</Text>
+          )}
         </View>
         {config && (
           <View>
@@ -296,11 +502,12 @@ export default function ComplianceRequirementModal({
       isOpen={open}
       onClose={onClose}
       title={title}
+      hideHeader={isAttendance}
       ariaLabelledBy="compliance-modal-title"
       ariaDescribedBy="compliance-modal-desc"
       maxWidth={isAttendance ? 720 : undefined}
     >
-      <View style={styles.body}>
+      <View style={[styles.body, isAttendance && styles.bodyStableHeight]}>
         {isAttendance ? renderAttendanceLayout() : renderDefaultLayout()}
       </View>
     </Modal>
@@ -462,6 +669,9 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     minHeight: 0,
   },
+  bodyStableHeight: {
+    minHeight: 360,
+  },
   bodyScroll: {
     flex: 1,
     minHeight: 0,
@@ -499,6 +709,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#475569',
   },
+  attendanceIntroBody: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: '#1E293B',
+    marginBottom: 16,
+  },
   attendanceHeaderDivider: {
     height: 1,
     backgroundColor: '#e5e7eb',
@@ -511,6 +727,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: '#fafafa',
+  },
+  cardStableHeight: {
+    minHeight: 88,
   },
   cardLabel: {
     fontSize: 11,
@@ -529,11 +748,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94A3B8',
   },
+  attendanceSummaryRowWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+    gap: 8,
+  },
   attendanceSummaryRow: {
     fontSize: 14,
     lineHeight: 22,
     color: '#1E293B',
-    marginBottom: 4,
+    flex: 1,
+  },
+  attendanceExportIconWrap: {
+    padding: 6,
+    flexShrink: 0,
   },
   inlineLink: {
     color: '#60a5fa',
@@ -722,10 +952,13 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   saveButton: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
     backgroundColor: '#60a5fa',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+    }),
   },
   saveButtonDisabled: {
     opacity: 0.5,

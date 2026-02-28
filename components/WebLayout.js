@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock, Download } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
@@ -28,6 +28,7 @@ import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
 import PlanYearWizard from './year/PlanYearWizard';
 import PlanYearModal from './planner/PlanYearModal';
+import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
@@ -55,6 +56,14 @@ import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 import PlanHealthIcon from './planner/PlanHealthIcon';
 import OnboardingModal from './onboarding/OnboardingModal';
+
+const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function toLocalYYYYMMDD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user } = useAuth();
@@ -93,6 +102,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalDefaultSubjectId, setTaskModalDefaultSubjectId] = useState(null);
   const [taskModalDefaultEventType, setTaskModalDefaultEventType] = useState(null);
   const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
+  const [taskModalDefaultStartTime, setTaskModalDefaultStartTime] = useState(null);
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -135,8 +145,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
   const [showPlanYearModal, setShowPlanYearModal] = useState(false);
   const [planYearInitialAcademicYearId, setPlanYearInitialAcademicYearId] = useState(null);
+  const [planYearInitialPlanSummaryData, setPlanYearInitialPlanSummaryData] = useState(null);
   const [planYearOpenForNewPlan, setPlanYearOpenForNewPlan] = useState(false);
+  const [planYearFromSubjectDetail, setPlanYearFromSubjectDetail] = useState(false);
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
+  const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
+  const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -146,6 +160,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showQuickRescheduleModal, setShowQuickRescheduleModal] = useState(false);
   const [quickRescheduleInitialEvent, setQuickRescheduleInitialEvent] = useState(null);
   const [showBuildCurriculumModal, setShowBuildCurriculumModal] = useState(false);
+  const [buildCurriculumInitialSubjectId, setBuildCurriculumInitialSubjectId] = useState(null);
+  const [buildCurriculumInitialSubjectName, setBuildCurriculumInitialSubjectName] = useState(null);
+  const [buildCurriculumInitialInputMode, setBuildCurriculumInitialInputMode] = useState(null);
+  const [buildCurriculumInitialSourceUrl, setBuildCurriculumInitialSourceUrl] = useState(null);
+  const [buildCurriculumInitialTopic, setBuildCurriculumInitialTopic] = useState(null);
+  const [buildCurriculumInitialMaterialId, setBuildCurriculumInitialMaterialId] = useState(null);
   const [showProgressForecastModal, setShowProgressForecastModal] = useState(false);
   const [showSchedulingAssistantModal, setShowSchedulingAssistantModal] = useState(false);
   const [schedulingAssistantChildId, setSchedulingAssistantChildId] = useState(null);
@@ -204,6 +224,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [freezeWeekTooltipPosition, setFreezeWeekTooltipPosition] = useState({ x: 0, y: 0 });
   const freezeWeekButtonRef = useRef(null);
   const planWeekButtonRef = useRef(null);
+
+  // Planner export date-range modal
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState('');
+  const [exportColumns, setExportColumns] = useState({
+    instructionalTime: false,
+    plan: false,
+    location: false,
+    mode: false,
+    instructor: false,
+    subject: false,
+    grade: false,
+    unit: false,
+    percentOfTotal: false,
+    attachmentTitle: false,
+    notes: false,
+  });
+  const [showExportStartDatePicker, setShowExportStartDatePicker] = useState(false);
+  const [showExportEndDatePicker, setShowExportEndDatePicker] = useState(false);
+  const [exportStartCalendarMonth, setExportStartCalendarMonth] = useState(() => new Date());
+  const [exportEndCalendarMonth, setExportEndCalendarMonth] = useState(() => new Date());
+  const [exportModalSubjectId, setExportModalSubjectId] = useState(null);
+  const [exportModalSubjectName, setExportModalSubjectName] = useState(null);
   
   // Walkthrough refs
   const newButtonRef = useRef(null);
@@ -571,23 +615,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
         }, 200);
       } else {
-        // Navigate to the event's date in current view (month/week/day)
+        // Calendar event: navigate to event's date and open event modal (no screen switch)
         const eventDate = result.date;
         setCurrentMonth(eventDate);
         
-        // If currently in tasks view, switch to calendar (month) view
+        // If currently in tasks view, switch to calendar (month) view so modal shows over calendar
         if (currentView === 'tasks') {
           const url = new URL(window.location.href);
           url.searchParams.set('view', 'month');
           window.history.pushState({}, '', url.toString());
-          
-          // Dispatch event to switch to month view
           window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
           setCurrentView('month');
         }
         
-        // Dispatch event to update WebContent
         window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: eventDate }));
+        // Open event modal instead of just navigating
+        if (result.id) {
+          window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: result.id } }));
+        }
       }
     }
   };
@@ -1429,6 +1474,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setTaskModalDefaultSubjectId(detail.subjectId || null);
       setTaskModalDefaultEventType(detail.eventType || null);
       setTaskModalDefaultPlacement(detail.placement || 'calendar');
+      setTaskModalDefaultStartTime(detail.startTime || null);
       setShowTaskModal(true);
     };
     
@@ -1514,25 +1560,51 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openYearWizard', handler);
   }, [navigateToIntelligence]);
 
-  // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal / EventDetails)
+  // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal / EventDetails / AddSubjectModal / MagicExtract / Library)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (event) => {
-      const from = event && event.detail && event.detail.from;
-      const yearIdFromEvent = event && event.detail && event.detail.academicYearId;
-      console.log('[WebLayout] openPlanYearModal event', { from, yearIdFromEvent });
+      const detail = event?.detail ?? {};
+      const from = detail.from;
+      const yearIdFromEvent = detail.academicYearId;
+      const subjectId = detail.subjectId ?? null;
+      const materialId = detail.materialId ?? null;
+      console.log('[WebLayout] openPlanYearModal event', { from, yearIdFromEvent, subjectId, materialId });
       setPlanYearHighlightFromHealth(from === 'plan_health_over');
+      setPlanYearFromSubjectDetail(from === 'subject_detail');
+      setPlanYearInitialSubjectId(subjectId);
+      setPlanYearInitialMaterialId(materialId);
       if (yearIdFromEvent) {
         setPlanYearInitialAcademicYearId(yearIdFromEvent);
+        setPlanYearInitialPlanSummaryData(detail.planSummaryData ?? null);
         setPlanYearOpenForNewPlan(false);
       } else {
         setPlanYearInitialAcademicYearId(null);
-        setPlanYearOpenForNewPlan(false);
+        setPlanYearInitialPlanSummaryData(null);
+        setPlanYearOpenForNewPlan(materialId != null || subjectId != null || from === 'library' || from === 'generate_curriculum' || from === 'magic_extract');
       }
       setShowPlanYearModal(true);
     };
     window.addEventListener('openPlanYearModal', handler);
     return () => window.removeEventListener('openPlanYearModal', handler);
+  }, []);
+
+  // Deprecated: openBuildCurriculumModal now opens Plan My Year instead (same params: subjectId, subjectName, materialId)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const detail = e?.detail ?? {};
+      const subjectId = detail.subjectId ?? null;
+      const subjectName = detail.subjectName ?? null;
+      const materialId = detail.materialId ?? null;
+      setPlanYearInitialSubjectId(subjectId);
+      setPlanYearInitialMaterialId(materialId);
+      setPlanYearInitialAcademicYearId(null);
+      setPlanYearOpenForNewPlan(true);
+      setShowPlanYearModal(true);
+    };
+    window.addEventListener('openBuildCurriculumModal', handler);
+    return () => window.removeEventListener('openBuildCurriculumModal', handler);
   }, []);
 
   // Listen for openScheduleRules event
@@ -1543,6 +1615,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
     window.addEventListener('openScheduleRules', handler);
     return () => window.removeEventListener('openScheduleRules', handler);
+  }, []);
+
+  // Listen for openExportPlannerModal event (e.g. from Subject detail Attendance section)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const detail = e?.detail || {};
+      setExportModalSubjectId(detail.subjectId || null);
+      setExportModalSubjectName(detail.subjectName || null);
+      setShowExportModal(true);
+    };
+    window.addEventListener('openExportPlannerModal', handler);
+    return () => window.removeEventListener('openExportPlannerModal', handler);
   }, []);
 
   // Navigation handler for global search - expose via window for GlobalSearchModal
@@ -2433,7 +2518,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           setPlanYearOpenForNewPlan(true);
                           setShowPlanYearModal(true);
                         }}
-                        accessibilityLabel="Plan My Year"
+                        accessibilityLabel={STRINGS.planMyYear.modal.title}
                         accessibilityRole="button"
                         style={{
                           flexDirection: 'row',
@@ -2454,7 +2539,45 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           fontWeight: '500',
                           fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }}>
-                          Plan My Year
+                          {STRINGS.planMyYear.modal.title}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {(activeTab === 'planner' || activeTab === 'calendar') && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          const m = currentMonth.getMonth();
+                          const y = currentMonth.getFullYear();
+                          const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+                          const lastDay = new Date(y, m + 1, 0);
+                          const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+                          setExportStartDate(firstDay);
+                          setExportEndDate(lastDayStr);
+                          setShowExportModal(true);
+                        }}
+                        accessibilityLabel="Export"
+                        accessibilityRole="button"
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          height: 36,
+                          gap: 8,
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#E6EBF2',
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Download size={16} color="#1E293B" strokeWidth={2} />
+                        <Text style={{
+                          fontSize: 15,
+                          color: '#1E293B',
+                          fontWeight: '500',
+                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }}>
+                          Export
                         </Text>
                       </TouchableOpacity>
                     )}
@@ -2933,6 +3056,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setTaskModalDefaultSubjectId(null);
             setTaskModalDefaultEventType(null);
             setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
+            setTaskModalDefaultStartTime(null);
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
@@ -2940,6 +3064,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultSubjectId={taskModalDefaultSubjectId}
           defaultEventType={taskModalDefaultEventType}
           defaultPlacement={taskModalDefaultPlacement}
+          defaultStartTime={taskModalDefaultStartTime}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,
@@ -3110,22 +3235,47 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         visible={showPlanYearModal}
         onClose={() => {
           setShowPlanYearModal(false);
-          setPlanYearHighlightFromHealth(false);
-          setPlanYearInitialAcademicYearId(null);
-          setPlanYearOpenForNewPlan(false);
+          // Defer resetting plan-year state until after modal close animation so we don't
+          // flash the "Create new plan" first screen when closing from "Edit plan".
+          setTimeout(() => {
+            setPlanYearHighlightFromHealth(false);
+            setPlanYearFromSubjectDetail(false);
+            setPlanYearInitialAcademicYearId(null);
+            setPlanYearInitialPlanSummaryData(null);
+            setPlanYearOpenForNewPlan(false);
+            setPlanYearInitialSubjectId(null);
+            setPlanYearInitialMaterialId(null);
+          }, 300);
         }}
         familyId={familyId}
         children={children}
         subjects={subjects}
         fullSubjects={fullSubjects}
         initialAcademicYearId={planYearInitialAcademicYearId}
+        initialPlanSummaryData={planYearInitialPlanSummaryData}
         openForNewPlan={planYearOpenForNewPlan}
+        fromSubjectDetail={planYearFromSubjectDetail}
         highlightFromPlanHealth={planYearHighlightFromHealth}
+        initialSubjectId={planYearInitialSubjectId}
+        initialMaterialId={planYearInitialMaterialId}
+        onOpenBuildCurriculum={(params) => {
+          setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
+          setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
+          setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
+          setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
+          setBuildCurriculumInitialTopic(params.initialTopic ?? null);
+          setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
+          setShowBuildCurriculumModal(true);
+        }}
         onComplete={() => {
           setShowPlanYearModal(false);
           setPlanYearHighlightFromHealth(false);
+          setPlanYearFromSubjectDetail(false);
           setPlanYearInitialAcademicYearId(null);
+          setPlanYearInitialPlanSummaryData(null);
           setPlanYearOpenForNewPlan(false);
+          setPlanYearInitialSubjectId(null);
+          setPlanYearInitialMaterialId(null);
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }}
       />
@@ -3156,6 +3306,352 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
         }}
       />
+
+      {/* Export planner date range modal */}
+      <Modal
+        visible={showExportModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowExportModal(false);
+          setExportModalSubjectId(null);
+          setExportModalSubjectName(null);
+        }}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.4)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            width: '100%',
+            maxWidth: 480,
+            borderWidth: 1,
+            borderColor: '#E6EBF2',
+          }}>
+            <Text style={{
+              fontSize: 18,
+              fontWeight: '600',
+              color: '#1E293B',
+              marginBottom: 16,
+              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>
+              {exportModalSubjectName ? `Export planner - ${exportModalSubjectName}` : 'Export planner'}
+            </Text>
+            <Text style={{
+              fontSize: 14,
+              color: '#64748B',
+              marginBottom: 12,
+              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>
+              Choose the date range and optional columns to export as CSV.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16, alignItems: 'flex-end' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 6, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Start date</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setExportStartCalendarMonth(exportStartDate ? new Date(exportStartDate + 'T12:00:00') : new Date());
+                    setShowExportStartDatePicker(true);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    height: 40,
+                    paddingHorizontal: 12,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#E6EBF2',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ fontSize: 15, color: exportStartDate ? '#1E293B' : '#94A3B8', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                    {exportStartDate ? (() => { const d = new Date(exportStartDate + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })() : 'Select start date'}
+                  </Text>
+                  <ChevronDown size={16} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 6, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>End date</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setExportEndCalendarMonth(exportEndDate ? new Date(exportEndDate + 'T12:00:00') : new Date());
+                    setShowExportEndDatePicker(true);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    height: 40,
+                    paddingHorizontal: 12,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#E6EBF2',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ fontSize: 15, color: exportEndDate ? '#1E293B' : '#94A3B8', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                    {exportEndDate ? (() => { const d = new Date(exportEndDate + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })() : 'Select end date'}
+                  </Text>
+                  <ChevronDown size={16} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Optional columns (include when checked)</Text>
+            <ScrollView style={{ maxHeight: 220, marginBottom: 20 }} nestedScrollEnabled>
+              {[
+                { key: 'instructionalTime', label: 'Count as instructional time' },
+                { key: 'plan', label: 'Plan My Year' },
+                { key: 'location', label: 'Location' },
+                { key: 'mode', label: 'Mode' },
+                { key: 'instructor', label: 'Instructor' },
+                { key: 'subject', label: 'Subject' },
+                { key: 'grade', label: 'Grade' },
+                { key: 'unit', label: 'Unit' },
+                { key: 'percentOfTotal', label: '% of total' },
+                { key: 'attachmentTitle', label: 'Attachment title' },
+                { key: 'notes', label: 'Notes' },
+              ].map(({ key, label }) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => setExportColumns((prev) => ({ ...prev, [key]: !prev[key] }))}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}
+                  activeOpacity={0.7}
+                >
+                  <View style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 4,
+                    borderWidth: 1.5,
+                    borderColor: exportColumns[key] ? '#1E293B' : '#CBD5E1',
+                    backgroundColor: exportColumns[key] ? '#1E293B' : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    {exportColumns[key] && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
+                  </View>
+                  <Text style={{ fontSize: 14, color: '#334155', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => setShowExportModal(false)}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: '#E6EBF2',
+                  backgroundColor: '#FFFFFF',
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '500', color: '#64748B', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  const start = exportStartDate.trim();
+                  const end = exportEndDate.trim();
+                  if (!start || !end) return;
+                  const startD = new Date(start);
+                  const endD = new Date(end);
+                  if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return;
+                  if (startD > endD) return;
+                  setShowExportModal(false);
+                  if (typeof window !== 'undefined') {
+                    const exportDetail = { startDate: startD, endDate: endD, columns: exportColumns };
+                    if (exportModalSubjectId) exportDetail.subjectId = exportModalSubjectId;
+                    if (exportModalSubjectName) exportDetail.subjectName = exportModalSubjectName;
+                    window.dispatchEvent(new CustomEvent('plannerExportToExcel', { detail: exportDetail }));
+                  }
+                  setExportModalSubjectId(null);
+                  setExportModalSubjectName(null);
+                }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  paddingVertical: 10,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: '#1E293B',
+                  borderWidth: 1,
+                  borderColor: '#1E293B',
+                }}
+              >
+                <Download size={16} color="#FFFFFF" />
+                <Text style={{ fontSize: 15, fontWeight: '500', color: '#FFFFFF', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Export</Text>
+              </TouchableOpacity>
+            </View>
+            </View>
+        </View>
+      </Modal>
+
+      {/* Export start date calendar picker */}
+      {showExportStartDatePicker && (
+        <Modal animationType="fade" transparent visible onRequestClose={() => setShowExportStartDatePicker(false)}>
+          <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowExportStartDatePicker(false)}>
+            <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, width: Platform.OS === 'web' ? 320 : '90%', maxWidth: 320, ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : {}) }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <TouchableOpacity onPress={() => { const d = new Date(exportStartCalendarMonth); d.setMonth(d.getMonth() - 1); setExportStartCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <ChevronLeft size={20} color="#1E293B" />
+                </TouchableOpacity>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#1E293B', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>{exportStartCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                <TouchableOpacity onPress={() => { const d = new Date(exportStartCalendarMonth); d.setMonth(d.getMonth() + 1); setExportStartCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <ChevronRight size={20} color="#1E293B" />
+                </TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+                <TouchableOpacity onPress={() => { const d = new Date(exportStartCalendarMonth); d.setFullYear(d.getFullYear() - 1); setExportStartCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>← Year</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const today = new Date(); setExportStartCalendarMonth(today); setExportStartDate(toLocalYYYYMMDD(today)); setShowExportStartDatePicker(false); }} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B', textDecorationLine: 'underline' }}>Today</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const d = new Date(exportStartCalendarMonth); d.setFullYear(d.getFullYear() + 1); setExportStartCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>Year →</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                {EXPORT_CALENDAR_WEEKDAY_LABELS.map((day) => (
+                  <View key={day} style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '500' }}>{day}</Text>
+                  </View>
+                ))}
+              </View>
+              {(() => {
+                const year = exportStartCalendarMonth.getFullYear();
+                const month = exportStartCalendarMonth.getMonth();
+                const firstDay = new Date(year, month, 1);
+                const startDateGrid = new Date(firstDay);
+                startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
+                const days = [];
+                const current = new Date(startDateGrid);
+                for (let i = 0; i < 42; i++) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
+                return (
+                  <View>
+                    {[0, 1, 2, 3, 4, 5].map((week) => (
+                      <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                        {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                          const isCurrentMonth = day.getMonth() === month;
+                          const ymd = toLocalYYYYMMDD(day);
+                          const isSelected = exportStartDate === ymd;
+                          const isToday = ymd === toLocalYYYYMMDD(new Date());
+                          return (
+                            <TouchableOpacity
+                              key={idx}
+                              onPress={() => { setExportStartDate(ymd); setShowExportStartDatePicker(false); }}
+                              style={{
+                                flex: 1,
+                                aspectRatio: 1,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: 6,
+                                ...(isSelected ? { backgroundColor: '#1E293B' } : {}),
+                                ...(isToday && !isSelected ? { borderWidth: 2, borderColor: '#1E293B' } : {}),
+                              }}
+                            >
+                              <Text style={{ fontSize: 13, color: isSelected ? '#fff' : (!isCurrentMonth ? '#94A3B8' : '#1E293B'), fontWeight: isSelected ? '600' : '400' }}>{day.getDate()}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
+      {/* Export end date calendar picker */}
+      {showExportEndDatePicker && (
+        <Modal animationType="fade" transparent visible onRequestClose={() => setShowExportEndDatePicker(false)}>
+          <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowExportEndDatePicker(false)}>
+            <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, width: Platform.OS === 'web' ? 320 : '90%', maxWidth: 320, ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : {}) }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <TouchableOpacity onPress={() => { const d = new Date(exportEndCalendarMonth); d.setMonth(d.getMonth() - 1); setExportEndCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <ChevronLeft size={20} color="#1E293B" />
+                </TouchableOpacity>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#1E293B', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>{exportEndCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                <TouchableOpacity onPress={() => { const d = new Date(exportEndCalendarMonth); d.setMonth(d.getMonth() + 1); setExportEndCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <ChevronRight size={20} color="#1E293B" />
+                </TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+                <TouchableOpacity onPress={() => { const d = new Date(exportEndCalendarMonth); d.setFullYear(d.getFullYear() - 1); setExportEndCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>← Year</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const today = new Date(); setExportEndCalendarMonth(today); setExportEndDate(toLocalYYYYMMDD(today)); setShowExportEndDatePicker(false); }} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B', textDecorationLine: 'underline' }}>Today</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const d = new Date(exportEndCalendarMonth); d.setFullYear(d.getFullYear() + 1); setExportEndCalendarMonth(d); }} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>Year →</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                {EXPORT_CALENDAR_WEEKDAY_LABELS.map((day) => (
+                  <View key={day} style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '500' }}>{day}</Text>
+                  </View>
+                ))}
+              </View>
+              {(() => {
+                const year = exportEndCalendarMonth.getFullYear();
+                const month = exportEndCalendarMonth.getMonth();
+                const firstDay = new Date(year, month, 1);
+                const startDateGrid = new Date(firstDay);
+                startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
+                const days = [];
+                const current = new Date(startDateGrid);
+                for (let i = 0; i < 42; i++) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
+                return (
+                  <View>
+                    {[0, 1, 2, 3, 4, 5].map((week) => (
+                      <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                        {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                          const isCurrentMonth = day.getMonth() === month;
+                          const ymd = toLocalYYYYMMDD(day);
+                          const isSelected = exportEndDate === ymd;
+                          const isToday = ymd === toLocalYYYYMMDD(new Date());
+                          return (
+                            <TouchableOpacity
+                              key={idx}
+                              onPress={() => { setExportEndDate(ymd); setShowExportEndDatePicker(false); }}
+                              style={{
+                                flex: 1,
+                                aspectRatio: 1,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: 6,
+                                ...(isSelected ? { backgroundColor: '#1E293B' } : {}),
+                                ...(isToday && !isSelected ? { borderWidth: 2, borderColor: '#1E293B' } : {}),
+                              }}
+                            >
+                              <Text style={{ fontSize: 13, color: isSelected ? '#fff' : (!isCurrentMonth ? '#94A3B8' : '#1E293B'), fontWeight: isSelected ? '600' : '400' }}>{day.getDate()}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
 
       {/* Scheduling Assistant Modal */}
       <Modal
@@ -3316,13 +3812,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       {/* Build Curriculum Modal */}
       <BuildCurriculumModal
         visible={showBuildCurriculumModal}
-        onClose={() => setShowBuildCurriculumModal(false)}
+        onClose={() => {
+          setShowBuildCurriculumModal(false);
+          setBuildCurriculumInitialSubjectId(null);
+          setBuildCurriculumInitialSubjectName(null);
+          setBuildCurriculumInitialInputMode(null);
+          setBuildCurriculumInitialSourceUrl(null);
+          setBuildCurriculumInitialTopic(null);
+          setBuildCurriculumInitialMaterialId(null);
+        }}
         familyId={familyId}
         children={children}
         selectedChildIds={selectedCalendarChildren}
+        initialSubjectId={buildCurriculumInitialSubjectId}
+        initialSubjectName={buildCurriculumInitialSubjectName}
+        initialInputMode={buildCurriculumInitialInputMode}
+        initialSourceUrl={buildCurriculumInitialSourceUrl}
+        initialTopic={buildCurriculumInitialTopic}
+        initialMaterialId={buildCurriculumInitialMaterialId}
         onComplete={(result) => {
           console.log('Build curriculum completed:', result);
           setShowBuildCurriculumModal(false);
+          setBuildCurriculumInitialSubjectId(null);
+          setBuildCurriculumInitialSubjectName(null);
+          setBuildCurriculumInitialInputMode(null);
+          setBuildCurriculumInitialSourceUrl(null);
+          setBuildCurriculumInitialTopic(null);
+          setBuildCurriculumInitialMaterialId(null);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshCalendar'));
           }

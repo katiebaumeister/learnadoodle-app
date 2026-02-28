@@ -49,15 +49,11 @@ export function useWeekDataWithOffline(weekStart, childIds, familyId) {
         return;
       }
       
-      // Only show loading when week changes, not when filter changes
+      // Never show loading: update data in place so week view doesn't flash (user requested no loading state)
       const weekChanged = prevWeekStartRef.current !== weekStart.toISOString();
       const hasNoData = !data.children || data.children.length === 0;
-      const isRefreshTrigger = refreshTrigger > 0; // Check if this is a refresh trigger
-      const shouldShowLoading = weekChanged || hasNoData;
-      
-      if (shouldShowLoading) {
-        setLoading(true);
-      }
+      const isRefreshTrigger = refreshTrigger > 0;
+      const shouldShowLoading = false;
       
       // Update the ref for next comparison
       prevWeekStartRef.current = weekStart.toISOString();

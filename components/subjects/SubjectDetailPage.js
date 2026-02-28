@@ -21,11 +21,13 @@ import {
   TrendingUp,
   CheckCircle,
   XCircle,
+  Download,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
 import { useSession } from '../../contexts/SessionContext';
-const ATTENDANCE_LIST_LIMIT = 10;
+import ReviewInboxModal from '../parent/ReviewInboxModal';
+const ATTENDANCE_LIST_LIMIT = 5;
 
 export default function SubjectDetailPage({
   subjectId,
@@ -45,6 +47,7 @@ export default function SubjectDetailPage({
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
+  const [showRecentlySubmittedModal, setShowRecentlySubmittedModal] = useState(false);
   const loadingRef = useRef(false);
 
   useEffect(() => {
@@ -163,18 +166,10 @@ export default function SubjectDetailPage({
     return () => clearTimeout(t);
   }, [initialScrollToSectionId, scrollToSection]);
 
-  const handleAddLesson = useCallback(() => {
+  const handleOpenPlanYear = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openTaskCreateModal', {
-        detail: { subjectId, eventType: 'lesson' }
-      }));
-    }
-  }, [subjectId]);
-
-  const handleAddAssignment = useCallback(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openTaskCreateModal', {
-        detail: { subjectId, eventType: 'assignment' }
+      window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+        detail: { from: 'subject_detail', subjectId }
       }));
     }
   }, [subjectId]);
@@ -204,6 +199,32 @@ export default function SubjectDetailPage({
   }, [subject, subjectData?.events]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
+
+  const handleAddLesson = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openTaskModal', {
+        detail: {
+          date: new Date(),
+          subjectId,
+          eventType: 'lesson',
+          childIds: assignedChildren.length > 0 ? assignedChildren : undefined,
+        }
+      }));
+    }
+  }, [subjectId, assignedChildren]);
+
+  const handleAddAssignment = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openTaskModal', {
+        detail: {
+          date: new Date(),
+          subjectId,
+          eventType: 'assignment',
+          childIds: assignedChildren.length > 0 ? assignedChildren : undefined,
+        }
+      }));
+    }
+  }, [subjectId, assignedChildren]);
 
   // Process attendance for last 30 days
   const attendance30Days = useMemo(() => {
@@ -496,9 +517,9 @@ export default function SubjectDetailPage({
           </TouchableOpacity>
         </View>
 
-        {/* Section 1: Timeline / What's Next - next 7 days only; then link to Planner */}
+        {/* Section 1: Progress - next 7 days only; then link to Planner */}
         <View id="progress-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Timeline / What's Next</Text>
+          <Text style={styles.sectionTitle}>Progress</Text>
           {whatsNextInNext7Days.length > 0 ? (
             <>
               <View style={styles.timelineList}>
@@ -550,15 +571,25 @@ export default function SubjectDetailPage({
                   <Text style={styles.emptyStateText}>
                     Upcoming lessons are later. View the full schedule in Planner.
                   </Text>
-                  <TouchableOpacity
-                    style={styles.attendanceViewTotalBtn}
-                    onPress={() => onNavigateToPlanner({ subjectId: subject.id })}
-                    activeOpacity={0.7}
-                  >
-                    <Calendar size={16} color={colors.accent || '#4F46E5'} />
-                    <Text style={styles.attendanceViewTotalText}>View in Planner</Text>
-                    <ChevronRight size={16} color={colors.muted || '#6B7280'} />
-                  </TouchableOpacity>
+                  <View style={styles.emptyStateButtonRow}>
+                    <TouchableOpacity
+                      style={styles.attendanceViewTotalBtn}
+                      onPress={() => onNavigateToPlanner({ subjectId: subject.id })}
+                      activeOpacity={0.7}
+                    >
+                      <Calendar size={16} color={colors.accent || '#4F46E5'} />
+                      <Text style={styles.attendanceViewTotalText}>View in Planner</Text>
+                      <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={handleOpenPlanYear} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <Calendar size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Plan my year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowRecentlySubmittedModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <FileText size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Recently submitted</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ) : hasAnyEvents ? (
                 <View style={styles.emptyStateBox}>
@@ -566,10 +597,20 @@ export default function SubjectDetailPage({
                   <Text style={styles.emptyStateText}>
                     No upcoming lessons, activities, or assignments are scheduled.
                   </Text>
-                  <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson}>
-                    <Plus size={18} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
-                  </TouchableOpacity>
+                  <View style={styles.emptyStateButtonRow}>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <Plus size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={handleOpenPlanYear} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <Calendar size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Plan my year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowRecentlySubmittedModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <FileText size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Recently submitted</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ) : (
                 <View style={styles.emptyStateBox}>
@@ -577,10 +618,20 @@ export default function SubjectDetailPage({
                   <Text style={styles.emptyStateText}>
                     Add a lesson or syllabus to begin tracking progress.
                   </Text>
-                  <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson}>
-                    <Plus size={18} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
-                  </TouchableOpacity>
+                  <View style={styles.emptyStateButtonRow}>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddLesson} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <Plus size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Add Lesson</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={handleOpenPlanYear} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <Calendar size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Plan my year</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowRecentlySubmittedModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <FileText size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Recently submitted</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
             </>
@@ -589,7 +640,19 @@ export default function SubjectDetailPage({
 
         {/* Section 2: Attendance */}
         <View id="attendance-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Attendance</Text>
+          <View style={styles.attendanceSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
+            {Platform.OS === 'web' && (
+              <TouchableOpacity
+                style={styles.exportIconButton}
+                onPress={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }))}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Download size={18} color="#6B7280" />
+              </TouchableOpacity>
+            )}
+          </View>
           {attendanceRecords.length > 0 ? (
             <>
               <View style={styles.attendanceChips}>
@@ -642,13 +705,13 @@ export default function SubjectDetailPage({
               )}
               {onNavigateToPlannerAttendance && (
                 <TouchableOpacity
-                  style={styles.attendanceViewTotalBtn}
+                  style={[styles.emptyStateButton, { marginTop: 16 }]}
                   onPress={onNavigateToPlannerAttendance}
                   activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Calendar size={16} color={colors.accent || '#4F46E5'} />
-                  <Text style={styles.attendanceViewTotalText}>View total attendance in Planner</Text>
-                  <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>View more</Text>
                 </TouchableOpacity>
               )}
             </>
@@ -659,13 +722,13 @@ export default function SubjectDetailPage({
               </Text>
               {onNavigateToPlannerAttendance && (
                 <TouchableOpacity
-                  style={styles.attendanceViewTotalBtn}
+                  style={styles.emptyStateButton}
                   onPress={onNavigateToPlannerAttendance}
                   activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Calendar size={16} color={colors.accent || '#4F46E5'} />
-                  <Text style={styles.attendanceViewTotalText}>View attendance in Planner</Text>
-                  <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>View more</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -776,7 +839,7 @@ export default function SubjectDetailPage({
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
-                Materials help Learnadoodle plan lessons, track coverage, and generate insights.
+                Adding materials over time helps Learnadoodle plan lessons, track coverage, and generate insights.
               </Text>
               <TouchableOpacity
                 style={styles.emptyStateButton}
@@ -789,6 +852,12 @@ export default function SubjectDetailPage({
           )}
         </View>
       </ScrollView>
+      <ReviewInboxModal
+        visible={showRecentlySubmittedModal}
+        onClose={() => setShowRecentlySubmittedModal(false)}
+        familyId={familyId}
+        initialSection="submissions"
+      />
     </View>
   );
 }
@@ -1017,6 +1086,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  attendanceSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  exportIconButton: {
+    padding: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
@@ -1124,6 +1203,12 @@ const styles = StyleSheet.create({
     padding: 24,
     borderWidth: 1,
     borderColor: colors.border || '#e5e7eb',
+  },
+  emptyStateButtonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    alignItems: 'center',
   },
   emptyStateBanner: {
     fontSize: 16,

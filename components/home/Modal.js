@@ -9,6 +9,7 @@ const Modal = ({
   ariaLabelledBy,
   ariaDescribedBy,
   maxWidth,
+  hideHeader = false,
 }) => {
   const modalRef = useRef(null);
   const previousActiveElement = useRef(null);
@@ -80,18 +81,20 @@ const Modal = ({
           aria-labelledby={ariaLabelledBy}
           aria-describedby={ariaDescribedBy}
         >
-          <View style={styles.header}>
-            <Text style={styles.title} id={ariaLabelledBy}>{title}</Text>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              accessibilityLabel="Close modal"
-              accessibilityRole="button"
-            >
-              <Text style={styles.closeButtonText}>×</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.content}>
+          {!hideHeader && (
+            <View style={styles.header}>
+              <Text style={styles.title} id={ariaLabelledBy}>{title}</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={onClose}
+                accessibilityLabel="Close modal"
+                accessibilityRole="button"
+              >
+                <Text style={styles.closeButtonText}>×</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          <View style={[styles.content, hideHeader && styles.contentNoHeader]}>
             {children}
           </View>
         </TouchableOpacity>
@@ -149,6 +152,9 @@ const styles = {
     padding: 24,
     maxHeight: '60vh',
     overflow: 'hidden',
+  },
+  contentNoHeader: {
+    paddingTop: 24,
   },
 };
 

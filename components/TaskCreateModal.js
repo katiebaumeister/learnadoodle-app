@@ -123,6 +123,7 @@ export default function TaskCreateModal({
   defaultPlacement = 'calendar', // New prop: 'calendar' or 'backlog'
   defaultSubjectId = null, // Default subject ID to set when opening modal
   defaultEventType = null, // Default event type to set when opening modal (e.g., 'Lesson')
+  defaultStartTime = null, // Default start time (e.g. '9:00 AM') when opening from plan slot
 }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
@@ -854,7 +855,7 @@ export default function TaskCreateModal({
       // Labels removed - no longer used
       setPlacement(defaultPlacement || 'calendar'); // Use the prop instead of hardcoded 'calendar'
       setAllDay(false);
-      setStartTime(DEFAULT_START_TIME);
+      setStartTime(defaultStartTime && String(defaultStartTime).trim() ? defaultStartTime : DEFAULT_START_TIME);
       setEndTime('');
       // Reset new fields
       const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
@@ -896,7 +897,7 @@ export default function TaskCreateModal({
       setSuggestedChange(null);
       setChangeAccepted(false);
     }
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType]);
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -1905,31 +1906,21 @@ export default function TaskCreateModal({
           eventDate = new Date(dueDate);
         }
         
-        const refreshDetail = { 
-          eventId: data.id, 
+        const refreshDetail = {
+          eventId: data.id,
           isBacklog: placement === 'backlog',
+          event: placement !== 'backlog' ? data : null,
         };
-        
-        // Add target month/year if we have an event date
         if (eventDate && !isNaN(eventDate.getTime())) {
           refreshDetail.targetYear = eventDate.getFullYear();
           refreshDetail.targetMonth = eventDate.getMonth();
         }
-        
-        window.dispatchEvent(new CustomEvent('eventCreated', { 
-          detail: refreshDetail
-        }));
-        // Refresh Subjects so subject detail (Timeline / Attendance) updates when lessons are added
+        window.dispatchEvent(new CustomEvent('eventCreated', { detail: refreshDetail }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         if (subjectId) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
         }
-        // Also dispatch refreshCalendar to ensure all views update, with target month/year
-        // Add a small delay to ensure database transaction completes
-        setTimeout(() => {
-          console.log('[TaskCreateModal] Dispatching refreshCalendar event with detail:', refreshDetail);
-          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: refreshDetail }));
-        }, 500);
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: refreshDetail }));
       }
       
       // If "Adjust automatically" was selected, open Quick Reschedule after closing modal
@@ -2085,10 +2076,9 @@ export default function TaskCreateModal({
             </View>
           </SafeFieldRow>
 
-          {/* Count this as instructional time - at top */}
+          {/* Count this as instructional time - at top (show even when no plans; plan choice is optional) */}
           {placement === 'calendar' &&
-            ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) &&
-            (academicYears.length > 0 || loadingAcademicYears) && (
+            ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) && (
             <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 4 }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                 <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>

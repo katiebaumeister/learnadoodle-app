@@ -58,6 +58,11 @@ class UpdateEventStatusInput(BaseModel):
     status: str = Field(..., description="New status: 'scheduled', 'in_progress', or 'done'")
 
 
+class FillSlotInput(BaseModel):
+    curriculum_lesson_id: str = Field(..., description="Curriculum lesson ID to attach to this slot")
+    title: Optional[str] = Field(None, description="Event title (defaults to lesson title)")
+
+
 class AutoScheduleCourseInput(BaseModel):
     family_id: str = Field(..., description="Family ID")
     course_id: str = Field(..., description="Course/Syllabus ID")
@@ -397,6 +402,59 @@ async def update_event_status(
     except Exception as e:
         log_event("update_event_status.error", event_id=event_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Error updating event status: {str(e)}")
+
+
+@events_router.patch("/{event_id}/fill-slot")
+async def fill_slot(
+    event_id: str,
+    body: FillSlotInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    Fill an empty Plan My Year slot (or change lesson on a filled slot) by attaching a curriculum lesson.
+    Sets curriculum_lesson_id, source='curriculum', and title on the event.
+    Filled slots are not overwritten by future Plan My Year Apply.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id:
+            raise HTTPException(status_code=404, detail="Family not found")
+
+        event = await verify_event_family_access(event_id, family_id)
+        supabase = get_admin_client()
+
+        # Fetch lesson and ensure it belongs to family (via unit)
+        lesson_res = supabase.table("curriculum_lessons").select("id, title, unit_id").eq("id", body.curriculum_lesson_id).single().execute()
+        if not lesson_res.data:
+            raise HTTPException(status_code=404, detail="Curriculum lesson not found")
+        lesson = lesson_res.data
+
+        unit_res = supabase.table("curriculum_units").select("id, family_id").eq("id", lesson["unit_id"]).single().execute()
+        if not unit_res.data or unit_res.data.get("family_id") != family_id:
+            raise HTTPException(status_code=403, detail="Lesson does not belong to your family")
+
+        title = (body.title or lesson.get("title") or "").strip() or lesson.get("title")
+
+        update_data = {
+            "curriculum_lesson_id": body.curriculum_lesson_id,
+            "source": "curriculum",
+            "title": title or event.get("title"),
+        }
+        # Optionally clear placeholder flag so UI shows as scheduled lesson (keep slot metadata for analytics)
+        # Spec: leave start_ts/end_ts/child_id/subject_id from slot; we only set curriculum link and title.
+        update_res = supabase.table("events").update(update_data).eq("id", event_id).execute()
+        if not update_res.data:
+            raise HTTPException(status_code=500, detail="Failed to update event")
+        updated_event = update_res.data[0] if isinstance(update_res.data, list) else update_res.data
+
+        log_event("fill_slot", event_id=event_id, family_id=family_id, curriculum_lesson_id=body.curriculum_lesson_id, user_id=user["id"])
+        return updated_event
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("fill_slot.error", event_id=event_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error filling slot: {str(e)}")
 
 
 @router.post("/shift_week")

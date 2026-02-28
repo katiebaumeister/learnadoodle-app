@@ -239,16 +239,26 @@ export default function TasksView({
       }
     };
 
+    // When an item is restored from trash or permanently deleted, remove from list
+    const handleTrashItemRestored = (event) => {
+      const eventId = event.detail?.eventId;
+      if (eventId) {
+        setTrashEvents(prev => prev.filter(ev => ev.id !== eventId));
+      }
+    };
+
     window.addEventListener('refreshCalendar', handleRefresh);
     window.addEventListener('eventRescheduled', handleRefresh);
     window.addEventListener('eventDeleted', handleEventDeleted);
     window.addEventListener('eventCreated', handleEventCreated);
+    window.addEventListener('trashItemRestored', handleTrashItemRestored);
 
     return () => {
       window.removeEventListener('refreshCalendar', handleRefresh);
       window.removeEventListener('eventRescheduled', handleRefresh);
       window.removeEventListener('eventDeleted', handleEventDeleted);
       window.removeEventListener('eventCreated', handleEventCreated);
+      window.removeEventListener('trashItemRestored', handleTrashItemRestored);
     };
   }, [activeSection, fetchBacklogItems, fetchTrashItems]);
 
@@ -655,7 +665,7 @@ export default function TasksView({
           compact={true}
           fullWidth={true}
           hideTime={false}
-          onPress={() => onEventPress && onEventPress(event)}
+          onPress={activeSection === 'trash' ? undefined : (() => onEventPress && onEventPress(event))}
           onRightClick={onEventRightClick ? (ev, nativeEvent) => {
             onEventRightClick(ev, nativeEvent);
           } : undefined}
@@ -667,6 +677,7 @@ export default function TasksView({
           timeFontSize={12}
           showDate={true}
           hideDoneStyling={activeSection === 'completed' || activeSection === 'trash'}
+          hideSlotBadge={activeSection === 'trash'}
         />
       </View>
     );
@@ -787,20 +798,7 @@ export default function TasksView({
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'trash' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('trash');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'trash' && styles.sidebarItemTextActive
-              ]}>
-                Trash
-              </Text>
-            </TouchableOpacity>
+            {/* Trash view hidden for now - sidebar entry removed */}
           </View>
         </ScrollView>
       </View>

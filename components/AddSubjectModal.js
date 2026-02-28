@@ -10,6 +10,7 @@ import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
+import { STRINGS } from '../lib/i18n/strings';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -866,6 +867,50 @@ export default function AddSubjectModal({
                 textAlignVertical="top"
               />
             </View>
+
+            {/* Course structure (edit mode only) */}
+            {subject && subject.id && (
+              <View style={styles.formGroup}>
+                <Text style={[styles.label, { marginBottom: 4 }]}>{STRINGS.courseStructure.section.title}</Text>
+                <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>{STRINGS.courseStructure.section.subtitle}</Text>
+                <View style={{ gap: 8 }}>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f5f3ff', borderRadius: 8, borderWidth: 1, borderColor: '#e9e7ed' }}
+                    onPress={() => {
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+                          detail: { subjectId: subject.id, subjectName: subjectName || subject.name || '', from: 'generate_curriculum' },
+                        }));
+                      }
+                      onClose();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <BookOpen size={18} color="#5b21b6" style={{ marginRight: 10 }} />
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: '#5b21b6' }}>{STRINGS.courseStructure.actions.generateCurriculum}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}
+                    onPress={() => {
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('openMagicExtractModal', { detail: { subjectId: subject.id, subjectName: subjectName || subject.name || '' } }));
+                      }
+                      onClose();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 14, color: '#475569' }}>{STRINGS.courseStructure.actions.importAndExtract}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}
+                    onPress={() => toast.push('Add unit manually: coming soon. Use Generate curriculum or Import & extract for now.', 'info')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 14, color: '#475569' }}>{STRINGS.courseStructure.actions.addUnitManually}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
             
             {/* Event Management Section (only in edit mode) */}
             {subject && subject.id && (

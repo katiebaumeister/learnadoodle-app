@@ -2,7 +2,7 @@
 FastAPI routes for Curriculum Builder
 Creates structured curriculum units with lessons and pacing
 """
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date, timedelta, timezone
@@ -58,6 +58,7 @@ class CurriculumCommitInput(BaseModel):
     preview: Dict[str, Any] = Field(..., description="Preview data from build")
     create_calendar_events: bool = Field(True, description="Create calendar events")
     placement: CurriculumPlacementInput = Field(..., description="Placement options")
+    prefer_placeholder_slots: Optional[bool] = Field(True, description="When true, fill empty Plan My Year slots first before creating new events")
     add_to_backlog: Optional[bool] = Field(False, description="Add all lessons to backlog")
     lesson_backlog_map: Optional[Dict[str, bool]] = Field(None, description="Map of lesson index to backlog status")
 
@@ -235,6 +236,57 @@ async def normalize_syllabus_text(text: str) -> str:
 
 
 # --- Routes ---
+
+@router.get("/lessons")
+async def list_curriculum_lessons(
+    subject_id: Optional[str] = Query(None, description="Filter by subject ID (units whose subject_tags match this subject)"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter)
+):
+    """
+    List curriculum lessons for the family, optionally filtered by subject.
+    Used by Fill Slot picker to choose a lesson for an empty slot.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id:
+            raise HTTPException(status_code=404, detail="Family not found")
+        supabase = get_admin_client()
+
+        units_query = supabase.table("curriculum_units").select("id, title").eq("family_id", family_id)
+        if subject_id:
+            subj_res = supabase.table("subject").select("id, name").eq("id", subject_id).eq("family_id", family_id).limit(1).execute()
+            if not subj_res.data:
+                return []
+            subject_name = (subj_res.data[0].get("name") or "").strip()
+            if subject_name:
+                units_query = units_query.contains("subject_tags", [subject_name])
+        units_res = units_query.order("created_at", desc=True).execute()
+        units = units_res.data or []
+        if not units:
+            return []
+        unit_ids = [u["id"] for u in units]
+        unit_by_id = {u["id"]: u for u in units}
+
+        lessons_res = supabase.table("curriculum_lessons").select("id, title, unit_id, sequence_index").in_("unit_id", unit_ids).order("sequence_index", desc=False).execute()
+        lessons = lessons_res.data or []
+        out = []
+        for les in lessons:
+            unit = unit_by_id.get(les["unit_id"]) or {}
+            out.append({
+                "id": les["id"],
+                "title": les.get("title") or "Lesson",
+                "unit_id": les["unit_id"],
+                "unit_title": unit.get("title") or "Unit",
+                "sequence_index": les.get("sequence_index", 0),
+            })
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.list_lessons.error", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list curriculum lessons")
+
 
 @router.post("/build")
 async def build_curriculum(
@@ -605,6 +657,40 @@ async def commit_curriculum(
             if subject_res.data:
                 subject_id = subject_res.data[0]["id"]
         
+        # Candidate empty Plan My Year slots for prefer_placeholder_slots (slot-fill pass)
+        candidate_slots = []
+        slots_used = 0
+        if body.create_calendar_events and (body.prefer_placeholder_slots is None or body.prefer_placeholder_slots) and subject_id and student_ids_validated:
+            try:
+                range_start_d = date.fromisoformat(start_date)
+                range_end_d = range_start_d + timedelta(weeks=unit_data.get("weeks_est", 1))
+                range_start_ts = datetime.combine(range_start_d, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+                range_end_ts = datetime.combine(range_end_d, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+                ay_res = supabase.table("academic_years").select("id").eq("family_id", family_id).lte("start_date", start_date).gte("end_date", start_date).limit(1).execute()
+                academic_year_id = ay_res.data[0]["id"] if ay_res.data else None
+                slots_query = (
+                    supabase.table("events")
+                    .select("id, start_ts, end_ts, child_id, subject_id")
+                    .eq("family_id", family_id)
+                    .eq("generated_by", "plan_year")
+                    .eq("is_placeholder", True)
+                    .is_("curriculum_lesson_id", "null")
+                    .is_("deleted_at", "null")
+                    .gte("start_ts", range_start_ts)
+                    .lt("start_ts", range_end_ts)
+                    .in_("child_id", student_ids_validated)
+                    .eq("subject_id", subject_id)
+                    .order("start_ts", desc=False)
+                )
+                if academic_year_id:
+                    slots_query = slots_query.eq("academic_year_id", academic_year_id)
+                slots_res = slots_query.execute()
+                candidate_slots = list(slots_res.data or [])
+                print(f"[CURRICULUM_COMMIT] Prefer slots: found {len(candidate_slots)} candidate empty slots")
+            except Exception as slot_err:
+                print(f"[CURRICULUM_COMMIT] WARNING: Could not load candidate slots: {slot_err}")
+                candidate_slots = []
+        
         # Load availability for placement if we need to create calendar events
         available_windows = []
         if body.create_calendar_events:
@@ -681,6 +767,31 @@ async def commit_curriculum(
                     if backlog_res.data:
                         backlog_item_ids.append(backlog_res.data[0]["id"])
             elif body.create_calendar_events:
+                # Prefer slots: fill next empty Plan My Year slot if available
+                used_slot = False
+                if candidate_slots:
+                    slot = candidate_slots.pop(0)
+                    try:
+                        slot_update = {
+                            "curriculum_lesson_id": lesson_id,
+                            "source": "curriculum",
+                            "title": lesson_data.get("title", "Lesson"),
+                        }
+                        if lesson_data.get("unit_topic"):
+                            slot_update["unit"] = lesson_data.get("unit_topic")
+                        update_res = supabase.table("events").update(slot_update).eq("id", slot["id"]).execute()
+                        if update_res.data:
+                            event_ids.append(slot["id"])
+                            slots_used += 1
+                            used_slot = True
+                            print(f"[CURRICULUM_COMMIT] Filled slot {slot['id']} with lesson {lesson_idx}")
+                    except Exception as fill_err:
+                        print(f"[CURRICULUM_COMMIT] WARNING: Failed to fill slot {slot.get('id')}: {fill_err}")
+                        candidate_slots.insert(0, slot)
+                
+                if used_slot:
+                    continue
+                
                 # Find placement from schedule_map or use simple algorithm
                 placement = None
                 # Match schedule_map entry by sequence_index, not by array index
@@ -731,6 +842,8 @@ async def commit_curriculum(
                         "description": lesson_data.get("objective"),
                         "modality": lesson_data.get("modality")
                     }
+                    if lesson_data.get("unit_topic"):
+                        event_record["unit"] = lesson_data.get("unit_topic")
                     
                     print(f"[CURRICULUM_COMMIT] Creating event for lesson {lesson_idx}: {event_record.get('title')}")
                     try:
@@ -848,7 +961,8 @@ async def commit_curriculum(
                                                 "description": lesson_data.get("objective"),
                                                 "modality": lesson_data.get("modality")
                                             }
-                                            
+                                            if lesson_data.get("unit_topic"):
+                                                event_record["unit"] = lesson_data.get("unit_topic")
                                             print(f"[CURRICULUM_COMMIT] Creating fallback event for lesson {lesson_idx} at {candidate_start.isoformat()}")
                                             try:
                                                 event_res = supabase.table("events").insert(event_record).execute()
@@ -929,7 +1043,9 @@ async def commit_curriculum(
             "lesson_ids": lesson_ids,
             "event_ids": event_ids,
             "backlog_item_ids": backlog_item_ids,
-            "pacing_id": pacing_res.data[0]["id"] if pacing_res.data else None
+            "pacing_id": pacing_res.data[0]["id"] if pacing_res.data else None,
+            "slots_used": slots_used,
+            "events_created": len(event_ids) - slots_used,
         }
         
     except HTTPException as http_exc:
@@ -966,7 +1082,9 @@ async def commit_curriculum(
                 "lesson_ids": lesson_ids if 'lesson_ids' in locals() else [],
                 "event_ids": event_ids if 'event_ids' in locals() else [],
                 "backlog_item_ids": backlog_item_ids if 'backlog_item_ids' in locals() else [],
-                "pacing_id": pacing_res.data[0]["id"] if 'pacing_res' in locals() and pacing_res.data else None
+                "pacing_id": pacing_res.data[0]["id"] if 'pacing_res' in locals() and pacing_res.data else None,
+                "slots_used": slots_used if 'slots_used' in locals() else 0,
+                "events_created": len(event_ids) - slots_used if 'event_ids' in locals() and 'slots_used' in locals() else 0,
             }
         
         # If we got here and unit_id is None, this is a real error during commit

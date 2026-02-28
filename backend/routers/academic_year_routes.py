@@ -15,6 +15,11 @@ from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 import math
 import json
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 import sys
 import traceback
 from pathlib import Path
@@ -122,6 +127,7 @@ class ApplyToCalendarInput(BaseModel):
     subject_targets: Optional[Dict[str, Dict[str, Any]]] = None  # { subject_id: { target_days, target_hours } }; validated on write
     year_name: Optional[str] = None  # Display name e.g. "Lilly · Math · Feb 26 – Mar 26, 2026"
     timezone: Optional[str] = None  # IANA timezone from client (e.g. America/New_York) when family timezone not set
+    force_new_plan: bool = False  # When True, always create a new academic year (do not reuse same start/end)
 
 
 class BlockRegenResult(BaseModel):
@@ -129,6 +135,8 @@ class BlockRegenResult(BaseModel):
     updated: int
     inserted: int
     deleted: int
+    skipped: int = 0  # inserts skipped due to overlap with existing events
+    skipped_dates: List[str] = []  # YYYY-MM-DD dates that were skipped (so UI can list them)
 
 
 class ApplyToCalendarOutput(BaseModel):
@@ -137,7 +145,9 @@ class ApplyToCalendarOutput(BaseModel):
     planned_days: int
     academic_year_id: Optional[str] = None
     blocks: Optional[List[BlockRegenResult]] = None
-    totals: Optional[Dict[str, int]] = None
+    totals: Optional[Dict[str, int]] = None  # updated, inserted, deleted, skipped
+    skipped_overlap: Optional[int] = None  # total inserts skipped due to time overlap (so UI can show message)
+    skipped_dates: Optional[List[str]] = None  # YYYY-MM-DD dates that had overlap (so UI can say "Feb 20, Feb 27")
 
 
 class SchedulePotentialInput(BaseModel):
@@ -1328,8 +1338,6 @@ async def get_holidays_for_range(
         years_resp = supabase.table("academic_years").select("id, start_date, end_date").eq(
             "family_id", family_id
         ).execute()
-        if not years_resp.data:
-            return {"holidays": []}
 
         def _parse_date(v):
             if v is None:
@@ -1339,6 +1347,25 @@ async def get_holidays_for_range(
 
         seen = set()  # (date_str, name) for dedupe
         result = []
+
+        # No academic years: always show default US public holidays on calendar (no plan required)
+        if not years_resp.data:
+            for year in range(start_date.year, end_date.year + 1):
+                try:
+                    global_holidays = fetch_global_holidays("US", year, "NAGER_DATE", None, None)
+                    for gh in global_holidays:
+                        d = gh.date if hasattr(gh.date, "year") else date.fromisoformat(str(gh.date)[:10])
+                        if start_date <= d <= end_date:
+                            date_str = d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]
+                            key = (date_str, gh.name or "")
+                            if key not in seen:
+                                seen.add(key)
+                                result.append({"date": date_str, "name": gh.name or "", "type": "GLOBAL_HOLIDAY"})
+                except Exception:
+                    pass
+            result.sort(key=lambda x: (x["date"], x["name"]))
+            return {"holidays": result}
+
         for row in years_resp.data:
             ay_start = _parse_date(row.get("start_date"))
             ay_end = _parse_date(row.get("end_date"))
@@ -1352,7 +1379,7 @@ async def get_holidays_for_range(
                     "academic_year_id", row["id"]
                 ).limit(1).execute()
                 holiday_settings = (settings_resp.data[0] if settings_resp.data and len(settings_resp.data) > 0 else None)
-                # When no holiday_settings row exists, default to US public holidays so calendar shows e.g. Presidents Day
+                # Calendar always shows holidays; "Follow public holidays" switch only affects scheduling (e.g. plan apply).
                 if holiday_settings is None:
                     include_global = True
                     country_code = "US"
@@ -1360,7 +1387,7 @@ async def get_holidays_for_range(
                     provider = "NAGER_DATE"
                     excluded_holiday_dates = []
                 else:
-                    include_global = holiday_settings.get("follow_global_holidays", False)
+                    include_global = True  # Always include for calendar display; follow_global_holidays only gates scheduling
                     country_code = holiday_settings.get("holiday_country_code") or "US"
                     region = holiday_settings.get("holiday_region")
                     provider = holiday_settings.get("provider") or "NAGER_DATE"
@@ -1592,6 +1619,107 @@ async def clear_placeholders(
         )
 
 
+@router.get("/event_for_slot")
+async def get_event_for_plan_slot(
+    family_id: str = Query(..., description="Family UUID"),
+    date_ymd: str = Query(..., description="Date YYYY-MM-DD"),
+    start_local: Optional[str] = Query(None, description="Start time HH:MM (optional for all-day)"),
+    subject_id: str = Query(..., description="Subject UUID"),
+    academic_year_id: str = Query(..., description="Academic year UUID"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Look up the calendar event for a plan event (from plan summary "Dates with events").
+    Returns the event so the client can open the edit event modal. Slots are created as
+    full events when the plan is applied, so this finds that event by date/time/subject.
+    """
+    try:
+        fid = get_family_id_for_user(user["id"])
+        if not fid or fid != family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Family ID mismatch")
+        supabase = get_admin_client()
+        # Family timezone for comparing start_local
+        family_tz = "UTC"
+        try:
+            tz_resp = supabase.table("family").select("timezone").eq("id", family_id).maybe_single().execute()
+            if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
+                family_tz = (tz_resp.data.get("timezone") or "").strip()
+        except Exception:
+            pass
+        # Query events for this plan: same family, academic_year, subject, on this date
+        start_str = date_ymd.strip()
+        if len(start_str) != 10:
+            raise HTTPException(status_code=400, detail="date_ymd must be YYYY-MM-DD")
+        end_dt = date.fromisoformat(start_str) + timedelta(days=1)
+        end_upper = end_dt.isoformat()
+        try:
+            local_tz = ZoneInfo(family_tz) if family_tz and family_tz.upper() != "UTC" else None
+        except Exception:
+            local_tz = None
+        events_res = (
+            supabase.table("events")
+            .select("id, start_ts, end_ts, title, subject_id, child_id, child_ids, status, event_type, unit, source, is_placeholder, generated_by, academic_year_id")
+            .eq("family_id", family_id)
+            .eq("academic_year_id", academic_year_id)
+            .eq("subject_id", subject_id)
+            .is_("deleted_at", "null")
+            .gte("start_ts", f"{start_str}T00:00:00")
+            .lt("start_ts", f"{end_upper}T00:00:00")
+            .execute()
+        )
+        events = list(events_res.data or [])
+        if not events:
+            return {"event": None}
+        # If start_local provided, match by local time (e.g. "09:00" or "9:00")
+        def normalize_time(t: Optional[str]) -> str:
+            if not t or not isinstance(t, str):
+                return ""
+            s = t.strip()
+            parts = s.split(":")
+            if len(parts) >= 2:
+                try:
+                    h, m = int(parts[0].strip()), (parts[1].strip()[:2] or "00")
+                    return f"{h}:{m}"
+                except (ValueError, TypeError):
+                    pass
+            return s or ""
+        target_local = normalize_time(start_local) if start_local else None
+        for ev in events:
+            start_ts = ev.get("start_ts")
+            if not start_ts:
+                continue
+            try:
+                if isinstance(start_ts, str) and start_ts.endswith("Z"):
+                    start_ts = start_ts.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                local_dt = dt.astimezone(local_tz) if local_tz else dt
+                ev_date_ymd = local_dt.strftime("%Y-%m-%d")
+                if ev_date_ymd != start_str:
+                    continue
+                if target_local is None:
+                    return {"event": ev}
+                ev_start_local = local_dt.strftime("%H:%M")
+                if normalize_time(ev_start_local) == target_local:
+                    return {"event": ev}
+            except (ValueError, TypeError):
+                continue
+        # No time match: if only one event on that date for this subject, return it
+        if len(events) == 1 and not target_local:
+            return {"event": events[0]}
+        return {"event": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("academic_year.event_for_slot.error", user_id=user.get("id"), error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to look up event: {str(e)}",
+        )
+
+
 @router.get("/by_id")
 async def get_academic_year_by_id(
     academic_year_id: str = Query(..., alias="academic_year_id", description="Academic year UUID"),
@@ -1703,6 +1831,7 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
         
         # Optional: include academic_year_plan for edit modal (blocks, target_days/hours)
         plan_summary = None
+        plan_slot_labels = []
         plan_resp = supabase.table("academic_year_plan").select(
             "start_date, end_date, constraint_mode, target_days, target_hours, blocks, created_at, updated_at"
         ).eq("academic_year_id", academic_year_id).limit(1).execute()
@@ -1723,6 +1852,97 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
             )
             plan_created_at = p.get("created_at")
             plan_updated_at = p.get("updated_at")
+            # Fetch events in plan range to get unit/topic per slot for plan summary display
+            plan_slot_labels = []
+            try:
+                start_str = _start.isoformat() if hasattr(_start, "isoformat") else str(_start)
+                end_str = _end.isoformat() if hasattr(_end, "isoformat") else str(_end)
+                end_dt = date.fromisoformat(end_str) if isinstance(end_str, str) else _end
+                end_upper = (end_dt + timedelta(days=1)).isoformat()
+                tz_name = "America/New_York"
+                local_tz = ZoneInfo(tz_name)
+                ev_resp = supabase.table("events").select("start_ts, subject_id, unit").eq(
+                    "family_id", family_id
+                ).eq("academic_year_id", academic_year_id).gte(
+                    "start_ts", f"{start_str}T00:00:00"
+                ).lt("start_ts", f"{end_upper}T00:00:00").execute()
+                for ev in (ev_resp.data or []):
+                    unit = (ev.get("unit") or "").strip()
+                    if not unit:
+                        continue
+                    start_ts = ev.get("start_ts")
+                    if not start_ts:
+                        continue
+                    try:
+                        if isinstance(start_ts, str) and start_ts.endswith("Z"):
+                            start_ts = start_ts.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        local_dt = dt.astimezone(local_tz)
+                        date_ymd = local_dt.strftime("%Y-%m-%d")
+                        start_local = local_dt.strftime("%H:%M")
+                        plan_slot_labels.append({
+                            "date_ymd": date_ymd,
+                            "start_local": start_local,
+                            "subject_id": str(ev.get("subject_id") or ""),
+                            "unit": unit,
+                        })
+                    except (ValueError, TypeError):
+                        continue
+            except Exception as slot_err:
+                log_event("academic_year.get.slot_labels_error", user_id=user["id"], error=str(slot_err))
+
+        # Events in this plan (plan summary "Dates with events" lists these). Query all events for this academic year in range — treat as events, not placeholders/slots.
+        plan_event_dates = []
+        if plan_summary and family_id and academic_year_id:
+            try:
+                tz_name = "America/New_York"
+                try:
+                    tz_resp = supabase.table("family").select("timezone").eq("id", family_id).maybe_single().execute()
+                    if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
+                        tz_name = (tz_resp.data.get("timezone") or "").strip()
+                except Exception:
+                    pass
+                local_tz = ZoneInfo(tz_name) if tz_name and tz_name.upper() != "UTC" else ZoneInfo("America/New_York")
+                start_str = plan_summary.start_date if isinstance(plan_summary.start_date, str) else (plan_summary.start_date.isoformat() if hasattr(plan_summary.start_date, "isoformat") else str(plan_summary.start_date))
+                end_str = plan_summary.end_date if isinstance(plan_summary.end_date, str) else (plan_summary.end_date.isoformat() if hasattr(plan_summary.end_date, "isoformat") else str(plan_summary.end_date))
+                end_dt = date.fromisoformat(end_str[:10])
+                end_upper = (end_dt + timedelta(days=1)).isoformat()
+                ev_resp = (
+                    supabase.table("events")
+                    .select("start_ts, subject_id, materials_attachment_ids")
+                    .eq("family_id", family_id)
+                    .eq("academic_year_id", academic_year_id)
+                    .is_("deleted_at", "null")
+                    .gte("start_ts", f"{start_str[:10]}T00:00:00")
+                    .lt("start_ts", f"{end_upper}T00:00:00")
+                    .execute()
+                )
+                for ev in (ev_resp.data or []):
+                    start_ts = ev.get("start_ts")
+                    if not start_ts:
+                        continue
+                    try:
+                        if isinstance(start_ts, str) and start_ts.endswith("Z"):
+                            start_ts = start_ts.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(start_ts.replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        local_dt = dt.astimezone(local_tz)
+                        mat_ids = ev.get("materials_attachment_ids") or []
+                        has_attachment = bool(mat_ids)
+                        plan_event_dates.append({
+                            "date_ymd": local_dt.strftime("%Y-%m-%d"),
+                            "subject_id": str(ev.get("subject_id") or ""),
+                            "start_local": local_dt.strftime("%H:%M"),
+                            "has_attachment": has_attachment,
+                        })
+                    except (ValueError, TypeError):
+                        continue
+            except Exception as event_dates_err:
+                log_event("academic_year.get.event_dates_error", user_id=user["id"], error=str(event_dates_err))
+
         log_event("academic_year.get.success", user_id=user["id"], academic_year_id=academic_year_id)
 
         # Build JSON-serializable response (avoid Pydantic/float NaN issues)
@@ -1768,6 +1988,8 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
                 "blocks": list(plan_summary.blocks) if plan_summary.blocks else [],
                 "created_at": _str_ts(plan_created_at),
                 "updated_at": _str_ts(plan_updated_at),
+                "plan_slot_labels": plan_slot_labels,
+                "plan_event_dates": plan_event_dates,
             },
         }
         try:
@@ -1973,6 +2195,8 @@ async def apply_to_calendar(
         academic_year_id = body.academic_year_id
         if not academic_year_id:
             # Reuse existing academic year for this family with same start/end so edits don't create duplicate plans
+            # Unless force_new_plan: then always create a new row so "Create new plan" adds a new entry to the list
+            reuse_existing = not getattr(body, "force_new_plan", False)
             existing = (
                 supabase.table("academic_years")
                 .select("id")
@@ -1983,7 +2207,7 @@ async def apply_to_calendar(
                 .limit(1)
                 .execute()
             )
-            if existing.data and len(existing.data) > 0:
+            if reuse_existing and existing.data and len(existing.data) > 0:
                 academic_year_id = existing.data[0]["id"]
                 if body.year_name and body.year_name.strip():
                     supabase.table("academic_years").update({"year_name": body.year_name.strip()}).eq("id", academic_year_id).execute()
@@ -2025,7 +2249,8 @@ async def apply_to_calendar(
         events_to_insert = []
         planned_dates_set = set()
         block_regen_results: List[BlockRegenResult] = []
-        totals_updated, totals_inserted, totals_deleted = 0, 0, 0
+        totals_updated, totals_inserted, totals_deleted, totals_skipped = 0, 0, 0, 0
+        all_skipped_dates: List[str] = []
 
         # Persist plan (target_days, end_date, blocks) immediately so Edit Plan shows saved values even if placeholder generation fails
         if academic_year_id:
@@ -2109,15 +2334,22 @@ async def apply_to_calendar(
                     log_event_fn=log_event,
                     user_id=user["id"],
                 )
+                skipped_dates = result.get("skipped_dates") or []
                 block_regen_results.append(BlockRegenResult(
                     block_id=str(block["block_id"]),
                     updated=result["updated"],
                     inserted=result["inserted"],
                     deleted=result["deleted"],
+                    skipped=result.get("skipped", 0),
+                    skipped_dates=skipped_dates,
                 ))
                 totals_updated += result["updated"]
                 totals_inserted += result["inserted"]
                 totals_deleted += result["deleted"]
+                totals_skipped += result.get("skipped", 0)
+                for d in skipped_dates:
+                    if d and d not in all_skipped_dates:
+                        all_skipped_dates.append(d)
                 for d in get_block_occurrence_dates(block, start_date_obj, end_date_obj, exclusion_ranges):
                     planned_dates_set.add(d)
             created_count = totals_inserted
@@ -2202,7 +2434,9 @@ async def apply_to_calendar(
             planned_days=planned_days,
             academic_year_id=academic_year_id,
             blocks=block_regen_results if use_blocks else None,
-            totals={"updated": totals_updated, "inserted": totals_inserted, "deleted": totals_deleted} if use_blocks else None,
+            totals={"updated": totals_updated, "inserted": totals_inserted, "deleted": totals_deleted, "skipped": totals_skipped} if use_blocks else None,
+            skipped_overlap=totals_skipped if use_blocks and totals_skipped else None,
+            skipped_dates=sorted(all_skipped_dates) if use_blocks and all_skipped_dates else None,
         )
 
     except HTTPException:

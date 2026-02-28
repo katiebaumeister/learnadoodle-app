@@ -298,6 +298,42 @@ def _fetch_state_requirements(state_code: str) -> List[StateRequirement]:
     return _fetch_state_requirements_from_json(state_code)
 
 
+def _load_state_requirement_metrics() -> Dict[str, Any]:
+    """Load state_requirement_metrics.json; returns {} if file missing or invalid."""
+    metrics_file = Path(__file__).parent.parent / "data" / "state_requirement_metrics.json"
+    if not metrics_file.exists():
+        return {}
+    try:
+        with open(metrics_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+@cached(ttl_seconds=3600)
+def _get_state_requirement_metrics(state_code: str) -> Optional[Dict[str, Any]]:
+    """Return metrics for one state (attendance, hours, testing) or None if not found."""
+    data = _load_state_requirement_metrics()
+    return data.get(state_code.upper()) if data else None
+
+
+@router.get("/state_requirement_metrics")
+async def get_state_requirement_metrics(
+    state_code: str = Query(..., description="State code (e.g. 'CA', 'NE')"),
+    user: dict = Depends(get_current_user),
+    rate_limit: None = Depends(rate_limiter),
+):
+    """Get state requirement metrics (attendance definition, min hours/days, testing) from state_requirement_metrics.json."""
+    try:
+        metrics = _get_state_requirement_metrics(state_code)
+        if metrics is None:
+            return JSONResponse(content={}, status_code=200)
+        return JSONResponse(content=metrics)
+    except Exception as e:
+        log_event("error", error=str(e), endpoint="state_requirement_metrics")
+        raise HTTPException(status_code=500, detail=f"Error loading state requirement metrics: {str(e)}")
+
+
 @router.get("/state_requirements")
 async def get_state_requirements(
     request: Request,

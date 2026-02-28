@@ -1,56 +1,72 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Image, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 
-const MODES = [
-  {
-    id: 'HOMESCHOOL_COMPLIANCE',
-    label: 'Homeschool',
-    description: 'Track instruction, subjects, and learning progress',
-    image: require('../../assets/homeschoolpood.png'),
-    emotion: 'calm', // calm, grounded
-  },
-  {
-    id: 'AFTERSCHOOL_GOALS',
-    label: 'Afterschool',
-    description: 'Track goals, activities, and progress outside school',
-    image: require('../../assets/afterschoolpood.png'),
-    emotion: 'curious', // curious, active
-  },
-  {
-    id: 'NONE',
-    label: 'Just scheduling',
-    description: 'Use calendar only — no learning tracking',
-    image: require('../../assets/schedulingpood.png'),
-    emotion: 'efficient', // organized, efficient
-  },
+const WHO_OPTIONS = [
+  { id: 'parent', label: 'My family (I\'m a parent)' },
+  { id: 'student', label: 'Myself (I\'m a student)' },
 ];
 
-const POODLE_SIZE = 90;
+const MODE_OPTIONS = [
+  { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschool' },
+  { id: 'AFTERSCHOOL_GOALS', label: 'Afterschool' },
+  { id: 'NONE', label: 'Just scheduling' },
+];
 
 export default function PlanningModeStep({ value, onChange, onNext, isSaving }) {
-  const [hoveredId, setHoveredId] = useState(null);
+  const [who, setWho] = useState(null);
+  const [hoveredWho, setHoveredWho] = useState(null);
+  const [hoveredMode, setHoveredMode] = useState(null);
   const [continueHovered, setContinueHovered] = useState(false);
-  const scaleAnims = useRef(MODES.map(() => new Animated.Value(1))).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnimsWho = useRef(WHO_OPTIONS.map(() => new Animated.Value(1))).current;
+  const scaleAnimsMode = useRef(MODE_OPTIONS.map(() => new Animated.Value(1))).current;
 
-  // 120ms scale effect on selection
+  // Fade in second row when "who" is selected
   useEffect(() => {
-    MODES.forEach((mode, i) => {
-      Animated.timing(scaleAnims[i], {
-        toValue: value === mode.id ? 1.02 : 1,
+    if (who) {
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 280,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      fadeAnim.setValue(0);
+    }
+  }, [who, fadeAnim]);
+
+  // Scale effect on who selection
+  useEffect(() => {
+    WHO_OPTIONS.forEach((opt, i) => {
+      Animated.timing(scaleAnimsWho[i], {
+        toValue: who === opt.id ? 1.02 : 1,
+        duration: 120,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [who]);
+
+  // Scale effect on mode selection
+  useEffect(() => {
+    MODE_OPTIONS.forEach((opt, i) => {
+      Animated.timing(scaleAnimsMode[i], {
+        toValue: value === opt.id ? 1.02 : 1,
         duration: 120,
         useNativeDriver: true,
       }).start();
     });
   }, [value]);
 
+  const canContinue = who && value;
+
   return (
     <View style={styles.container}>
       <Text style={styles.prompt}>I'm using Learnadoodle for…</Text>
 
-      <View style={styles.cards}>
-        {MODES.map((mode, index) => {
-          const selected = value === mode.id;
-          const hovered = hoveredId === mode.id;
+      {/* First row: Who */}
+      <View style={styles.row}>
+        {WHO_OPTIONS.map((opt, index) => {
+          const selected = who === opt.id;
+          const hovered = hoveredWho === opt.id;
           const cardStyle = [
             styles.card,
             selected && styles.cardSelected,
@@ -59,40 +75,69 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
           ];
           return (
             <Animated.View
-              key={mode.id}
-              style={[
-                styles.cardWrapper,
-                { transform: [{ scale: scaleAnims[index] }] },
-              ]}
+              key={opt.id}
+              style={[styles.cardWrapper, { transform: [{ scale: scaleAnimsWho[index] }] }]}
             >
               <TouchableOpacity
                 style={cardStyle}
-                onPress={() => onChange(mode.id)}
-                onMouseEnter={Platform.OS === 'web' ? () => setHoveredId(mode.id) : undefined}
-                onMouseLeave={Platform.OS === 'web' ? () => setHoveredId(null) : undefined}
+                onPress={() => setWho(opt.id)}
+                onMouseEnter={Platform.OS === 'web' ? () => setHoveredWho(opt.id) : undefined}
+                onMouseLeave={Platform.OS === 'web' ? () => setHoveredWho(null) : undefined}
                 activeOpacity={1}
               >
-                <View style={styles.cardIcon}>
-                  <Image source={mode.image} style={styles.cardImage} resizeMode="contain" />
-                </View>
                 <Text style={[styles.cardLabel, selected && styles.cardLabelSelected]}>
-                  {mode.label}
+                  {opt.label}
                 </Text>
-                <Text style={styles.cardDescription}>{mode.description}</Text>
               </TouchableOpacity>
             </Animated.View>
           );
         })}
       </View>
 
+      {/* Second row: Homeschool / Afterschool / Just scheduling (fade in) */}
+      {who && (
+        <Animated.View style={[styles.secondRow, { opacity: fadeAnim }]}>
+          <View style={styles.row}>
+            {MODE_OPTIONS.map((mode, index) => {
+              const selected = value === mode.id;
+              const hovered = hoveredMode === mode.id;
+              const cardStyle = [
+                styles.card,
+                selected && styles.cardSelected,
+                hovered && !selected && styles.cardHovered,
+                Platform.OS === 'web' && hovered && !selected && styles.cardHoveredTransform,
+              ];
+              return (
+                <Animated.View
+                  key={mode.id}
+                  style={[styles.cardWrapper, { transform: [{ scale: scaleAnimsMode[index] }] }]}
+                >
+                  <TouchableOpacity
+                    style={cardStyle}
+                    onPress={() => onChange(mode.id)}
+                    onMouseEnter={Platform.OS === 'web' ? () => setHoveredMode(mode.id) : undefined}
+                    onMouseLeave={Platform.OS === 'web' ? () => setHoveredMode(null) : undefined}
+                    activeOpacity={1}
+                  >
+                    <Text style={[styles.cardLabel, selected && styles.cardLabelSelected]}>
+                      {mode.label}
+                    </Text>
+                  </TouchableOpacity>
+                </Animated.View>
+              );
+            })}
+          </View>
+        </Animated.View>
+      )}
+
       <TouchableOpacity
         style={[
           styles.continueBtn,
-          !value && styles.continueBtnDisabled,
-          Platform.OS === 'web' && value && continueHovered && styles.continueBtnHovered,
+          !canContinue && styles.continueBtnDisabled,
+          Platform.OS === 'web' && canContinue && continueHovered && styles.continueBtnHovered,
         ]}
         onPress={onNext}
-        disabled={!value || isSaving}
+        disabled={!canContinue || isSaving}
         onMouseEnter={Platform.OS === 'web' ? () => setContinueHovered(true) : undefined}
         onMouseLeave={Platform.OS === 'web' ? () => setContinueHovered(false) : undefined}
         activeOpacity={0.9}
@@ -118,9 +163,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
-  cards: {
+  row: {
     flexDirection: 'row',
-    paddingTop: 18,
+    marginBottom: 16,
+  },
+  secondRow: {
     marginBottom: 28,
   },
   cardWrapper: {
@@ -157,31 +204,15 @@ const styles = StyleSheet.create({
       elevation: 4,
     }),
   },
-  cardIcon: {
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  cardImage: {
-    width: POODLE_SIZE,
-    height: POODLE_SIZE,
-  },
   cardLabel: {
     fontSize: 20,
     fontWeight: '600',
     color: 'rgba(15,23,42,0.9)',
-    marginBottom: 6,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardLabelSelected: {
     color: '#4A5FEB',
-  },
-  cardDescription: {
-    fontSize: 15,
-    color: '#6B7280',
-    lineHeight: 22,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   continueBtn: {
     backgroundColor: '#85C4F2',

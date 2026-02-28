@@ -11,13 +11,13 @@ import {
 } from 'react-native';
 import { X, Pencil, Check } from 'lucide-react';
 
-function getStatusDisplay(status) {
-  if (status === 'present') return { label: 'Present', variant: 'present' };
-  if (status === 'absent') return { label: 'Absent', variant: 'absent' };
-  return { label: 'Not recorded', variant: 'none' };
+export function getStatusDisplay(status) {
+  if (status === 'present' || status === 'partial') return { label: 'Attended', variant: 'present' };
+  if (status === 'absent') return { label: 'Unattended', variant: 'absent' };
+  return { label: 'None scheduled', variant: 'none' };
 }
 
-function buildPrintHtml(exportRows, children, options = {}) {
+export function buildPrintHtml(exportRows, children, options = {}) {
   const {
     pageTitle = 'Attendance Report',
     periodLabel = '',
@@ -89,7 +89,7 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function formatPeriodLabelFromRange(startKey, endKey) {
+export function formatPeriodLabelFromRange(startKey, endKey) {
   if (!startKey || !endKey) return '';
   const d1 = new Date(startKey + 'T12:00:00');
   const d2 = new Date(endKey + 'T12:00:00');

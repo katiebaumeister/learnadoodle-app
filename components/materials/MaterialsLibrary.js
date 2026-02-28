@@ -32,7 +32,6 @@ import { DOCUMENT_ROLE_CHIPS, normalizeMaterial, normalizeUpload, matchesRole, r
 import { useToast } from '../Toast';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { parseChildIds } from '../../lib/services/subjectsClient';
-import BuildCurriculumModal from '../planner/modals/BuildCurriculumModal';
 import ConfirmDialog from '../ConfirmDialog';
 
 // Helper function to check if a URL is from Supabase storage
@@ -123,6 +122,7 @@ const PDFIframe = ({ src, title }) => {
 
 export default function MaterialsLibrary({ familyId, children = [], preloadedSubjects = null, preloadedMaterials = null, onMaterialsUpdate = null }) {
   const toast = useToast();
+  const session = useSession();
   
   // Get child colors for dots
   const getChildDotColor = (childId) => {
@@ -151,7 +151,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [showDeletedBin, setShowDeletedBin] = useState(false);
   const [deletedMaterials, setDeletedMaterials] = useState([]);
   const [loadingDeleted, setLoadingDeleted] = useState(false);
-  const [showBuildFromMaterialModal, setShowBuildFromMaterialModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState({ visible: false, title: '', message: '', confirmLabel: 'OK', onConfirm: null });
   
   // Filters
@@ -269,8 +268,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     
     const loadAllMaterials = async () => {
       try {
-        // Pass session for role-based filtering
-        const data = await getMaterials(familyId, {}, session); // No filters
+        const data = await getMaterials(familyId, {}, session ?? null);
         setAllMaterials(data);
       } catch (err) {
         console.warn('[MaterialsLibrary] Error loading all materials:', err);
@@ -278,7 +276,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     };
     
     loadAllMaterials();
-  }, [familyId, allMaterials.length]);
+  }, [familyId, allMaterials.length, session]);
 
   // Set allMaterials for stats when materials are loaded (only when no filters are applied)
   useEffect(() => {
@@ -713,7 +711,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
      const menuItems = [
        { text: 'Attachment details', action: () => handleEditDetails(item), icon: FileText },
        { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
-       { text: 'Magic Extract', action: () => handleMagicExtract(item), icon: Sparkles },
        { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
        { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
      ];
@@ -1461,26 +1458,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
               </ScrollView>
             </View>
 
-            {/* Recently Deleted Row */}
-            <View style={styles.recentlyDeletedFilterRow}>
-              <Text style={styles.recentlyDeletedLabelText}>Recently Deleted</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.recentlyDeletedFilterScroll}
-                contentContainerStyle={styles.recentlyDeletedFilterScrollContent}
-              >
-                <TouchableOpacity
-                  style={[styles.childrenFilterChip, showDeletedBin && styles.childrenFilterChipActive]}
-                  onPress={() => setShowDeletedBin(true)}
-                >
-                  <Text style={[styles.childrenFilterChipText, showDeletedBin && styles.childrenFilterChipTextActive]}>
-                    Recently Deleted
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-
               {/* Column Headers */}
               <View style={styles.allFilesContainer}>
                 <Text style={styles.allFilesText}>ALL FILES</Text>
@@ -1720,20 +1697,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       )}
       </View>
 
-
-      {/* Build Curriculum Modal */}
-      <BuildCurriculumModal
-        visible={showBuildFromMaterialModal}
-        onClose={() => setShowBuildFromMaterialModal(false)}
-        familyId={familyId}
-        children={children}
-        selectedChildIds={null}
-        onComplete={(result) => {
-          console.log('Build curriculum completed:', result);
-          setShowBuildFromMaterialModal(false);
-          // Optionally refresh materials or calendar
-        }}
-      />
 
       {/* Detail Drawer */}
       <MaterialDetailDrawer

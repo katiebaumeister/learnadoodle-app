@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Platform, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Pressable, ActivityIndicator, Platform, Modal } from 'react-native';
 import { Inbox, X, CheckCircle, RotateCcw, HelpCircle, Clock, FileText, User } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
@@ -233,13 +233,42 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
         animationType="slide"
         onRequestClose={onClose}
       >
-        <View style={styles.overlay}>
-          <View style={styles.modal}>
-            {/* Header */}
+        <View style={styles.overlayContainer}>
+          <Pressable style={styles.overlay} onPress={onClose} />
+          <View style={styles.modalWrapper} pointerEvents="box-none">
+            <View style={styles.modal}>
+            {/* Header: rounded chips + count + close */}
             <View style={styles.header}>
               <View style={styles.headerLeft}>
-                <Inbox size={24} color={colors.text} />
-                <Text style={styles.title}>Review Inbox</Text>
+                <View style={styles.headerChips}>
+                  {SECTIONS.map(section => {
+                    const isActive = selectedSection === section.id;
+                    const count = getSectionCount(section.id);
+
+                    return (
+                      <TouchableOpacity
+                        key={section.id}
+                        style={[styles.sectionTab, isActive && styles.sectionTabActive]}
+                        onPress={() => setSelectedSection(section.id)}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text
+                          style={[
+                            styles.sectionTabText,
+                            isActive && styles.sectionTabTextActive,
+                          ]}
+                        >
+                          {section.label}
+                        </Text>
+                        {count > 0 && (
+                          <View style={[styles.countBadge, isActive && styles.countBadgeActive]}>
+                            <Text style={[styles.countText, isActive && styles.countTextActive]}>{count}</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
               <View style={styles.headerRight}>
                 <Text style={styles.subtitle}>
@@ -255,51 +284,10 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
               </View>
             </View>
 
-            {/* Section Tabs */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.sectionTabs}
-              contentContainerStyle={styles.sectionTabsContent}
-            >
-              {SECTIONS.map(section => {
-                const Icon = section.icon;
-                const isActive = selectedSection === section.id;
-                const count = getSectionCount(section.id);
-
-                return (
-                  <TouchableOpacity
-                    key={section.id}
-                    style={[styles.sectionTab, isActive && styles.sectionTabActive]}
-                    onPress={() => setSelectedSection(section.id)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Icon
-                      size={18}
-                      color={isActive ? colors.primary : colors.textSecondary}
-                    />
-                    <Text
-                      style={[
-                        styles.sectionTabText,
-                        isActive && styles.sectionTabTextActive,
-                      ]}
-                    >
-                      {section.label}
-                    </Text>
-                    {count > 0 && (
-                      <View style={[styles.countBadge, isActive && styles.countBadgeActive]}>
-                        <Text style={[styles.countText, isActive && styles.countTextActive]}>{count}</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
             {/* Assignments List */}
             {loading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary} />
+                <ActivityIndicator size="large" color={colors.text} />
                 <Text style={styles.loadingText}>Loading assignments...</Text>
               </View>
             ) : filteredAssignments.length === 0 ? (
@@ -410,6 +398,7 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
               </ScrollView>
             )}
           </View>
+            </View>
         </View>
       </Modal>
 
@@ -443,17 +432,26 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  overlayContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+  },
+  modalWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+  },
   modal: {
     width: '90%',
-    maxWidth: 900,
+    maxWidth: 420,
     maxHeight: '90%',
-    backgroundColor: colors.bgSubtle,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
@@ -466,7 +464,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     paddingBottom: 12,
-    backgroundColor: colors.card,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     ...(Platform.OS === 'web' && {
@@ -476,20 +474,20 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  headerChips: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
+    flexWrap: 'wrap',
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.text,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   subtitle: {
     fontSize: 14,
@@ -505,42 +503,32 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
       transition: 'background-color 0.15s ease',
       '&:hover': {
-        backgroundColor: colors.bgOffset,
+        backgroundColor: '#F3F4F6',
       },
     }),
-  },
-  sectionTabs: {
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  sectionTabsContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 8,
   },
   sectionTab: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: colors.bgOffset,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: colors.border,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.15s ease',
       '&:hover': {
-        borderColor: colors.primary,
-        backgroundColor: colors.primarySoft,
+        borderColor: '#9CA3AF',
+        backgroundColor: '#F9FAFB',
       },
     }),
   },
   sectionTabActive: {
-    backgroundColor: colors.primarySoft,
-    borderColor: colors.primary,
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
   },
   sectionTabText: {
     fontSize: 14,
@@ -551,19 +539,22 @@ const styles = StyleSheet.create({
     }),
   },
   sectionTabTextActive: {
-    color: colors.primary,
+    color: colors.text,
     fontWeight: '600',
   },
   countBadge: {
-    backgroundColor: colors.white,
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 10,
     minWidth: 20,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   countBadgeActive: {
-    backgroundColor: colors.primary,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#9CA3AF',
   },
   countText: {
     fontSize: 11,
@@ -574,7 +565,7 @@ const styles = StyleSheet.create({
     }),
   },
   countTextActive: {
-    color: colors.white,
+    color: colors.text,
   },
   loadingContainer: {
     flex: 1,
@@ -598,7 +589,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   reviewCard: {
-    backgroundColor: colors.card,
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
@@ -704,12 +695,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
-    backgroundColor: colors.bgOffset,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: colors.border,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'background-color 0.15s ease',
       '&:hover': {
-        backgroundColor: colors.bgSubtle,
+        backgroundColor: '#F3F4F6',
       },
     }),
   },
@@ -725,7 +718,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: colors.primary,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.border,
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
@@ -733,12 +728,12 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
       transition: 'background-color 0.15s ease',
       '&:hover': {
-        backgroundColor: colors.primaryHover,
+        backgroundColor: '#F9FAFB',
       },
     }),
   },
   reviewButtonText: {
-    color: colors.white,
+    color: colors.text,
     fontSize: 14,
     fontWeight: '600',
     ...(Platform.OS === 'web' && {

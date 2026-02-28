@@ -290,6 +290,8 @@ def regenerate_block(
             print(f"[BACKEND] block_regen update failed for id={row.get('id')}: {exc}", flush=True)
 
     inserted_count = 0
+    skipped_count = 0
+    skipped_dates: List[str] = []
     if to_insert:
         try:
             ins = supabase.table("events").insert(to_insert).execute()
@@ -301,8 +303,16 @@ def regenerate_block(
                     try:
                         supabase.table("events").insert(ev).execute()
                         inserted_count += 1
-                    except Exception:
-                        pass
+                    except Exception as single_err:
+                        skipped_count += 1
+                        start_ts = ev.get("start_ts") or ev.get("start", "")
+                        date_ymd = (start_ts[:10] if isinstance(start_ts, str) and len(start_ts) >= 10 else None) or ""
+                        if date_ymd and date_ymd not in skipped_dates:
+                            skipped_dates.append(date_ymd)
+                        print(
+                            f"[BACKEND] block_regen insert skipped (overlap/constraint): start_ts={start_ts} title={ev.get('title')} block_id={block_id}: {single_err}",
+                            flush=True,
+                        )
             else:
                 raise
 
@@ -334,4 +344,10 @@ def regenerate_block(
             generation_batch_id=generation_batch_id,
         )
 
-    return {"updated": updated_count, "inserted": inserted_count, "deleted": deleted_count}
+    return {
+        "updated": updated_count,
+        "inserted": inserted_count,
+        "deleted": deleted_count,
+        "skipped": skipped_count,
+        "skipped_dates": skipped_dates,
+    }

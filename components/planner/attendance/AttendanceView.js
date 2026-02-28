@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform, Modal, TouchableOpacity } from 'react-native';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 
 /** Notify other views (planner calendar, event modals, subject pages) to refetch so attendance stays in sync.
@@ -25,6 +26,45 @@ import { TOKENS } from './constants';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Allowed attendance range: full year before through full year after current year. */
+function getAttendanceMinMaxRange() {
+  const now = new Date();
+  const y = now.getFullYear();
+  return {
+    minStart: new Date(y - 1, 0, 1),
+    maxEnd: new Date(y + 1, 11, 31),
+  };
+}
+
+/** Clamp a calendar month (any date) to the feasible attendance range so the picker doesn't navigate outside it. */
+function clampCalendarMonthToRange(d, minStart, maxEnd) {
+  const first = new Date(d.getFullYear(), d.getMonth(), 1);
+  const minFirst = new Date(minStart.getFullYear(), minStart.getMonth(), 1);
+  const maxFirst = new Date(maxEnd.getFullYear(), maxEnd.getMonth(), 1);
+  if (first < minFirst) return minFirst;
+  if (first > maxFirst) return maxFirst;
+  return first;
+}
+
+function toLocalYYYYMMDD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function dateStringToDate(ymd) {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return new Date();
+  return new Date(ymd + 'T12:00:00');
+}
+
+function formatDateDisplay(ymd) {
+  if (!ymd) return '';
+  const d = dateStringToDate(ymd);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 function getDefaultYearRange() {
   const now = new Date();
@@ -67,17 +107,29 @@ export default function AttendanceView({
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [exportModalChildId, setExportModalChildId] = useState(null);
   const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [startDateCalendarMonth, setStartDateCalendarMonth] = useState(() => new Date());
+  const [endDateCalendarMonth, setEndDateCalendarMonth] = useState(() => new Date());
+  const [rangeReady, setRangeReady] = useState(false);
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
   const children = childrenProp.length > 0 ? childrenProp : [];
 
+  const { minStart, maxEnd } = useMemo(() => getAttendanceMinMaxRange(), []);
+  const minStartKey = toLocalYYYYMMDD(minStart);
+  const maxEndKey = toLocalYYYYMMDD(maxEnd);
+
+  // Set initial year range from academic year when family/children change (do not overwrite user-selected range later).
   useEffect(() => {
     if (!familyIdResolved) {
       setLoading(false);
       setYearRange(getDefaultYearRange());
+      setRangeReady(false);
       return;
     }
+    setRangeReady(false);
     let cancelled = false;
     (async () => {
       try {
@@ -89,27 +141,42 @@ export default function AttendanceView({
           .limit(1);
 
         const defaultRange = getDefaultYearRange();
-        let fetchStart = yearRange.start;
-        let fetchEnd = yearRange.end;
+        let rangeStart;
+        let rangeEnd;
         if (years?.[0]) {
           const ay = years[0];
           setAcademicYear(ay);
           const ayStart = new Date(ay.start_date + 'T12:00:00');
           const ayEnd = new Date(ay.end_date + 'T12:00:00');
-          fetchStart = ayStart;
-          fetchEnd = ayEnd;
-          // Include start of month so we fetch and display events before term start (e.g. Feb 1–23 when term starts Feb 24)
-          const rangeStart = new Date(fetchStart.getFullYear(), fetchStart.getMonth(), 1);
-          fetchStart = rangeStart;
-          setYearRange({ start: rangeStart, end: fetchEnd });
+          rangeStart = new Date(ayStart.getFullYear(), ayStart.getMonth(), 1);
+          rangeEnd = ayEnd;
         } else {
-          fetchStart = defaultRange.start;
-          fetchEnd = defaultRange.end;
-          setYearRange({ start: fetchStart, end: fetchEnd });
+          rangeStart = defaultRange.start;
+          rangeEnd = defaultRange.end;
         }
-        const startStr = fetchStart.toISOString().split('T')[0];
-        const endStr = fetchEnd.toISOString().split('T')[0];
+        if (!cancelled) {
+          setYearRange({ start: rangeStart, end: rangeEnd });
+          setRangeReady(true);
+        }
+      } catch (_) {
+        if (!cancelled) setRangeReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [familyIdResolved, children.length]);
 
+  // Fetch attendance and events when year range (or family/children/refresh) changes.
+  const yearStartKey = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
+  const yearEndKey = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
+  useEffect(() => {
+    if (!familyIdResolved || !rangeReady || !yearStartKey || !yearEndKey) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fetchStart = dateStringToDate(yearStartKey);
+        const fetchEnd = dateStringToDate(yearEndKey);
+        const startStr = yearStartKey;
+        const endStr = yearEndKey;
         const childIds = children.map((c) => c.id);
         const [logs, eventsRes] = await Promise.all([
           getAttendanceLogs(familyIdResolved, childIds.length ? childIds : null, { start: startStr, end: endStr }),
@@ -123,7 +190,6 @@ export default function AttendanceView({
             .is('deleted_at', null)
             .order('start_ts', { ascending: true }),
         ]);
-
         if (!cancelled) {
           setAttendanceRecords(logs || []);
           setYearEvents(eventsRes?.data || []);
@@ -138,7 +204,7 @@ export default function AttendanceView({
       }
     })();
     return () => { cancelled = true; };
-  }, [familyIdResolved, children.length, attendanceRefreshKey]);
+  }, [familyIdResolved, rangeReady, yearStartKey, yearEndKey, children.length, attendanceRefreshKey]);
 
   const eventsInRange = yearEvents.length > 0 ? yearEvents : eventsProp.filter((e) => {
     const t = e.start_ts || e.start || e.start_local;
@@ -646,6 +712,86 @@ export default function AttendanceView({
     );
   }
 
+  const rangeStartStr = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
+  const rangeEndStr = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
+
+  const setRangeStart = useCallback((ymd) => {
+    const clamped = ymd < minStartKey ? minStartKey : ymd > maxEndKey ? maxEndKey : ymd;
+    const start = dateStringToDate(clamped);
+    let end = yearRange.end ? new Date(yearRange.end) : dateStringToDate(maxEndKey);
+    if (end < start) end = new Date(start);
+    end.setHours(23, 59, 59, 999);
+    if (toLocalYYYYMMDD(end) > maxEndKey) end = dateStringToDate(maxEndKey);
+    setYearRange({ start, end });
+  }, [minStartKey, maxEndKey, yearRange.end]);
+
+  const setRangeEnd = useCallback((ymd) => {
+    const clamped = ymd < minStartKey ? minStartKey : ymd > maxEndKey ? maxEndKey : ymd;
+    const end = dateStringToDate(clamped);
+    let start = yearRange.start ? new Date(yearRange.start) : dateStringToDate(minStartKey);
+    if (start > end) start = new Date(end);
+    setYearRange({ start, end });
+  }, [minStartKey, maxEndKey, yearRange.start]);
+
+  const rangeRow = (
+    <View style={styles.rangeRowWrap}>
+      <Text style={styles.rangeRowLabel}>Attendance range</Text>
+      <View style={styles.dateRangeRow}>
+        <View style={styles.dateRangeSide}>
+          <TouchableOpacity
+            onPress={() => { if (!rangeStartStr) return; const d = new Date(rangeStartStr + 'T12:00:00'); d.setDate(d.getDate() - 1); setRangeStart(toLocalYYYYMMDD(d)); }}
+            style={styles.dateRangeArrow}
+            disabled={!rangeStartStr || rangeStartStr === minStartKey}
+            {...(Platform.OS === 'web' && { cursor: rangeStartStr && rangeStartStr !== minStartKey ? 'pointer' : 'default' })}
+          >
+            <ChevronLeft size={14} color={rangeStartStr && rangeStartStr !== minStartKey ? TOKENS.text : TOKENS.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.dateRangeDateWrap}
+            onPress={() => { setStartDateCalendarMonth(clampCalendarMonthToRange(rangeStartStr ? dateStringToDate(rangeStartStr) : new Date(), minStart, maxEnd)); setShowStartDatePicker(true); }}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.dateRangeDate}>{rangeStartStr ? formatDateDisplay(rangeStartStr) : 'From'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { if (!rangeStartStr) return; const d = new Date(rangeStartStr + 'T12:00:00'); d.setDate(d.getDate() + 1); setRangeStart(toLocalYYYYMMDD(d)); }}
+            style={styles.dateRangeArrow}
+            disabled={!rangeStartStr || rangeStartStr === maxEndKey}
+            {...(Platform.OS === 'web' && { cursor: rangeStartStr && rangeStartStr !== maxEndKey ? 'pointer' : 'default' })}
+          >
+            <ChevronRight size={14} color={rangeStartStr && rangeStartStr !== maxEndKey ? TOKENS.text : TOKENS.textMuted} />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.dateRangeArrowLabel}>→</Text>
+        <View style={styles.dateRangeSide}>
+          <TouchableOpacity
+            onPress={() => { if (!rangeEndStr) return; const d = new Date(rangeEndStr + 'T12:00:00'); d.setDate(d.getDate() - 1); setRangeEnd(toLocalYYYYMMDD(d)); }}
+            style={styles.dateRangeArrow}
+            disabled={!rangeEndStr || rangeEndStr === minStartKey}
+            {...(Platform.OS === 'web' && { cursor: rangeEndStr && rangeEndStr !== minStartKey ? 'pointer' : 'default' })}
+          >
+            <ChevronLeft size={14} color={rangeEndStr && rangeEndStr !== minStartKey ? TOKENS.text : TOKENS.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.dateRangeDateWrap}
+            onPress={() => { setEndDateCalendarMonth(clampCalendarMonthToRange(rangeEndStr ? dateStringToDate(rangeEndStr) : new Date(), minStart, maxEnd)); setShowEndDatePicker(true); }}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.dateRangeDate}>{rangeEndStr ? formatDateDisplay(rangeEndStr) : 'To'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { if (!rangeEndStr) return; const d = new Date(rangeEndStr + 'T12:00:00'); d.setDate(d.getDate() + 1); setRangeEnd(toLocalYYYYMMDD(d)); }}
+            style={styles.dateRangeArrow}
+            disabled={!rangeEndStr || rangeEndStr === maxEndKey}
+            {...(Platform.OS === 'web' && { cursor: rangeEndStr && rangeEndStr !== maxEndKey ? 'pointer' : 'default' })}
+          >
+            <ChevronRight size={14} color={rangeEndStr && rangeEndStr !== maxEndKey ? TOKENS.text : TOKENS.textMuted} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <HeaderSummaryStrip />
@@ -668,6 +814,7 @@ export default function AttendanceView({
               setExportModalVisible(true);
             }}
           />
+          {rangeRow}
           <View style={styles.drilldownSection}>
             <View style={styles.drilldownDividerLine} />
             <Text style={styles.drilldownTitle}>Month drill-down</Text>
@@ -717,6 +864,152 @@ export default function AttendanceView({
         </View>
       )}
 
+      {showStartDatePicker && (
+        <Modal animationType="fade" transparent visible={showStartDatePicker} onRequestClose={() => setShowStartDatePicker(false)}>
+          <TouchableOpacity style={styles.calendarOverlay} activeOpacity={1} onPress={() => setShowStartDatePicker(false)}>
+            <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.calendarModal}>
+              <View style={styles.calendarNavRow}>
+                <TouchableOpacity onPress={() => { const d = new Date(startDateCalendarMonth); d.setMonth(d.getMonth() - 1); setStartDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <ChevronLeft size={20} color={TOKENS.text} />
+                </TouchableOpacity>
+                <Text style={styles.calendarMonthTitle}>{startDateCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                <TouchableOpacity onPress={() => { const d = new Date(startDateCalendarMonth); d.setMonth(d.getMonth() + 1); setStartDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <ChevronRight size={20} color={TOKENS.text} />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.calendarYearRow}>
+                <TouchableOpacity onPress={() => { const d = new Date(startDateCalendarMonth); d.setFullYear(d.getFullYear() - 1); setStartDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <Text style={styles.calendarYearLink}>← Year</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const today = new Date(); const clamped = clampCalendarMonthToRange(today, minStart, maxEnd); setStartDateCalendarMonth(clamped); setRangeStart(toLocalYYYYMMDD(today)); setShowStartDatePicker(false); }} style={styles.calendarNavButton}>
+                  <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const d = new Date(startDateCalendarMonth); d.setFullYear(d.getFullYear() + 1); setStartDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <Text style={styles.calendarYearLink}>Year →</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.calendarDayHeaders}>
+                {WEEKDAY_LABELS.map((day) => (
+                  <View key={day} style={styles.calendarDayHeader}>
+                    <Text style={styles.calendarDayHeaderText}>{day}</Text>
+                  </View>
+                ))}
+              </View>
+              {(() => {
+                const year = startDateCalendarMonth.getFullYear();
+                const month = startDateCalendarMonth.getMonth();
+                const firstDay = new Date(year, month, 1);
+                const startDateGrid = new Date(firstDay);
+                startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
+                const days = [];
+                const current = new Date(startDateGrid);
+                for (let i = 0; i < 42; i++) {
+                  days.push(new Date(current));
+                  current.setDate(current.getDate() + 1);
+                }
+                return (
+                  <View>
+                    {[0, 1, 2, 3, 4, 5].map((week) => (
+                      <View key={week} style={styles.calendarWeekRow}>
+                        {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                          const isCurrentMonth = day.getMonth() === month;
+                          const ymd = toLocalYYYYMMDD(day);
+                          const isSelected = rangeStartStr === ymd;
+                          const isToday = ymd === toLocalYYYYMMDD(new Date());
+                          const inRange = ymd >= minStartKey && ymd <= maxEndKey;
+                          return (
+                            <TouchableOpacity
+                              key={idx}
+                              onPress={() => { if (inRange) { setRangeStart(ymd); setShowStartDatePicker(false); } }}
+                              style={[styles.calendarDayCell, isSelected && styles.calendarDayCellSelected, isToday && !isSelected && styles.calendarDayCellToday, !inRange && styles.calendarDayCellDisabled]}
+                              disabled={!inRange}
+                            >
+                              <Text style={[styles.calendarDayText, isSelected && styles.calendarDayTextSelected, !isCurrentMonth && styles.calendarDayTextMuted, !inRange && styles.calendarDayTextMuted]}>{day.getDate()}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
+      {showEndDatePicker && (
+        <Modal animationType="fade" transparent visible={showEndDatePicker} onRequestClose={() => setShowEndDatePicker(false)}>
+          <TouchableOpacity style={styles.calendarOverlay} activeOpacity={1} onPress={() => setShowEndDatePicker(false)}>
+            <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.calendarModal}>
+              <View style={styles.calendarNavRow}>
+                <TouchableOpacity onPress={() => { const d = new Date(endDateCalendarMonth); d.setMonth(d.getMonth() - 1); setEndDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <ChevronLeft size={20} color={TOKENS.text} />
+                </TouchableOpacity>
+                <Text style={styles.calendarMonthTitle}>{endDateCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                <TouchableOpacity onPress={() => { const d = new Date(endDateCalendarMonth); d.setMonth(d.getMonth() + 1); setEndDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <ChevronRight size={20} color={TOKENS.text} />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.calendarYearRow}>
+                <TouchableOpacity onPress={() => { const d = new Date(endDateCalendarMonth); d.setFullYear(d.getFullYear() - 1); setEndDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <Text style={styles.calendarYearLink}>← Year</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const today = new Date(); const clamped = clampCalendarMonthToRange(today, minStart, maxEnd); setEndDateCalendarMonth(clamped); setRangeEnd(toLocalYYYYMMDD(today)); setShowEndDatePicker(false); }} style={styles.calendarNavButton}>
+                  <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const d = new Date(endDateCalendarMonth); d.setFullYear(d.getFullYear() + 1); setEndDateCalendarMonth(clampCalendarMonthToRange(d, minStart, maxEnd)); }} style={styles.calendarNavButton}>
+                  <Text style={styles.calendarYearLink}>Year →</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.calendarDayHeaders}>
+                {WEEKDAY_LABELS.map((day) => (
+                  <View key={day} style={styles.calendarDayHeader}>
+                    <Text style={styles.calendarDayHeaderText}>{day}</Text>
+                  </View>
+                ))}
+              </View>
+              {(() => {
+                const year = endDateCalendarMonth.getFullYear();
+                const month = endDateCalendarMonth.getMonth();
+                const firstDay = new Date(year, month, 1);
+                const startDateGrid = new Date(firstDay);
+                startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
+                const days = [];
+                const current = new Date(startDateGrid);
+                for (let i = 0; i < 42; i++) {
+                  days.push(new Date(current));
+                  current.setDate(current.getDate() + 1);
+                }
+                return (
+                  <View>
+                    {[0, 1, 2, 3, 4, 5].map((week) => (
+                      <View key={week} style={styles.calendarWeekRow}>
+                        {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                          const isCurrentMonth = day.getMonth() === month;
+                          const ymd = toLocalYYYYMMDD(day);
+                          const isSelected = rangeEndStr === ymd;
+                          const isToday = ymd === toLocalYYYYMMDD(new Date());
+                          const inRange = ymd >= minStartKey && ymd <= maxEndKey;
+                          return (
+                            <TouchableOpacity
+                              key={idx}
+                              onPress={() => { if (inRange) { setRangeEnd(ymd); setShowEndDatePicker(false); } }}
+                              style={[styles.calendarDayCell, isSelected && styles.calendarDayCellSelected, isToday && !isSelected && styles.calendarDayCellToday, !inRange && styles.calendarDayCellDisabled]}
+                              disabled={!inRange}
+                            >
+                              <Text style={[styles.calendarDayText, isSelected && styles.calendarDayTextSelected, !isCurrentMonth && styles.calendarDayTextMuted, !inRange && styles.calendarDayTextMuted]}>{day.getDate()}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
       <MarkRangeModal
         visible={markRangeVisible}
         children={children}
@@ -771,8 +1064,8 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   drilldownSection: {
-    marginTop: TOKENS.s9,
-    paddingTop: 24,
+    marginTop: TOKENS.s5,
+    paddingTop: 16,
   },
   drilldownDividerLine: {
     position: 'absolute',
@@ -816,4 +1109,64 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 12, fontSize: 14, color: TOKENS.textMuted },
   empty: { padding: 24 },
   emptyText: { fontSize: 14, color: TOKENS.textMuted },
+  rangeRowWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: TOKENS.s4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: TOKENS.bgSubtle,
+    alignSelf: 'flex-start',
+  },
+  rangeRowLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
+  dateRangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  dateRangeSide: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  dateRangeArrow: { paddingVertical: 4, paddingHorizontal: 0 },
+  dateRangeDateWrap: { minWidth: 100, alignItems: 'center', justifyContent: 'center' },
+  dateRangeDate: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
+  dateRangeArrowLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
+  calendarOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calendarModal: {
+    backgroundColor: TOKENS.bg ?? '#fff',
+    borderRadius: 12,
+    padding: 16,
+    width: Platform.OS === 'web' ? 320 : '90%',
+    maxWidth: 320,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' } : {}),
+  },
+  calendarNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  calendarNavButton: { padding: 4 },
+  calendarMonthTitle: { fontSize: 14, fontWeight: '600', color: TOKENS.text },
+  calendarYearRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 },
+  calendarYearLink: { fontSize: 12, color: TOKENS.textMuted },
+  calendarDayHeaders: { flexDirection: 'row', marginBottom: 8 },
+  calendarDayHeader: { flex: 1, alignItems: 'center' },
+  calendarDayHeaderText: { fontSize: 12, color: TOKENS.textMuted, fontWeight: '500' },
+  calendarWeekRow: { flexDirection: 'row', marginBottom: 4 },
+  calendarDayCell: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+  },
+  calendarDayCellSelected: { backgroundColor: TOKENS.accent ?? '#887DEE' },
+  calendarDayCellToday: { borderWidth: 2, borderColor: TOKENS.accent ?? '#887DEE' },
+  calendarDayCellDisabled: { opacity: 0.4 },
+  calendarDayText: { fontSize: 13, color: TOKENS.text },
+  calendarDayTextSelected: { color: '#fff', fontWeight: '600' },
+  calendarDayTextMuted: { color: TOKENS.textMuted },
 });

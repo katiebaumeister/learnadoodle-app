@@ -1,0 +1,1146 @@
+{
+  "AK": {
+    "attendance": {
+      "source_url": "https://education.alaska.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "hours": {
+      "source_url": "https://education.alaska.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://education.alaska.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "AL": {
+    "attendance": {
+      "source_url": "https://www.ed.gov/birth-grade-12-education/education-choice/state-regulation-of-private-and-home-schools/alabama-state-regulations-of-private-and-home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true).",
+        "min_days_per_year": 140,
+        "min_hours_per_year": 420,
+        "unit": "hours"
+      }
+    },
+    "hours": {
+      "source_url": "https://www.ed.gov/birth-grade-12-education/education-choice/state-regulation-of-private-and-home-schools/alabama-state-regulations-of-private-and-home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": 420,
+        "min_days_per_year": 140,
+        "unit": "hours"
+      }
+    },
+    "testing": {
+      "source_url": "https://www.ed.gov/birth-grade-12-education/education-choice/state-regulation-of-private-and-home-schools/alabama-state-regulations-of-private-and-home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "AR": {
+    "attendance": {
+      "source_url": "https://dese.ade.arkansas.gov/Files/AR_Home_School_Fact_Sheet_2024_OSCPE.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true)."
+      }
+    },
+    "hours": {
+      "source_url": "https://dese.ade.arkansas.gov/Files/AR_Home_School_Fact_Sheet_2024_OSCPE.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://dese.ade.arkansas.gov/Files/AR_Home_School_Fact_Sheet_2024_OSCPE.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "AZ": {
+    "attendance": {
+      "source_url": "https://www.azed.gov/schoolchoice/homeschool",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.azed.gov/schoolchoice/homeschool",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "CA": {
+    "attendance": {
+      "source_url": "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?sectionNum=48222.&lawCode=EDC",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?sectionNum=48222.&lawCode=EDC",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "CO": {
+    "attendance": {
+      "source_url": "https://leg.colorado.gov/sites/default/files/images/olls/crs2023-title-22.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": 172
+      }
+    },
+    "testing": {
+      "source_url": "https://leg.colorado.gov/sites/default/files/images/olls/crs2023-title-22.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Testing or evaluation in grades 3, 5, 7, 9, 11"
+      }
+    }
+  },
+  "CT": {
+    "attendance": {
+      "source_url": "https://cga.ct.gov/2008/rpt/2008-R-0292.htm",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "hours": {
+      "source_url": "https://cga.ct.gov/2008/rpt/2008-R-0292.htm",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://cga.ct.gov/2008/rpt/2008-R-0292.htm",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "DC": {
+    "attendance": {
+      "source_url": "https://osse.dc.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "hours": {
+      "source_url": "https://osse.dc.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "testing": {
+      "source_url": "https://osse.dc.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": null,
+        "window_simple": "Check OSSE for current homeschool reporting and evaluation requirements."
+      }
+    }
+  },
+  "DE": {
+    "attendance": {
+      "source_url": "https://education.delaware.gov/families/home_schooling/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://education.delaware.gov/families/home_schooling/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://education.delaware.gov/families/home_schooling/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "FL": {
+    "attendance": {
+      "source_url": "https://www.leg.state.fl.us/Statutes/index.cfm?App_mode=Display_Statute&URL=1000-1099/1002/Sections/1002.41.html",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.leg.state.fl.us/Statutes/index.cfm?App_mode=Display_Statute&URL=1000-1099/1002/Sections/1002.41.html",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annually (file with district superintendent; statute does not give a single universal due date)"
+      }
+    }
+  },
+  "GA": {
+    "attendance": {
+      "source_url": "https://law.justia.com/codes/georgia/latest/title-20/chapter-2/article-16/section-20-2-690/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": 180,
+        "min_hours_per_year": 810,
+        "unit": "hours"
+      }
+    },
+    "testing": {
+      "source_url": "https://law.justia.com/codes/georgia/latest/title-20/chapter-2/article-16/section-20-2-690/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Testing required every 3 years beginning in 3rd grade"
+      }
+    }
+  },
+  "HI": {
+    "attendance": {
+      "source_url": "https://www.hawaiipublicschools.org/TeachingAndLearning/SpecializedPrograms/Homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://www.hawaiipublicschools.org/TeachingAndLearning/SpecializedPrograms/Homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.hawaiipublicschools.org/TeachingAndLearning/SpecializedPrograms/Homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "IA": {
+    "attendance": {
+      "source_url": "https://educate.iowa.gov/pk-12/educational-choice/homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Attendance is computed from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true)."
+      }
+    },
+    "hours": {
+      "source_url": "https://educate.iowa.gov/pk-12/educational-choice/homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://educate.iowa.gov/pk-12/educational-choice/homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "ID": {
+    "attendance": {
+      "source_url": "https://www.sde.idaho.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "hours": {
+      "source_url": "https://www.sde.idaho.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.sde.idaho.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": null,
+        "window_simple": "Verify with Idaho SDE for current homeschool requirements."
+      }
+    }
+  },
+  "IL": {
+    "attendance": {
+      "source_url": "https://www.isbe.net/Pages/Homeschool.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.isbe.net/Pages/Homeschool.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "IN": {
+    "attendance": {
+      "source_url": "https://www.doe.in.gov/choice/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://www.doe.in.gov/choice/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "KS": {
+    "attendance": {
+      "source_url": "https://www.ed.gov/birth-grade-12-education/education-choice/state-regulation-of-private-and-home-schools/kansas-state-regulation-of-private-and-home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Attendance is computed from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true).",
+        "min_hours_per_year": {
+          "K": 465,
+          "1-11": 1116,
+          "12": 1086,
+          "unit": "hours"
+        }
+      }
+    },
+    "hours": {
+      "source_url": "https://www.ed.gov/birth-grade-12-education/education-choice/state-regulation-of-private-and-home-schools/kansas-state-regulation-of-private-and-home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": {
+          "K": 465,
+          "1-11": 1116,
+          "12": 1086,
+          "unit": "hours"
+        }
+      }
+    },
+    "testing": {
+      "source_url": "https://www.ed.gov/birth-grade-12-education/education-choice/state-regulation-of-private-and-home-schools/kansas-state-regulation-of-private-and-home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Periodic testing required, but no fixed statewide dates specified."
+      }
+    }
+  },
+  "KY": {
+    "attendance": {
+      "source_url": "https://education.ky.gov/school/epp/Pages/HomeInstruction.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://education.ky.gov/school/epp/Pages/HomeInstruction.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual evaluation/report (district determines timing)"
+      }
+    }
+  },
+  "LA": {
+    "attendance": {
+      "source_url": "https://www.louisianabelieves.com/learning-supports/parents-families/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://www.louisianabelieves.com/learning-supports/parents-families/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "MA": {
+    "attendance": {
+      "source_url": "https://www.doe.mass.edu/mcas/home-schooling.html",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://www.doe.mass.edu/mcas/home-schooling.html",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "MD": {
+    "attendance": {
+      "source_url": "https://marylandpublicschools.org/about/Pages/DSFSS/SSSP/HomeEducation.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://marylandpublicschools.org/about/Pages/DSFSS/SSSP/HomeEducation.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual review with school system (no fixed date stated)"
+      }
+    }
+  },
+  "ME": {
+    "attendance": {
+      "source_url": "https://www.maine.gov/doe/schools/safeschools/homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://www.maine.gov/doe/schools/safeschools/homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.maine.gov/doe/schools/safeschools/homeschooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual assessment required"
+      }
+    }
+  },
+  "MI": {
+    "attendance": {
+      "source_url": "https://www.michigan.gov/mde/0,4615,7-140-6530_6605_6607_40135---,00.html",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.michigan.gov/mde/0,4615,7-140-6530_6605_6607_40135---,00.html",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "MN": {
+    "attendance": {
+      "source_url": "https://www.revisor.mn.gov/statutes/cite/120A.22",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.revisor.mn.gov/statutes/cite/120A.22",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annually (private school evaluation)"
+      }
+    }
+  },
+  "MO": {
+    "attendance": {
+      "source_url": "https://dese.mo.gov/administration/commonly-requested/school-forms/home-school",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://dese.mo.gov/administration/commonly-requested/school-forms/home-school",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "MS": {
+    "attendance": {
+      "source_url": "https://mdek12.org/ocsa/home-school/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true)."
+      }
+    },
+    "hours": {
+      "source_url": "https://mdek12.org/ocsa/home-school/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://mdek12.org/ocsa/home-school/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "MT": {
+    "attendance": {
+      "source_url": "https://opi.mt.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "hours": {
+      "source_url": "https://opi.mt.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "testing": {
+      "source_url": "https://opi.mt.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": null,
+        "window_simple": "Verify with Montana OPI for current homeschool requirements."
+      }
+    }
+  },
+  "NC": {
+    "attendance": {
+      "source_url": "https://www.doa.nc.gov/divisions/non-public-education/home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.doa.nc.gov/divisions/non-public-education/home-schools",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Administer nationally standardized test annually"
+      }
+    }
+  },
+  "ND": {
+    "attendance": {
+      "source_url": "https://ndlegis.gov/cencode/t15-1c23.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true). Minimum 4 hours per day over 175 days.",
+        "min_days_per_year": 175,
+        "min_hours_per_year": 700,
+        "unit": "hours"
+      }
+    },
+    "hours": {
+      "source_url": "https://ndlegis.gov/cencode/t15-1c23.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "hours_requirement": {
+          "min_hours_per_day": 4,
+          "min_days_per_year": 175,
+          "min_hours_per_year": 700,
+          "unit": "hours"
+        }
+      }
+    },
+    "testing": {
+      "source_url": "https://www.west-fargo.k12.nd.us/teaching-learning/home-education/home-education-requirements",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Standardized testing required in grades 4, 6, 8, and 10"
+      }
+    }
+  },
+  "NE": {
+    "attendance": {
+      "source_url": "https://www.education.ne.gov/fos/exempt-schools/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Attendance is computed from instructional events only (events where counts_toward_plan=true OR instructional_status in ['MANUAL_COUNTS','PLAN_PLACEHOLDER']). Homeschools are exempt schools and must meet the compulsory attendance law.",
+        "min_days_per_year": null,
+        "min_hours_per_year": {
+          "elementary": 1032,
+          "secondary": 1080,
+          "unit": "hours"
+        }
+      }
+    },
+    "hours": {
+      "source_url": "https://www.education.ne.gov/fos/exempt-schools/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": {
+          "elementary": 1032,
+          "secondary": 1080,
+          "unit": "hours"
+        }
+      }
+    },
+    "testing": {
+      "source_url": "https://www.education.ne.gov/fos/exempt-schools/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "NH": {
+    "attendance": {
+      "source_url": "https://www.education.nh.gov/parent/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://www.education.nh.gov/parent/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.education.nh.gov/parent/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "NJ": {
+    "attendance": {
+      "source_url": "https://www.state.nj.us/education/nonpublic/home/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.state.nj.us/education/nonpublic/home/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "NM": {
+    "attendance": {
+      "source_url": "https://webnew.ped.state.nm.us/bureaus/instructional-programs/home-school/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://webnew.ped.state.nm.us/bureaus/instructional-programs/home-school/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "NV": {
+    "attendance": {
+      "source_url": "https://doe.nv.gov/Students/Parents/Home_School/Private_Instruction/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://doe.nv.gov/Students/Parents/Home_School/Private_Instruction/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "NY": {
+    "attendance": {
+      "source_url": "https://www.schools.nyc.gov/enrollment/enrollment-help/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": { "grades_1_6": 900, "grades_7_12": 990, "unit": "hours" }
+      }
+    },
+    "testing": {
+      "source_url": "https://www.schools.nyc.gov/enrollment/enrollment-help/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Due by June 30 each year"
+      }
+    }
+  },
+  "OH": {
+    "attendance": {
+      "source_url": "https://education.ohio.gov/Topics/Ohio-Education-Options/Home-Schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://education.ohio.gov/Topics/Ohio-Education-Options/Home-Schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annually (submit assessment to district; no single statutory due date)"
+      }
+    }
+  },
+  "OK": {
+    "attendance": {
+      "source_url": "https://sde.ok.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "hours": {
+      "source_url": "https://sde.ok.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "testing": {
+      "source_url": "https://sde.ok.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": null,
+        "window_simple": "Verify with Oklahoma SDE for current homeschool requirements."
+      }
+    }
+  },
+  "OR": {
+    "attendance": {
+      "source_url": "https://www.oregon.gov/ode/students-and-family/Pages/Home-School.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.oregon.gov/ode/students-and-family/Pages/Home-School.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual progress report (no single fixed date stated)"
+      }
+    }
+  },
+  "PA": {
+    "attendance": {
+      "source_url": "https://www.pa.gov/content/dam/copapwp-pagov/en/education/documents/instruction/home-education-and-private-tutoring/home%20education%20and%20private%20tutoring%20guide.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": 180,
+        "min_hours_per_year": { "grades_k_6": 900, "grades_7_12": 990, "unit": "hours" }
+      }
+    },
+    "testing": {
+      "source_url": "https://www.pa.gov/content/dam/copapwp-pagov/en/education/documents/instruction/home-education-and-private-tutoring/home%20education%20and%20private%20tutoring%20guide.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Evaluation due by June 30 each school year",
+        "testing_grades": [3, 5, 8]
+      }
+    }
+  },
+  "RI": {
+    "attendance": {
+      "source_url": "https://ride.ri.gov/students-families/education-programs/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": 180,
+        "min_hours_per_year": null,
+        "unit": "days"
+      }
+    },
+    "hours": {
+      "source_url": "https://ride.ri.gov/students-families/education-programs/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": 180,
+        "min_hours_per_year": null,
+        "unit": "days"
+      }
+    },
+    "testing": {
+      "source_url": "https://ride.ri.gov/students-families/education-programs/home-schooling",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "SC": {
+    "attendance": {
+      "source_url": "https://ed.sc.gov/districts-schools/private-schools/home-schooling/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "testing": {
+      "source_url": "https://ed.sc.gov/districts-schools/private-schools/home-schooling/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual progress report (district determines format)"
+      }
+    }
+  },
+  "SD": {
+    "attendance": {
+      "source_url": "https://doe.sd.gov/oatq/homeschooling.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only (instructional_status in {MANUAL_COUNTS, PLAN_PLACEHOLDER} or counts_toward_plan=true)."
+      }
+    },
+    "hours": {
+      "source_url": "https://doe.sd.gov/oatq/homeschooling.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://doe.sd.gov/oatq/homeschooling.aspx",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "TN": {
+    "attendance": {
+      "source_url": "https://law.justia.com/codes/tennessee/2020/title-49/chapter-6/part-30/section-49-6-3059/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://law.justia.com/codes/tennessee/2020/title-49/chapter-6/part-30/section-49-6-3059/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annually (progress report)"
+      }
+    }
+  },
+  "TX": {
+    "attendance": {
+      "source_url": "https://statutes.capitol.texas.gov/Docs/ED/htm/ED.25.htm#25.086",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://statutes.capitol.texas.gov/Docs/ED/htm/ED.25.htm#25.086",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "UT": {
+    "attendance": {
+      "source_url": "https://www.schools.utah.gov/curr/homeschool",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://www.schools.utah.gov/curr/homeschool",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://www.schools.utah.gov/curr/homeschool",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": false,
+        "window_simple": null
+      }
+    }
+  },
+  "VA": {
+    "attendance": {
+      "source_url": "https://law.lis.virginia.gov/vacode/title22.1/chapter14/section22.1-254.1/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://law.lis.virginia.gov/vacode/title22.1/chapter14/section22.1-254.1/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Evidence of progress submitted by August 1"
+      }
+    }
+  },
+  "VT": {
+    "attendance": {
+      "source_url": "https://education.vermont.gov/student-support/student-assessment/home-study",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://education.vermont.gov/student-support/student-assessment/home-study",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://education.vermont.gov/student-support/student-assessment/home-study",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual assessment required"
+      }
+    }
+  },
+  "WA": {
+    "attendance": {
+      "source_url": "https://ospi.k12.wa.us/sites/default/files/2023-08/pinkbook.pdf",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_hours_per_year": { "grades_1_12": 1000, "unit": "hours" }
+      }
+    },
+    "testing": {
+      "source_url": "https://app.leg.wa.gov/rcw/default.aspx?cite=28A.200.010",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annually (no fixed due date stated here)"
+      }
+    }
+  },
+  "WV": {
+    "attendance": {
+      "source_url": "https://wvde.us/parents/homeschool/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day."
+      }
+    },
+    "hours": {
+      "source_url": "https://wvde.us/parents/homeschool/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_hours_per_year": null,
+        "min_days_per_year": 180
+      }
+    },
+    "testing": {
+      "source_url": "https://wvde.us/parents/homeschool/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual assessment required"
+      }
+    }
+  },
+  "WI": {
+    "attendance": {
+      "source_url": "https://dpi.wi.gov/sms/home-based-private-educational-program",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null
+      }
+    },
+    "testing": {
+      "source_url": "https://dpi.wi.gov/sms/home-based-private-educational-program",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": true,
+        "window_simple": "Annual evaluation/report"
+      }
+    }
+  },
+  "WY": {
+    "attendance": {
+      "source_url": "https://edu.wyoming.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "attendance_definition": "Derived from instructional events only and logged per event, per child, per day.",
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "hours": {
+      "source_url": "https://edu.wyoming.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "min_days_per_year": null,
+        "min_hours_per_year": null,
+        "unit": null
+      }
+    },
+    "testing": {
+      "source_url": "https://edu.wyoming.gov/",
+      "last_verified_at": "2026-02-26",
+      "metric_defaults": {
+        "evaluation_required": null,
+        "window_simple": "Verify with Wyoming Department of Education for current homeschool requirements."
+      }
+    }
+  }
+}

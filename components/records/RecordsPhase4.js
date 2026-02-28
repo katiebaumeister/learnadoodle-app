@@ -299,7 +299,7 @@ function Modal({ isOpen, onClose, title, subtitle, children, maxWidth = 'max-w-4
             className="text-slate-400 hover:text-slate-600 transition"
             style={{
               color: '#94a3b8',
-              background: 'none',
+              backgroundColor: 'transparent',
               border: 'none',
               cursor: 'pointer',
               padding: '4px',

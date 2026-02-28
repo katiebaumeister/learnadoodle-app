@@ -2185,17 +2185,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     document.addEventListener('mouseup', handleMouseUp);
   }, [data.events, selectedChildIds, weekStart, handleWeekStartChange, familyId]);
 
-  // Early return for loading - MUST be after all hooks
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={styles.loadingText}>Loading week...</Text>
-      </View>
-    );
-  }
-  
-  // Use View for both web and native, with web-specific styles
+  // Always render week view with current data (no loading screen); data updates in place when refetches complete
   return (
     <View style={[
       styles.wrapper,

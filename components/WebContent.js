@@ -15,7 +15,7 @@ import {
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
-import { getHolidaysForRange } from '../lib/services/academicYearClient'
+import { getHolidaysForRange, getEventForPlanSlot } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 
 // Set up error suppression immediately on module load (before React renders)
@@ -488,7 +488,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { Clock, ArrowRight, UserCircle, Link, MapPin, Eye, Plus, Upload, Copy, Sparkles, Download, Users, Settings, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { proposeReschedule, getWeekStart, apiRequest } from '../lib/apiClient'
-import { deleteEvent as deletePlannerEvent } from '../lib/services/plannerClientWithOffline'
+import { deleteEvent as deletePlannerEvent, restoreEventFromTrash, permanentlyDeleteTrashEvent } from '../lib/services/plannerClientWithOffline'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import SyllabusUpload from './SyllabusUpload'
@@ -1080,6 +1080,130 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     };
   }, [activeTab]);
 
+  // Listen for openEventForPlanSlot (from Plan Year plan summary "Dates with events" row click)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const normalizeTime = (t) => {
+      if (t == null || t === '') return '';
+      const s = String(t).trim();
+      const m = s.match(/^(\d{1,2}):(\d{2})/);
+      return m ? `${String(parseInt(m[1], 10))}:${m[2]}` : s.replace(/^0(?=\d:)/, '');
+    };
+
+    const findMatch = (eventsByDate, dateYmd, startLocal, subjectId, subjectName) => {
+      const dayEvents = eventsByDate[dateYmd] || [];
+      const nStart = normalizeTime(startLocal);
+      return dayEvents.find((e) => {
+        if (!e || !e.id) return false;
+        const subjectMatch = subjectId != null && (String(e.subject_id) === String(subjectId) || (e.subject_name && subjectName && String(e.subject_name).trim() === String(subjectName).trim()));
+        if (!subjectMatch) return false;
+        if (startLocal == null) return true; // all-day
+        const et = normalizeTime(e.start_local || e.time);
+        return et === nStart || (e.start_local === startLocal) || (e.time === startLocal);
+      });
+    };
+
+    const handleOpenEventForPlanSlot = async (event) => {
+      const detail = event.detail || {};
+      const { dateYmd, startLocal, subjectId, academicYearId, subjectName } = detail;
+      if (!dateYmd) return;
+      if (__DEV__) console.log('[WebContent] openEventForPlanSlot received', { dateYmd, startLocal, subjectId, subjectName });
+
+      let eventsByDate = calendarEventsRef.current || {};
+      let match = findMatch(eventsByDate, dateYmd, startLocal, subjectId, subjectName);
+
+      // If no match, fetch that month with all children so we get every event (calendar filter may hide the plan's assignee)
+      if (!match && refreshCalendarDataRef.current) {
+        try {
+          const slotDate = new Date(dateYmd + 'T12:00:00');
+          if (!isNaN(slotDate.getTime())) {
+            await refreshCalendarDataRef.current(slotDate, { background: true, allChildren: true });
+            // Wait for state/ref to update after setCalendarEvents (React may batch)
+            await new Promise((r) => setTimeout(r, 400));
+            eventsByDate = calendarEventsRef.current || {};
+            match = findMatch(eventsByDate, dateYmd, startLocal, subjectId, subjectName);
+            if (!match) {
+              await new Promise((r) => setTimeout(r, 300));
+              eventsByDate = calendarEventsRef.current || {};
+              match = findMatch(eventsByDate, dateYmd, startLocal, subjectId, subjectName);
+            }
+          }
+        } catch (err) {
+          console.warn('[WebContent] openEventForPlanSlot: refresh failed', err);
+        }
+      }
+
+      if (match) {
+        setShowNewEventForm(false);
+        setShowTaskModal(false);
+        setEventModalEventId(match.id);
+        setEventModalInitialEvent(match);
+        setEventModalVisible(true);
+        // Also dispatch openEventModal so WebLayout's global EventModal opens (same as calendar event click)
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: match.id, initialEvent: match } }));
+        }
+        if (__DEV__) console.log('[WebContent] openEventForPlanSlot: opened event modal', match.id);
+        return;
+      }
+
+      // No match in calendar cache: look up event by plan slot (slots are created as full events when plan is applied)
+      if (familyId && academicYearId) {
+        try {
+          const { data: slotData, error: slotErr } = await getEventForPlanSlot({
+            familyId,
+            dateYmd,
+            startLocal: startLocal || undefined,
+            subjectId: subjectId || '',
+            academicYearId,
+          });
+          if (!slotErr && slotData?.event) {
+            const ev = slotData.event;
+            setShowNewEventForm(false);
+            setShowTaskModal(false);
+            setEventModalEventId(ev.id);
+            setEventModalInitialEvent(ev);
+            setEventModalVisible(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev.id, initialEvent: ev } }));
+            }
+            if (__DEV__) console.log('[WebContent] openEventForPlanSlot: opened event modal from slot API', ev.id);
+            return;
+          }
+        } catch (err) {
+          if (__DEV__) console.warn('[WebContent] openEventForPlanSlot: event_for_slot API failed', err);
+        }
+      }
+
+      // Slot has no event yet (e.g. plan not applied): open new-event modal with slot prefilled
+      if (typeof window !== 'undefined') {
+        const slotDate = new Date(dateYmd + 'T12:00:00');
+        if (!isNaN(slotDate.getTime())) {
+          const startTimeDisplay = startLocal && /^\d{1,2}:\d{2}/.test(String(startLocal))
+            ? (() => {
+                const [h, m] = String(startLocal).split(':').map((n) => parseInt(n, 10));
+                const hour = h % 12 || 12;
+                const ampm = h < 12 ? 'AM' : 'PM';
+                return `${hour}:${String(m || 0).padStart(2, '0')} ${ampm}`;
+              })()
+            : null;
+          window.dispatchEvent(new CustomEvent('openTaskModal', {
+            detail: {
+              date: slotDate,
+              subjectId: subjectId || null,
+              startTime: startTimeDisplay,
+            },
+          }));
+          if (__DEV__) console.log('[WebContent] openEventForPlanSlot: opened task modal for slot (no event found)');
+        }
+      }
+    };
+
+    window.addEventListener('openEventForPlanSlot', handleOpenEventForPlanSlot);
+    return () => window.removeEventListener('openEventForPlanSlot', handleOpenEventForPlanSlot);
+  }, [familyId]);
+
   // Listen for openAddMaterialModal event
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -1112,11 +1236,124 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     if (Platform.OS !== 'web') return;
     
     const handleEventRescheduled = async (event) => {
-      const { eventId, updatedEvent, apiError } = event.detail || {};
+      const { eventId, updatedEvent, apiError, dropStartTime, fromApi } = event.detail || {};
       if (!eventId || !updatedEvent) return;
-      
-      // console.log('[WebContent] Optimistic update for event:', eventId);
-      
+
+      // API success: patch state with saved event and skip full refetch
+      if (fromApi) {
+        lastMergeFromApiRef.current = { eventId, at: Date.now() };
+        pendingOptimisticUpdatesRef.current.delete(eventId);
+        const saved = updatedEvent;
+        const newDateKey = saved.date_local || (() => {
+          const d = new Date(saved.start_ts || saved.start || saved.start_local);
+          return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : null;
+        })();
+        setCalendarEvents((prevEvents) => {
+          const newEvents = { ...prevEvents };
+          let found = false;
+          Object.keys(newEvents).forEach((dateKey) => {
+            const dayEvents = newEvents[dateKey];
+            if (!Array.isArray(dayEvents)) return;
+            const index = dayEvents.findIndex((e) => e && e.id === eventId);
+            if (index < 0) return;
+            found = true;
+            const patched = { ...dayEvents[index], ...saved, date_local: newDateKey || dateKey };
+            if (newDateKey === dateKey) {
+              const updated = [...dayEvents];
+              updated[index] = patched;
+              newEvents[dateKey] = updated;
+            } else {
+              newEvents[dateKey] = dayEvents.filter((e) => e.id !== eventId);
+              if (!newEvents[newDateKey]) newEvents[newDateKey] = [];
+              newEvents[newDateKey] = [...newEvents[newDateKey], patched];
+            }
+          });
+          return found ? newEvents : prevEvents;
+        });
+        return;
+      }
+      const t0 = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
+      console.log('[WebContent] [drag-timing] t+' + t0 + 'ms eventRescheduled received');
+
+      // Apply optimistic update first so the event appears to land immediately; flushSync on web so it paints in same tick
+      const applyOptimistic = () => {
+        setCalendarEvents(prevEvents => {
+          const newEvents = { ...prevEvents };
+          let found = false;
+          const newDateKey = updatedEvent.date_local || (() => {
+            const d = new Date(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local);
+            return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : null;
+          })();
+          Object.keys(newEvents).forEach(dateKey => {
+            const dayEvents = newEvents[dateKey];
+            if (Array.isArray(dayEvents)) {
+              const index = dayEvents.findIndex(e => e && e.id === eventId);
+              if (index >= 0) {
+                const updatedDayEvents = [...dayEvents];
+                const preservedStartLocal = updatedEvent.start_local || updatedDayEvents[index].start_local;
+                const preservedEndLocal = updatedEvent.end_local || updatedDayEvents[index].end_local;
+                const preservedTime = updatedEvent.time || updatedEvent.start_local || updatedDayEvents[index].time;
+                updatedDayEvents[index] = {
+                  ...updatedDayEvents[index],
+                  ...updatedEvent,
+                  start_local: preservedStartLocal,
+                  end_local: preservedEndLocal,
+                  time: preservedTime,
+                  data: {
+                    ...updatedDayEvents[index].data,
+                    ...updatedEvent,
+                    start_local: preservedStartLocal,
+                    end_local: preservedEndLocal,
+                    time: preservedTime,
+                  }
+                };
+                newEvents[dateKey] = updatedDayEvents;
+                found = true;
+                if (newDateKey && newDateKey !== dateKey) {
+                  newEvents[dateKey] = updatedDayEvents.filter(e => e.id !== eventId);
+                  if (!newEvents[newDateKey]) newEvents[newDateKey] = [];
+                  const movedEvent = {
+                    ...updatedDayEvents[index],
+                    date_local: newDateKey,
+                    start_local: preservedStartLocal,
+                    end_local: preservedEndLocal,
+                    time: preservedTime,
+                    data: {
+                      ...updatedDayEvents[index].data,
+                      ...updatedEvent,
+                      start_local: preservedStartLocal,
+                      end_local: preservedEndLocal,
+                      time: preservedTime,
+                    }
+                  };
+                  newEvents[newDateKey] = [...(newEvents[newDateKey] || []), movedEvent];
+                }
+              }
+            }
+          });
+          // Event may come from cache only (not in calendarEvents); still add to new date so it shows in correct cell
+          if (!found && newDateKey) {
+            const withDateLocal = { ...updatedEvent, date_local: newDateKey };
+            newEvents[newDateKey] = [...(newEvents[newDateKey] || []), withDateLocal];
+            return newEvents;
+          }
+          return found ? newEvents : prevEvents;
+        });
+      };
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try {
+          const { flushSync } = require('react-dom');
+          if (typeof flushSync === 'function') flushSync(applyOptimistic);
+          else applyOptimistic();
+        } catch (_) {
+          applyOptimistic();
+        }
+      } else {
+        applyOptimistic();
+      }
+      const t1 = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
+      console.log('[WebContent] [drag-timing] t+' + t1 + 'ms optimistic update applied');
+
       // Mark the time of this drag-and-drop to prevent immediate refreshes
       lastDragDropTimeRef.current = Date.now();
       
@@ -1138,12 +1375,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         ? Date.now() - lastDragEventRef.current.timestamp 
         : Infinity;
       
-      // If this is a new drag of the same event, clear any previous pending flag
-      // (user is making a new move, so previous optimistic update is no longer relevant)
-      if (isSameEvent && timeSinceLastDrag > 2000) {
-        console.log('[WebContent] Same event dragged again - clearing previous pending flag');
-        // Don't clear here - we'll add it again below, but this ensures we start fresh
-      }
+      // If same event dragged again after a while, we'll add it to pending again below; no need to clear here.
       
       // Always run conflict detection, even for optimistic updates
       // The debounce timeout will handle rapid successive drags
@@ -1162,8 +1394,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         timestamp: Date.now(),
       };
       
-      // Wait a bit for the database to update, then check for conflicts
+      // Short debounce for conflict detection (we use optimistic data if event not in DB yet)
+      console.log('[WebContent] [drag-timing] scheduling conflict detection in 50ms');
       dragDebounceTimeoutRef.current = setTimeout(async () => {
+        const tConflictStart = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
+        console.log('[WebContent] [drag-timing] t+' + tConflictStart + 'ms conflict detection started');
         try {
           // Get all events for the same child and day
           const eventDate = new Date(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local);
@@ -1209,6 +1444,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
             console.error('[WebContent] Error fetching events for conflict detection:', error);
             return;
           }
+          const tFetch = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
+          console.log('[WebContent] [drag-timing] t+' + tFetch + 'ms conflict detection fetch done');
           
           // Create a mutable copy of dbEvents for conflict detection
           // dbEvents is readonly from Supabase, so we need a new array
@@ -1803,114 +2040,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         } catch (err) {
           console.error('[WebContent] Error in conflict detection:', err);
         }
-      }, 800); // Delay to ensure database has updated
-      
-      // Update the event in calendarEvents immediately
-      setCalendarEvents(prevEvents => {
-        const newEvents = { ...prevEvents };
-        let found = false;
-        
-        // Find and update the event in the calendarEvents structure
-        Object.keys(newEvents).forEach(dateKey => {
-          const dayEvents = newEvents[dateKey];
-          if (Array.isArray(dayEvents)) {
-            const index = dayEvents.findIndex(e => e && e.id === eventId);
-            if (index >= 0) {
-              // Update the event
-              const updatedDayEvents = [...dayEvents];
-              // CRITICAL: Preserve start_local from updatedEvent (it's the source of truth)
-              const preservedStartLocal = updatedEvent.start_local || updatedDayEvents[index].start_local;
-              const preservedEndLocal = updatedEvent.end_local || updatedDayEvents[index].end_local;
-              const preservedTime = updatedEvent.time || updatedEvent.start_local || updatedDayEvents[index].time;
-              
-              updatedDayEvents[index] = {
-                ...updatedDayEvents[index],
-                ...updatedEvent,
-                // CRITICAL: Ensure start_local is preserved (critical for time display)
-                // Use updatedEvent.start_local as primary source since it's set correctly in MonthGrid
-                start_local: preservedStartLocal,
-                end_local: preservedEndLocal,
-                time: preservedTime,
-                data: {
-                  ...updatedDayEvents[index].data,
-                  ...updatedEvent,
-                  // CRITICAL: Ensure start_local is also in nested data object
-                  start_local: preservedStartLocal,
-                  end_local: preservedEndLocal,
-                  time: preservedTime,
-                }
-              };
-              
-              // Log only if start_local is missing (potential issue)
-              if (!preservedStartLocal) {
-                console.warn('[WebContent] start_local missing when updating event:', {
-                  eventId,
-                  dateKey,
-                  updatedEventStartLocal: updatedEvent.start_local,
-                  updatedEventTime: updatedEvent.time,
-                });
-              }
-              newEvents[dateKey] = updatedDayEvents;
-              found = true;
-              
-              // Also check if we need to move it to a different date
-              // Use date_local if available (more reliable), otherwise parse from start_ts
-              const newDateKey = updatedEvent.date_local || (() => {
-                const newDate = new Date(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local);
-                if (!isNaN(newDate.getTime())) {
-                  return newDate.toISOString().split('T')[0];
-                }
-                return null;
-              })();
-              
-              if (newDateKey && newDateKey !== dateKey) {
-                // console.log('[WebContent] Moving event from', dateKey, 'to', newDateKey);
-                // Remove from old date
-                newEvents[dateKey] = updatedDayEvents.filter(e => e.id !== eventId);
-                // Add to new date with updated event
-                if (!newEvents[newDateKey]) {
-                  newEvents[newDateKey] = [];
-                }
-                // Use the updated event (already has all the new date info)
-                // CRITICAL: Preserve start_local from updatedEvent (it's the source of truth)
-                const preservedStartLocal = updatedEvent.start_local || updatedDayEvents[index].start_local;
-                const preservedEndLocal = updatedEvent.end_local || updatedDayEvents[index].end_local;
-                const preservedTime = updatedEvent.time || updatedEvent.start_local || updatedDayEvents[index].time;
-                
-                const movedEvent = {
-                  ...updatedDayEvents[index],
-                  date_local: newDateKey, // Ensure date_local is set
-                  // CRITICAL: Ensure start_local is preserved when moving to new date
-                  start_local: preservedStartLocal,
-                  end_local: preservedEndLocal,
-                  time: preservedTime,
-                  data: {
-                    ...updatedDayEvents[index].data,
-                    ...updatedEvent,
-                    start_local: preservedStartLocal,
-                    end_local: preservedEndLocal,
-                    time: preservedTime,
-                  }
-                };
-                newEvents[newDateKey] = [...(newEvents[newDateKey] || []), movedEvent];
-                
-                // console.log('[WebContent] Moved event to new date with preserved local time:', {
-                //   eventId,
-                //   fromDate: dateKey,
-                //   toDate: newDateKey,
-                //   start_local: movedEvent.start_local,
-                //   start_ts: movedEvent.start_ts,
-                //   time: movedEvent.time,
-                // });
-              } else if (!newDateKey) {
-                console.warn('[WebContent] Could not determine new date for event', eventId);
-              }
-            }
-          }
-        });
-        
-        return found ? newEvents : prevEvents;
-      });
+        const tConflictEnd = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
+        console.log('[WebContent] [drag-timing] t+' + tConflictEnd + 'ms conflict detection done');
+      }, 100); // Brief delay; we use optimistic position if DB not updated yet
     };
     
     const handleEventRescheduleError = async (event) => {
@@ -2094,9 +2226,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   
   // Track events with pending optimistic updates to prevent cache overwrites
   const pendingOptimisticUpdatesRef = useRef(new Set());
+  // Track events that were just merged from API (reschedule success) so we can skip full month refetch
+  const lastMergeFromApiRef = useRef(null); // { eventId, at }
   // Track events that were just updated from database to prevent merge from overwriting
   const recentlyFetchedFromDbRef = useRef(new Map()); // Map<eventId, timestamp>
-  
+  // Ref for planner visible date so refresh handler can read it without plannerDate in deps (plannerDate is declared later)
+  const plannerDateRef = useRef(null);
+
   // Expose the ref to window so MonthGrid can update it synchronously
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2119,8 +2255,16 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
 
   // Load month view into calendarDataCache and calendarEvents (used by planner/calendar tabs).
   // Fetches month events and holidays in parallel so holidays appear with other events on load (no delay).
-  const refreshCalendarData = useCallback(async (dateOrNull) => {
+  // options.preserveEventId: when set (e.g. after drag-drop), keep this event's position from current state
+  // so a stale refetch doesn't overwrite the optimistic update and make the event "jump back".
+  // options.background: when true (e.g. post-drag refetch), skip loading state so UI stays responsive.
+  const refreshCalendarData = useCallback(async (dateOrNull, options = {}) => {
     if (!familyId) return Promise.resolve();
+    const dropStartTime = options.dropStartTime;
+    const background = options.background === true;
+    if (dropStartTime != null && typeof performance !== 'undefined') {
+      console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData started');
+    }
     const date = dateOrNull && (dateOrNull instanceof Date ? !isNaN(dateOrNull.getTime()) : true)
       ? (dateOrNull instanceof Date ? dateOrNull : new Date(dateOrNull))
       : new Date();
@@ -2130,17 +2274,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
     const lastDay = new Date(year, month + 1, 0).getDate();
     const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-    setCalendarDataLoading(true);
+    const preserveEventId = options.preserveEventId || null;
+    const allChildren = options.allChildren === true; // when true, fetch all family events (e.g. for plan summary slot lookup)
+    if (!background) setCalendarDataLoading(true);
     try {
       const [monthResult, holidaysResult] = await Promise.all([
         supabase.rpc('get_month_view', {
           _family_id: familyId,
           _year: year,
           _month: month + 1,
-          _child_ids: propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null,
+          _child_ids: allChildren ? null : (propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null),
         }),
         getHolidaysForRange(familyId, start, end),
       ]);
+      if (dropStartTime != null && typeof performance !== 'undefined') {
+        console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData fetch done');
+      }
       const { data, error } = monthResult;
       if (error) throw error;
       const eventsByDate = data?.events_by_date || {};
@@ -2156,6 +2305,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
           start_local: e.start_local,
           date_local: dateKey,
           child_id: e.child_id,
+          child_ids: Array.isArray(e.child_ids) ? e.child_ids : undefined,
           childId: e.child_id,
           subject_name: e.subject_name,
           subjectName: e.subject_name,
@@ -2164,7 +2314,31 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         }));
       });
       setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
-      setCalendarEvents((prev) => ({ ...prev, ...byDate }));
+      setCalendarEvents((prev) => {
+        let merged = { ...prev, ...byDate };
+        if (preserveEventId) {
+          let optimisticEvent = null;
+          let optimisticDateKey = null;
+          for (const key of Object.keys(prev)) {
+            const arr = prev[key];
+            if (Array.isArray(arr)) {
+              const e = arr.find((ev) => ev && ev.id === preserveEventId);
+              if (e) {
+                optimisticEvent = e;
+                optimisticDateKey = key;
+                break;
+              }
+            }
+          }
+          if (optimisticEvent && optimisticDateKey) {
+            Object.keys(merged).forEach((k) => {
+              merged[k] = (merged[k] || []).filter((ev) => ev && ev.id !== preserveEventId);
+            });
+            merged[optimisticDateKey] = [...(merged[optimisticDateKey] || []), optimisticEvent];
+          }
+        }
+        return merged;
+      });
       const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
       setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
       setIsCalendarDataLoaded(true);
@@ -2172,10 +2346,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       console.error('[WebContent] refreshCalendarData failed:', err);
       setCalendarDataCache((prev) => ({ ...prev, [monthKey]: {} }));
     } finally {
-      setCalendarDataLoading(false);
+      if (dropStartTime != null && typeof performance !== 'undefined') {
+        console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData finished');
+      }
+      if (!background) setCalendarDataLoading(false);
     }
   }, [familyId, propSelectedCalendarChildren]);
-  
+
+  useEffect(() => {
+    refreshCalendarDataRef.current = refreshCalendarData;
+    return () => { refreshCalendarDataRef.current = null; };
+  }, [refreshCalendarData]);
+
   // Listen for calendar refresh events from global task modal
   // This allows the TaskCreateModal in WebLayout to trigger a calendar refresh
   useEffect(() => {
@@ -2184,8 +2366,34 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     const handleRefreshCalendar = async (event) => {
       // console.log('[WebContent] handleRefreshCalendar called', event?.detail);
       
-      // Check if there are any pending optimistic updates - if so, delay the refresh
-      if (pendingOptimisticUpdatesRef.current.size > 0) {
+      const targetMonth = event?.detail?.targetMonth;
+      const targetYear = event?.detail?.targetYear;
+      const eventIdFromDetail = event?.detail?.eventId;
+      const isTargetedRefresh = targetYear !== undefined && targetMonth !== undefined;
+
+      // Targeted refresh (e.g. after drag-drop): clear pending so refetch runs and server state sticks
+      if (isTargetedRefresh && eventIdFromDetail) {
+        pendingOptimisticUpdatesRef.current.delete(eventIdFromDetail);
+      }
+
+      // Skip full refetch when we just patched this event from API (avoids ~400–500ms delay)
+      const merged = lastMergeFromApiRef.current;
+      if (isTargetedRefresh && eventIdFromDetail && merged?.eventId === eventIdFromDetail && (Date.now() - merged.at) < 2000) {
+        lastMergeFromApiRef.current = null;
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+        }
+        if (user && !event?.detail?.skipHomeRefresh) {
+          try {
+            const { data: profileData } = await supabase.from('profiles').select('family_id').eq('id', user.id).maybeSingle();
+            if (profileData?.family_id) invalidateHomeDataCache(profileData.family_id);
+          } catch (_) {}
+        }
+        return;
+      }
+
+      // Check if there are any pending optimistic updates - if so, delay the refresh (unless targeted refresh from drag)
+      if (!isTargetedRefresh && pendingOptimisticUpdatesRef.current.size > 0) {
         // console.log('[WebContent] Delaying refresh -', pendingOptimisticUpdatesRef.current.size, 'pending optimistic updates');
         // Delay the refresh to allow the API call to complete
         setTimeout(() => {
@@ -2195,9 +2403,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
         return;
       }
       
-      // Check if a drag-and-drop happened recently - if so, delay the refresh
+      // Check if a drag-and-drop happened recently - if so, delay the refresh (unless this IS the delayed targeted refresh)
       const timeSinceLastDrag = Date.now() - lastDragDropTimeRef.current;
-      if (timeSinceLastDrag < 2000) {
+      if (!isTargetedRefresh && timeSinceLastDrag < 2000) {
         // console.log('[WebContent] Delaying refresh - drag-and-drop happened', timeSinceLastDrag, 'ms ago');
         // Delay the refresh to allow the API call to complete
         setTimeout(() => {
@@ -2209,30 +2417,30 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       
       // Check if we should skip home refresh (e.g., when we're already refreshing)
       const skipHomeRefresh = event?.detail?.skipHomeRefresh || false;
-      const targetMonth = event?.detail?.targetMonth;
-      const targetYear = event?.detail?.targetYear;
-      
-      // Use target date if provided, otherwise use current month
+
+      // Use target date if provided, otherwise use planner's visible month so calendar updates immediately after plan apply
       let refreshDate = null;
       if (targetYear !== undefined && targetMonth !== undefined) {
         refreshDate = new Date(targetYear, targetMonth, 1);
         console.log('[WebContent] Refreshing specific month:', { year: targetYear, month: targetMonth, date: refreshDate });
       } else {
-        refreshDate = new Date();
+        const visible = plannerDateRef.current;
+        const visibleDate = visible && !isNaN(visible.getTime()) ? visible : new Date();
+        refreshDate = new Date(visibleDate.getFullYear(), visibleDate.getMonth(), 1);
       }
       
-      // Invalidate calendar cache so refetch returns fresh data (e.g. after Fix-It apply or plan changes)
-      // Skip clear when only toggling attendance to avoid blink (refetch will replace current month)
+      // Update data in place: refetch target month and merge into cache (no full cache clear to avoid loading flash)
       const skipCacheClear = event?.detail?.skipCacheClear === true;
-      if (!skipCacheClear) {
-        setCalendarDataCache({});
-        setCalendarEvents({});
-      }
-
       const forceInvalidate = event?.detail?.forceInvalidate === true;
+      const dropStartTime = event?.detail?.dropStartTime;
       const doRefetch = () => {
+        const tRefresh = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
+        console.log('[WebContent] [drag-timing] t+' + tRefresh + 'ms refreshCalendar handler calling refreshCalendarData');
         console.log('[WebContent] Calling refreshCalendarData with date:', refreshDate);
-        refreshCalendarData(refreshDate).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
+        const opts = isTargetedRefresh && eventIdFromDetail ? { preserveEventId: eventIdFromDetail } : {};
+        if (dropStartTime != null) opts.dropStartTime = dropStartTime;
+        if (isTargetedRefresh && eventIdFromDetail) opts.background = true; // post-drag: refetch in background, no loading state
+        refreshCalendarData(refreshDate, opts).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
       };
       if (forceInvalidate) {
         setTimeout(doRefetch, 0);
@@ -2300,7 +2508,52 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     };
     
     window.addEventListener('refreshCalendar', handleRefreshCalendar);
-    
+
+    // When an event is deleted, remove it from planner calendar state immediately so it disappears without waiting for refetch
+    const handleEventDeletedForPlanner = (event) => {
+      const deletedId = event.detail?.eventId || event.detail?.id;
+      if (!deletedId) return;
+      const idStr = String(deletedId);
+      setCalendarEvents((prev) => {
+        let changed = false;
+        const next = {};
+        for (const [dateKey, list] of Object.entries(prev)) {
+          if (!Array.isArray(list)) {
+            next[dateKey] = list;
+            continue;
+          }
+          const filtered = list.filter((e) => e && String(e.id) !== idStr);
+          if (filtered.length !== list.length) changed = true;
+          next[dateKey] = filtered;
+        }
+        return changed ? next : prev;
+      });
+      setCalendarDataCache((prev) => {
+        let changed = false;
+        const next = {};
+        for (const [monthKey, byDate] of Object.entries(prev)) {
+          if (!byDate || typeof byDate !== 'object') {
+            next[monthKey] = byDate;
+            continue;
+          }
+          const nextByDate = {};
+          for (const [dateKey, list] of Object.entries(byDate)) {
+            if (!Array.isArray(list)) {
+              nextByDate[dateKey] = list;
+              continue;
+            }
+            const filtered = list.filter((e) => e && String(e.id) !== idStr);
+            if (filtered.length !== list.length) changed = true;
+            nextByDate[dateKey] = filtered;
+          }
+          next[monthKey] = nextByDate;
+        }
+        return changed ? next : prev;
+      });
+    };
+
+    window.addEventListener('eventDeleted', handleEventDeletedForPlanner);
+
     // Listen for event creation and deletion to refresh home page
     const handleEventCreated = async (event) => {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2458,6 +2711,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     
     return () => {
       window.removeEventListener('refreshCalendar', handleRefreshCalendar);
+      window.removeEventListener('eventDeleted', handleEventDeletedForPlanner);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.removeEventListener('eventCreated', handleEventCreated);
         window.removeEventListener('eventDeleted', handleEventDeletedForHome);
@@ -3079,6 +3333,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   // State variables
   // Use propChildren if provided (preloaded from WebLayout), otherwise load them. Clean avatar/url UUIDs to prevent 404s.
   const [children, setChildren] = useState(() => (Array.isArray(propChildren) && propChildren.length > 0 ? cleanAvatarUrls(propChildren) : propChildren))
+  const childrenRef = useRef(children)
+  useEffect(() => { childrenRef.current = children; }, [children])
   const [archivedChildren, setArchivedChildren] = useState([])
   const [showArchived, setShowArchived] = useState(false)
   const [familyScreenSelectedChildId, setFamilyScreenSelectedChildId] = useState(null) // null = "All Children"
@@ -3223,12 +3479,26 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   // Calendar data caching
   const [calendarDataCache, setCalendarDataCache] = useState({})
   const [calendarEvents, setCalendarEvents] = useState({}) // dateKey -> events[] (optimistic + merged)
+  const calendarEventsRef = useRef(calendarEvents)
+  useEffect(() => { calendarEventsRef.current = calendarEvents; }, [calendarEvents])
+  const calendarDataCacheRef = useRef({})
+  useEffect(() => { calendarDataCacheRef.current = calendarDataCache; }, [calendarDataCache])
   const [calendarBlackoutDates, setCalendarBlackoutDates] = useState({})
   const [plannerHolidaysCache, setPlannerHolidaysCache] = useState({}) // monthKey -> [{ date, name, type }]
+  const plannerHolidaysCacheRef = useRef({})
+  useEffect(() => { plannerHolidaysCacheRef.current = plannerHolidaysCache; }, [plannerHolidaysCache])
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   const [calendarDataLoading, setCalendarDataLoading] = useState(false)
   // Planner view date (synced from WebLayout via plannerMonthChange)
   const [plannerDate, setPlannerDate] = useState(() => new Date())
+  useEffect(() => { plannerDateRef.current = plannerDate; }, [plannerDate]);
+  // Preload planner current month once when familyId is available so planner opens with data
+  const plannerPreloadedForFamilyRef = useRef(null);
+  useEffect(() => {
+    if (!familyId || plannerPreloadedForFamilyRef.current === familyId) return;
+    plannerPreloadedForFamilyRef.current = familyId;
+    refreshCalendarData(new Date()).catch((err) => console.error('[WebContent] Planner preload failed:', err));
+  }, [familyId, refreshCalendarData]);
 
   // Add child form state
   const [addChildName, setAddChildName] = useState('')
@@ -3416,6 +3686,208 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     return () => window.removeEventListener('plannerMonthChange', handlePlannerMonthChange);
   }, []);
 
+  // Export planner month to Excel (CSV) — list of dates with events, one row per event
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const escapeCsv = (val) => {
+      if (val == null) return '';
+      const s = String(val).trim();
+      if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+    const handlePlannerExportToExcel = (e) => {
+      const detail = e?.detail || {};
+      const startDate = detail.startDate;
+      const endDate = detail.endDate;
+      const exportSubjectId = detail.subjectId || null;
+      const exportSubjectName = (detail.subjectName || '').trim();
+      const isSubjectFilter = exportSubjectId != null && exportSubjectId !== '';
+      const eventMatchesSubject = (ev) => {
+        if (!isSubjectFilter) return true;
+        const sid = ev.subject_id ?? ev.related_subject_id;
+        return sid != null && String(sid) === String(exportSubjectId);
+      };
+      const useRange = startDate && endDate &&
+        (startDate instanceof Date || !isNaN(new Date(startDate).getTime())) &&
+        (endDate instanceof Date || !isNaN(new Date(endDate).getTime()));
+
+      const cache = calendarDataCacheRef.current || {};
+      const eventsState = calendarEventsRef.current || {};
+      const childList = childrenRef.current || [];
+      const getChildName = (childId) => {
+        if (!childId) return '';
+        const c = childList.find((ch) => ch.id === childId);
+        return c ? (c.first_name || c.name || '') : '';
+      };
+      const getAllChildNames = (ev) => {
+        const fromIds = Array.isArray(ev.child_ids) && ev.child_ids.length > 0 ? ev.child_ids : [];
+        const fromSingle = ev.child_id ? [ev.child_id] : [];
+        const seen = new Set();
+        const ids = [];
+        [...fromIds, ...fromSingle].forEach((id) => {
+          if (id && !seen.has(id)) { seen.add(id); ids.push(id); }
+        });
+        return ids.map((id) => getChildName(id)).filter(Boolean).join('; ') || '';
+      };
+      const statusToAttendance = (status) => {
+        const s = (status || '').toString().toLowerCase();
+        return s === 'done' ? 'Attended' : 'Unattended';
+      };
+      const cols = detail.columns || {};
+      const optCols = [
+        { key: 'instructionalTime', label: 'Count as instructional time', get: (ev) => {
+          if (ev.counts_toward_plan === true) return 'Yes';
+          if (ev.instructional_status === 'MANUAL_COUNTS' || ev.instructional_status === 'PLAN_LOCKED' || ev.instructional_status === 'PLAN_PLACEHOLDER') return 'Yes';
+          if (ev.academic_year_id) return 'Yes';
+          return 'No';
+        } },
+        { key: 'plan', label: 'Plan My Year', get: (ev) => ev.academic_year_name || ev.plan_name || (ev.academic_year_id ? 'Yes' : '') || '' },
+        { key: 'location', label: 'Location', get: (ev) => ev.location || '' },
+        { key: 'mode', label: 'Mode', get: (ev) => ev.mode || '' },
+        { key: 'instructor', label: 'Instructor', get: (ev) => ev.instructor || '' },
+        { key: 'subject', label: 'Subject', get: (ev) => ev.subject_name || ev.subjectName || ev.topic || '' },
+        { key: 'grade', label: 'Grade', get: (ev) => ev.grade || '' },
+        { key: 'unit', label: 'Unit', get: (ev) => ev.unit || '' },
+        { key: 'percentOfTotal', label: '% of total', get: (ev) => (ev.percent_of_total_grade != null && ev.percent_of_total_grade !== '' ? String(ev.percent_of_total_grade) : '') },
+        { key: 'attachmentTitle', label: 'Attachment title', get: (ev) => ev.material_title || ev.attachment_title || (ev.materials_attachment_title || (Array.isArray(ev.materials_attachment_ids) && ev.materials_attachment_ids.length ? '(attachment)' : '')) || '' },
+        { key: 'notes', label: 'Notes', get: (ev) => ev.description || ev.notes || '' },
+      ].filter((c) => cols[c.key]);
+
+      let merged = {};
+      let holidays = [];
+      let downloadFilename = '';
+
+      if (useRange) {
+        const start = startDate instanceof Date ? startDate : new Date(startDate);
+        const end = endDate instanceof Date ? endDate : new Date(endDate);
+        start.setHours(0, 0, 0, 0);
+        end.setHours(0, 0, 0, 0);
+        if (start > end) return;
+        const toKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const dateKeys = [];
+        const d = new Date(start.getTime());
+        while (d <= end) {
+          dateKeys.push(toKey(d));
+          d.setDate(d.getDate() + 1);
+        }
+        const dateKeySet = new Set(dateKeys);
+        dateKeys.forEach((dateKey) => {
+          const [y, m] = dateKey.split('-');
+          const monthKey = `${y}-${parseInt(m, 10) - 1}`;
+          const fromCache = (cache[monthKey] || {})[dateKey];
+          const fromState = eventsState[dateKey];
+          const list = Array.isArray(fromState) && fromState.length > 0 ? fromState : (Array.isArray(fromCache) ? fromCache : []);
+          if (list.length > 0) merged[dateKey] = list;
+        });
+        const holidaysCache = plannerHolidaysCacheRef.current || {};
+        dateKeys.forEach((dateKey) => {
+          const [y, m] = dateKey.split('-');
+          const monthKey = `${y}-${parseInt(m, 10) - 1}`;
+          (holidaysCache[monthKey] || []).forEach((h) => {
+            if (h.date === dateKey) holidays.push({ ...h, dateKey });
+          });
+        });
+        downloadFilename = isSubjectFilter && exportSubjectName
+          ? `planner-${exportSubjectName.replace(/[^a-zA-Z0-9-_]/g, '_')}-${toKey(start)}_to_${toKey(end)}.csv`
+          : `planner-${toKey(start)}_to_${toKey(end)}.csv`;
+      } else {
+        const targetMonth = detail.currentMonth;
+        const date = targetMonth && (targetMonth instanceof Date || !isNaN(new Date(targetMonth).getTime()))
+          ? (targetMonth instanceof Date ? targetMonth : new Date(targetMonth))
+          : (plannerDateRef.current || new Date());
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const monthKey = `${year}-${month}`;
+        const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+        const cacheMonth = cache[monthKey] || {};
+        merged = { ...cacheMonth };
+        Object.keys(eventsState).forEach((dateKey) => {
+          if (!dateKey.startsWith(monthPrefix)) return;
+          const list = eventsState[dateKey];
+          if (Array.isArray(list) && list.length > 0) merged[dateKey] = list;
+        });
+        holidays = (plannerHolidaysCacheRef.current || {})[monthKey] || [];
+        downloadFilename = isSubjectFilter && exportSubjectName
+          ? `planner-${exportSubjectName.replace(/[^a-zA-Z0-9-_]/g, '_')}-${monthPrefix}.csv`
+          : `planner-${monthPrefix}.csv`;
+      }
+
+      const dataRows = [];
+      const sortedDates = Object.keys(merged).sort();
+      sortedDates.forEach((dateKey) => {
+        const list = (merged[dateKey] || []).filter(Boolean);
+        const sorted = [...list].filter(eventMatchesSubject).sort((a, b) => {
+          const ta = a.start_local || a.time || '';
+          const tb = b.start_local || b.time || '';
+          return String(ta).localeCompare(String(tb));
+        });
+        sorted.forEach((ev) => {
+          const baseRow = [
+            dateKey,
+            getAllChildNames(ev),
+            ev.subject_name || ev.subjectName || ev.topic || '',
+            ev.start_local || ev.time || '',
+            ev.end_local || '',
+            ev.title || '',
+            statusToAttendance(ev.status),
+            ev.event_type || ev.type || ev.source || '',
+          ];
+          const optRow = optCols.map((c) => c.get(ev));
+          dataRows.push({
+            dateKey,
+            time: ev.start_local || ev.time || '',
+            row: baseRow.concat(optRow),
+          });
+        });
+      });
+      const emptyOptRow = optCols.map(() => '');
+      if (!isSubjectFilter) {
+        holidays.forEach((h) => {
+          const dateKey = h.date || h.dateKey || '';
+          const baseRow = [
+            dateKey,
+            '',
+            '',
+            '',
+            '',
+            h.name || 'Holiday',
+            'Unattended',
+            'holiday',
+          ];
+          dataRows.push({
+            dateKey,
+            time: '',
+            row: baseRow.concat(emptyOptRow),
+          });
+        });
+      }
+      // Capitalize "Holiday" in Type column for display
+      dataRows.forEach((r) => {
+        const typeIdx = 7; // Type is 8th column (0-based index 7)
+        if (r.row[typeIdx] === 'holiday') r.row[typeIdx] = 'Holiday';
+      });
+      dataRows.sort((a, b) => {
+        const d = a.dateKey.localeCompare(b.dateKey);
+        if (d !== 0) return d;
+        return String(a.time).localeCompare(String(b.time));
+      });
+      const header = ['Date', 'Child', 'Subject', 'Start Time', 'End Time', 'Title', 'Status', 'Type'].concat(optCols.map((c) => c.label));
+      const rows = [header.map(escapeCsv), ...dataRows.map((r) => r.row.map(escapeCsv))];
+      const csv = rows.map((r) => r.join(',')).join('\n');
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadFilename;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    window.addEventListener('plannerExportToExcel', handlePlannerExportToExcel);
+    return () => window.removeEventListener('plannerExportToExcel', handlePlannerExportToExcel);
+  }, []);
+
   // Right-click context menu for planner events (Month and other views that dispatch plannerEventContextMenu)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -3427,8 +3899,121 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       const existingMenu = document.getElementById('planner-event-context-menu');
       if (existingMenu) existingMenu.remove();
       const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+      const isFromTrash = ev._activeSection === 'trash';
       let menuItems = [];
-      if (isHoliday) {
+
+      if (isFromTrash) {
+        const cleanId = (ev._originalId || ev.originalId || ev.id || '').toString().split('-day-')[0];
+        menuItems.push({
+          text: 'Add back to calendar',
+          action: async () => {
+            try {
+              const res = await restoreEventFromTrash(cleanId, familyId);
+              if (res.error) {
+                Alert.alert('Error', res.error.message || 'Failed to restore event');
+                return;
+              }
+              window.dispatchEvent(new CustomEvent('trashItemRestored', { detail: { eventId: cleanId } }));
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+              const restored = res.data;
+              if (restored && (res.hadConflict || restored.is_flexible)) {
+                const eventDate = new Date(restored.start_ts || restored.start);
+                if (!isNaN(eventDate.getTime())) {
+                  const dateKey = eventDate.toISOString().split('T')[0];
+                  const childId = restored.child_id || restored.childId;
+                  if (childId && dateKey) {
+                    const { data: dbEvents } = await supabase
+                      .from('events')
+                      .select('*')
+                      .eq('family_id', familyId)
+                      .eq('child_id', childId)
+                      .gte('start_ts', new Date(dateKey + 'T00:00:00').toISOString())
+                      .lt('start_ts', new Date(dateKey + 'T23:59:59').toISOString())
+                      .neq('status', 'canceled')
+                      .is('canceled_at', null)
+                      .is('deleted_at', null);
+                    const eventsForDetection = [...(dbEvents || [])];
+                    const conflictCount = detectConflicts(restored, eventsForDetection);
+                    if (conflictCount > 0) {
+                      const movedStart = new Date(restored.start_ts || restored.start);
+                      const movedEnd = new Date(restored.end_ts || restored.end);
+                      let firstConflictEvent = null;
+                      for (const event of eventsForDetection || []) {
+                        if (!event || event.id === restored.id || event.child_id !== (restored.child_id || restored.childId)) continue;
+                        if (event.status === 'canceled' || event.canceled_at || event.deleted_at) continue;
+                        const eventStart = new Date(event.start_ts || event.start);
+                        const eventEnd = new Date(event.end_ts || event.end);
+                        if (movedStart < eventEnd && eventStart < movedEnd) {
+                          firstConflictEvent = event;
+                          break;
+                        }
+                      }
+                      let conflictMessage = null;
+                      if (firstConflictEvent) {
+                        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        const d = new Date(firstConflictEvent.start_ts);
+                        const formatTime = (date) => {
+                          let h = date.getHours();
+                          const m = date.getMinutes();
+                          const p = h >= 12 ? 'PM' : 'AM';
+                          if (h > 12) h -= 12; else if (h === 0) h = 12;
+                          return m === 0 ? `${h} ${p}` : `${h}:${String(m).padStart(2, '0')} ${p}`;
+                        };
+                        const startStr = formatTime(new Date(firstConflictEvent.start_ts));
+                        const endStr = formatTime(new Date(firstConflictEvent.end_ts || firstConflictEvent.start_ts));
+                        conflictMessage = `${firstConflictEvent.title} (${dayNames[d.getDay()]} ${monthNames[d.getMonth()]} ${d.getDate()}, ${startStr}–${endStr})`;
+                      }
+                      setConflictBanner(prev => ({
+                        ...prev,
+                        visible: true,
+                        eventId: restored.id,
+                        conflictCount,
+                        eventTitle: restored.title || 'This event',
+                        conflictEvent: firstConflictEvent,
+                        movedEvent: restored,
+                        conflictMessage: conflictMessage || undefined,
+                        dismissed: false,
+                        timestamp: Date.now(),
+                      }));
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              Alert.alert('Error', err?.message || 'Failed to restore event');
+            }
+          },
+        });
+        menuItems.push({
+          text: 'Delete forever',
+          isDelete: true,
+          action: () => {
+            const setConfirm = setConfirmDialogRef.current;
+            if (!setConfirm) return;
+            setConfirm({
+              visible: true,
+              title: 'Delete forever?',
+              message: 'This event will be permanently removed. This cannot be undone.',
+              confirmLabel: 'Delete forever',
+              cancelLabel: 'Cancel',
+              destructive: true,
+              onConfirm: async () => {
+                try {
+                  await permanentlyDeleteTrashEvent(cleanId, familyId);
+                  window.dispatchEvent(new CustomEvent('trashItemRestored', { detail: { eventId: cleanId, permanent: true } }));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+                } catch (err) {
+                  Alert.alert('Error', err?.message || 'Failed to delete event');
+                } finally {
+                  setConfirm((prev) => ({ ...prev, visible: false }));
+                }
+              },
+              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+            });
+          },
+        });
+      } else if (isHoliday) {
         menuItems.push({
           text: 'View',
           action: () => {
@@ -3472,6 +4057,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
                     const result = await deletePlannerEvent(cleanId, familyId);
                     if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
                   }
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: cleanId } }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar'));
                 } catch (err) {
                   Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
@@ -3512,7 +4098,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
                     const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
                     if (rpcError || !rpcData?.success) await deletePlannerEvent(cleanId, familyId);
                   }
-                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: masterEventId } }));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 } catch (err) {
                   Alert.alert('Error', `Failed to delete series: ${err?.message || err}`);
                 } finally {
@@ -3548,6 +4135,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
                     const result = await deletePlannerEvent(cleanId, familyId);
                     if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
                   }
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: cleanId } }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar'));
                 } catch (err) {
                   Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
@@ -3611,6 +4199,59 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       refreshCalendarData(plannerDate).catch((err) => console.error('[WebContent] Initial planner load failed:', err));
     }
   }, [activeTab, familyId, plannerDate, calendarDataCache, refreshCalendarData]);
+
+  // Optimistically add newly created calendar events so they appear on the planner immediately
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const detail = e?.detail;
+      const raw = detail?.event;
+      if (!raw?.id || detail?.isBacklog) return;
+      const startTs = raw.start_ts;
+      if (!startTs) return;
+      const eventDate = new Date(startTs);
+      if (isNaN(eventDate.getTime())) return;
+      const dateKey = eventDate.toISOString().split('T')[0];
+      const startLocalStr = `${String(eventDate.getHours()).padStart(2, '0')}:${String(eventDate.getMinutes()).padStart(2, '0')}`;
+      const endTs = raw.end_ts;
+      let endLocalStr = '';
+      if (endTs) {
+        const endDate = new Date(endTs);
+        endLocalStr = `${String(endDate.getHours()).padStart(2, '0')}:${String(endDate.getMinutes()).padStart(2, '0')}`;
+      }
+      const formatted = {
+        id: raw.id,
+        type: raw.source || 'activity',
+        title: raw.title || 'Untitled Event',
+        childName: 'Child',
+        time: startLocalStr,
+        color: 'teal',
+        subject: raw.subject_name ?? '',
+        status: raw.status || 'scheduled',
+        year_plan_id: raw.year_plan_id,
+        event_type: raw.event_type,
+        data: { ...raw, date_local: dateKey },
+        date_local: dateKey,
+        start_local: startLocalStr,
+        end_local: endLocalStr || undefined,
+        start_ts: raw.start_ts,
+        end_ts: raw.end_ts,
+        assignee: raw.child_id,
+        assignees: raw.child_id ? [raw.child_id] : [],
+        child_id: raw.child_id,
+      };
+      setCalendarEvents((prev) => {
+        const next = { ...prev };
+        const list = Array.isArray(next[dateKey]) ? [...next[dateKey]] : [];
+        if (list.some((ev) => ev && ev.id === raw.id)) return prev;
+        list.push(formatted);
+        next[dateKey] = list;
+        return next;
+      });
+    };
+    window.addEventListener('eventCreated', handler);
+    return () => window.removeEventListener('eventCreated', handler);
+  }, []);
 
   // Holidays are now fetched inside refreshCalendarData (in parallel with month events) so they appear on load with other events.
 
@@ -6478,13 +7119,27 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     const cacheMonth = calendarDataCache[monthKey] || {};
     const merged = { ...cacheMonth };
     const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const eventIdsInCalendarEvents = new Set();
     Object.keys(calendarEvents).forEach((dateKey) => {
       if (!dateKey.startsWith(monthPrefix)) return;
       const fromState = calendarEvents[dateKey];
       if (Array.isArray(fromState) && fromState.length > 0) {
         merged[dateKey] = fromState;
+        fromState.forEach((e) => e && e.id && eventIdsInCalendarEvents.add(e.id));
       }
     });
+    // For moved events (in calendarEvents), remove that id from other dates so event appears only once at its new position
+    if (eventIdsInCalendarEvents.size > 0) {
+      Object.keys(merged).forEach((dateKey) => {
+        const arr = merged[dateKey];
+        if (!Array.isArray(arr)) return;
+        const fromState = calendarEvents[dateKey];
+        const isAuthoritative = Array.isArray(fromState) && fromState.some((e) => e && e.id && eventIdsInCalendarEvents.has(e.id));
+        if (isAuthoritative) return; // this date is from calendarEvents, keep as-is
+        const filtered = arr.filter((e) => !e || !e.id || !eventIdsInCalendarEvents.has(e.id));
+        if (filtered.length !== arr.length) merged[dateKey] = filtered;
+      });
+    }
     const calendarEventList = Object.entries(merged).flatMap(([, evts]) => (Array.isArray(evts) ? evts : []));
     const holidays = plannerHolidaysCache[monthKey] || [];
     const holidayEvents = holidays.map((h) => ({
@@ -6500,18 +7155,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
-    const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-    const hasMonthData = !!calendarDataCache[monthKey];
-    const showPlannerLoading = familyId && !hasMonthData;
-
-    if (showPlannerLoading) {
-      return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-          <ActivityIndicator size="large" color="#887DEE" />
-          <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading planner...</Text>
-        </View>
-      );
-    }
+    // Always show planner with current cache (no full-page loading); data updates in place when refetches complete
     return (
       <View style={{ flex: 1 }}>
         <PlanHealthBanner familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={propPreloadedPlanHealth} />
@@ -7051,7 +7695,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       <AddMaterialModal
         visible={showAddMaterialModal}
         onClose={() => setShowAddMaterialModal(false)}
-        onSaved={() => setShowAddMaterialModal(false)}
+        onSaved={() => {
+          setShowAddMaterialModal(false);
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('materialSaved'));
+        }}
         familyId={familyId}
         children={children || []}
         defaultSubjectId={addMaterialModalDefaultSubjectId}

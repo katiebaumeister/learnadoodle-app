@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
+import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
@@ -68,6 +69,7 @@ export default function SubjectsPage({
   const [expandedSummaryMetric, setExpandedSummaryMetric] = useState(null);
   const [openComplianceRequirement, setOpenComplianceRequirement] = useState(null);
   const [complianceRowHoverKey, setComplianceRowHoverKey] = useState(null);
+  const [attendanceByChildForCompliance, setAttendanceByChildForCompliance] = useState(null); // { [childId]: { daysPresent } }
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
 
@@ -265,6 +267,50 @@ export default function SubjectsPage({
     return [...codes];
   }, [children, selectedChildFilter]);
 
+  // Child IDs we show compliance for (used for loading attendance to derive "met" for attendance requirement)
+  const complianceChildIds = useMemo(() => {
+    const list = selectedChildFilter === 'all' ? (children || []) : (children || []).filter(c => c.id === selectedChildFilter);
+    return list.map(c => c.id).filter(Boolean);
+  }, [children, selectedChildFilter]);
+
+  const complianceChildIdsKey = useMemo(() => complianceChildIds.slice().sort().join(','), [complianceChildIds]);
+
+  // Load attendance summary so we can show checkmarks for "Attendance tracking" when a child has any attendance
+  useEffect(() => {
+    if (!familyId || !complianceChildIdsKey) {
+      setAttendanceByChildForCompliance(null);
+      return;
+    }
+    const childIdsToFetch = complianceChildIdsKey.split(',').filter(Boolean);
+    const end = new Date();
+    const start = new Date();
+    start.setFullYear(start.getFullYear() - 1);
+    start.setDate(start.getDate() + 1);
+    getAttendanceLogs(familyId, childIdsToFetch, {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0],
+    })
+      .then((logs) => {
+        const byChild = {};
+        (logs || []).forEach((log) => {
+          const cid = log.child_id;
+          if (!cid) return;
+          if (!byChild[cid]) byChild[cid] = { present: new Set(), absent: new Set() };
+          const day = (log.day_date || '').slice(0, 10);
+          if (!day) return;
+          const status = (log.status || '').toLowerCase();
+          if (status === 'present' || status === 'partial') byChild[cid].present.add(day);
+          else if (status === 'absent') byChild[cid].absent.add(day);
+        });
+        const summary = {};
+        Object.keys(byChild).forEach((cid) => {
+          summary[cid] = { daysPresent: byChild[cid].present.size };
+        });
+        setAttendanceByChildForCompliance(summary);
+      })
+      .catch(() => setAttendanceByChildForCompliance(null));
+  }, [familyId, complianceChildIdsKey]);
+
   // Preview data for expanded summary sections
   const summaryProgressDetail = useMemo(() => {
     const list = filteredSubjects || [];
@@ -348,13 +394,13 @@ export default function SubjectsPage({
     return merged.slice(0, 5);
   }, [filteredSubjects, subjectDetailCache]);
 
-  // One row per requirement type per state (what's applicable by state), no duplicate rows per subject/child.
+  // One row per requirement type per state; dedupe by (state, type, child) so total = requirement types × children (e.g. 4 × 3 = 12).
   // Only include states that are saved for the selected child/children (effectiveComplianceStateCodes).
-  // When a single child is selected, only count that child's compliance items; when "All Children", include every child and every state per child.
   const summaryComplianceDetail = useMemo(() => {
     const savedStateSet = new Set((effectiveComplianceStateCodes || []).map(s => s.toUpperCase()));
     const filterByChildId = selectedChildFilter !== 'all' ? selectedChildFilter : null;
     const byState = {};
+    const seen = new Set(); // key: stateCode|type|child_id — so we count each (state, type, child) once
     let totalMet = 0;
     let totalTotal = 0;
     const stateCodes = new Set();
@@ -368,27 +414,43 @@ export default function SubjectsPage({
         if (!req) return;
         const stateCode = (item.state_code || '').toUpperCase() || 'Other';
         if (savedStateSet.size > 0 && !savedStateSet.has(stateCode)) return;
+        const type = (req.requirement_type || 'Other').toLowerCase();
+        const key = `${stateCode}|${type}|${item.child_id || ''}`;
+        if (seen.has(key)) return;
+        seen.add(key);
         stateCodes.add(stateCode);
         if (item.child_id) childIds.add(item.child_id);
-        const type = (req.requirement_type || 'Other').toLowerCase();
         if (!byState[stateCode]) byState[stateCode] = {};
         if (!byState[stateCode][type]) {
           byState[stateCode][type] = {
             title: req.requirement_title,
             description: req.requirement_description,
-            metCount: 0,
-            totalCount: 0,
+            byChild: {}, // { [childId]: isMet }
           };
         }
         const row = byState[stateCode][type];
-        row.totalCount += 1;
-        if (item.status === 'met' || item.status === 'on_track' || item.status === 'completed') row.metCount += 1;
-        totalMet += (item.status === 'met' || item.status === 'on_track' || item.status === 'completed') ? 1 : 0;
+        const cid = item.child_id || '';
+        const checklistMet = item.status === 'met' || item.status === 'on_track' || item.status === 'completed';
+        const hasAttendanceData = type === 'attendance' && (attendanceByChildForCompliance?.[cid]?.daysPresent ?? 0) > 0;
+        const isMet = checklistMet || hasAttendanceData;
+        if (!Object.prototype.hasOwnProperty.call(row.byChild, cid)) {
+          row.byChild[cid] = isMet;
+        }
         totalTotal += 1;
+        if (isMet) totalMet += 1;
+      });
+    });
+    // Derive metCount/totalCount per row from byChild for backward compatibility with progress dots
+    Object.values(byState).forEach(byType => {
+      Object.values(byType).forEach(row => {
+        const ids = Object.keys(row.byChild).filter(Boolean);
+        row.totalCount = ids.length;
+        row.metCount = ids.filter(id => row.byChild[id]).length;
       });
     });
     const stateLabel = [...stateCodes].sort().join(', ') || '';
-    const studentLabel = [...childIds].map(id => getChildName(id)).filter(Boolean).join(', ') || '';
+    const sortedChildIds = [...childIds].sort((a, b) => getChildName(a).localeCompare(getChildName(b)));
+    const studentLabel = sortedChildIds.map(id => getChildName(id)).filter(Boolean).join(', ') || '';
 
     const statesTotal = Object.keys(byState).length;
     let statesComplete = 0;
@@ -406,11 +468,12 @@ export default function SubjectsPage({
 
     return {
       byState,
+      sortedChildIds,
       summary: { met: totalMet, total: totalTotal, stateLabel, studentLabel },
       summaryTop: { statesComplete, statesTotal, typesComplete, typesTotal },
       hasData: totalTotal > 0,
     };
-  }, [filteredSubjects, subjectDetailCache, getChildName, effectiveComplianceStateCodes, selectedChildFilter]);
+  }, [filteredSubjects, subjectDetailCache, getChildName, effectiveComplianceStateCodes, selectedChildFilter, attendanceByChildForCompliance]);
 
   const handleSubjectClick = (subject) => {
     setSelectedSubjectId(subject.id);
@@ -626,122 +689,6 @@ export default function SubjectsPage({
               );
             })}
           </ScrollView>
-        </View>
-      )}
-
-      {/* Compact overall summary: Progress | Attendance | Grades | Compliance (expandable) */}
-      {!loading && !error && filteredSubjects.length > 0 && overallSummary && (
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryCardContext} numberOfLines={1}>
-            {overallSummary.contextLabel} · overall
-          </Text>
-          <View style={styles.summaryCardRow}>
-            {(['progress', 'attendance', 'grades']).map((key, idx) => {
-              const isExpanded = expandedSummaryMetric === key;
-              const label = key.charAt(0).toUpperCase() + key.slice(1);
-              const value = key === 'progress' ? (overallSummary.progress != null ? `${overallSummary.progress}%` : '—')
-                : key === 'attendance' ? (overallSummary.attendance != null ? `${overallSummary.attendance}%` : '—')
-                : (overallSummary.grades != null ? `${overallSummary.grades}%` : '—');
-              return (
-                <React.Fragment key={key}>
-                  <TouchableOpacity
-                    style={[styles.summaryCardItem, isExpanded && styles.summaryCardItemExpanded]}
-                    onPress={() => setExpandedSummaryMetric(isExpanded ? null : key)}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[styles.summaryCardLabel, isExpanded && styles.summaryCardLabelExpanded]}>{label}</Text>
-                    <View style={styles.summaryCardValueRow}>
-                      <Text style={[
-                        key === 'progress' ? styles.summaryCardValuePrimary : styles.summaryCardValue,
-                        isExpanded && styles.summaryCardValueExpanded,
-                      ]}>{value}</Text>
-                      {isExpanded ? <ChevronUp size={12} color="#6BB3E8" /> : <ChevronDown size={12} color="#64748B" />}
-                    </View>
-                  </TouchableOpacity>
-                </React.Fragment>
-              );
-            })}
-          </View>
-
-          {/* Expanded preview panels */}
-          {expandedSummaryMetric === 'progress' && (
-            <View style={styles.summaryExpandPanel}>
-              <Text style={styles.summaryExpandTitle}>Progress</Text>
-              {summaryProgressDetail.progress != null && (
-                <Text style={styles.summaryExpandValue}>{summaryProgressDetail.progress}%</Text>
-              )}
-              {summaryProgressDetail.nextItem && (
-                <View style={styles.summaryExpandRow}>
-                  <Calendar size={14} color="#64748B" />
-                  <Text style={styles.summaryExpandText}>
-                    Upcoming: {summaryProgressDetail.nextItem.title} ({summaryProgressDetail.nextItem.subjectName})
-                  </Text>
-                  <Text style={styles.summaryExpandMuted}>
-                    {summaryProgressDetail.nextItem.dueDate ? new Date(summaryProgressDetail.nextItem.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
-                  </Text>
-                </View>
-              )}
-              {(summaryProgressDetail.currentFocus || summaryProgressDetail.coreGoal) && (
-                <>
-                  {summaryProgressDetail.currentFocus && (
-                <Text style={styles.summaryExpandSub}>Current: {summaryProgressDetail.currentFocus}</Text>
-                  )}
-                  {summaryProgressDetail.coreGoal && (
-                <Text style={styles.summaryExpandSub}>Goal: {summaryProgressDetail.coreGoal}</Text>
-                  )}
-                </>
-              )}
-              {!summaryProgressDetail.nextItem && !summaryProgressDetail.currentFocus && !summaryProgressDetail.coreGoal && (
-                <Text style={styles.summaryExpandMuted}>Add syllabi or subject units and goals to see updates here.</Text>
-              )}
-            </View>
-          )}
-
-          {expandedSummaryMetric === 'attendance' && (
-            <View style={styles.summaryExpandPanel}>
-              <Text style={styles.summaryExpandTitle}>Recent attendance</Text>
-              {summaryAttendanceDetail.length === 0 ? (
-                <Text style={styles.summaryExpandMuted}>No recent attendance.</Text>
-              ) : (
-                summaryAttendanceDetail.map((ar, i) => (
-                  <View key={i} style={styles.summaryExpandRowAttendance}>
-                    <Clock size={14} color="#64748B" />
-                    <Text style={styles.summaryExpandText} numberOfLines={1}>{ar.eventTitle}</Text>
-                    <Text style={styles.summaryExpandMinutes}>{ar.minutes} min</Text>
-                    <View style={styles.summaryExpandSubjectChip}>
-                      <Text style={styles.summaryExpandSubjectChipText}>{ar.subjectName}</Text>
-                    </View>
-                  </View>
-                ))
-              )}
-            </View>
-          )}
-
-          {expandedSummaryMetric === 'grades' && (
-            <View style={styles.summaryExpandPanel}>
-              <Text style={styles.summaryExpandTitle}>Recent grades</Text>
-              {summaryGradesDetail.length === 0 ? (
-                <View style={styles.summaryGradesEmpty}>
-                  <GraduationCap size={20} color="#94A3B8" strokeWidth={1.5} />
-                  <Text style={styles.summaryGradesEmptyText}>No grades yet</Text>
-                  <Text style={styles.summaryGradesEmptySub}>Grades will appear here once you add assignments with scores.</Text>
-                </View>
-              ) : (
-                summaryGradesDetail.map((g, i) => (
-                  <View key={i} style={styles.summaryExpandRow}>
-                    <Text style={styles.summaryExpandText} numberOfLines={1}>
-                      {g.percent != null ? `${g.percent}%` : g.grade || '—'} · {g.subjectName}
-                    </Text>
-                    <Text style={styles.summaryExpandMuted}>
-                      {g.date ? new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </View>
-          )}
-
         </View>
       )}
 
@@ -1125,6 +1072,35 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 4,
   },
+  summaryComplianceTableWrap: {
+    marginBottom: 8,
+  },
+  summaryComplianceTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 40,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(148, 163, 184, 0.3)',
+  },
+  summaryComplianceTableLabelCell: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 6,
+    paddingRight: 8,
+  },
+  summaryComplianceTableHeaderCell: {
+    width: 56,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  summaryComplianceTableCheckboxCell: {
+    width: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
   summaryComplianceGroup: {
     marginBottom: 8,
     gap: 8,
@@ -1336,7 +1312,7 @@ const styles = StyleSheet.create({
   subjectsList: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 6,
+    paddingTop: 24,
   },
   subjectsListContent: {
     paddingBottom: 40,

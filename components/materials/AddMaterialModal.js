@@ -2,7 +2,7 @@
  * Add Material Modal
  * Form for adding a new material to the library
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import { X, Upload, FileText, ChevronLeft, ChevronRight, ChevronDown, ChevronUp 
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
+import { parseChildIds } from '../../lib/services/subjectsClient';
 import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
@@ -96,12 +97,44 @@ export default function AddMaterialModal({
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadedFileUrl, setUploadedFileUrl] = useState('');
   
-  // Subjects data
+  // Subjects data (filteredSubjects derived via useMemo to avoid setState-in-effect loop)
   const [allSubjects, setAllSubjects] = useState([]);
-  const [filteredSubjects, setFilteredSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const loadingSubjectsRef = useRef(false);
-  
+
+  // Pure computation: filter subjects by selected children. subject.child_id is semicolon-separated (e.g. "id1;id2").
+  // When children are selected: show only subjects assigned to ALL selected children (or family-wide).
+  const filteredSubjects = useMemo(() => {
+    const subjectsToFilter = allSubjects;
+    const childIds = selectedChildIds;
+    const norm = (id) => String(id ?? '').trim();
+    if (!subjectsToFilter.length) return [];
+    if (!childIds || childIds.length === 0) {
+      const subjectMap = new Map();
+      subjectsToFilter.forEach((subject) => {
+        const existing = subjectMap.get(subject.name);
+        const subjectChildIds = parseChildIds(subject.child_id ?? '');
+        const isFamilyWide = subjectChildIds.length === 0;
+        if (!existing) subjectMap.set(subject.name, subject);
+        else if (parseChildIds(existing.child_id ?? '').length === 0 && !isFamilyWide) subjectMap.set(subject.name, subject);
+      });
+      return Array.from(subjectMap.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }
+    const subjectMap = new Map();
+    subjectsToFilter.forEach((subject) => {
+      const subjectChildIds = parseChildIds(subject.child_id ?? '');
+      const isFamilyWide = subjectChildIds.length === 0;
+      const subjectIdSet = new Set(subjectChildIds.map(norm).filter(Boolean));
+      const isForAllSelectedChildren = childIds.every((cid) => subjectIdSet.has(norm(cid)));
+      if (!isFamilyWide && !isForAllSelectedChildren) return;
+      const existing = subjectMap.get(subject.name);
+      if (!existing) subjectMap.set(subject.name, subject);
+      else if (parseChildIds(existing.child_id ?? '').length === 0 && !isFamilyWide) subjectMap.set(subject.name, subject);
+      else if (isForAllSelectedChildren && !childIds.every((cid) => parseChildIds(existing.child_id ?? '').map(norm).includes(norm(cid)))) subjectMap.set(subject.name, subject);
+    });
+    return Array.from(subjectMap.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [allSubjects, selectedChildIds.join(',')]);
+
   // Calendar picker state
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
   const [calendarViewMonth, setCalendarViewMonth] = useState(new Date());
@@ -122,10 +155,8 @@ export default function AddMaterialModal({
   // Use pre-loaded subjects if available, otherwise load from database
   useEffect(() => {
     if (!visible || !familyId) {
-      // Reset when modal closes
       if (!visible) {
         setAllSubjects([]);
-        setFilteredSubjects([]);
         loadingSubjectsRef.current = false;
         setLoadingSubjects(false);
       }
@@ -133,23 +164,13 @@ export default function AddMaterialModal({
     }
 
     if (propAllSubjects.length > 0) {
-      // Use pre-loaded subjects from parent
       setAllSubjects(propAllSubjects);
-      filterSubjectsByChildren(propAllSubjects, selectedChildIds);
     } else {
       // Fallback: load from database if not provided
       loadSubjects(selectedChildIds);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, familyId, propAllSubjects.length]); // Use length instead of array to avoid re-renders
-
-  // Filter subjects when children selection changes (if using pre-loaded subjects)
-  useEffect(() => {
-    if (visible && propAllSubjects.length > 0 && allSubjects.length > 0) {
-      filterSubjectsByChildren(allSubjects, selectedChildIds);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedChildIds, visible, propAllSubjects.length, allSubjects.length]);
+  }, [visible, familyId, propAllSubjects.length]); // Intentionally omit selectedChildIds so we don't re-run and cause loop; child chip onPress updates filter
 
   // Reload subjects when selectedChildIds changes (when NOT using pre-loaded subjects)
   useEffect(() => {
@@ -165,45 +186,36 @@ export default function AddMaterialModal({
     loadingSubjectsRef.current = true;
     setLoadingSubjects(true);
     try {
-      let query = supabase
+      // Load ALL subjects for the family; child_id can be null, single UUID, or semicolon-separated for shared (e.g. "id1;id2").
+      // Filtering by selected children is done in useMemo via parseChildIds.
+      const { data, error } = await supabase
         .from('subject')
         .select('id, name, child_id')
-        .eq('family_id', familyId);
+        .eq('family_id', familyId)
+        .order('name');
 
-      // If children are selected, get family-wide subjects OR child-specific subjects for those children
-      if (childIds.length > 0) {
-        query = query.or(`child_id.is.null,child_id.in.(${childIds.join(',')})`);
-      } else {
-        // If no children selected, show only family-wide subjects
-        query = query.is('child_id', null);
-      }
-
-      const { data, error } = await query.order('name');
-      
       if (!error && data) {
-        // Deduplicate by name, preferring child-specific over family-wide
+        // Deduplicate by name: prefer row that matches selected children, then non-empty child_id over family-wide
         const subjectMap = new Map();
-        
-        data.forEach(subject => {
+        const firstChildId = childIds.length > 0 ? String(childIds[0]).trim() : null;
+
+        data.forEach((subject) => {
           const existing = subjectMap.get(subject.name);
-          
-          // If no existing entry, add this one
+          const subIds = parseChildIds(subject.child_id ?? '');
+          const isFamilyWide = subIds.length === 0;
+          const matchesFirst = firstChildId && subIds.some((id) => String(id).trim() === firstChildId);
+
           if (!existing) {
             subjectMap.set(subject.name, subject);
-          } 
-          // If existing is family-wide and this is child-specific, replace it (prefer child-specific)
-          else if (existing.child_id === null && subject.child_id !== null) {
-            subjectMap.set(subject.name, subject);
-          }
-          // If both are child-specific, prefer the one matching first selected child
-          else if (existing.child_id !== null && subject.child_id !== null && childIds.length > 0) {
-            const firstChildId = childIds[0];
-            if (subject.child_id === firstChildId && existing.child_id !== firstChildId) {
-              subjectMap.set(subject.name, subject);
-            }
+          } else {
+            const exIds = parseChildIds(existing.child_id ?? '');
+            const exFamilyWide = exIds.length === 0;
+            const exMatchesFirst = firstChildId && exIds.some((id) => String(id).trim() === firstChildId);
+            if (exFamilyWide && !isFamilyWide) subjectMap.set(subject.name, subject);
+            else if (matchesFirst && !exMatchesFirst) subjectMap.set(subject.name, subject);
           }
         });
-        
+
         let uniqueSubjects = Array.from(subjectMap.values());
 
         // Ensure defaultSubjectId is present even if filters/dedup skipped it
@@ -218,166 +230,86 @@ export default function AddMaterialModal({
 
         uniqueSubjects = uniqueSubjects.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         setAllSubjects(uniqueSubjects);
-        setFilteredSubjects(uniqueSubjects);
       } else if (error) {
         console.warn('[AddMaterialModal] Error loading subjects:', error);
         setAllSubjects([]);
-        setFilteredSubjects([]);
       }
     } catch (error) {
       console.warn('[AddMaterialModal] Error loading subjects:', error);
       setAllSubjects([]);
-      setFilteredSubjects([]);
     } finally {
       loadingSubjectsRef.current = false;
       setLoadingSubjects(false);
     }
   };
 
-  const filterSubjectsByChildren = (subjectsToFilter, childIds) => {
-    if (!childIds || childIds.length === 0) {
-      // If no children selected, show only family-wide subjects
-      const familyWide = subjectsToFilter.filter(s => s.child_id === null);
-      setFilteredSubjects(familyWide);
-      return;
-    }
-
-    // Filter subjects to show:
-    // 1. Family-wide subjects (child_id is null) - show for all children
-    // 2. Child-specific subjects (child_id matches selected child) - show only for that child
-    // Deduplicate by name, preferring child-specific over family-wide
-    const subjectMap = new Map();
-    
-    subjectsToFilter.forEach(subject => {
-      const isFamilyWide = subject.child_id === null;
-      const isForSelectedChild = subject.child_id !== null && childIds.includes(subject.child_id);
-      const shouldInclude = isFamilyWide || isForSelectedChild;
-      
-      if (shouldInclude) {
-        const existing = subjectMap.get(subject.name);
-        
-        // If no existing entry, add this one
-        if (!existing) {
-          subjectMap.set(subject.name, subject);
-        } 
-        // If existing is family-wide and this is child-specific, replace it (prefer child-specific)
-        else if (existing.child_id === null && subject.child_id !== null) {
-          subjectMap.set(subject.name, subject);
-        }
-        // If both are child-specific, prefer the one matching first selected child
-        else if (existing.child_id !== null && subject.child_id !== null) {
-          const firstChildId = childIds[0];
-          if (subject.child_id === firstChildId && existing.child_id !== firstChildId) {
-            subjectMap.set(subject.name, subject);
-          }
-        }
-      }
-    });
-    
-    const filtered = Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    setFilteredSubjects(filtered);
-  };
-
+  // Edit mode: populate form from material (no allSubjects in deps to avoid update loop)
   useEffect(() => {
-    if (visible && material) {
-      // Edit mode: populate form with existing material data
-      setTitle(material.title || '');
-      
-      // Derive role from tags
-      const tags = material.tags || [];
-      const roleTag = tags.find(t => t.startsWith('role:'));
-      const derivedRole = roleTag ? roleTag.replace('role:', '') : '';
-      setRole(derivedRole);
-      
-      // Set subject ID - wait for subjects to load if needed
-      if (material.subject_id) {
-        setSelectedSubjectId(material.subject_id);
-      } else if (material.subject_key && allSubjects.length > 0) {
-        // Find subject by name
-        const subject = allSubjects.find(s => s.name === material.subject_key);
-        if (subject) {
-          setSelectedSubjectId(subject.id);
-        } else {
-          setSelectedSubjectId(null);
-        }
-      } else {
-        setSelectedSubjectId(null);
-      }
-        
-        // Set children from material_children
-        const childIds = (material.material_children || []).map(mc => mc.child_id);
-        setSelectedChildIds(childIds);
-        
-        setProviderName(material.provider_name || '');
-        setProviderUrl(material.provider_url || '');
-        
-        // Set purchase date
-        if (material.purchase_date) {
-          setPurchaseDate(new Date(material.purchase_date));
-        } else {
-          setPurchaseDate(null);
-        }
-        
-        setPurchasePrice(material.purchase_price ? String(material.purchase_price) : '');
-        
-        // Check if subscription from tags or is_subscription
-        const isSub = material.is_subscription || tags.some(t => t.startsWith('subscription:'));
-        setIsSubscription(isSub);
-        const subFreqTag = tags.find(t => t.startsWith('subscription:'));
-        if (subFreqTag) {
-          const freq = subFreqTag.replace('subscription:', '');
-          setSubscriptionFrequency(freq === 'yearly' ? 'yearly' : 'monthly');
-        } else {
-          setSubscriptionFrequency('monthly');
-        }
-        
-        // Set uploaded file info if it exists
-        if (material.storage_path) {
-          setUploadedFile({
-            name: material.filename || material.title || 'Uploaded file',
-            size: material.bytes || 0,
-            type: material.mime || 'application/octet-stream',
-            path: material.storage_path,
-          });
-          // Try to get URL if available
-          if (material.provider_url && !material.provider_url.includes('/storage/')) {
-            setUploadedFileUrl(material.provider_url);
-          }
-        } else {
-          setUploadedFile(null);
-          setUploadedFileUrl('');
-        }
-        
-        // Show expanded sections if they have data
-        setShowProviderInfo(!!(material.provider_name || material.provider_url));
-        setShowPurchaseInfo(!!(material.purchase_date || material.purchase_price || isSub));
-        
-        // Populate review fields from material review fields (single review per material)
-        if (material.review_child_id || material.review_rating || material.review_emotion || material.review_pacing_fit || material.review_difficulty || material.review_notes) {
-          setReviewChildId(material.review_child_id || null);
-          setReviewRating(material.review_rating || null);
-          setReviewEmotion(material.review_emotion || null);
-          setReviewPacingFit(material.review_pacing_fit || null);
-          setReviewDifficulty(material.review_difficulty || null);
-          setReviewNotes(material.review_notes || '');
-          setShowReviewInfo(true); // Auto-expand if there's a review
-        } else {
-          setShowReviewInfo(false);
-          // Reset review fields
-          setReviewChildId(null);
-          setReviewRating(null);
-          setReviewEmotion(null);
-          setReviewPacingFit(null);
-          setReviewDifficulty(null);
-          setReviewNotes('');
-        }
-      }
-  }, [visible, material, allSubjects]);
+    if (!visible || !material) return;
+    setTitle(material.title || '');
+    const tags = material.tags || [];
+    const roleTag = tags.find(t => t.startsWith('role:'));
+    setRole(roleTag ? roleTag.replace('role:', '') : '');
+    if (material.subject_id) {
+      setSelectedSubjectId(material.subject_id);
+    } else {
+      setSelectedSubjectId(null); // subject_key resolved in separate effect when allSubjects load
+    }
+    const childIds = (material.material_children || []).map(mc => mc.child_id);
+    setSelectedChildIds(childIds);
+    setProviderName(material.provider_name || '');
+    setProviderUrl(material.provider_url || '');
+    setPurchaseDate(material.purchase_date ? new Date(material.purchase_date) : null);
+    setPurchasePrice(material.purchase_price ? String(material.purchase_price) : '');
+    const isSub = material.is_subscription || tags.some(t => t.startsWith('subscription:'));
+    setIsSubscription(isSub);
+    const subFreqTag = tags.find(t => t.startsWith('subscription:'));
+    setSubscriptionFrequency(subFreqTag?.replace('subscription:', '') === 'yearly' ? 'yearly' : 'monthly');
+    if (material.storage_path) {
+      setUploadedFile({
+        name: material.filename || material.title || 'Uploaded file',
+        size: material.bytes || 0,
+        type: material.mime || 'application/octet-stream',
+        path: material.storage_path,
+      });
+      setUploadedFileUrl((material.provider_url && !material.provider_url.includes('/storage/')) ? material.provider_url : '');
+    } else {
+      setUploadedFile(null);
+      setUploadedFileUrl('');
+    }
+    setShowProviderInfo(!!(material.provider_name || material.provider_url));
+    setShowPurchaseInfo(!!(material.purchase_date || material.purchase_price || isSub));
+    if (material.review_child_id || material.review_rating || material.review_emotion || material.review_pacing_fit || material.review_difficulty || material.review_notes) {
+      setReviewChildId(material.review_child_id || null);
+      setReviewRating(material.review_rating || null);
+      setReviewEmotion(material.review_emotion || null);
+      setReviewPacingFit(material.review_pacing_fit || null);
+      setReviewDifficulty(material.review_difficulty || null);
+      setReviewNotes(material.review_notes || '');
+      setShowReviewInfo(true);
+    } else {
+      setShowReviewInfo(false);
+      setReviewChildId(null);
+      setReviewRating(null);
+      setReviewEmotion(null);
+      setReviewPacingFit(null);
+      setReviewDifficulty(null);
+      setReviewNotes('');
+    }
+  }, [visible, material]);
 
-  // Separate effect for resetting form in add mode
+  // When subjects load in edit mode, resolve subject_key -> selectedSubjectId (separate so allSubjects doesn't trigger main edit effect)
+  useEffect(() => {
+    if (!visible || !material || !material.subject_key || material.subject_id) return;
+    if (allSubjects.length === 0) return;
+    const subject = allSubjects.find(s => s.name === material.subject_key);
+    setSelectedSubjectId(subject ? subject.id : null);
+  }, [visible, material?.id, material?.subject_key, allSubjects]);
+
+  // Separate effect for resetting form in add mode (stable deps: no array refs to avoid loop when parent passes defaultChildIds=[] or omits it)
+  const defaultChildIdsKey = Array.isArray(defaultChildIds) ? defaultChildIds.join(',') : '';
   useEffect(() => {
     if (visible && !material) {
-      // Add mode: reset form
       setTitle('');
       setRole(defaultRole || '');
       setSelectedSubjectId(defaultSubjectId || null);
@@ -397,8 +329,6 @@ export default function AddMaterialModal({
       setShowProviderInfo(false);
       setShowPurchaseInfo(false);
       setShowReviewInfo(false);
-      
-      // Reset review fields
       setReviewChildId(null);
       setReviewRating(null);
       setReviewEmotion(null);
@@ -406,7 +336,8 @@ export default function AddMaterialModal({
       setReviewDifficulty(null);
       setReviewNotes('');
     }
-  }, [visible, material, defaultRole, defaultSubjectId, defaultChildId, defaultChildIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, !!material, defaultRole, defaultSubjectId, defaultChildId, defaultChildIdsKey]);
 
   const handleFileSelect = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -897,11 +828,7 @@ export default function AddMaterialModal({
           activeOpacity={1}
           onPress={onClose}
         />
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={(e) => e.stopPropagation()}
-          style={styles.modal}
-        >
+        <View style={[styles.modal, { pointerEvents: 'box-none' }]}>
           {/* Header */}
           <View style={[styles.header, material && styles.headerEdit]}>
             <View style={styles.headerTitleRow}>
@@ -1019,19 +946,21 @@ export default function AddMaterialModal({
                   <View style={styles.dropdownContainer}>
                     <View style={styles.dropdownRow}>
                       {children.map((child) => {
+                        const childId = child.id ?? child.child_id;
                         const label = child.first_name || child.name || 'Child';
-                        const active = selectedChildIds.includes(child.id);
+                        const active = selectedChildIds.some((id) => String(id) === String(childId));
                         return (
                           <TouchableOpacity
-                            key={child.id}
+                            key={childId}
                             style={[
                               styles.dropdownOption,
                               active && styles.dropdownOptionActive
                             ]}
                             onPress={() => {
-                              setSelectedChildIds((prev) =>
-                                prev.includes(child.id) ? prev.filter((id) => id !== child.id) : [...prev, child.id]
-                              );
+                              const nextIds = active
+                                ? selectedChildIds.filter((id) => String(id) !== String(childId))
+                                : [...selectedChildIds, childId];
+                              setSelectedChildIds(nextIds);
                             }}
                           >
                             <Text style={[
@@ -1131,120 +1060,6 @@ export default function AddMaterialModal({
                         placeholderTextColor={MUTED}
                         keyboardType="url"
                         autoCapitalize="none"
-                      />
-                    </View>
-                  </View>
-                </>
-              )}
-            </View>
-
-            {/* Purchase Info */}
-            <View style={styles.blockSection}>
-              <TouchableOpacity
-                style={styles.sectionHeader}
-                onPress={() => setShowPurchaseInfo(!showPurchaseInfo)}
-              >
-                <Text style={styles.sectionTitle}>Purchase Information</Text>
-                {showPurchaseInfo ? (
-                  <ChevronUp size={20} color={SUB} />
-                ) : (
-                  <ChevronDown size={20} color={SUB} />
-                )}
-              </TouchableOpacity>
-              {showPurchaseInfo && (
-                <>
-                  <View style={[styles.fieldRow, { marginTop: 8 }]}>
-                    <View style={styles.field}>
-                      <TouchableOpacity
-                        style={styles.checkboxRow}
-                        onPress={() => setIsSubscription(!isSubscription)}
-                      >
-                        <View style={[styles.checkbox, isSubscription && styles.checkboxChecked]}>
-                          {isSubscription && <Text style={styles.checkmark}>✓</Text>}
-                        </View>
-                        <Text style={styles.checkboxLabel}>Subscription (optional)</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  {isSubscription && (
-                    <View style={styles.fieldRow}>
-                      <View style={styles.field}>
-                        <Text style={styles.fieldLabel}>Frequency (optional)</Text>
-                        <View style={styles.dropdownContainer}>
-                          <View style={styles.dropdownRow}>
-                            <TouchableOpacity
-                              style={[
-                                styles.dropdownOption,
-                                subscriptionFrequency === 'monthly' && styles.dropdownOptionActive
-                              ]}
-                              onPress={() => setSubscriptionFrequency('monthly')}
-                            >
-                              <Text style={[
-                                styles.dropdownOptionText,
-                                subscriptionFrequency === 'monthly' && styles.dropdownOptionTextActive
-                              ]}>
-                                Monthly
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[
-                                styles.dropdownOption,
-                                subscriptionFrequency === 'yearly' && styles.dropdownOptionActive
-                              ]}
-                              onPress={() => setSubscriptionFrequency('yearly')}
-                            >
-                              <Text style={[
-                                styles.dropdownOptionText,
-                                subscriptionFrequency === 'yearly' && styles.dropdownOptionTextActive
-                              ]}>
-                                Yearly
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </View>
-                    </View>
-                  )}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Purchase Date (optional)</Text>
-                      <TouchableOpacity
-                        style={styles.dateInputButton}
-                        onPress={() => {
-                          setCalendarViewMonth(purchaseDate ? new Date(purchaseDate) : new Date());
-                          setShowCalendarPicker(true);
-                        }}
-                      >
-                        <Text style={[
-                          styles.dateInputText,
-                          !purchaseDate && styles.dateInputPlaceholder
-                        ]}>
-                          {purchaseDate ? fmt(purchaseDate) : 'Select purchase date'}
-                        </Text>
-                        {purchaseDate && (
-                          <TouchableOpacity
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              setPurchaseDate(null);
-                            }}
-                            style={styles.clearDateButton}
-                          >
-                            <X size={14} color={MUTED} />
-                          </TouchableOpacity>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Price (optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={purchasePrice}
-                        onChangeText={setPurchasePrice}
-                        placeholder="e.g., 29.99"
-                        keyboardType="decimal-pad"
-                        placeholderTextColor={MUTED}
                       />
                     </View>
                   </View>
@@ -1450,7 +1265,7 @@ export default function AddMaterialModal({
               )}
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </View>
 
       {/* Mini Calendar Picker Modal */}
@@ -1830,9 +1645,9 @@ const styles = StyleSheet.create({
   dropdownOption: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: CHIP_BORDER,
+    borderColor: '#e5e7eb',
     backgroundColor: '#fff',
     ...Platform.select({
       web: {
@@ -1841,19 +1656,22 @@ const styles = StyleSheet.create({
     }),
   },
   dropdownOptionActive: {
-    backgroundColor: '#e0f2fe',
-    borderColor: '#bae6fd',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   dropdownOptionText: {
-    color: FG,
+    color: '#6b7280',
     fontSize: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   dropdownOptionTextActive: {
-    fontWeight: '600',
-    color: FG,
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   checkboxRow: {
     flexDirection: 'row',
@@ -1978,8 +1796,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: colors.accent,
-    backgroundColor: colors.accentLight,
+    borderColor: BORDER,
+    backgroundColor: CHIP_BG,
     ...Platform.select({
       web: { cursor: 'pointer' },
     }),
@@ -1990,7 +1808,7 @@ const styles = StyleSheet.create({
   uploadButtonText: {
     fontSize: 14,
     fontWeight: '500',
-    color: colors.accent,
+    color: SUB,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

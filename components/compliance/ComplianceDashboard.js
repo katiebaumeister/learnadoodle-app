@@ -447,17 +447,16 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
     return Math.round((completed / total) * 100);
   };
 
-  // State-specific requirements interpretation
+  // State-specific requirements interpretation (not used when compliance is only on Subjects page)
   const getStateRequirementsSummary = () => {
     if (!readiness || !stateCode) return null;
 
-    // Common state requirements (not legal advice, just common patterns)
     const commonRequirements = {
       'CA': { hours: 175, subjects: ['English', 'Math', 'Science', 'Social Studies'] },
       'NY': { hours: 180, subjects: ['English', 'Math', 'Science', 'Social Studies', 'Arts'] },
       'TX': { hours: 180, subjects: ['English', 'Math', 'Science', 'Social Studies'] },
       'FL': { hours: 180, subjects: ['English', 'Math', 'Science', 'Social Studies'] },
-      'US': { hours: 180, subjects: ['English', 'Math', 'Science', 'Social Studies'] }, // Generic
+      'US': { hours: 180, subjects: ['English', 'Math', 'Science', 'Social Studies'] },
     };
 
     const reqs = commonRequirements[stateCode] || commonRequirements['US'];

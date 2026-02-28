@@ -509,6 +509,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 ['Instagram', 'https://instagram.com/learnadoodle'],
                 ['Twitter', 'https://twitter.com/learnadoodle'],
                 ['YouTube', 'https://www.youtube.com/@Learnadoodle'],
+                ['Roblox', 'https://www.roblox.com/share?code=a65c902ebb096944a88af078229248c1&type=Server'],
               ]}
             />
           </View>
