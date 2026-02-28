@@ -4,6 +4,7 @@
   "installCommand": "npm install",
   "framework": null,
   "rewrites": [
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
