@@ -4,6 +4,7 @@ import WebAuthScreen from './WebAuthScreen';
 import PasswordResetPage from './PasswordResetPage';
 import WebLayout from './WebLayout';
 import InviteAcceptancePage from './InviteAcceptancePage';
+import InviteLandingPage from './InviteLandingPage';
 import ChildInvitePage from './auth/ChildInvitePage';
 import ContinueLearningPage from './ContinueLearningPage';
 import TermsPage from './TermsPage';
@@ -126,6 +127,17 @@ export default function WebRouter() {
     }
   }, [isPasswordResetFlow, resetFlowStartTime, user]);
 
+  // After sign-in from invite: if user is on / with ?invite=TOKEN, send them to /invite/TOKEN to accept
+  useEffect(() => {
+    if (!user || typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const inviteToken = urlParams.get('invite');
+    if (inviteToken && window.location.pathname === '/') {
+      window.history.replaceState({}, '', `/invite/${inviteToken}`);
+      setCurrentPath(`/invite/${inviteToken}`);
+    }
+  }, [user]);
+
   // If we're in a password reset flow, wait for auth to be ready
   if (isPasswordResetFlow) {
     
@@ -182,7 +194,19 @@ export default function WebRouter() {
     );
   }
 
-  // Check if we're on a regular invite page
+  // Public invite landing (learnadoodle.com/invites/:token) — friendly message then CTA to app to sign in/accept
+  const invitesLandingMatch = currentPath.match(/^\/invites\/(.+)$/);
+  const invitesLandingToken = invitesLandingMatch ? invitesLandingMatch[1] : null;
+
+  if (invitesLandingToken) {
+    return (
+      <InviteLandingPage
+        token={invitesLandingToken}
+      />
+    );
+  }
+
+  // App invite page (app.learnadoodle.com/invite/:token) — sign in / sign up then accept invite
   const inviteMatch = currentPath.match(/^\/invite\/(.+)$/);
   const inviteToken = inviteMatch ? inviteMatch[1] : null;
 
@@ -193,7 +217,7 @@ export default function WebRouter() {
         onAcceptComplete={(data) => {
           // After accepting, redirect based on role
           // The component handles the redirect, but we can also handle it here
-}}
+        }}
       />
     );
   }

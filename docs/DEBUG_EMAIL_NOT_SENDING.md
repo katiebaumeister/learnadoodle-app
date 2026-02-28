@@ -113,7 +113,7 @@ from email_service import send_invite_email
 
 result = send_invite_email(
     to_email="your-test-email@example.com",
-    invite_url="https://app.learnadoodle.com/invite/test123",
+    invite_url="https://learnadoodle.com/invites/test123",
     role="parent",
     inviter_name="Test User",
 )

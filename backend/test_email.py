@@ -29,7 +29,7 @@ print("\nSending test email...")
 
 result = send_invite_email(
     to_email=test_email,
-    invite_url="https://app.learnadoodle.com/invite/test123",
+    invite_url="https://learnadoodle.com/invites/test123",
     role="parent",
     inviter_name="Test User",
 )

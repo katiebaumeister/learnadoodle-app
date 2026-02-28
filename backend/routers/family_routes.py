@@ -614,9 +614,9 @@ async def invite_tutor(
                 detail="Failed to create invite: No invite was created"
             )
 
-        # Generate invite URL (use frontend URL if available, otherwise relative)
-        frontend_url = os.environ.get("FRONTEND_URL", "https://app.learnadoodle.com")
-        invite_url = f"{frontend_url}/invite/{token}"
+        # Generate invite URL: send users to learnadoodle.com/invites/{token} (landing), then they continue to app to sign in/accept
+        invite_landing_base = os.environ.get("INVITE_LANDING_URL", "https://learnadoodle.com")
+        invite_url = f"{invite_landing_base}/invites/{token}"
 
         # Get inviter's name for email
         inviter_name = None

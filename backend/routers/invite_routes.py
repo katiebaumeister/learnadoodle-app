@@ -253,9 +253,9 @@ async def preview_invite(
     try:
         supabase = get_admin_client()
         
-        # Get invite details
+        # Get invite details (include invited_by for inviter name)
         invite_res = supabase.table("invites").select(
-            "id, family_id, email, role, child_scope, expires_at, accepted_at"
+            "id, family_id, email, role, child_scope, expires_at, accepted_at, invited_by"
         ).eq("token", token).single().execute()
         
         if not invite_res.data:
@@ -314,6 +314,16 @@ async def preview_invite(
             except Exception:
                 pass
         
+        # Get inviter display name for landing page
+        inviter_name = None
+        if invite.get("invited_by"):
+            try:
+                inviter_res = supabase.table("profiles").select("first_name, name").eq("id", invite["invited_by"]).single().execute()
+                if inviter_res.data:
+                    inviter_name = inviter_res.data.get("first_name") or inviter_res.data.get("name")
+            except Exception:
+                pass
+        
         return {
             "token": token,
             "family_name": family_name,
@@ -323,6 +333,7 @@ async def preview_invite(
             "child_names": child_names,
             "child_id": invite.get("child_id"),
             "child_name": child_name,
+            "inviter_name": inviter_name,
             "expires_at": invite.get("expires_at")
         }
         

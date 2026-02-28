@@ -130,7 +130,8 @@ POSTMARK_API_TOKEN=your_server_token_here
 # Optional (defaults shown)
 POSTMARK_SENDER_EMAIL=contact@learnadoodle.com
 POSTMARK_SENDER_NAME=Learnadoodle
-FRONTEND_URL=https://app.learnadoodle.com  # Used for invite URLs
+FRONTEND_URL=https://app.learnadoodle.com  # App where users sign in and accept invites
+INVITE_LANDING_URL=https://learnadoodle.com  # Base URL for invite links in email (link goes to /invites/{token})
 ```
 
 ## Files Modified
