@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, TextInput } from 'react-native';
 import { Calendar, ExternalLink, Copy, CheckCircle, X, AlertCircle, RefreshCw } from 'lucide-react';
-import { getMe } from '../../lib/apiClient';
+import { getMe, getAPIBase } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 
@@ -33,7 +33,7 @@ export default function IntegrationsSettings({ user }) {
   const loadIntegrations = async () => {
     setLoading(true);
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -68,7 +68,7 @@ export default function IntegrationsSettings({ user }) {
 
   const handleConnectGoogle = async () => {
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -93,7 +93,7 @@ export default function IntegrationsSettings({ user }) {
 
   const handleDisconnectGoogle = async () => {
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -114,7 +114,7 @@ export default function IntegrationsSettings({ user }) {
 
   const handleGenerateIcsUrl = async () => {
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 

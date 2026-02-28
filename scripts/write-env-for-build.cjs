@@ -11,8 +11,11 @@ const apiUrl = process.env.EXPO_PUBLIC_API_URL || process.env.REACT_APP_API_URL 
 const root = path.resolve(__dirname, '..');
 const envPath = path.join(root, '.env');
 
+// When building on Vercel/CI, env is set → write it so the bundle gets the API URL.
+// When building locally with no env set → don't touch .env so your local REACT_APP_API_URL (e.g. localhost:8001) is used.
 if (!apiUrl) {
-  console.warn('[write-env-for-build] WARNING: EXPO_PUBLIC_API_URL and REACT_APP_API_URL are both unset. Set one in Vercel → Settings → Environment Variables. App will use runtime fallback for learnadoodle.com.');
+  console.warn('[write-env-for-build] No EXPO_PUBLIC_API_URL or REACT_APP_API_URL set; leaving .env unchanged so local dev/build uses your existing .env.');
+  process.exit(0);
 }
 
 const lines = [

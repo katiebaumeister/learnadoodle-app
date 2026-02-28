@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
@@ -1145,7 +1145,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setLoadingConnections(true);
     }
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
@@ -1228,7 +1228,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setConnectingProvider(providerKey);
     
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         toast.push('Please sign in to connect accounts', 'error');
@@ -1311,7 +1311,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   const handleDisconnectProvider = async (providerKey) => {
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const apiBase = getAPIBase();
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         toast.push('Please sign in to disconnect accounts', 'error');
