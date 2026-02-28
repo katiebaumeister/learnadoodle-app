@@ -13,10 +13,11 @@ if (!fs.existsSync(distPath)) {
 
 const q = 'v=' + Date.now();
 let html = fs.readFileSync(distPath, 'utf8');
-// Cache-bust favicon.ico so browsers (especially Safari) fetch fresh icon
+// Use _expo/static/favicon.ico so the path is excluded from SPA rewrite; cache-bust so browsers fetch fresh
+const faviconHref = '/_expo/static/favicon.ico?' + q;
 html = html.replace(
-  new RegExp('href="/favicon.ico(?:\\?[^"]*)?"'),
-  'href="/favicon.ico?' + q + '"'
+  new RegExp('<link rel="icon" href="[^"]*"\\s*/>'),
+  '<link rel="icon" href="' + faviconHref + '" />'
 );
 fs.writeFileSync(distPath, html);
 console.log('[patch-favicon] Added cache-bust to favicon link');
