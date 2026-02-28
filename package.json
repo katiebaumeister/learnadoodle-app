@@ -10,8 +10,8 @@
     "web": "expo start --web",
     "test:openai": "expo start --web --port 19006",
     "web:no-404": "node scripts/dev-server-web.js",
-    "build": "node scripts/write-env-for-build.js && npx expo export --platform web && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true",
-    "vercel-build": "node scripts/write-env-for-build.js && npx expo export --platform web && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true"
+    "build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true",
+    "vercel-build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true"
   },
   "dependencies": {
     "@expo/metro-config": "~54.0.0",

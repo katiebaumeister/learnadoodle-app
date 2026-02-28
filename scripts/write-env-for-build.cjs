@@ -2,6 +2,7 @@
  * Writes .env with API URL from the build environment (e.g. Vercel).
  * Run before `expo export --platform web` so react-native-dotenv and Expo
  * can inject REACT_APP_API_URL / EXPO_PUBLIC_API_URL into the bundle.
+ * (.cjs so Node treats as CommonJS when package.json has "type": "module")
  */
 const fs = require('fs');
 const path = require('path');
