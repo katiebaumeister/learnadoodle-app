@@ -10,8 +10,8 @@
     "web": "expo start --web",
     "test:openai": "expo start --web --port 19006",
     "web:no-404": "node scripts/dev-server-web.js",
-    "build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && node scripts/patch-favicon-cache-bust.cjs && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true",
-    "vercel-build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && node scripts/patch-favicon-cache-bust.cjs && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true"
+    "build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && node scripts/generate-favicon.cjs && node scripts/patch-favicon-cache-bust.cjs && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true",
+    "vercel-build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && node scripts/generate-favicon.cjs && node scripts/patch-favicon-cache-bust.cjs && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true"
   },
   "dependencies": {
     "@expo/metro-config": "~54.0.0",
@@ -48,6 +48,7 @@
     "@babel/core": "^7.20.0",
     "@types/react": "~19.1.0",
     "@types/react-native": "^0.73.0",
+    "to-ico": "^1.1.5",
     "typescript": "~5.9.2"
   },
   "engines": {
