@@ -13,17 +13,10 @@ if (!fs.existsSync(distPath)) {
 
 const q = 'v=' + Date.now();
 let html = fs.readFileSync(distPath, 'utf8');
-// Cache-bust favicon.ico and add PNG fallback (Safari often prefers PNG)
+// Cache-bust favicon.ico so browsers (especially Safari) fetch fresh icon
 html = html.replace(
   new RegExp('href="/favicon.ico(?:\\?[^"]*)?"'),
   'href="/favicon.ico?' + q + '"'
 );
-// Add PNG icon link after the existing icon link if not already present
-if (!html.includes('favicon.png')) {
-  html = html.replace(
-    /(<link rel="icon" href="[^"]+favicon\.ico[^"]*" \/>)/,
-    '$1<link rel="icon" type="image/png" href="/favicon.png?' + q + '" />'
-  );
-}
 fs.writeFileSync(distPath, html);
-console.log('[patch-favicon] Added cache-bust and PNG fallback to favicon links');
+console.log('[patch-favicon] Added cache-bust to favicon link');
