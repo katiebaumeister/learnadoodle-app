@@ -1,23 +1,29 @@
 /**
- * Patches dist/index.html to add a cache-busting query param to the favicon link
- * so browsers (especially Safari) fetch the icon instead of using a cached generic one.
+ * Patches dist/index.html to embed the favicon as a data URL so no separate request
+ * can be cached or rewritten (fixes Safari showing old/generic icon).
  */
 const fs = require('fs');
 const path = require('path');
 
 const distPath = path.join(__dirname, '..', 'dist', 'index.html');
+const favicon32Path = path.join(__dirname, '..', 'dist', '_expo', 'static', 'favicon-32.png');
+
 if (!fs.existsSync(distPath)) {
   console.warn('[patch-favicon] dist/index.html not found, skipping');
   process.exit(0);
 }
+if (!fs.existsSync(favicon32Path)) {
+  console.warn('[patch-favicon] favicon-32.png not found, run generate-favicon first');
+  process.exit(0);
+}
 
-const q = 'v=' + Date.now();
+const pngBase64 = fs.readFileSync(favicon32Path).toString('base64');
+const dataUrl = 'data:image/png;base64,' + pngBase64;
+
 let html = fs.readFileSync(distPath, 'utf8');
-// Use _expo/static/favicon.ico so the path is excluded from SPA rewrite; cache-bust so browsers fetch fresh
-const faviconHref = '/_expo/static/favicon.ico?' + q;
 html = html.replace(
   new RegExp('<link rel="icon" href="[^"]*"\\s*/>'),
-  '<link rel="icon" href="' + faviconHref + '" />'
+  '<link rel="icon" href="' + dataUrl + '" />'
 );
 fs.writeFileSync(distPath, html);
-console.log('[patch-favicon] Added cache-bust to favicon link');
+console.log('[patch-favicon] Embedded favicon as data URL in index.html');

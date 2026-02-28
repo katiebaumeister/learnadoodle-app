@@ -48,6 +48,7 @@
     "@babel/core": "^7.20.0",
     "@types/react": "~19.1.0",
     "@types/react-native": "^0.73.0",
+    "sharp": "^0.34.5",
     "to-ico": "^1.1.5",
     "typescript": "~5.9.2"
   },
