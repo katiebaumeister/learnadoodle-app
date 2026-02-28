@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
@@ -1913,10 +1913,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         if (savingFamilyName || !familyId) return;
                         setSavingFamilyName(true);
                         try {
-                          const { error: err } = await supabase
-                            .from('family')
-                            .update({ family_name: trimmed || null })
-                            .eq('id', familyId);
+                          const { data, error: err } = await updateFamilyName(trimmed || null);
                           if (err) throw err;
                           setFamily((prev) => (prev ? { ...prev, family_name: trimmed || undefined } : prev));
                           if (onFamilyUpdate) onFamilyUpdate({ ...family, family_name: trimmed || undefined });
@@ -1926,7 +1923,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           toast.push('Family name saved', 'success');
                         } catch (e) {
                           console.warn('[FamilyPanel] Error saving family name:', e);
-                          toast.push('Could not save family name', 'error');
+                          toast.push(e?.message || e?.detail || 'Could not save family name', 'error');
                         } finally {
                           setSavingFamilyName(false);
                         }

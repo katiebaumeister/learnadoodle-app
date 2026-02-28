@@ -547,7 +547,7 @@ export default function TasksView({
     const planGroups = {};
     const singles = [];
     for (const ev of trashEvents) {
-      if (ev.is_placeholder && ev.generated_by === 'plan_year' && ev.academic_year_id) {
+      if (ev.generated_by === 'plan_year' && ev.academic_year_id) {
         const id = ev.academic_year_id;
         if (!planGroups[id]) planGroups[id] = { events: [], label: null };
         planGroups[id].events.push(ev);

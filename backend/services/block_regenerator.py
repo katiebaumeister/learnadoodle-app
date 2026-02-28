@@ -1,19 +1,15 @@
 """
 Block-aware regeneration for Plan My Year Apply.
-Only touches events that are still placeholders (is_placeholder=true, generated_by='plan_year')
-for the given block (source_block_id). Never updates or deletes customized events.
+Creates Lesson events linked to the plan by academic_year_id, generation_batch_id, source_block_id,
+and generated_by='plan_year'. They are real events (event_type=Lesson); plan linkage and
+"count as instructional time" (counts_toward_plan) are how we attach/detach from the plan.
 
-Collision avoidance (Option B): before inserting a placeholder for (date, child), we skip insert
-if any existing event on that date for the same child and subject has counts_toward_plan=true
-and deleted_at IS NULL. This avoids duplicating when a parent has moved a lesson (e.g. to 1–3pm);
-we do not then insert a new placeholder at the block's original slot (e.g. 9–11am).
+Only touches events from this plan for this block that have no curriculum_lesson_id (user-owned
+filled slots are never overwritten). If an insert fails (e.g. DB overlap), it is skipped.
 """
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
-
-# Qualifying event type for collision avoidance (must match plan_health / compliance)
-QUALIFYING_EVENT_TYPE = "lesson"
 
 from services.blocks_calculator import get_block_occurrence_dates
 
@@ -73,11 +69,11 @@ def regenerate_block(
     user_id: str = None,
 ) -> Dict[str, int]:
     """
-    Regenerate placeholder events for a single block only.
-    - Updates existing overwrite-safe placeholders (same date/child) with new times/subject.
-    - Inserts new placeholders for (date, child) that don't exist.
-    - Deletes placeholders for (date, child) that are no longer in the block's occurrence set.
-    Never touches: is_placeholder=false, or events from other blocks.
+    Regenerate plan events for a single block only.
+    - Updates existing plan events for this block (same date/child) with new times/subject.
+    - Inserts new Lesson events for (date, child) that don't exist.
+    - Deletes plan events for (date, child) that are no longer in the block's occurrence set.
+    Never touches: events with curriculum_lesson_id set (user-filled), or events from other blocks.
 
     Returns: {"updated": n, "inserted": n, "deleted": n}
     """
@@ -102,15 +98,14 @@ def regenerate_block(
     )
     whole_family_sentinel = None  # key (d, None) for whole-family event on date d
 
-    # Fetch existing overwrite-safe placeholders for this block only (include soft-deleted so we can undelete on re-apply).
-    # CRITICAL: only touch empty slots — exclude rows with curriculum_lesson_id set (filled slots are user-owned).
+    # Fetch existing plan events for this block (include soft-deleted so we can undelete on re-apply).
+    # Identify by generated_by + academic_year_id + source_block_id; only touch empty slots (no curriculum_lesson_id).
     existing_res = (
         supabase.table("events")
         .select("id, start_ts, end_ts, child_id, child_ids, subject_id, title, deleted_at")
         .eq("family_id", family_id)
         .eq("academic_year_id", academic_year_id)
         .eq("source_block_id", block_id)
-        .eq("is_placeholder", True)
         .eq("generated_by", "plan_year")
         .is_("curriculum_lesson_id", "null")
         .execute()
@@ -129,49 +124,6 @@ def regenerate_block(
             existing_by_key[(d, whole_family_sentinel)] = e
         else:
             existing_by_key[(d, cid)] = e
-
-    # Collision avoidance (Option B): do not insert placeholder if an existing qualifying event
-    # on that date for same child + subject already counts toward plan (respects parent's intent).
-    # Matches compliance definition: lesson, not canceled, counts_toward_plan=true, deleted_at IS NULL.
-    # Time range: [start_of_day(min_occ), end_of_day(max_occ)) = [min 00:00, max+1 00:00).
-    occupied_slots: Set[Tuple[date, Any]] = set()
-    if occ_dates and child_ids and block.get("subject_id"):
-        min_d = min(occ_dates)
-        max_d = max(occ_dates)
-        max_d_next = max_d + timedelta(days=1)
-        occupants_res = (
-            supabase.table("events")
-            .select("start_ts, child_id, child_ids, event_type, status")
-            .eq("family_id", family_id)
-            .eq("subject_id", block["subject_id"])
-            .eq("counts_toward_plan", True)
-            .is_("deleted_at", "null")
-            .not_.is_("academic_year_id", "null")  # don't count orphaned events (e.g. from deleted plan) as blocking
-            .eq("event_type", "Lesson")  # qualifying type (align with plan_health)
-            .neq("status", "canceled")
-            .gte("start_ts", f"{min_d.isoformat()}T00:00:00")
-            .lt("start_ts", f"{max_d_next.isoformat()}T00:00:00")
-            .execute()
-        )
-        for e in occupants_res.data or []:
-            # Only count as occupant if it's a qualifying event type (match compliance)
-            etype = (e.get("event_type") or "").strip().lower()
-            if etype != QUALIFYING_EVENT_TYPE:
-                continue
-            d = _event_date_from_start_ts(e)
-            if d is None or d not in occ_dates:
-                continue
-            # Both child_id and child_ids: family lessons can block for each participating child
-            cids_to_add: List[Any] = []
-            if e.get("child_id") is not None:
-                cids_to_add.append(e["child_id"])
-            if e.get("child_ids") and isinstance(e["child_ids"], list):
-                cids_to_add.extend(e["child_ids"])
-            for cid in cids_to_add:
-                if cid in child_ids:
-                    occupied_slots.add((d, cid))
-                    if is_whole_family:
-                        occupied_slots.add((d, whole_family_sentinel))
 
     if is_whole_family:
         desired_keys = {(d, whole_family_sentinel) for d in occ_dates}
@@ -207,7 +159,7 @@ def regenerate_block(
                     "generation_batch_id": generation_batch_id,
                     "deleted_at": e.get("deleted_at"),
                 })
-            elif key not in occupied_slots:
+            else:
                 to_insert.append({
                     "family_id": family_id,
                     "child_id": None,
@@ -219,7 +171,7 @@ def regenerate_block(
                     "source": "system",
                     "event_type": "Lesson",
                     "subject_id": subject_id,
-                    "is_placeholder": True,
+                    "is_placeholder": False,
                     "generated_by": "plan_year",
                     "academic_year_id": academic_year_id,
                     "generation_batch_id": generation_batch_id,
@@ -229,7 +181,7 @@ def regenerate_block(
         else:
             for cid in child_ids:
                 if cid is None:
-                    continue  # skip placeholder for "no child" (e.g. family has no children)
+                    continue  # skip for "no child" (e.g. family has no children)
                 key = (d, cid)
                 if key in existing_by_key:
                     e = existing_by_key[key]
@@ -242,7 +194,7 @@ def regenerate_block(
                         "generation_batch_id": generation_batch_id,
                         "deleted_at": e.get("deleted_at"),
                     })
-                elif key not in occupied_slots:
+                else:
                     to_insert.append({
                         "family_id": family_id,
                         "child_id": cid,
@@ -253,7 +205,7 @@ def regenerate_block(
                         "source": "system",
                         "event_type": "Lesson",
                         "subject_id": subject_id,
-                        "is_placeholder": True,
+                        "is_placeholder": False,
                         "generated_by": "plan_year",
                         "academic_year_id": academic_year_id,
                         "generation_batch_id": generation_batch_id,
@@ -281,7 +233,7 @@ def regenerate_block(
                 "title": row["title"],
                 "generation_batch_id": row["generation_batch_id"],
             }
-            # Undelete if this placeholder was soft-deleted so plan_health sees it again
+            # Undelete if this plan event was soft-deleted so plan_health sees it again
             if row.get("deleted_at"):
                 payload["deleted_at"] = None
             supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()

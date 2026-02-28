@@ -673,7 +673,6 @@ async def commit_curriculum(
                     .select("id, start_ts, end_ts, child_id, subject_id")
                     .eq("family_id", family_id)
                     .eq("generated_by", "plan_year")
-                    .eq("is_placeholder", True)
                     .is_("curriculum_lesson_id", "null")
                     .is_("deleted_at", "null")
                     .gte("start_ts", range_start_ts)

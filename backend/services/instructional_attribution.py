@@ -82,7 +82,8 @@ def get_instructional_attributions(events: List[Dict[str, Any]]) -> List[Dict[st
             child_ids = []
         minutes = _event_minutes(ev)
         day_credit = ev.get("instructional_day_credit")
-        is_placeholder = ev.get("is_placeholder") is True
+        # Plan events are identified by generated_by; "from plan" is exposed as is_placeholder for attribution consumers
+        is_placeholder = ev.get("generated_by") == "plan_year"
         subject_id = ev.get("subject_id")
         start_ts = ev.get("start_ts")
         for cid in child_ids:

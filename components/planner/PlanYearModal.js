@@ -1252,7 +1252,6 @@ export default function PlanYearModal({
         .select('*', { count: 'exact', head: true })
         .eq('family_id', familyId)
         .eq('academic_year_id', academicYearId)
-        .eq('is_placeholder', true)
         .eq('generated_by', 'plan_year')
         .is('deleted_at', null);
       if (!cancelled && !error) setExistingPlaceholdersCount(count ?? 0);
@@ -1507,7 +1506,6 @@ export default function PlanYearModal({
           .select('*', { count: 'exact', head: true })
           .eq('family_id', familyId)
           .eq('academic_year_id', academicYearId)
-          .eq('is_placeholder', true)
           .eq('generated_by', 'plan_year')
           .is('deleted_at', null);
         if (!countErr && count != null) setExistingPlaceholdersCount(count);

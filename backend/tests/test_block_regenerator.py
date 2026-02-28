@@ -1,7 +1,7 @@
 """
 Tests for block-aware regeneration invariants:
-A) Customized events (is_placeholder=false) never change.
-B) Only plan_year placeholders are touched.
+A) Customized events (curriculum_lesson_id set) never change.
+B) Only plan_year events for the block are touched (generated_by + academic_year_id + source_block_id).
 C) Regeneration is block-local (only source_block_id = block_id).
 """
 
@@ -50,19 +50,18 @@ class TestBlockRegeneratorInvariants(unittest.TestCase):
         self.assertIn("family_id", keys)
         self.assertIn("academic_year_id", keys)
         self.assertIn("source_block_id", keys)
-        self.assertIn("is_placeholder", keys)
         self.assertIn("generated_by", keys)
 
     def test_custom_event_never_in_update_or_delete(self):
-        """Invariant A: If we only fetch placeholders (is_placeholder=true), custom events are never in the result set.
-        So update/delete are only ever called with ids that came from that placeholder query."""
+        """Invariant A: We only fetch plan events for this block without curriculum_lesson_id (filled slots are user-owned).
+        So update/delete are only ever called with ids that came from that query."""
         supabase = MagicMock()
         # Two placeholders for same block (same date, two children) - one we'll "convert to custom" by not including in fetch
         # So we return only 1 placeholder. Desired keys: 2 (date + 2 children). So we insert 1, update 1.
         existing = [
             {"id": "placeholder-1", "start_ts": "2025-09-01T09:00:00+00:00", "end_ts": "2025-09-01T10:00:00+00:00", "child_id": "child1", "subject_id": "sub1", "title": "Math — Lesson"},
         ]
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value.data = existing
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value.data = existing
         supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = None
         supabase.table.return_value.insert.return_value.execute.return_value.data = [{}]
 

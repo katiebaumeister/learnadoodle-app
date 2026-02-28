@@ -497,10 +497,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const shouldShowDoneStyling = isDone && !hideDoneStyling;
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
-  const isPlaceholder = ev?.is_placeholder === true;
-  const isEmptySlot = isPlaceholder && ev?.generated_by === 'plan_year' && !ev?.curriculum_lesson_id;
+  const isPlanEvent = ev?.generated_by === 'plan_year';
+  const isEmptySlot = isPlanEvent && !ev?.curriculum_lesson_id;
   const isFilledSlot = !!(ev?.curriculum_lesson_id);
-  const slotBadgeLabel = hideSlotBadge ? null : (isFilledSlot ? null : (isEmptySlot ? STRINGS.calendarSlotActions.emptySlot.title : (isPlaceholder ? 'Placeholder' : null)));
+  const slotBadgeLabel = hideSlotBadge ? null : (isFilledSlot ? null : (isEmptySlot ? STRINGS.calendarSlotActions.emptySlot.title : null));
   // Lesson that does not count toward 180-day/hour requirement (show muted + tooltip)
   const isExcludedFromPlan = ((ev?.event_type || ev?.type || '').toLowerCase() === 'lesson') && ev?.counts_toward_plan === false;
 

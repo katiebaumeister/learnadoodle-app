@@ -1404,7 +1404,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     event?.child_name ||
     (Array.isArray(event?.assignees) && event.assignees.length ? event.assignees.join(', ') : null);
 
-  const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name || (event?.is_placeholder && event?.title) || null;
+  const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name || (event?.generated_by === 'plan_year' && event?.title) || null;
 
   const handleDelete = async () => {
     if (readOnly) return;
@@ -2194,11 +2194,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       cleanUpdates.child_ids = newChildIds;
       cleanUpdates.child_id = assigneeIds.length > 0 ? assigneeIds[0] : null;
 
-      // Convert plan-year placeholder to manual when user edits (protects from future Replace).
-      // Only is_placeholder flips; preserve source_block_id, academic_year_id, generated_by for drift/analytics.
-      if (event.is_placeholder && event.generated_by === 'plan_year') {
-        cleanUpdates.is_placeholder = false;
-      }
+      // Plan events are real events; attach/detach from plan via "Count as instructional time" and plan attachment.
+      // No placeholder flip — preserve academic_year_id, generated_by, source_block_id for plan linkage.
       
       console.log('[EventDetails] child_ids update preparation:', {
         currentChildIds,
@@ -2344,9 +2341,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               child_ids: childIdsForFallback, // Use full array from cleanUpdates
               is_flexible: true
             };
-            if (event.is_placeholder && event.generated_by === 'plan_year') {
-              fallbackUpdate.is_placeholder = false;
-            }
             fallbackUpdate.counts_toward_plan = countsTowardPlan;
             fallbackUpdate.academic_year_id = countsTowardPlan ? academicYearId : null;
             fallbackUpdate.instructional_status = countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE';
@@ -2683,10 +2677,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             );
           })()}
 
-          {/* Placeholder note - when editing Plan Year placeholder (no curriculum_lesson_id but not in empty-slot UI because editing) */}
-          {event?.is_placeholder && event?.generated_by === 'plan_year' && event?.curriculum_lesson_id == null && editing && (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 8, marginBottom: 4, backgroundColor: '#fef3c7', borderRadius: 8, marginTop: 8 }}>
-              <Text style={{ fontSize: 12, color: '#92400e', lineHeight: 18 }}>When you save, this becomes a custom event and won't be overwritten by future plan changes.</Text>
+          {/* Plan event note - event linked to plan; attach/detach via Count as instructional time and plan attachment */}
+          {event?.generated_by === 'plan_year' && event?.curriculum_lesson_id == null && editing && (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 8, marginBottom: 4, backgroundColor: '#f0f9ff', borderRadius: 8, marginTop: 8 }}>
+              <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 18 }}>This event is linked to your plan. Use &quot;Count as instructional time&quot; and plan attachment to include or exclude it from the plan.</Text>
             </View>
           )}
 

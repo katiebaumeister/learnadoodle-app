@@ -836,15 +836,15 @@ async def get_plan_health(
         current_scheduled_days = None
         deleted_dates = None
         if constraint_mode == "none" and isinstance(baseline_scheduled_dates, list) and len(baseline_scheduled_dates) > 0:
-            placeholder_dates = set()
+            plan_event_dates = set()
             for e in events:
-                if e.get("is_placeholder") and e.get("generated_by") == "plan_year":
+                if e.get("generated_by") == "plan_year":
                     start_ts = e.get("start_ts")
                     if start_ts and isinstance(start_ts, str) and "T" in start_ts:
-                        placeholder_dates.add(start_ts[:10])
-            current_scheduled_days = len(placeholder_dates)
+                        plan_event_dates.add(start_ts[:10])
+            current_scheduled_days = len(plan_event_dates)
             baseline_set = set(baseline_scheduled_dates)
-            deleted_dates = sorted([d for d in baseline_set if d not in placeholder_dates])
+            deleted_dates = sorted([d for d in baseline_set if d not in plan_event_dates])
         print(
             f"[BACKEND] plan_health: plan_id={plan.get('id')} academic_year_id={academic_year_id} "
             f"start={plan['start_date'][:10]} end={plan['end_date'][:10]} target_days={target_days} "
@@ -1201,7 +1201,7 @@ async def apply_fix_suggestion(
                         "source": "system",
                         "event_type": "Lesson",
                         "subject_id": subject_id,
-                        "is_placeholder": True,
+                        "is_placeholder": False,
                         "generated_by": "plan_year",
                         "academic_year_id": academic_year_id,
                         "generation_batch_id": gen_id,
@@ -1544,9 +1544,9 @@ async def clear_placeholders(
     __: None = Depends(rate_limiter),
 ):
     """
-    Remove Plan Year placeholder lessons. By default clears all placeholders for the family.
-    If academic_year_id is provided, clears only that year's placeholders (validates family ownership).
-    Only touches events where is_placeholder=true and generated_by='plan_year' and deleted_at is null.
+    Remove Plan Year plan events. By default clears all plan events for the family.
+    If academic_year_id is provided, clears only that year's plan events (validates family ownership).
+    Touches events where generated_by='plan_year' (and optional academic_year_id); deleted_at is null.
     Uses soft delete (sets deleted_at) so calendar/views that filter deleted_at IS NULL stop showing them.
     If delete_plan=True and academic_year_id is set, also deletes the academic_year row (CASCADE removes
     academic_year_plan, holidays, class_days, exclusions). Events keep rows but academic_year_id becomes NULL.
@@ -1568,12 +1568,11 @@ async def clear_placeholders(
             if ay.data[0].get("family_id") != family_id:
                 raise HTTPException(status_code=403, detail="Academic year does not belong to your family")
 
-        # Select placeholder event ids (only non-deleted)
+        # Select plan event ids (generated_by='plan_year'; only non-deleted)
         q = (
             supabase.table("events")
             .select("id")
             .eq("family_id", family_id)
-            .eq("is_placeholder", True)
             .eq("generated_by", "plan_year")
             .is_("deleted_at", None)
         )
@@ -1581,7 +1580,7 @@ async def clear_placeholders(
             q = q.eq("academic_year_id", academic_year_id)
         resp = q.execute()
         ids = [row["id"] for row in (resp.data or [])]
-        print(f"[BACKEND] clear_placeholders: found {len(ids)} placeholder(s) to soft-delete")
+        print(f"[BACKEND] clear_placeholders: found {len(ids)} plan event(s) to soft-delete")
 
         deleted = 0
         if ids:
@@ -2386,7 +2385,7 @@ async def apply_to_calendar(
                         "source": "system",
                         "event_type": "Lesson",
                         "subject_id": subject_id,
-                        "is_placeholder": True,
+                        "is_placeholder": False,
                         "generated_by": "plan_year",
                         "academic_year_id": academic_year_id,
                         "generation_batch_id": generation_batch_id,

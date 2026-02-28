@@ -64,6 +64,9 @@ class InviteTutorOut(BaseModel):
 class UpdateTutorScopeIn(BaseModel):
     child_ids: List[str] = Field(..., description="List of child IDs the tutor can see")
 
+class UpdateFamilyIn(BaseModel):
+    family_name: Optional[str] = Field(None, description="Family display name (e.g. 'Doodle Family')")
+
 # --- Routes ---
 
 @router.get("/members", response_model=FamilyMembersOut)
@@ -102,7 +105,7 @@ async def get_family_members(
         try:
             family_res = supabase.table("family").select("*").eq("id", family_id).maybe_single().execute()
             if family_res.data:
-                family_name = family_res.data.get("name")
+                family_name = family_res.data.get("family_name") or family_res.data.get("name")
                 # Prefer onboarding_completed; fallback to legacy has_completed_onboarding
                 onboarding_completed = family_res.data.get("onboarding_completed")
                 if onboarding_completed is None and family_res.data.get("has_completed_onboarding") is True:
@@ -204,6 +207,42 @@ async def get_family_members(
             default_planning_mode=None,
             children=[],
             members=[]
+        )
+
+
+@router.patch("", response_model=dict)
+async def update_family(
+    body: UpdateFamilyIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Update family details (e.g. family name). Uses service role so it is not blocked by RLS.
+    Verifies the user belongs to the family before updating.
+    """
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family not found")
+
+    if body.family_name is None:
+        return {"success": True, "family_id": family_id}
+
+    supabase = get_admin_client()
+    try:
+        value = body.family_name.strip() if body.family_name else None
+        update_payload = {"family_name": value}
+        resp = supabase.table("family").update(update_payload).eq("id", family_id).execute()
+        if not resp.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family record not found")
+        log_event("family.update.success", user_id=user["id"], family_id=family_id)
+        return {"success": True, "family_id": family_id, "family_name": value}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("family.update.error", user_id=user["id"], family_id=family_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save family name: {str(e)}",
         )
 
 

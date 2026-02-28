@@ -118,12 +118,13 @@ def compute_plan_health_from_attributions(
         if not child_id:
             continue
         child_id = str(child_id)
-        is_placeholder = row.get("is_placeholder") is True
+        # Attribution row's is_placeholder is set from event generated_by=='plan_year' (see instructional_attribution)
+        is_plan_event = row.get("is_placeholder") is True
 
         all_dates.add(d)
         per_child_dates[child_id].add(d)
         per_child_minutes[child_id] += minutes
-        if not is_placeholder:
+        if not is_plan_event:
             manual_days.add(d)
             manual_minutes += minutes
         subject_id = row.get("subject_id")
@@ -256,8 +257,8 @@ def compute_plan_health_from_events(
         all_dates.add(d)
         intervals_by_date[d].append((start_min, end_min))
 
-        is_manual = ev.get("is_placeholder") is not True
-        if is_manual:
+        is_plan_event = ev.get("generated_by") == "plan_year"
+        if not is_plan_event:
             manual_days.add(d)
             manual_minutes += minutes
 
