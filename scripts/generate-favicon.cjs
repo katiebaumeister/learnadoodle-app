@@ -12,6 +12,7 @@ const pngPath = path.join(root, 'assets', 'favicon.png');
 const distDir = path.join(root, 'dist');
 const expoStaticDir = path.join(distDir, '_expo', 'static');
 const icoPath = path.join(expoStaticDir, 'favicon.ico');
+const icoPathRoot = path.join(distDir, 'favicon.ico'); // Safari requests /favicon.ico by default; must be at root
 const png32Path = path.join(expoStaticDir, 'favicon-32.png');
 
 if (!fs.existsSync(pngPath)) {
@@ -31,6 +32,7 @@ const input = fs.readFileSync(pngPath);
 Promise.all([
   toIco(input, { resize: true }).then((buf) => {
     fs.writeFileSync(icoPath, buf);
+    fs.writeFileSync(icoPathRoot, buf); // also at root so /favicon.ico serves our icon
     return 'favicon.ico';
   }),
   sharp(input)
