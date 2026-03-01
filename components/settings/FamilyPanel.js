@@ -198,13 +198,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  // Normalize invite URL: always show learnadoodle.com/invites/{token} (backend may still return app.learnadoodle.com/invite/{token} until redeployed)
+  const normalizeInviteUrl = (url) => {
+    if (!url || typeof url !== 'string') return url;
+    const oldMatch = url.match(/^https:\/\/app\.learnadoodle\.com\/invite\/(.+)$/);
+    if (oldMatch) return `https://learnadoodle.com/invites/${oldMatch[1]}`;
+    return url;
+  };
+
   // Show invite URL modal
   const showInviteSuccessModal = (url) => {
-    setInviteUrlToShow(url);
+    const normalized = normalizeInviteUrl(url);
+    setInviteUrlToShow(normalized);
     setShowInviteUrlModal(true);
     setInviteUrlCopied(false);
     // Try to copy automatically, but don't show error if it fails
-    copyToClipboard(url, 'Invite link').catch(() => {});
+    copyToClipboard(normalized, 'Invite link').catch(() => {});
   };
 
   // Provider logo assets (PNG)
