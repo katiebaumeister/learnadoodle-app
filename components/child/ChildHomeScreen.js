@@ -5,6 +5,10 @@
  * - Today's schedule (only their events)
  * - Assignments due soon / needing review
  * - Quick action buttons (Submit, Ask for Help)
+ * 
+ * When overrideChildId/overrideFamilyId/overrideChildName/overrideChildren are provided
+ * (e.g. parent viewing a specific child), uses those and filters data to that child only.
+ * Same UI structure as parent home: main column + right rail.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -22,7 +26,14 @@ import EmptyStateCard from '../home/EmptyStateCard';
 import { applyChildFilter } from '../../lib/queryFilters';
 import { colors } from '../../theme/colors';
 
-export default function ChildHomeScreen({ familyId, onNavigate }) {
+export default function ChildHomeScreen({
+  familyId: propFamilyId,
+  onNavigate,
+  overrideChildId = null,
+  overrideFamilyId = null,
+  overrideChildName = null,
+  overrideChildren = null,
+}) {
   const session = useSession();
   const [loading, setLoading] = useState(true);
   const [todayEvents, setTodayEvents] = useState([]);
@@ -33,26 +44,41 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [assignmentCount, setAssignmentCount] = useState(0);
 
-  const childId = session?.child_id || (session?.accessible_children?.[0]?.id);
-  const child = session?.accessible_children?.[0];
+  const isParentViewingChild = Boolean(overrideChildId);
+  const childId = overrideChildId ?? session?.child_id ?? session?.accessible_children?.[0]?.id;
+  const familyId = overrideFamilyId ?? propFamilyId ?? session?.family_id;
+  const child = overrideChildren?.[0] ?? session?.accessible_children?.[0];
+  const childName = overrideChildName ?? child?.name ?? child?.first_name ?? 'Student';
+
+  // Ensure we have valid string IDs for API calls (avoid 400 from null/undefined/number)
+  const safeChildId = childId != null && String(childId).trim() ? String(childId).trim() : null;
+  const safeFamilyId = familyId != null && String(familyId).trim() ? String(familyId).trim() : null;
 
   useEffect(() => {
-    if (session && !session.loading && familyId && childId) {
+    if (!safeFamilyId || !safeChildId) return;
+    if (isParentViewingChild) {
+      loadData();
+    } else if (session && !session.loading) {
       loadData();
     }
-  }, [session, familyId, childId]);
+  }, [session, safeFamilyId, safeChildId, isParentViewingChild]);
 
   const loadData = async () => {
-    if (!familyId || !childId) return;
+    if (!safeFamilyId || !safeChildId) return;
+
+    if (isParentViewingChild && overrideChildren?.length) {
+      setChildren(overrideChildren);
+    }
 
     setLoading(true);
     try {
-      await Promise.all([
+      const loaders = [
         loadTodayEvents(),
         loadAssignments(),
-        loadChildren(),
+        isParentViewingChild && overrideChildren?.length ? Promise.resolve() : loadChildren(),
         loadSubjects(),
-      ]);
+      ].filter(Boolean);
+      await Promise.all(loaders);
     } catch (error) {
       console.error('[ChildHomeScreen] Error loading data:', error);
     } finally {
@@ -61,7 +87,8 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
   };
 
   const loadTodayEvents = async () => {
-    if (!familyId || !childId || !session) return;
+    if (!safeFamilyId || !safeChildId) return;
+    if (!isParentViewingChild && !session) return;
 
     try {
       const today = new Date(selectedDate);
@@ -83,14 +110,18 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
           event_type,
           subject:subject_id (id, name)
         `)
-        .eq('family_id', familyId)
+        .eq('family_id', safeFamilyId)
         .gte('start_ts', today.toISOString())
         .lt('start_ts', tomorrow.toISOString())
         .neq('status', 'canceled')
         .is('deleted_at', null)
         .order('start_ts', { ascending: true });
 
-      query = applyChildFilter(query, session, 'child_id');
+      if (isParentViewingChild) {
+        query = query.eq('child_id', safeChildId);
+      } else {
+        query = applyChildFilter(query, session, 'child_id');
+      }
 
       const { data, error } = await query;
 
@@ -121,10 +152,10 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
   };
 
   const loadAssignments = async () => {
-    if (!childId) return;
+    if (!safeChildId) return;
 
     try {
-      const { data, error } = await getAssignments(childId);
+      const { data, error } = await getAssignments(safeChildId);
       if (error) {
         console.error('[ChildHomeScreen] Error loading assignments:', error);
         setAssignments([]);
@@ -146,13 +177,22 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
   };
 
   const loadChildren = async () => {
-    if (!familyId || !session) return;
+    if (isParentViewingChild && overrideChildren?.length) {
+      setChildren(overrideChildren);
+      return;
+    }
+    if (!safeFamilyId || !session) return;
+    // Avoid query with undefined child_id for child users (causes 400)
+    if (session.role_flags?.isChild && !session.child_id) {
+      setChildren(session.accessible_children || []);
+      return;
+    }
 
     try {
       let query = supabase
         .from('children')
         .select('id, first_name, name, avatar')
-        .eq('family_id', familyId);
+        .eq('family_id', safeFamilyId);
 
       query = applyChildFilter(query, session, 'id');
 
@@ -172,13 +212,13 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
   };
 
   const loadSubjects = async () => {
-    if (!familyId) return;
+    if (!safeFamilyId) return;
 
     try {
       const { data, error } = await supabase
         .from('subject')
         .select('id, name')
-        .eq('family_id', familyId)
+        .eq('family_id', safeFamilyId)
         .is('deleted_at', null);
 
       if (error) {
@@ -194,7 +234,8 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
     }
   };
 
-  if (session?.loading || loading) {
+  const waitingForSession = !isParentViewingChild && session?.loading;
+  if (waitingForSession || loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -203,7 +244,7 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
     );
   }
 
-  if (!childId || !child) {
+  if (!childId || (!child && !isParentViewingChild)) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Unable to load your account information.</Text>
@@ -211,12 +252,12 @@ export default function ChildHomeScreen({ familyId, onNavigate }) {
     );
   }
 
-  const childName = child.name || child.first_name || 'Student';
+  const displayName = childName || (child && (child.name || child.first_name)) || 'Student';
 
   const heroProps = {
     date: selectedDate,
     title: "Today's plan",
-    subtitle: `Hi ${childName}! Here's what's happening today.`,
+    subtitle: `Hi ${displayName}! Here's what's happening today.`,
     chips: [
       { label: 'events', value: todayEvents.length, onClick: () => {} },
       { label: 'assignments', value: assignments.length, onClick: () => onNavigate?.('assignments') },

@@ -594,6 +594,7 @@ import AIActions from './planner/AIActions'
 import CenterPane from './planner/CenterPane'
 import SchedulingAssistant from './planner/SchedulingAssistant'
 import ChildProfile from './ChildProfile'
+import ChildHomeScreen from './child/ChildHomeScreen'
 // import Attendance from './records/Attendance' // Archived - records screen removed
 import Uploads from './documents/Uploads'
 import UploadsEnhanced from './documents/UploadsEnhanced'
@@ -7345,78 +7346,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         )
       }
     }
-    // Check if it's a child profile tab (from sidebar)
+    // Check if it's a child view tab (from sidebar) — same UI structure as parent home: left sidebar + center grid (main + rail)
     if (activeTab.startsWith('child-')) {
       const childId = activeTab.replace('child-', '');
       const child = children.find(c => c.id === childId);
-      if (child) {
+      if (child && familyId) {
         return (
           <View style={{ flex: 1 }}>
-            <ChildProfile
-              childId={child.id}
-              childName={child.first_name}
+            <ChildHomeScreen
               familyId={familyId}
-              activeChildSection={activeChildSection || 'affirmation'}
-              onBack={null}
-              onDeleted={() => {
-                console.log('Child deleted, returning to children list');
-                onTabChange('children-list');
-                setTimeout(() => {
-                  window.location.reload();
-                }, 500);
-              }}
-              onAITopOff={(params) => {
-                console.log('AI top-off:', params);
-                if (typeof window !== 'undefined') {
-                  const urlParams = new URLSearchParams();
-                  urlParams.set('ai_topoff_for_subject', params.subject);
-                  urlParams.set('minutes_needed', params.minutesNeeded.toString());
-                  urlParams.set('plan_for_child', params.childId);
-                  window.history.replaceState({}, '', `?${urlParams.toString()}`);
-                }
-                onTabChange('planner');
-              }}
-              onEditGoal={(goal) => {
-                console.log('Edit goal:', goal);
-              }}
-              onAddGoal={() => {
-                console.log('Add goal for child:', child.id);
-              }}
-              onEditInfo={() => {
-                if (onEditChild) {
-                  onEditChild(child);
-                } else {
-                  console.log('Edit child info:', child.id);
-                }
-              }}
-              onAISummary={() => {
-                console.log('Generate AI summary for:', child.id);
-              }}
-              onPlanYear={() => {
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openYearWizard'));
-                }
-              }}
-              onAddSyllabus={onAddSyllabus}
-              onOpenPlanner={(params) => {
-                console.log('Open planner:', params);
-                if (typeof window !== 'undefined') {
-                  const urlParams = new URLSearchParams();
-                  urlParams.set('plan_for_child', params.childId);
-                  urlParams.set('week', params.weekStart);
-                  if (params.rebalance) {
-                    urlParams.set('rebalance', 'true');
-                  }
-                  window.history.replaceState({}, '', `?${urlParams.toString()}`);
-                }
-                onTabChange('planner');
-              }}
-              onNavigate={(section) => {
-                // Handle navigation to different child sections
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('childSectionChange', { detail: { childId: child.id, section } }));
-                }
-              }}
+              onNavigate={onTabChange}
+              overrideChildId={child.id}
+              overrideFamilyId={familyId}
+              overrideChildName={child.first_name || child.name}
+              overrideChildren={[child]}
             />
           </View>
         );
