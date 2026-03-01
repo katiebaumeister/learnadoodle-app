@@ -12,7 +12,6 @@ import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { useSession } from '../../contexts/SessionContext';
 import ParentNavigator from './ParentNavigator';
-import ChildNavigator from './ChildNavigator';
 import TutorNavigator from './TutorNavigator';
 
 export default function RoleGate({ children, ...props }) {
@@ -41,10 +40,11 @@ export default function RoleGate({ children, ...props }) {
   }
 
   // Route to appropriate navigator based on role
+  // Child users use the same shell as parents (WebLayout: left sidebar + center grid) so structure/UI match; only content is child-scoped.
   const { role_flags, effective_role } = session;
 
   if (role_flags.isChild) {
-    return <ChildNavigator session={session} user={props.user} {...props} />;
+    return <ParentNavigator session={session} user={props.user} userRole="child" {...props} />;
   } else if (role_flags.isTutor) {
     return <TutorNavigator session={session} user={props.user} {...props} />;
   } else {

@@ -184,12 +184,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showAIToolsModal, setShowAIToolsModal] = useState(false);
   const [userRole, setUserRole] = useState(propUserRole || null);
   
-  // Update userRole from session if available
+  // Update userRole from session when prop not provided (prop wins so child gets same shell with userRole="child")
   useEffect(() => {
+    if (propUserRole != null) return;
     if (session && session.effective_role) {
       setUserRole(session.effective_role);
     }
-  }, [session]);
+  }, [session, propUserRole]);
   const [homeLoading, setHomeLoading] = useState(false);
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);

@@ -7417,7 +7417,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'home':
         // Route to appropriate dashboard based on role
         if (userRole === 'child' && accessibleChildren.length > 0) {
-          return <ChildDashboard childId={accessibleChildren[0].id} childName={accessibleChildren[0].name || accessibleChildren[0].first_name} />
+          return (
+            <ChildHomeScreen
+              familyId={familyId}
+              onNavigate={onTabChange}
+            />
+          )
         } else if (userRole === 'tutor') {
           return <TutorDashboard accessibleChildren={accessibleChildren} />
         } else {

@@ -131,10 +131,9 @@ export default function LeftRail({
         // { key: 'subjects', label: 'Subjects', icon: null }, // Hidden from sidebar
       ];
 
-      // Filter based on role
+      // Same sidebar structure for parent and child (exact same UI); content is child-scoped in WebContent
       if (userRole === 'child') {
-        // Children only see Home
-        return allItems.filter(item => item.key === 'home');
+        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       } else if (userRole === 'tutor') {
         // Tutors see Home, Planner, New (no Records, no Explore - archived)
         return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
