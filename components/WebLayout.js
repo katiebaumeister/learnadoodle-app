@@ -1016,10 +1016,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         if (!meError && meData) {
           const mergedProfile = {
             ...meData,
-            // Prefer profiles table for editable fields
+            // Prefer profiles table for editable fields; email must be logged-in user's (child sees own email, not parent's)
             name: profileData?.name || profileData?.first_name || meData.name || meData.first_name || '',
             first_name: profileData?.first_name || meData.first_name || '',
-            email: profileData?.email || meData.email || user.email,
+            email: profileData?.email || user.email || meData.email,
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
           };
@@ -1085,7 +1085,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             ...meData,
             name: profileData?.name || profileData?.first_name || meData.name || meData.first_name || '',
             first_name: profileData?.first_name || meData.first_name || '',
-            email: profileData?.email || meData.email || user.email,
+            email: profileData?.email || user.email || meData.email,
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
           };

@@ -17,7 +17,9 @@ import TaskCreateModal from '../TaskCreateModal';
 import ConfirmDialog from '../ConfirmDialog';
 import IDCardView from '../profile/IDCardView';
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null }) {
+  const isChildMode = propUserRole === 'child';
+  const currentChildId = propCurrentChildId ?? null;
   const { mode } = useSensoryMode();
   const tokens = getModeTokens(mode);
   const toast = useToast();
@@ -323,7 +325,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           if (!error && data) {
             setProfile(data);
             setProfileName(data.name || data.first_name || '');
-            setProfileEmail(data.email || user?.email || '');
+            // Prefer logged-in user's email so child sees own email, not parent's
+            setProfileEmail(user?.email || data.email || '');
             setProfilePhone(data.phone || '');
           }
         } catch (error) {
@@ -1703,85 +1706,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </Text>
             </View>
             </View>
-            
-            {/* Data & Account Actions */}
-            <View style={styles.dangerZoneSection}>
-              <Text style={styles.subsectionTitle}>Data controls</Text>
-              <View style={styles.subsectionDivider} />
-              <View style={styles.dangerZoneActions}>
-                <TouchableOpacity
-                  style={[styles.dangerZoneExportButton, resetFamilyDataInProgress && styles.dangerZoneButtonDisabled]}
-                  onPress={() => {
-                    const runReset = async () => {
-                      setResetFamilyDataInProgress(true);
-                      try {
-                        const res = await resetFamilyData();
-                        if (res?.error) {
-                          const msg = res.error?.message || res.error?.detail || String(res.error);
-                          throw new Error(msg);
-                        }
-                        if (toast?.push) toast.push('Family data reset. Refreshing…', 'success');
-                        if (onFamilyUpdate) {
-                          const { data } = await getFamilyMembers();
-                          if (data) onFamilyUpdate(data);
-                        }
-                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                          window.dispatchEvent(new CustomEvent('refreshChildren'));
-                          window.dispatchEvent(new CustomEvent('refreshSubjects'));
-                          window.dispatchEvent(new CustomEvent('refreshCalendar'));
-                          setTimeout(() => window.location.reload(), 800);
-                        }
-                      } catch (e) {
-                        const msg = e?.message || 'Reset failed';
-                        const hint = (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('load') || msg.toLowerCase().includes('network'))
-                          ? ' Is the backend running (e.g. localhost:8001)?'
-                          : '';
-                        if (toast?.push) toast.push(msg + hint, 'error');
-                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                          window.alert(msg + hint);
-                        }
-                      } finally {
-                        setResetFamilyDataInProgress(false);
-                      }
-                    };
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      const ok = window.confirm('Reset all family data? This will remove all events, children, subjects, materials, and plans so you can re-run onboarding. Your account stays. Cannot be undone.');
-                      if (ok) runReset();
-                    } else {
-                      Alert.alert(
-                        'Reset all family data?',
-                        'This will remove all events, children, subjects, materials, and plans so you can re-run onboarding. Your account and family membership stay. Cannot be undone.',
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          { text: 'Reset all data', style: 'destructive', onPress: runReset },
-                        ]
-                      );
-                    }
-                  }}
-                  disabled={resetFamilyDataInProgress}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.dangerZoneExportButtonText}>
-                    {resetFamilyDataInProgress ? 'Resetting…' : 'Reset all family data'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.dangerZoneExportButton}
-                  onPress={() => setActiveSection('datavault')}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.dangerZoneExportButtonText}>Export my data</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={styles.dangerZoneDeleteButton}
-                  onPress={() => setActiveSection('datavault')}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.dangerZoneDeleteButtonText}>Delete my account</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
           </View>
         );
       
@@ -1854,7 +1778,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             {/* Parents Section */}
             <View style={styles.membersSectionRow}>
-              <Text style={styles.subsectionTitle}>Parents</Text>
+              <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Parents' : 'Parents'}</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {parents.length > 0 && (
                   <TouchableOpacity 
@@ -1973,7 +1897,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             {/* Children Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
-              <Text style={styles.subsectionTitle}>Children</Text>
+              <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Family' : 'Children'}</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {children.length > 0 && (
                   <TouchableOpacity 
@@ -2020,25 +1944,27 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   })}
                 >
                   <Text style={styles.memberRowName}>{childName}{child.archived && ' (Archived)'}</Text>
-                  <View style={styles.memberRowActions}>
-                    <TouchableOpacity 
-                      style={[
-                        styles.memberRowActionButton,
-                        isHovered && styles.memberRowActionButtonHovered,
-                      ]} 
-                      onPress={() => { setEditingChild(child); setShowEditChildModal(true); }} 
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Pencil size={16} color="#374151" />
-                    </TouchableOpacity>
-                  </View>
+                  {!isChildMode && (
+                    <View style={styles.memberRowActions}>
+                      <TouchableOpacity 
+                        style={[
+                          styles.memberRowActionButton,
+                          isHovered && styles.memberRowActionButtonHovered,
+                        ]} 
+                        onPress={() => { setEditingChild(child); setShowEditChildModal(true); }} 
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Pencil size={16} color="#374151" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               );
             })}
             
             {/* Tutors Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
-              <Text style={styles.subsectionTitle}>Tutors</Text>
+              <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Tutors' : 'Tutors'}</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {tutors.length > 0 && (
                   <TouchableOpacity 
@@ -2076,34 +2002,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           </View>
         );
       
-      case 'courses':
+      case 'courses': {
+        // In child mode, only show subjects assigned to the logged-in child (child_id empty = all, or child_id contains currentChildId)
+        const coursesList = isChildMode && currentChildId
+          ? subjects.filter((s) => {
+              const cid = s.child_id == null ? '' : String(s.child_id).trim();
+              if (cid === '') return true;
+              const ids = cid.split(';').map((id) => id.trim()).filter(Boolean);
+              return ids.some((id) => String(id) === String(currentChildId));
+            })
+          : subjects;
         return (
           <View style={styles.mainContentInner}>
             <View style={styles.coursesHeader}>
               <View style={styles.coursesTitleContainer}>
                 <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Courses</Text>
               </View>
-              <TouchableOpacity
-                style={styles.coursesAddButton}
-                onPress={() => setShowAddSubjectModal(true)}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Plus size={16} color="#374151" />
-                <Text style={styles.coursesAddButtonText}>Add Subject</Text>
-              </TouchableOpacity>
-            </View>
-            
-            {loadingSubjects ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="#887DEE" />
-                <Text style={styles.loadingText}>Loading subjects...</Text>
-              </View>
-            ) : subjects.length === 0 ? (
-              <View style={styles.coursesEmptyState}>
-                <Text style={styles.coursesEmptyTitle}>No subjects yet</Text>
-                <Text style={styles.coursesEmptyDescription}>
-                  Create subjects to organize learning, assignments, and progress.
-                </Text>
+              {!isChildMode && (
                 <TouchableOpacity
                   style={styles.coursesAddButton}
                   onPress={() => setShowAddSubjectModal(true)}
@@ -2112,10 +2027,34 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   <Plus size={16} color="#374151" />
                   <Text style={styles.coursesAddButtonText}>Add Subject</Text>
                 </TouchableOpacity>
+              )}
+            </View>
+            
+            {loadingSubjects ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color="#887DEE" />
+                <Text style={styles.loadingText}>Loading subjects...</Text>
+              </View>
+            ) : coursesList.length === 0 ? (
+              <View style={styles.coursesEmptyState}>
+                <Text style={styles.coursesEmptyTitle}>No subjects yet</Text>
+                <Text style={styles.coursesEmptyDescription}>
+                  {isChildMode ? 'No courses are assigned to you yet.' : 'Create subjects to organize learning, assignments, and progress.'}
+                </Text>
+                {!isChildMode && (
+                  <TouchableOpacity
+                    style={styles.coursesAddButton}
+                    onPress={() => setShowAddSubjectModal(true)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Plus size={16} color="#374151" />
+                    <Text style={styles.coursesAddButtonText}>Add Subject</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               <View style={styles.subjectsList}>
-                {subjects.map((subject, index) => {
+                {coursesList.map((subject, index) => {
                   const isHovered = hoveredSubjectId === subject.id;
                   const lastActivity = getSubjectLastActivity(subject);
                   const childNames = getSubjectChildNames(subject);
@@ -2189,18 +2128,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                 <Text style={styles.subjectCardActivity}> · {lastActivity}</Text>
                               </View>
                             </View>
-                            <View style={styles.subjectCardActions}>
-                              <TouchableOpacity
-                                style={[
-                                  styles.subjectActionButton,
-                                  isHovered && styles.subjectActionButtonHovered,
-                                ]}
-                                onPress={() => handleEditSubject(subject)}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Pencil size={16} color="#374151" />
-                              </TouchableOpacity>
-                            </View>
+                            {!isChildMode && (
+                              <View style={styles.subjectCardActions}>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.subjectActionButton,
+                                    isHovered && styles.subjectActionButtonHovered,
+                                  ]}
+                                  onPress={() => handleEditSubject(subject)}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Pencil size={16} color="#374151" />
+                                </TouchableOpacity>
+                              </View>
+                            )}
                           </View>
                         </>
                       )}
@@ -2212,6 +2153,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             )}
           </View>
         );
+      }
       
       case 'doodlemax':
         return (

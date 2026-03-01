@@ -7646,6 +7646,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onFamilyUpdate={onFamilyUpdate}
               profile={propProfile}
               preloadedSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
+              userRole={userRole}
+              currentChildId={userRole === 'child' ? (accessibleChildren?.[0]?.id ?? propSession?.child_id) : null}
             />
           </View>
         );

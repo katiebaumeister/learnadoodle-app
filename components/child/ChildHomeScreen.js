@@ -4,7 +4,7 @@
  * Simplified, motivating home experience for children using RoleHomeShell:
  * - Today's schedule (only their events)
  * - Assignments due soon / needing review
- * - Quick action buttons (Submit, Ask for Help)
+ * - Today's schedule and assignments
  * 
  * When overrideChildId/overrideFamilyId/overrideChildName/overrideChildren are provided
  * (e.g. parent viewing a specific child), uses those and filters data to that child only.
@@ -13,15 +13,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Platform, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { HelpCircle } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import RoleHomeShell from '../home/RoleHomeShell';
-import HomeHeroCard from '../home/HomeHeroCard';
 import TodayScheduleCard from '../home/TodayScheduleCard';
 import AssignmentsCard from './overview/AssignmentsCard';
-import AskForHelpModal from './AskForHelpModal';
 import EmptyStateCard from '../home/EmptyStateCard';
 import { applyChildFilter } from '../../lib/queryFilters';
 import { colors } from '../../theme/colors';
@@ -40,7 +37,6 @@ export default function ChildHomeScreen({
   const [assignments, setAssignments] = useState([]);
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
-  const [showHelpModal, setShowHelpModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [assignmentCount, setAssignmentCount] = useState(0);
 
@@ -107,8 +103,7 @@ export default function ChildHomeScreen({
           status,
           child_id,
           subject_id,
-          event_type,
-          subject:subject_id (id, name)
+          event_type
         `)
         .eq('family_id', safeFamilyId)
         .gte('start_ts', today.toISOString())
@@ -140,7 +135,7 @@ export default function ChildHomeScreen({
         status: event.status,
         child_id: event.child_id,
         subject_id: event.subject_id,
-        subject: event.subject?.name || null,
+        subject: null,
         event_type: event.event_type,
       }));
 
@@ -191,7 +186,7 @@ export default function ChildHomeScreen({
     try {
       let query = supabase
         .from('children')
-        .select('id, first_name, name, avatar')
+        .select('id, first_name, avatar')
         .eq('family_id', safeFamilyId);
 
       query = applyChildFilter(query, session, 'id');
@@ -218,8 +213,7 @@ export default function ChildHomeScreen({
       const { data, error } = await supabase
         .from('subject')
         .select('id, name')
-        .eq('family_id', safeFamilyId)
-        .is('deleted_at', null);
+        .eq('family_id', safeFamilyId);
 
       if (error) {
         console.error('[ChildHomeScreen] Error loading subjects:', error);
@@ -266,25 +260,11 @@ export default function ChildHomeScreen({
 
   const mainContent = (
     <View style={styles.mainContent}>
-      {/* Quick Actions */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={styles.helpButton}
-          onPress={() => setShowHelpModal(true)}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <HelpCircle size={18} color={colors.white} />
-          <Text style={styles.helpButtonText}>Ask for Help</Text>
-        </TouchableOpacity>
-      </View>
-
       {/* Today's Schedule */}
       {todayEvents.length === 0 ? (
         <EmptyStateCard
           title="Nothing planned today"
           subtitle="Ask your parent to add activities, or check back later."
-          actionLabel="Ask for Help"
-          onAction={() => setShowHelpModal(true)}
         />
       ) : (
         <TodayScheduleCard
@@ -307,39 +287,11 @@ export default function ChildHomeScreen({
     </View>
   );
 
-  const railContent = (
-    <View style={styles.railContent}>
-      {/* My Focus placeholder */}
-      <View style={styles.focusCard}>
-        <Text style={styles.focusTitle}>My focus</Text>
-        <Text style={styles.focusText}>Keep up the great work!</Text>
-      </View>
-
-      {/* Rewards placeholder */}
-      <View style={styles.rewardsCard}>
-        <Text style={styles.rewardsTitle}>Rewards</Text>
-        <Text style={styles.rewardsText}>Nice work today!</Text>
-      </View>
-    </View>
-  );
-
   return (
     <>
       <RoleHomeShell
         heroProps={heroProps}
         main={mainContent}
-        rail={railContent}
-      />
-
-      <AskForHelpModal
-        visible={showHelpModal}
-        onClose={() => setShowHelpModal(false)}
-        childId={childId}
-        familyId={familyId}
-        onHelpRequested={() => {
-          setShowHelpModal(false);
-          loadAssignments();
-        }}
       />
     </>
   );
@@ -377,89 +329,5 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     gap: 20,
-  },
-  quickActions: {
-    marginBottom: 0,
-  },
-  helpButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
-      transition: 'all 0.2s ease-in-out',
-      '&:hover': {
-        opacity: 0.9,
-      },
-    }),
-  },
-  helpButtonText: {
-    color: colors.white,
-    fontSize: 15,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  railContent: {
-    gap: 20,
-  },
-  focusCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
-    }),
-  },
-  focusTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  focusText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  rewardsCard: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
-    }),
-  },
-  rewardsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  rewardsText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
 });
