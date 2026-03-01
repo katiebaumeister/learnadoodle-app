@@ -7466,8 +7466,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               />
             );
           }
-          // Fallback to legacy home content for non-parents or when session not ready
-          // Never return null - show loading so content area is never blank
+          // Fallback when session not ready or non-parent: show ParentHomeScreen if we have familyId, else loading
           if (homeLoading || !homeData) {
             return (
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
@@ -7476,7 +7475,25 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               </View>
             );
           }
-          return renderHomeContent()
+          if (familyId) {
+            return (
+              <ParentHomeScreen
+                familyId={familyId}
+                onNavigate={onTabChange}
+                onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
+                onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
+                onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
+                onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
+                onAddChild={() => onCloseAddChildModal && Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddChildModal'))}
+              />
+            );
+          }
+          return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+              <ActivityIndicator size="large" color="#887DEE" />
+              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+            </View>
+          );
         }
       case 'child-dashboard':
         if (activeSubtab) {
@@ -7485,7 +7502,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }
         return accessibleChildren.length > 0 ? (
           <ChildDashboard childId={accessibleChildren[0].id} childName={accessibleChildren[0].name || accessibleChildren[0].first_name} />
-        ) : renderHomeContent()
+        ) : (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+            <Text style={{ fontSize: 14, color: '#6b7280' }}>No children in your account yet.</Text>
+          </View>
+        )
       case 'tutor-dashboard':
         return <TutorDashboard accessibleChildren={accessibleChildren} />
       // case 'explore': // Archived - explore page removed
