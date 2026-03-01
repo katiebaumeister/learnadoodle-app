@@ -60,7 +60,8 @@ const styles = StyleSheet.create({
   },
   content: {
     alignItems: 'center',
-    maxWidth: 400,
+    alignSelf: 'stretch',
+    width: '100%',
   },
   iconContainer: {
     width: 64,

@@ -13,8 +13,8 @@ export default function RoleHomeShell({ main, rail }) {
     <View style={styles.container}>
       {/* Responsive grid */}
       <View style={styles.gridContainer}>
-        {/* Left: Main column */}
-        <View style={styles.leftSection}>
+        {/* Left: Main column (full width when no rail) */}
+        <View style={[styles.leftSection, !rail && styles.leftSectionFullWidth]}>
           {main}
         </View>
 
@@ -67,6 +67,11 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
       alignSelf: 'stretch',
+    }),
+  },
+  leftSectionFullWidth: {
+    ...(Platform.OS === 'web' && {
+      maxWidth: '100%',
     }),
   },
   railColumn: {

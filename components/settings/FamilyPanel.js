@@ -17,9 +17,10 @@ import TaskCreateModal from '../TaskCreateModal';
 import ConfirmDialog from '../ConfirmDialog';
 import IDCardView from '../profile/IDCardView';
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null }) {
   const isChildMode = propUserRole === 'child';
   const currentChildId = propCurrentChildId ?? null;
+  const viewingAsChildId = propViewingAsChildId ?? null;
   const { mode } = useSensoryMode();
   const tokens = getModeTokens(mode);
   const toast = useToast();
@@ -46,6 +47,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [familyName, setFamilyName] = useState('');
   const [profileUsername, setProfileUsername] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [viewingAsChildEmail, setViewingAsChildEmail] = useState(null);
   const lastProfileSaveRef = useRef(0);
   const preferencesLoadedRef = useRef(false);
   const skipPreferencesSaveRef = useRef(true);
@@ -344,7 +346,55 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   }, [family]);
 
-  // Load preferences and notification preferences from DB
+  // When parent is "viewing as" a child, load that child's linked account email for Profile
+  useEffect(() => {
+    if (!viewingAsChildId || !familyId || propUserRole !== 'parent') {
+      setViewingAsChildEmail(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        let fm = null;
+        const { data: byChildId } = await supabase
+          .from('family_members')
+          .select('user_id')
+          .eq('family_id', familyId)
+          .eq('member_role', 'child')
+          .eq('child_id', viewingAsChildId)
+          .maybeSingle();
+        if (cancelled) return;
+        fm = byChildId;
+        if (!fm?.user_id) {
+          const { data: byScopeList } = await supabase
+            .from('family_members')
+            .select('user_id')
+            .eq('family_id', familyId)
+            .eq('member_role', 'child')
+            .contains('child_scope', [viewingAsChildId])
+            .limit(1);
+          if (cancelled) return;
+          fm = byScopeList?.[0] ?? null;
+        }
+        if (!fm?.user_id) {
+          setViewingAsChildEmail(null);
+          return;
+        }
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', fm.user_id)
+          .maybeSingle();
+        if (cancelled) return;
+        setViewingAsChildEmail(prof?.email ?? null);
+      } catch (_) {
+        if (!cancelled) setViewingAsChildEmail(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewingAsChildId, familyId, propUserRole]);
+
+  // Load preferences and notification preferences from DB (skip notification_preferences in child mode to avoid 403 RLS)
   useEffect(() => {
     if (!user?.id || !familyId) return;
     let cancelled = false;
@@ -364,24 +414,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setMotivationalMessagesEnabled(ap.motivational_messages !== false);
           setDarkMode(ap.dark_mode === 'on' || ap.dark_mode === 'off' || ap.dark_mode === 'system' ? ap.dark_mode : 'off');
         }
-        const { data: notifRow } = await supabase
-          .from('notification_preferences')
-          .select('notification_types, email_notifications_enabled')
-          .eq('user_id', user.id)
-          .eq('family_id', familyId)
-          .maybeSingle();
-        if (cancelled) return;
-        if (notifRow?.notification_types && typeof notifRow.notification_types === 'object') {
-          const nt = notifRow.notification_types;
-          setNotifDailyUpdates(nt.daily_updates !== false);
-          setNotifWeeklyProgress(nt.weekly_progress === true);
-          setNotifPlanningInsights(nt.planning_insights !== false);
-          setNotifMotivation(nt.motivation !== false);
-          setNotifParentGuidance(nt.parent_guidance === true);
-          setNotifProductUpdates(nt.product_updates !== false);
-          setNotifAnnouncements(nt.announcements === true);
+        if (!isChildMode) {
+          const { data: notifRow } = await supabase
+            .from('notification_preferences')
+            .select('notification_types, email_notifications_enabled')
+            .eq('user_id', user.id)
+            .eq('family_id', familyId)
+            .maybeSingle();
+          if (cancelled) return;
+          if (notifRow?.notification_types && typeof notifRow.notification_types === 'object') {
+            const nt = notifRow.notification_types;
+            setNotifDailyUpdates(nt.daily_updates !== false);
+            setNotifWeeklyProgress(nt.weekly_progress === true);
+            setNotifPlanningInsights(nt.planning_insights !== false);
+            setNotifMotivation(nt.motivation !== false);
+            setNotifParentGuidance(nt.parent_guidance === true);
+            setNotifProductUpdates(nt.product_updates !== false);
+            setNotifAnnouncements(nt.announcements === true);
+          }
+          setNotificationsEnabled(notifRow?.email_notifications_enabled !== false);
         }
-        setNotificationsEnabled(notifRow?.email_notifications_enabled !== false);
       } catch (_) {
         // Silently fail; defaults remain
       } finally {
@@ -392,7 +444,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       }
     })();
     return () => { cancelled = true; };
-  }, [user?.id, familyId]);
+  }, [user?.id, familyId, isChildMode]);
 
   // Persist app preferences to profiles when they change
   useEffect(() => {
@@ -413,9 +465,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       });
   }, [soundEffectsEnabled, animationsEnabled, motivationalMessagesEnabled, darkMode, user?.id]);
 
-  // Persist notification preferences to DB when they change
+  // Persist notification preferences to DB when they change (skip in child mode to avoid 403 RLS)
   useEffect(() => {
-    if (!preferencesLoadedRef.current || skipPreferencesSaveRef.current || !user?.id || !familyId) return;
+    if (isChildMode || !preferencesLoadedRef.current || skipPreferencesSaveRef.current || !user?.id || !familyId) return;
     supabase
       .from('notification_preferences')
       .upsert(
@@ -439,6 +491,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         if (error) console.warn('Failed to save notification preferences:', error.message);
       });
   }, [
+    isChildMode,
     notificationsEnabled,
     notifDailyUpdates,
     notifWeeklyProgress,
@@ -1115,7 +1168,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Load connection status from API
   const loadConnectionStatus = async (useCache = true, showLoading = false) => {
-    if (!user || !familyId) return;
+    if (!user || !familyId || isChildMode) return;
     
     // Try to load from cache first if useCache is true
     if (useCache && Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1201,20 +1254,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  // Load connection status on mount (use cache first, no loading state)
+  // Load connection status on mount (use cache first, no loading state; skip in child mode to avoid 403)
   useEffect(() => {
-    if (user && familyId) {
-      loadConnectionStatus(true); // Use cache first, load immediately
+    if (user && familyId && !isChildMode) {
+      loadConnectionStatus(true);
     }
-  }, [user, familyId]);
+  }, [user, familyId, isChildMode]);
 
   // Refresh connection status when connections section becomes active (if needed)
   useEffect(() => {
-    if (activeSection === 'connections' && user && familyId) {
-      // Only refresh if cache is stale (background refresh)
-      loadConnectionStatus(false); // Force refresh in background
+    if (activeSection === 'connections' && user && familyId && !isChildMode) {
+      loadConnectionStatus(false);
     }
-  }, [activeSection, user, familyId]);
+  }, [activeSection, user, familyId, isChildMode]);
 
   // Listen for OAuth callback messages (for Google)
   useEffect(() => {
@@ -1618,8 +1670,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           </View>
         );
       
-      case 'profile':
-        const hasProfileChanges = profileEmail.trim() !== (profile?.email || user?.email || '');
+      case 'profile': {
+        const isViewingAsChild = Boolean(viewingAsChildId);
+        const displayEmail = isViewingAsChild ? (viewingAsChildEmail ?? 'No account linked') : profileEmail;
+        const hasProfileChanges = !isViewingAsChild && (profileEmail.trim() !== (profile?.email || user?.email || ''));
         
         return (
           <View style={styles.mainContentInner}>
@@ -1636,12 +1690,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <View style={styles.profileEmailInputContainer}>
                 <TextInput
                   style={[styles.profileDarkInput, styles.profileEmailInput]}
-                  value={profileEmail}
-                  onChangeText={setProfileEmail}
+                  value={displayEmail}
+                  onChangeText={isViewingAsChild ? undefined : setProfileEmail}
                   placeholder="Enter your email"
                   placeholderTextColor="#6b7280"
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  editable={!isViewingAsChild}
                 />
                 {hasProfileChanges && (
                   <TouchableOpacity
@@ -1708,6 +1763,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
           </View>
         );
+      }
       
       case 'notifications':
         const NotificationCheckbox = ({ value, onValueChange, label }) => (
@@ -1871,21 +1927,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               ) : (
                 <>
                   <Text style={styles.memberRowName}>{family?.family_name || 'Family'}</Text>
-                  <View style={styles.memberRowActions}>
-                    <TouchableOpacity
-                      style={[
-                        styles.memberRowActionButton,
-                        familyNameRowHovered && styles.memberRowActionButtonHovered,
-                      ]}
-                      onPress={() => {
-                        setEditingFamilyNameValue(family?.family_name || '');
-                        setIsEditingFamilyName(true);
-                      }}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Pencil size={16} color="#374151" />
-                    </TouchableOpacity>
-                  </View>
+                  {!isChildMode && (
+                    <View style={styles.memberRowActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.memberRowActionButton,
+                          familyNameRowHovered && styles.memberRowActionButtonHovered,
+                        ]}
+                        onPress={() => {
+                          setEditingFamilyNameValue(family?.family_name || '');
+                          setIsEditingFamilyName(true);
+                        }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Pencil size={16} color="#374151" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </>
               )}
             </View>

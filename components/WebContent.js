@@ -632,7 +632,7 @@ import PlanHealthBanner from './planner/PlanHealthBanner'
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -670,7 +670,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       Animated.timing(spinValue, {
         toValue: 1,
         duration: 1000,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       })
     );
     spinAnimation.start();
@@ -993,10 +993,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
                             (activeTab && typeof activeTab === 'string' && activeTab.startsWith('notes-pages-')) ||
                             activeTab === 'children-list';
       
-      if (isFamilyScreen) {
-        console.log('[WebContent] openTaskModal event ignored - on family screen, WebLayout will handle it');
-        return;
-      }
+      if (isFamilyScreen) return;
       
       // Only handle for non-family screens (planner, home, etc.)
       const date = detail.date || new Date();
@@ -1006,34 +1003,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
       const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
       const subjectId = detail.subjectId || null;
       
-      console.log('[WebContent] openTaskModal event received (non-family screen):', { 
-        date, 
-        childIds: incomingChildIds, 
-        primaryChildId,
-        eventType: detail.eventType, 
-        subjectId: detail.subjectId,
-        activeTab 
-      });
-      
-      // Set all state values - React will batch these updates
       setTaskModalDate(date);
       setTaskModalChildIds(incomingChildIds);
       setTaskModalChildId(primaryChildId);
       setTaskModalDefaultSubjectId(subjectId);
       setTaskModalDefaultEventType(detail.eventType || null);
-      setTaskModalDefaultPlacement(detail.placement || 'calendar'); // Use placement from event detail, default to 'calendar'
+      setTaskModalDefaultPlacement(detail.placement || 'calendar');
       setShowTaskModal(true);
-      
-      console.log('[WebContent] Task modal state set - showTaskModal: true, date:', date, 'primaryChildId:', primaryChildId);
     };
     
-    console.log('[WebContent] Setting up openTaskModal event listener');
     window.addEventListener('openTaskModal', handleOpenTaskModal);
-    
-    return () => {
-      console.log('[WebContent] Removing openTaskModal event listener');
-      window.removeEventListener('openTaskModal', handleOpenTaskModal);
-    };
+    return () => window.removeEventListener('openTaskModal', handleOpenTaskModal);
   }, [activeTab]);
 
   // Listen for openEventModal event to open event details modal
@@ -2751,9 +2731,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
     };
   }, []);
 
-  // User role state
+  // User role state (fallback when session not passed; session is source of truth to avoid parent flash)
   const [userRole, setUserRole] = useState(null);
   const [accessibleChildren, setAccessibleChildren] = useState([]);
+  // Use session role/children first so we show correct home (child vs parent) on first paint
+  const roleForHome = propSession?.effective_role ?? userRole;
+  const accessibleForHome = Array.isArray(propSession?.accessible_children) && propSession.accessible_children.length > 0
+    ? propSession.accessible_children
+    : accessibleChildren;
 
   useEffect(() => {
     const fetchUserInfo = async () => {
@@ -3622,11 +3607,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildSection
   const [addMaterialModalDefaultSubjectId, setAddMaterialModalDefaultSubjectId] = useState(null);
   const [addMaterialModalDefaultSubjectName, setAddMaterialModalDefaultSubjectName] = useState(null);
   const [addMaterialModalDefaultChildIds, setAddMaterialModalDefaultChildIds] = useState([]);
-  
-  // Debug: Log when showTaskModal changes
-  useEffect(() => {
-    console.log('[WebContent] showTaskModal changed to:', showTaskModal);
-  }, [showTaskModal]);
   
   // Drag-drop conflict banner state
   const [conflictBanner, setConflictBanner] = useState({
@@ -7414,23 +7394,34 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     switch (activeTab) {
       case 'search':
         return renderSearchContent()
-      case 'home':
-        // Route to appropriate dashboard based on role
-        if (userRole === 'child' && accessibleChildren.length > 0) {
+      case 'home': {
+        // Route by role; use session first so we don't flash parent before role is loaded
+        const isChild = roleForHome === 'child' || roleForHome === 'student';
+        const isTutor = roleForHome === 'tutor';
+        const hasAccessibleChildren = accessibleForHome.length > 0;
+        // When we have user but role still unknown, show loading instead of parent view to avoid flash
+        if (user && roleForHome == null) {
+          return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+              <ActivityIndicator size="large" color="#887DEE" />
+              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+            </View>
+          );
+        }
+        if (isChild && hasAccessibleChildren) {
           return (
             <ChildHomeScreen
               familyId={familyId}
               onNavigate={onTabChange}
             />
-          )
-        } else if (userRole === 'tutor') {
-          return <TutorDashboard accessibleChildren={accessibleChildren} />
-        } else {
-          // Use ParentHomeScreen for parent users (only if session is ready and we have homeData or it's loading)
-          // If RPC fails, fall back to legacy home content
-          if (propSession && (propSession.role_flags?.isParent || (!propSession.role_flags?.isChild && !propSession.role_flags?.isTutor)) && !propSession.loading) {
-            // Try ParentHomeScreen, but if it fails, we'll fall back to legacy
-            return (
+          );
+        }
+        if (isTutor) {
+          return <TutorDashboard accessibleChildren={accessibleForHome} />;
+        }
+        // Parent (or fallback)
+        if (propSession && (propSession.role_flags?.isParent || (!propSession.role_flags?.isChild && !propSession.role_flags?.isTutor)) && !propSession.loading) {
+          return (
               <ParentHomeScreen
                 familyId={familyId}
                 onNavigate={onTabChange}
@@ -7558,7 +7549,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               preloadedSubjectDetailCache={subjectDetailCache}
               onSubjectsUpdate={handleSubjectsOverviewUpdate}
               onSubjectDetailUpdate={handleSubjectDetailUpdate}
-              userRole={userRole}
+              userRole={roleForHome ?? userRole}
               accessibleChildren={accessibleChildren}
               onAddSubject={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -7646,8 +7637,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onFamilyUpdate={onFamilyUpdate}
               profile={propProfile}
               preloadedSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
-              userRole={userRole}
-              currentChildId={userRole === 'child' ? (accessibleChildren?.[0]?.id ?? propSession?.child_id) : null}
+              userRole={roleForHome ?? userRole}
+              currentChildId={(roleForHome === 'child' || roleForHome === 'student') ? (typeof accessibleForHome[0] === 'string' ? accessibleForHome[0] : accessibleForHome[0]?.id) ?? propSession?.child_id : null}
+              viewingAsChildId={(roleForHome === 'parent' || !roleForHome) && propActiveChildId ? propActiveChildId : null}
             />
           </View>
         );

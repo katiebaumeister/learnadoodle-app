@@ -53,6 +53,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       let isLegacy = false;
       let accessibleChildren = [];
 
+      // getMe may return 401 if backend requires verified email; we still resolve role from family_members/profiles below
       const meRes = await getMe();
       if (meRes?.data && (meRes.data.family_id || meRes.data.role)) {
         activeFamilyId = activeFamilyId || meRes.data.family_id || null;

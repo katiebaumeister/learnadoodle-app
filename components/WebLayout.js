@@ -1407,6 +1407,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (activeTab && activeTab.startsWith('child-')) {
       const childId = activeTab.replace('child-', '');
       setActiveChildId(childId);
+    } else if (activeTab === 'settings') {
+      // Preserve activeChildId so Profile can show the child's email when parent is "viewing as" that child
     } else if (activeSubtab) {
       setActiveChildId(activeSubtab);
     } else {
@@ -2957,6 +2959,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           <WebContent
             activeTab={activeTab}
             activeSubtab={activeSubtab}
+            activeChildId={activeChildId}
             plannerView={currentView}
             activeChildSection={activeChildSection}
             user={user}
