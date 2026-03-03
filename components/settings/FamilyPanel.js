@@ -293,11 +293,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     return () => { cancelled = true; };
   }, [family?.id, familyId, propFamilyId, childrenFetchKey]);
 
-  // Update profile when prop changes
+  // Update profile when prop changes (always prefer logged-in user's email so child sees own email)
   useEffect(() => {
     if (propProfile && !editingProfile) {
       const incomingName = propProfile.name || propProfile.first_name || '';
-      const incomingEmail = propProfile.email || user?.email || '';
+      const incomingEmail = user?.email || propProfile.email || '';
       const incomingPhone = propProfile.phone || '';
       const currentName = profileName || '';
       const currentEmail = profileEmail || '';

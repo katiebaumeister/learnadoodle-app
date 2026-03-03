@@ -10,10 +10,10 @@ import {
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { previewInvite, acceptInvite } from '../lib/apiClient';
-import { Users, UserCheck, AlertCircle, CheckCircle } from 'lucide-react';
+import { Users, UserCheck, AlertCircle, CheckCircle, LogOut } from 'lucide-react';
 
 export default function InviteAcceptancePage({ token, onAcceptComplete }) {
-  const { user, session } = useAuth();
+  const { user, session, signOut } = useAuth();
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [inviteData, setInviteData] = useState(null);
@@ -202,6 +202,33 @@ export default function InviteAcceptancePage({ token, onAcceptComplete }) {
               <Text style={styles.buttonText}>Sign In</Text>
             </TouchableOpacity>
           </View>
+        ) : inviteData?.role === 'child' && inviteData?.email && (user?.email || '').toLowerCase() !== (inviteData.email || '').toLowerCase() ? (
+          <View style={styles.wrongAccountBox}>
+            <AlertCircle size={24} color="#f59e0b" />
+            <Text style={styles.wrongAccountTitle}>This invite is for a different account</Text>
+            <Text style={styles.wrongAccountText}>
+              This link is for <Text style={styles.wrongAccountEmail}>{inviteData.email}</Text>. You're signed in as {user?.email}.
+            </Text>
+            <Text style={styles.wrongAccountHint}>
+              To create the child's account, sign out and open this link again—or open it in a private/incognito window and sign up with the child's email.
+            </Text>
+            <TouchableOpacity
+              style={[styles.button, styles.signOutButton]}
+              onPress={async () => {
+                if (signOut) await signOut();
+                window.location.href = `/invite/${token}`;
+              }}
+            >
+              <LogOut size={20} color="#ffffff" />
+              <Text style={styles.buttonText}>Sign out and use this invite</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={() => (window.location.href = '/')}
+            >
+              <Text style={[styles.buttonText, styles.secondaryButtonText]}>Back to my account</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <TouchableOpacity
             style={[styles.button, styles.acceptButton, accepting && styles.buttonDisabled]}
@@ -374,6 +401,52 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
+  },
+  wrongAccountBox: {
+    width: '100%',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 16,
+  },
+  wrongAccountTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#92400e',
+    marginTop: 12,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  wrongAccountText: {
+    fontSize: 14,
+    color: '#78350f',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  wrongAccountEmail: {
+    fontWeight: '600',
+  },
+  wrongAccountHint: {
+    fontSize: 13,
+    color: '#a16207',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  signOutButton: {
+    backgroundColor: '#ea580c',
+    marginBottom: 12,
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#6b7280',
+  },
+  secondaryButtonText: {
+    color: '#374151',
   },
 });
 

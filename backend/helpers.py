@@ -17,10 +17,18 @@ def get_placeholder_conversion_fields(event: dict) -> Tuple[dict, bool]:
 
 
 def get_family_id_for_user(user_id: str) -> Optional[str]:
+    """Resolve family_id for any user (parent or child). Tries profiles first, then family_members."""
     supabase = get_admin_client()
     resp = supabase.table("profiles").select("family_id").eq("id", user_id).maybe_single().execute()
-    if resp.data:
+    if resp.data and resp.data.get("family_id"):
         return resp.data.get("family_id")
+    # Fallback for child users whose profiles.family_id may not be set (e.g. invite flow only wrote family_members)
+    try:
+        fm = supabase.table("family_members").select("family_id").eq("user_id", user_id).limit(1).execute()
+        if fm.data and len(fm.data) > 0 and fm.data[0].get("family_id"):
+            return fm.data[0].get("family_id")
+    except Exception:
+        pass
     return None
 
 

@@ -202,6 +202,24 @@ export default function LeftRail({
           </View>
         )}
 
+        {/* When parent is viewing as a child, show "Back to my view" */}
+        {!isCollapsed && userRole === 'parent' && activeChildId && childrenList?.length > 0 && (() => {
+          const viewingChild = childrenList.find((c) => String(c.id) === String(activeChildId));
+          const viewingName = viewingChild?.first_name || viewingChild?.name || 'Child';
+          return (
+            <View style={styles.viewingAsRow}>
+              <Text style={styles.viewingAsLabel} numberOfLines={1}>Viewing as {viewingName}</Text>
+              <TouchableOpacity
+                style={styles.backToMyViewButton}
+                onPress={() => onSelectTop?.('home')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.backToMyViewText}>Back to my view</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })()}
+
         {/* Main menu section */}
         <View style={styles.sectionGroup}>
           {topNavItems.map((item) => {
@@ -370,6 +388,35 @@ const styles = StyleSheet.create({
   },
   wrapCollapsed: {
     paddingHorizontal: 8,
+  },
+  viewingAsRow: {
+    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(79, 70, 229, 0.08)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(79, 70, 229, 0.2)',
+  },
+  viewingAsLabel: {
+    fontSize: 12,
+    color: '#4f46e5',
+    fontWeight: '600',
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  backToMyViewButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  backToMyViewText: {
+    fontSize: 13,
+    color: '#4f46e5',
+    fontWeight: '500',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
   },
   brandHeading: {
     fontSize: 18,

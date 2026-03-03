@@ -1019,7 +1019,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             // Prefer profiles table for editable fields; email must be logged-in user's (child sees own email, not parent's)
             name: profileData?.name || profileData?.first_name || meData.name || meData.first_name || '',
             first_name: profileData?.first_name || meData.first_name || '',
-            email: profileData?.email || user.email || meData.email,
+            email: user.email || profileData?.email || meData.email,
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
           };
@@ -1037,7 +1037,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           if (!meData) {
             setProfile({
               role: profileData.role || 'parent',
-              email: profileData.email || user.email,
+              email: user.email || profileData.email,
               name: profileData.name || profileData.first_name || '',
               first_name: profileData.first_name || '',
               phone: profileData.phone || '',
@@ -1085,7 +1085,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             ...meData,
             name: profileData?.name || profileData?.first_name || meData.name || meData.first_name || '',
             first_name: profileData?.first_name || meData.first_name || '',
-            email: profileData?.email || user.email || meData.email,
+            email: user.email || profileData?.email || meData.email,
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
           };
@@ -1098,7 +1098,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setUserRole(profileData.role || 'parent');
           setProfile({
             role: profileData.role || 'parent',
-            email: profileData.email || user.email,
+            email: user.email || profileData.email,
             name: profileData.name || profileData.first_name || '',
             first_name: profileData.first_name || '',
             phone: profileData.phone || '',
