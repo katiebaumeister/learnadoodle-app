@@ -17,12 +17,11 @@ import TutorNavigator from './TutorNavigator';
 export default function RoleGate({ children, ...props }) {
   const session = useSession();
 
-  // Show loading while session is being resolved
+  // Show loading while session is being resolved (plain white + neutral grey spinner)
   if (session.loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#887DEE" />
-        <Text style={styles.loadingText}>Loading...</Text>
+        <ActivityIndicator size="large" color="#6b7280" />
       </View>
     );
   }
@@ -59,14 +58,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 14,
-    color: '#6b7280',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   errorContainer: {
     flex: 1,

@@ -50,10 +50,12 @@ export default function SubjectsPage({
 }) {
   // Get session context for role-based filtering
   const session = useSession();
+  const safeChildren = Array.isArray(children) ? children : [];
+  const safeAccessibleChildren = Array.isArray(accessibleChildren) ? accessibleChildren : [];
   
   // Determine if this is a child/student view
   const isChildView = userRole === 'child' || userRole === 'student';
-  const childId = isChildView && accessibleChildren.length > 0 ? accessibleChildren[0].id : null;
+  const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
   
   const [subjects, setSubjects] = useState(preloadedSubjects || []);
   const [loading, setLoading] = useState(!preloadedSubjects);
@@ -238,7 +240,7 @@ export default function SubjectsPage({
 
     const contextLabel = selectedChildFilter === 'all'
       ? 'All children'
-      : (children.find(c => c.id === selectedChildFilter)?.first_name || children.find(c => c.id === selectedChildFilter)?.name || 'Child');
+      : (safeChildren.find(c => c.id === selectedChildFilter)?.first_name || safeChildren.find(c => c.id === selectedChildFilter)?.name || 'Child');
 
     return {
       progress,
@@ -247,31 +249,31 @@ export default function SubjectsPage({
       compliance: complianceTotal > 0 ? { met: complianceMet, total: complianceTotal } : null,
       contextLabel,
     };
-  }, [filteredSubjects, subjectDetailCache, selectedChildFilter, children]);
+  }, [filteredSubjects, subjectDetailCache, selectedChildFilter, safeChildren]);
 
   const getChildName = useCallback((childId) => {
-    const c = children.find(x => x.id === childId);
+    const c = safeChildren.find(x => x.id === childId);
     return c?.first_name || c?.name || 'Unknown';
-  }, [children]);
+  }, [safeChildren]);
 
   // Saved state(s) for selected child/children (from child settings) — only show compliance for these
   const effectiveComplianceStateCodes = useMemo(() => {
     const list = selectedChildFilter === 'all'
-      ? (children || [])
-      : (children || []).filter(c => c.id === selectedChildFilter);
+      ? safeChildren
+      : safeChildren.filter(c => c.id === selectedChildFilter);
     const codes = new Set();
     list.forEach(c => {
       const state = c.standards_state || c.standards || c.state_code || c.state;
       if (state && String(state).trim()) codes.add(String(state).trim().toUpperCase());
     });
     return [...codes];
-  }, [children, selectedChildFilter]);
+  }, [safeChildren, selectedChildFilter]);
 
   // Child IDs we show compliance for (used for loading attendance to derive "met" for attendance requirement)
   const complianceChildIds = useMemo(() => {
-    const list = selectedChildFilter === 'all' ? (children || []) : (children || []).filter(c => c.id === selectedChildFilter);
+    const list = selectedChildFilter === 'all' ? safeChildren : safeChildren.filter(c => c.id === selectedChildFilter);
     return list.map(c => c.id).filter(Boolean);
-  }, [children, selectedChildFilter]);
+  }, [safeChildren, selectedChildFilter]);
 
   const complianceChildIdsKey = useMemo(() => complianceChildIds.slice().sort().join(','), [complianceChildIds]);
 
@@ -558,7 +560,7 @@ export default function SubjectsPage({
       <SubjectDetailPage
         subjectId={selectedSubjectId}
         familyId={familyId}
-        children={children}
+        children={safeChildren}
         preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
         initialScrollToSectionId={pendingScrollToSectionId}
         onSubjectDataUpdate={(data) => {
@@ -582,15 +584,16 @@ export default function SubjectsPage({
     );
   }
 
+  const childDisplayName = safeAccessibleChildren[0]?.first_name || safeAccessibleChildren[0]?.name || 'Your';
+  const subjectsHeaderTitle = isChildView && childId
+    ? (childDisplayName === 'Your' ? 'Your Subjects' : `${childDisplayName}'s Subjects`)
+    : "Your Family's Subjects";
+
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          {isChildView && childId 
-            ? `${accessibleChildren[0]?.first_name || accessibleChildren[0]?.name || 'Your'} Subjects`
-            : "Your Family's Subjects"}
-        </Text>
+        <Text style={styles.headerTitle}>{subjectsHeaderTitle}</Text>
         <View style={styles.headerActions}>
           <View style={styles.searchContainer}>
             <TextInput
@@ -661,7 +664,7 @@ export default function SubjectsPage({
                 All Children
               </Text>
             </TouchableOpacity>
-            {children.map((child) => {
+            {safeChildren.map((child) => {
               const childColor = getChildColorFromAvatar(child.avatar);
               const isActive = selectedChildFilter === child.id;
               return (
@@ -738,11 +741,11 @@ export default function SubjectsPage({
           contentContainerStyle={styles.subjectsListContent}
           showsVerticalScrollIndicator={false}
         >
-          {filteredSubjects.map((subject) => (
+          {(filteredSubjects || []).filter(s => s?.id).map((subject) => (
             <SubjectOverviewCard
               key={subject.id}
               subject={subject}
-              children={children}
+              children={safeChildren}
               selectedChildFilter={selectedChildFilter}
               onCardClick={handleSubjectClick}
               onNavigateToPlanner={handleNavigateToPlanner}
@@ -758,7 +761,7 @@ export default function SubjectsPage({
         onClose={() => setOpenComplianceRequirement(null)}
         requirement={openComplianceRequirement}
         familyId={familyId}
-        children={children}
+        children={safeChildren}
         onOpenAttendanceView={onNavigateToPlannerAttendance}
       />
     </View>

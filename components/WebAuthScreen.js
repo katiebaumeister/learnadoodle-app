@@ -71,14 +71,23 @@ export default function WebAuthScreen() {
     }
   };
 
-  // Handle browser back/forward buttons
+  // Handle browser back/forward buttons and pre-fill email from URL (e.g. from invite landing ?view=signup&email=...)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
     const handlePopState = () => {
       const urlParams = new URLSearchParams(window.location.search);
       const view = urlParams.get('view');
-      
+      const emailParam = urlParams.get('email');
+
+      if (emailParam) {
+        try {
+          setEmail(decodeURIComponent(emailParam).trim());
+        } catch (_) {
+          setEmail(emailParam.trim());
+        }
+      }
+
       if (view === 'signup') {
         setShowWelcome(false);
         setIsSignUp(true);

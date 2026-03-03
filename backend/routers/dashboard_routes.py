@@ -110,13 +110,28 @@ async def get_me(
         family_id = profile.get("family_id")
         role = profile.get("role", "parent")
         
-        # Get family_members entry if exists
-        # Use admin client to bypass RLS (service role)
+        # Get family_members entry - filter by family_id when available so we get the correct role for the user's primary family.
+        # A user can have multiple rows (e.g. parent in family A, child in family B); without family_id filter we might get the wrong one.
         try:
-            member_res = supabase.table("family_members").select("*").eq("user_id", user["id"]).maybe_single().execute()
+            query = supabase.table("family_members").select("*").eq("user_id", user["id"])
+            if family_id:
+                query = query.eq("family_id", family_id)
+            member_res = query.maybe_single().execute()
             if member_res.data:
                 role = member_res.data.get("member_role", role)
                 family_id = member_res.data.get("family_id", family_id)
+            elif family_id:
+                # No row for profile's family_id - try any membership; prefer parent (user may be parent in another family)
+                all_members = supabase.table("family_members").select("*").eq("user_id", user["id"]).execute()
+                if all_members.data:
+                    parent_row = next((m for m in all_members.data if m.get("member_role") == "parent"), None)
+                    if parent_row:
+                        role = "parent"
+                        family_id = parent_row.get("family_id", family_id)
+                    else:
+                        m = all_members.data[0]
+                        role = m.get("member_role", role)
+                        family_id = m.get("family_id", family_id)
         except Exception as e:
             # If query fails (e.g., RLS issue), fall back to profile data (non-critical, suppress log)
             # log_event("dashboard.get_me.family_members_query_failed", user_id=user["id"], error=str(e), level="debug")

@@ -632,7 +632,7 @@ import PlanHealthBanner from './planner/PlanHealthBanner'
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, onPlannerLoadingChange, onSubjectsLoadingChange, onMaterialsLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -774,18 +774,23 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [materialsCacheTimestamp, setMaterialsCacheTimestamp] = useState(null);
   const [materialsCacheLoading, setMaterialsCacheLoading] = useState(false);
   
-  // Pre-load materials when familyId is available
+  // Pre-load materials when familyId is available (report to parent for initial load overlay)
   useEffect(() => {
-    if (!familyId || materialsCacheLoading) return;
-    
+    if (!familyId) {
+      onMaterialsLoadingChange?.(false);
+      return;
+    }
+    if (materialsCacheLoading) return;
+
     // Only pre-load if cache is empty or older than 5 minutes
     const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-    const shouldPreload = !materialsCache || 
-                         !materialsCacheTimestamp || 
+    const shouldPreload = !materialsCache ||
+                         !materialsCacheTimestamp ||
                          (Date.now() - materialsCacheTimestamp > CACHE_TTL);
-    
+
     if (shouldPreload) {
       setMaterialsCacheLoading(true);
+      onMaterialsLoadingChange?.(true);
       getMaterials(familyId, {}, propSession)
         .then(data => {
           setMaterialsCache(data);
@@ -796,9 +801,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         })
         .finally(() => {
           setMaterialsCacheLoading(false);
+          onMaterialsLoadingChange?.(false);
         });
+    } else {
+      onMaterialsLoadingChange?.(false);
     }
-  }, [familyId, materialsCache, materialsCacheTimestamp, materialsCacheLoading]);
+  }, [familyId, materialsCache, materialsCacheTimestamp, materialsCacheLoading, onMaterialsLoadingChange]);
   
   // Initialize offline sync
   useOfflineSync(familyId);
@@ -3343,11 +3351,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   }, [propSubjects]);
 
   // Preload subjects overview once when the app initializes (per family)
-  // so that Subjects screens don't need to block on their own fetches.
+  // so that Subjects screens don't need to block on their own fetches. Report to parent for initial load overlay.
   useEffect(() => {
-    if (!familyId || subjectsOverviewCache) return;
+    if (!familyId) {
+      onSubjectsLoadingChange?.(false);
+      return;
+    }
+    if (subjectsOverviewCache) {
+      onSubjectsLoadingChange?.(false);
+      return;
+    }
 
     let isCancelled = false;
+    onSubjectsLoadingChange?.(true);
 
     const loadInitialSubjectsOverview = async () => {
       try {
@@ -3357,6 +3373,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         }
       } catch (err) {
         console.error('[WebContent] Error preloading subjects overview:', err);
+      } finally {
+        if (!isCancelled) onSubjectsLoadingChange?.(false);
       }
     };
 
@@ -3364,8 +3382,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
     return () => {
       isCancelled = true;
+      onSubjectsLoadingChange?.(false);
     };
-  }, [familyId, subjectsOverviewCache]);
+  }, [familyId, subjectsOverviewCache, onSubjectsLoadingChange]);
 
   // Preload subject detail data for all subjects when overview is loaded
   useEffect(() => {
@@ -3478,13 +3497,24 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Planner view date (synced from WebLayout via plannerMonthChange)
   const [plannerDate, setPlannerDate] = useState(() => new Date())
   useEffect(() => { plannerDateRef.current = plannerDate; }, [plannerDate]);
-  // Preload planner current month once when familyId is available so planner opens with data
+  // Preload planner current month once when familyId is available so planner opens with data.
+  // Report to parent so initial app load overlay stays until planner data is ready.
   const plannerPreloadedForFamilyRef = useRef(null);
   useEffect(() => {
-    if (!familyId || plannerPreloadedForFamilyRef.current === familyId) return;
+    if (!familyId) {
+      onPlannerLoadingChange?.(false);
+      return;
+    }
+    if (plannerPreloadedForFamilyRef.current === familyId) return;
     plannerPreloadedForFamilyRef.current = familyId;
-    refreshCalendarData(new Date()).catch((err) => console.error('[WebContent] Planner preload failed:', err));
-  }, [familyId, refreshCalendarData]);
+    onPlannerLoadingChange?.(true);
+    refreshCalendarData(new Date())
+      .then(() => { onPlannerLoadingChange?.(false); })
+      .catch((err) => {
+        console.error('[WebContent] Planner preload failed:', err);
+        onPlannerLoadingChange?.(false);
+      });
+  }, [familyId, refreshCalendarData, onPlannerLoadingChange]);
 
   // Add child form state
   const [addChildName, setAddChildName] = useState('')

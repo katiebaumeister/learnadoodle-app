@@ -18,7 +18,7 @@ import ConfirmDialog from '../ConfirmDialog';
 import IDCardView from '../profile/IDCardView';
 
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null }) {
-  const isChildMode = propUserRole === 'child';
+  const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
   const viewingAsChildId = propViewingAsChildId ?? null;
   const { mode } = useSensoryMode();
@@ -1835,32 +1835,34 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             {/* Parents Section */}
             <View style={styles.membersSectionRow}>
               <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Parents' : 'Parents'}</Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {parents.length > 0 && (
-                  <TouchableOpacity 
-                    style={styles.membersInviteButton} 
-                    onPress={() => openIdCardModal('parent', parents)} 
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <CreditCard size={16} color="#374151" />
-                    <Text style={styles.membersInviteButtonText}>Generate ID</Text>
-                  </TouchableOpacity>
-                )}
-                {parents.length < 2 && (
-                  <TouchableOpacity 
-                    style={styles.membersInviteButton} 
-                    onPress={() => {
-                      setShowParentInviteModal(true);
-                      setParentInviteEmail('');
-                      setError(null);
-                    }} 
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Plus size={16} color="#374151" />
-                    <Text style={styles.membersInviteButtonText}>Invite Parent</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+              {!isChildMode && (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {parents.length > 0 && (
+                    <TouchableOpacity 
+                      style={styles.membersInviteButton} 
+                      onPress={() => openIdCardModal('parent', parents)} 
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <CreditCard size={16} color="#374151" />
+                      <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                    </TouchableOpacity>
+                  )}
+                  {parents.length < 2 && (
+                    <TouchableOpacity 
+                      style={styles.membersInviteButton} 
+                      onPress={() => {
+                        setShowParentInviteModal(true);
+                        setParentInviteEmail('');
+                        setError(null);
+                      }} 
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Plus size={16} color="#374151" />
+                      <Text style={styles.membersInviteButtonText}>Invite Parent</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
             </View>
             <View style={styles.subsectionDivider} />
             
@@ -1956,34 +1958,36 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             {/* Children Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
               <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Family' : 'Children'}</Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {children.length > 0 && (
+              {!isChildMode && (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {children.length > 0 && (
+                    <TouchableOpacity 
+                      style={styles.membersInviteButton} 
+                      onPress={() => openIdCardModal('child', children)} 
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <CreditCard size={16} color="#374151" />
+                      <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity 
                     style={styles.membersInviteButton} 
-                    onPress={() => openIdCardModal('child', children)} 
+                    onPress={() => setShowAddChildModal(true)} 
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <CreditCard size={16} color="#374151" />
-                    <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                    <Plus size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Add Child</Text>
                   </TouchableOpacity>
-                )}
-                <TouchableOpacity 
-                  style={styles.membersInviteButton} 
-                  onPress={() => setShowAddChildModal(true)} 
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#374151" />
-                  <Text style={styles.membersInviteButtonText}>Add Child</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={styles.membersInviteButton} 
-                  onPress={handleOpenChildInviteModal}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#374151" />
-                  <Text style={styles.membersInviteButtonText}>Invite Child</Text>
-                </TouchableOpacity>
-              </View>
+                  <TouchableOpacity 
+                    style={styles.membersInviteButton} 
+                    onPress={handleOpenChildInviteModal}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Plus size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Invite Child</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
             <View style={styles.subsectionDivider} />
             
@@ -2023,30 +2027,32 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             {/* Tutors Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
               <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Tutors' : 'Tutors'}</Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {tutors.length > 0 && (
+              {!isChildMode && (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {tutors.length > 0 && (
+                    <TouchableOpacity 
+                      style={styles.membersInviteButton} 
+                      onPress={() => openIdCardModal('tutor', tutors)} 
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <CreditCard size={16} color="#374151" />
+                      <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity 
                     style={styles.membersInviteButton} 
-                    onPress={() => openIdCardModal('tutor', tutors)} 
+                    onPress={() => {
+                      setShowTutorInviteModal(true);
+                      setTutorInviteEmail('');
+                      setError(null);
+                    }} 
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <CreditCard size={16} color="#374151" />
-                    <Text style={styles.membersInviteButtonText}>Generate ID</Text>
+                    <Plus size={16} color="#374151" />
+                    <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
                   </TouchableOpacity>
-                )}
-                <TouchableOpacity 
-                  style={styles.membersInviteButton} 
-                  onPress={() => {
-                    setShowTutorInviteModal(true);
-                    setTutorInviteEmail('');
-                    setError(null);
-                  }} 
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#374151" />
-                  <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
-                </TouchableOpacity>
-              </View>
+                </View>
+              )}
             </View>
             <View style={styles.subsectionDivider} />
             

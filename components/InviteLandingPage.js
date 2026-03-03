@@ -6,10 +6,11 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { previewInvite } from '../lib/apiClient';
 import { getAppBase } from '../lib/apiClient';
-import { Mail, ArrowRight, AlertCircle } from 'lucide-react';
+import { Mail, AlertCircle, UserPlus } from 'lucide-react';
 
 /**
  * Public invite landing page at learnadoodle.com/invites/:token.
@@ -44,12 +45,6 @@ export default function InviteLandingPage({ token }) {
     return () => { cancelled = true; };
   }, [token]);
 
-  const handleContinue = () => {
-    const appBase = getAppBase();
-    window.location.href = `${appBase}/invite/${token}`;
-  };
-
-  const roleLabel = inviteData?.role === 'child' ? 'child' : inviteData?.role === 'tutor' ? 'tutor' : 'parent';
   const inviterLabel = inviteData?.role === 'child' ? 'parent' : 'family member';
 
   if (loading) {
@@ -82,7 +77,7 @@ export default function InviteLandingPage({ token }) {
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.brand}>Learnadoodle</Text>
+          <Text style={styles.brand}>learnadoodle</Text>
           <Text style={styles.title}>You're invited</Text>
         </View>
 
@@ -94,9 +89,6 @@ export default function InviteLandingPage({ token }) {
               <>You've been invited to join a family on Learnadoodle.</>
             )}
           </Text>
-          <Text style={styles.submessage}>
-            Click below to enter your personalized <Text style={styles.roleHighlight}>{roleLabel}</Text> experience.
-          </Text>
         </View>
 
         <View style={styles.emailNote}>
@@ -106,9 +98,18 @@ export default function InviteLandingPage({ token }) {
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={handleContinue} activeOpacity={0.8}>
-          <Text style={styles.primaryButtonText}>Continue to Learnadoodle</Text>
-          <ArrowRight size={20} color="#ffffff" />
+        <TouchableOpacity
+          style={styles.signUpButton}
+          onPress={() => {
+            const appBase = getAppBase() || '';
+            const base = appBase.replace(/\/$/, '');
+            const emailParam = inviteData?.email ? `&email=${encodeURIComponent(inviteData.email)}` : '';
+            window.location.href = `${base}/?view=signup${emailParam}`;
+          }}
+          activeOpacity={0.8}
+        >
+          <UserPlus size={20} color="#ffffff" />
+          <Text style={styles.signUpButtonText}>Continue with sign up</Text>
         </TouchableOpacity>
 
         <Text style={styles.footer}>
@@ -140,10 +141,13 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   brand: {
-    fontSize: 18,
+    fontSize: 28,
     fontWeight: '600',
-    color: '#887DEE',
+    color: '#60a5fa',
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
   },
   title: {
     fontSize: 28,
@@ -171,16 +175,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1f2937',
   },
-  submessage: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  roleHighlight: {
-    fontWeight: '600',
-    color: '#887DEE',
-  },
   emailNote: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -198,18 +192,19 @@ const styles = StyleSheet.create({
     color: '#374151',
     lineHeight: 20,
   },
-  primaryButton: {
+  signUpButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-    backgroundColor: '#887DEE',
+    backgroundColor: '#60a5fa',
     paddingHorizontal: 28,
     paddingVertical: 16,
     borderRadius: 12,
     minWidth: 260,
+    marginTop: 8,
   },
-  primaryButtonText: {
+  signUpButtonText: {
     fontSize: 17,
     fontWeight: '600',
     color: '#ffffff',

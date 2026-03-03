@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal } from 'react-native';
+import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator } from 'react-native';
 
 // For web portal rendering
 let ReactDOM;
@@ -191,7 +191,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setUserRole(session.effective_role);
     }
   }, [session, propUserRole]);
-  const [homeLoading, setHomeLoading] = useState(false);
+  const [homeLoading, setHomeLoading] = useState(true); // true so initial load overlay stays until WebContent reports ready
+  const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
+  const [familyDataLoaded, setFamilyDataLoaded] = useState(false); // children, family, subjects from fetchFamilyMembers/fetchFamilyData
+  const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
+  const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
+  const [initialAppLoadDone, setInitialAppLoadDone] = useState(false);
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const filterButtonRef = useRef(null);
@@ -1252,9 +1257,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [user]);
 
   useEffect(() => {
-    fetchFamilyMembers();
-    fetchFamilyData();
-  }, [fetchFamilyData, fetchFamilyMembers]);
+    if (!user) {
+      setFamilyDataLoaded(true);
+      return;
+    }
+    let mounted = true;
+    Promise.all([fetchFamilyMembers(), fetchFamilyData()])
+      .then(() => { if (mounted) setFamilyDataLoaded(true); })
+      .catch(() => { if (mounted) setFamilyDataLoaded(true); });
+    return () => { mounted = false; };
+  }, [fetchFamilyData, fetchFamilyMembers, user]);
 
   // Resolve onboarding status before showing main content so we never flash landing without modal
   useEffect(() => {
@@ -1827,6 +1839,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Show full-screen loading when home tab is loading
   const showFullScreenLoading = activeTab === 'home' && homeLoading;
 
+  // Dismiss initial app load overlay once home, planner, family data, subjects, and materials have loaded
+  useEffect(() => {
+    if (activeTab === 'home' && !homeLoading && !plannerLoading && familyDataLoaded && !subjectsLoading && !materialsLoading) {
+      setInitialAppLoadDone(true);
+    }
+  }, [activeTab, homeLoading, plannerLoading, familyDataLoaded, subjectsLoading, materialsLoading]);
+
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {
     const crumbs = [];
@@ -1929,7 +1948,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Don't show main content until onboarding status is known (avoids flash of landing without modal)
   if (user && session && !onboardingCheckDone) {
-    return <View style={styles.onboardingCheckContainer} />;
+    return (
+      <View style={styles.initialLoadOverlay}>
+        <ActivityIndicator size="large" color="#6b7280" />
+      </View>
+    );
   }
 
   return (
@@ -2975,6 +2998,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             onSubtabChange={setActiveSubtab}
             pendingDoodlePrompt={null}
             onHomeLoadingChange={setHomeLoading}
+            onPlannerLoadingChange={setPlannerLoading}
+            onSubjectsLoadingChange={setSubjectsLoading}
+            onMaterialsLoadingChange={setMaterialsLoading}
             onConsumeDoodlePrompt={() => {}}
             onCalendarViewChange={(view) => {
               // View change handled by WebContent
@@ -3949,6 +3975,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )}
         </PlannerDiffProvider>
       </FiltersProvider>
+      {/* Initial app load: plain white + neutral grey spinner until home content is ready */}
+      {!initialAppLoadDone && (
+        <View
+          style={[StyleSheet.absoluteFillObject, styles.initialLoadOverlay]}
+          pointerEvents="auto"
+        >
+          <ActivityIndicator size="large" color="#6b7280" />
+        </View>
+      )}
     </ToastProvider>
   );
 }
@@ -3962,5 +3997,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#ffffff',
+  },
+  initialLoadOverlay: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
   },
 });

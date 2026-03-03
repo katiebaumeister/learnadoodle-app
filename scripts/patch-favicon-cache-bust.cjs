@@ -1,8 +1,7 @@
 /**
- * Patches dist/index.html to point favicon at /favicon.ico with cache-bust.
- * Safari does NOT support data-URL favicons; it only uses real URLs. We serve
- * the generated icon at /favicon.ico (rewrite excludes it) and bust cache so
- * Safari fetches fresh. Clear Safari Favicon Cache if still seeing old icon.
+ * Patches dist/index.html to point favicon at /favicon.png with cache-bust.
+ * Uses favicon.png (single source: assets/favicon.png). Safari and other
+ * browsers use real URLs; rewrite excludes /favicon.png so it is served from dist.
  */
 const fs = require('fs');
 const path = require('path');
@@ -14,11 +13,12 @@ if (!fs.existsSync(distPath)) {
 }
 
 const q = 'v=' + Date.now();
-const faviconHref = '/favicon.ico?' + q;
+const faviconHref = '/favicon.png?' + q;
 let html = fs.readFileSync(distPath, 'utf8');
+// Replace any existing icon link (Expo may inject various formats)
 html = html.replace(
   new RegExp('<link rel="icon" href="[^"]*"\\s*/>'),
   '<link rel="icon" href="' + faviconHref + '" />'
 );
 fs.writeFileSync(distPath, html);
-console.log('[patch-favicon] Set favicon link to /favicon.ico?' + q);
+console.log('[patch-favicon] Set favicon link to /favicon.png?' + q);
