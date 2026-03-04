@@ -35,18 +35,20 @@ if (!fs.existsSync(appDir)) {
 
 const input = fs.readFileSync(pngPath);
 
-// Zoom into the center of the image so the subject fills more of the frame (e.g. 1.4 = 40% more zoom)
-const ZOOM = 1.4;
+// Crop from top and bottom (more from bottom) so the subject fills the frame better
+const CROP_HEIGHT_FRAC = 0.58;   // use 58% of height
+const CROP_TOP_FRAC = 0.06;      // take 6% from top
+const CROP_WIDTH_FRAC = 0.58;    // use 58% of width (centered)
 
 sharp(input)
   .metadata()
   .then(({ width, height }) => {
     const w = width || 512;
     const h = height || 512;
-    const cropW = Math.round(w / ZOOM);
-    const cropH = Math.round(h / ZOOM);
+    const cropW = Math.round(w * CROP_WIDTH_FRAC);
+    const cropH = Math.round(h * CROP_HEIGHT_FRAC);
     const left = Math.round((w - cropW) / 2);
-    const top = Math.round((h - cropH) / 2);
+    const top = Math.round(h * CROP_TOP_FRAC); // more remaining space is at bottom (36% cropped from bottom)
     return sharp(input)
       .extract({ left, top, width: cropW, height: cropH })
       .resize(w, h)
