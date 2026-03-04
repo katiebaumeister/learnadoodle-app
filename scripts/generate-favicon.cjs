@@ -35,25 +35,47 @@ if (!fs.existsSync(appDir)) {
 
 const input = fs.readFileSync(pngPath);
 
-// Write favicon.png to dist root and app/ for App Router convention (single source: assets/favicon.png)
-fs.writeFileSync(faviconPngRoot, input);
-fs.writeFileSync(appIconPng, input);
+// Zoom into the center of the image so the subject fills more of the frame (e.g. 1.4 = 40% more zoom)
+const ZOOM = 1.4;
 
-Promise.all([
-  toIco(input, { resize: true }).then((buf) => {
-    fs.writeFileSync(icoPath, buf);
-    fs.writeFileSync(icoPathRoot, buf);
-    return 'favicon.ico';
-  }),
-  sharp(input)
-    .resize(32, 32)
-    .png()
-    .toBuffer()
-    .then((buf) => {
-      fs.writeFileSync(png32Path, buf);
-      return 'favicon-32.png';
-    }),
-])
+sharp(input)
+  .metadata()
+  .then(({ width, height }) => {
+    const w = width || 512;
+    const h = height || 512;
+    const cropW = Math.round(w / ZOOM);
+    const cropH = Math.round(h / ZOOM);
+    const left = Math.round((w - cropW) / 2);
+    const top = Math.round((h - cropH) / 2);
+    return sharp(input)
+      .extract({ left, top, width: cropW, height: cropH })
+      .resize(w, h)
+      .png()
+      .toBuffer();
+  })
+  .then((zoomed) => {
+    // Write zoomed favicon.png to dist root and app/
+    fs.writeFileSync(faviconPngRoot, zoomed);
+    fs.writeFileSync(appIconPng, zoomed);
+    return zoomed;
+  })
+  .then((zoomed) =>
+    Promise.all([
+      toIco(zoomed, { resize: true }).then((buf) => {
+        fs.writeFileSync(icoPath, buf);
+        fs.writeFileSync(icoPathRoot, buf);
+        return 'favicon.ico';
+      }),
+      sharp(zoomed)
+        .resize(32, 32)
+        .png()
+        .toBuffer()
+        .then((buf) => {
+          fs.writeFileSync(png32Path, buf);
+          return 'favicon-32.png';
+        }),
+    ])
+  )
   .then(([a, b]) => {
     console.log('[generate-favicon] Wrote dist/favicon.png, app/icon.png, dist/_expo/static/' + a + ', ' + b);
   })
