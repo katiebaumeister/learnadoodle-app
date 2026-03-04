@@ -5,7 +5,7 @@
   "framework": null,
   "rewrites": [
     {
-      "source": "/((?!favicon\\.ico|favicon\\.png|_expo\\/).*)",
+      "source": "/((?!favicon\\.ico|favicon\\.png|og-image\\.png|_expo\\/).*)",
       "destination": "/index.html"
     }
   ],
@@ -22,6 +22,12 @@
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
         { "key": "Pragma", "value": "no-cache" }
+      ]
+    },
+    {
+      "source": "/og-image.png",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400" }
       ]
     },
     {
