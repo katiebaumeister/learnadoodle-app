@@ -36,9 +36,9 @@ if (!fs.existsSync(appDir)) {
 const input = fs.readFileSync(pngPath);
 
 // Crop from top and bottom (more from bottom) so the subject fills the frame better
-const CROP_HEIGHT_FRAC = 0.58;   // use 58% of height
-const CROP_TOP_FRAC = 0.06;      // take 6% from top
-const CROP_WIDTH_FRAC = 0.58;    // use 58% of width (centered)
+const CROP_HEIGHT_FRAC = 0.78;   // use 78% of height (crop less)
+const CROP_TOP_FRAC = 0.04;      // take 4% from top
+const CROP_WIDTH_FRAC = 0.78;    // use 78% of width (centered)
 
 sharp(input)
   .metadata()
