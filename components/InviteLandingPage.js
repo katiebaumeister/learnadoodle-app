@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
   Platform,
 } from 'react-native';
 import { previewInvite } from '../lib/apiClient';
@@ -47,21 +46,10 @@ export default function InviteLandingPage({ token }) {
 
   const inviterLabel = inviteData?.role === 'child' ? 'parent' : 'family member';
 
-  if (loading) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.content}>
-          <ActivityIndicator size="large" color="#887DEE" />
-          <Text style={styles.loadingText}>Loading your invitation...</Text>
-        </View>
-      </View>
-    );
-  }
-
   if (error && !inviteData) {
     return (
       <View style={styles.container}>
-        <View style={styles.content}>
+        <View style={[styles.content, styles.loadingState]}>
           <AlertCircle size={48} color="#ef4444" />
           <Text style={styles.errorTitle}>Invite link invalid or expired</Text>
           <Text style={styles.errorText}>{error}</Text>
@@ -78,9 +66,10 @@ export default function InviteLandingPage({ token }) {
       <View style={styles.content}>
         <View style={styles.header}>
           <Text style={styles.brand}>learnadoodle</Text>
-          <Text style={styles.title}>You're invited</Text>
         </View>
 
+        {!loading && inviteData && (
+          <>
         <View style={styles.card}>
           <Text style={styles.message}>
             {inviteData?.inviter_name ? (
@@ -115,6 +104,8 @@ export default function InviteLandingPage({ token }) {
         <Text style={styles.footer}>
           This invitation was sent to {inviteData?.email || 'you'}. Expires in 30 days.
         </Text>
+          </>
+        )}
       </View>
     </ScrollView>
   );
@@ -127,7 +118,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingVertical: 48,
+    paddingTop: 96,
+    paddingBottom: 48,
   },
   content: {
     maxWidth: 480,
@@ -135,6 +127,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: 24,
     alignItems: 'center',
+  },
+  loadingState: {
+    paddingTop: 96,
   },
   header: {
     alignItems: 'center',
@@ -148,12 +143,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, sans-serif',
     }),
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1f2937',
-    textAlign: 'center',
   },
   card: {
     width: '100%',
@@ -214,11 +203,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#9ca3af',
     textAlign: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#6b7280',
   },
   errorTitle: {
     fontSize: 20,
