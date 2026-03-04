@@ -204,7 +204,6 @@ Unit 2: Systems of..."`,
     },
 
     calendar: {
-      slotBadge: "Instructional slot",
       filledBadge: "Scheduled lesson",
       slotTooltipEmpty:
         "This is an instructional slot created by Plan My Year. Fill it with a lesson or leave it open.",
@@ -363,7 +362,6 @@ Unit 2: Systems of..."`,
 
   calendarSlotActions: {
     emptySlot: {
-      title: "Instructional slot",
       primary: "Fill slot",
       secondary: "Create one-off event",
       tooltip:

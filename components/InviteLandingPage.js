@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { previewInvite } from '../lib/apiClient';
 import { getAppBase } from '../lib/apiClient';
@@ -21,6 +22,21 @@ export default function InviteLandingPage({ token }) {
   const [loading, setLoading] = useState(true);
   const [inviteData, setInviteData] = useState(null);
   const [error, setError] = useState(null);
+
+  // Ensure favicon uses root-relative URL so it shows on /invites/xxx (not just /)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    let link = document.querySelector('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    const href = link.getAttribute('href') || '';
+    if (!href.startsWith('/favicon.png')) {
+      link.setAttribute('href', '/favicon.png');
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +77,18 @@ export default function InviteLandingPage({ token }) {
     );
   }
 
+  // Don't show any content until invite is loaded so "learnadoodle" doesn't flash alone
+  if (loading || !inviteData) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.content, styles.loadingState]}>
+          <ActivityIndicator size="large" color="#60a5fa" />
+          <Text style={styles.loadingText}>Loading invitation…</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.content}>
@@ -68,8 +96,6 @@ export default function InviteLandingPage({ token }) {
           <Text style={styles.brand}>learnadoodle</Text>
         </View>
 
-        {!loading && inviteData && (
-          <>
         <View style={styles.card}>
           <Text style={styles.message}>
             {inviteData?.inviter_name ? (
@@ -104,8 +130,6 @@ export default function InviteLandingPage({ token }) {
         <Text style={styles.footer}>
           This invitation was sent to {inviteData?.email || 'you'}. Expires in 30 days.
         </Text>
-          </>
-        )}
       </View>
     </ScrollView>
   );
@@ -130,6 +154,11 @@ const styles = StyleSheet.create({
   },
   loadingState: {
     paddingTop: 96,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6b7280',
   },
   header: {
     alignItems: 'center',

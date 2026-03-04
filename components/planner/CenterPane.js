@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { View, Platform, useWindowDimensions } from 'react-native';
 import MonthGrid from './MonthGrid';
 import WeekGrid from './WeekGrid';
@@ -55,26 +55,29 @@ export default function CenterPane({
     }
   }, [selectedDate, date]);
   
-  // When switching to Board view, jump to the week containing today (only on initial switch)
+  // When switching to Board view from non-Month view, jump to the week containing today
+  // (When switching from Month, viewDate may have been set to a clicked day — don't override.)
   useEffect(() => {
     const prevMode = prevModeRef.current;
     prevModeRef.current = mode;
     
-    // Only run when switching TO Board mode, not when already in Board mode
-    if (mode === 'Board' && prevMode !== 'Board') {
+    if (mode === 'Board' && prevMode !== 'Board' && prevMode !== 'Month') {
       const today = startOfToday();
-      // Check if current viewDate is in the same week as today
       const viewDateWeekStart = startOfWeek(viewDate);
       const todayWeekStart = startOfWeek(today);
-      
-      // If viewDate is not in the current week, set it to today
       if (viewDateWeekStart.getTime() !== todayWeekStart.getTime()) {
         setViewDate(today);
       }
     }
   }, [mode]);
-  
-  
+
+  const switchToBoardViewForDay = useCallback((day) => {
+    setViewDate(day);
+    setMode('Board');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'board' }));
+    }
+  }, []);
 
   const filtered = useMemo(() => {
     let out = events;
@@ -190,6 +193,7 @@ export default function CenterPane({
               blackoutDates={blackoutDates}
               children={children}
               onSwitchToBoardView={() => setMode('Board')}
+              onSwitchToBoardViewForDay={switchToBoardViewForDay}
             />
           )}
           {mode === 'Week' && (

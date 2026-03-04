@@ -4201,7 +4201,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     return () => window.removeEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
   }, [familyId]);
 
-  // Load month data when showing planner tab
+  // Load month data when showing planner tab so grid and events show on first open or after login
   useEffect(() => {
     if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
     if (!familyId) return;

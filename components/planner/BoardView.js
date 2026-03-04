@@ -44,36 +44,28 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
   const weekStart = startOfWeek(weekAnchor); // Sunday start
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   
-  // Auto-scroll to today's column on mount or when weekAnchor changes
+  // Auto-scroll to the weekAnchor day's column on mount or when weekAnchor changes
+  // (weekAnchor is the focused day — e.g. the day clicked in month view, or today when opening Board)
   useEffect(() => {
-    // Reset scroll flag when weekAnchor changes
     hasScrolledToToday.current = false;
-    
-    // Compute days inside useEffect to ensure we have the latest values
     const weekStart = startOfWeek(weekAnchor);
     const daysArray = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-    
-    const scrollToToday = () => {
-      if (!scrollViewRef.current || hasScrolledToToday.current) return;
-      
-      const today = new Date();
-      const todayIndex = daysArray.findIndex(d => isSameDay(d, today));
-      
-      if (todayIndex >= 0) {
-        // Scroll to today's column (280px width + 8px gap = 288px per column)
-        const scrollPosition = todayIndex * 288;
-        
-        scrollViewRef.current.scrollTo({ x: scrollPosition, animated: false });
-        hasScrolledToToday.current = true;
-      }
+    const anchorDate = weekAnchor instanceof Date ? weekAnchor : new Date(weekAnchor);
+    const targetIndex = daysArray.findIndex(d => isSameDay(d, anchorDate));
+    const indexToScroll = targetIndex >= 0 ? targetIndex : daysArray.findIndex(d => isSameDay(d, new Date()));
+
+    const scrollToColumn = () => {
+      if (!scrollViewRef.current || hasScrolledToToday.current || indexToScroll < 0) return;
+      const scrollPosition = indexToScroll * 288;
+      scrollViewRef.current.scrollTo({ x: scrollPosition, animated: false });
+      hasScrolledToToday.current = true;
     };
-    
-    // Try scrolling with multiple attempts to ensure layout is ready
+
     requestAnimationFrame(() => {
-      scrollToToday();
-      setTimeout(scrollToToday, 50);
-      setTimeout(scrollToToday, 200);
-      setTimeout(scrollToToday, 500);
+      scrollToColumn();
+      setTimeout(scrollToColumn, 50);
+      setTimeout(scrollToColumn, 200);
+      setTimeout(scrollToColumn, 500);
     });
   }, [weekAnchor]);
 

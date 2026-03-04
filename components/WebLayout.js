@@ -948,10 +948,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       // Listen for URL changes (popstate event)
       window.addEventListener('popstate', updateView);
       
-      // Listen for plannerViewChange events
+      // Listen for plannerViewChange events (e.g. from month day click → board)
       const handleViewChange = (event) => {
         const newView = event.detail;
         setCurrentView(newView);
+        const url = new URL(window.location.href);
+        if (newView === 'month' || newView === 'Month') {
+          url.searchParams.delete('view');
+        } else {
+          url.searchParams.set('view', newView);
+        }
+        window.history.replaceState({}, '', url.toString());
       };
       window.addEventListener('plannerViewChange', handleViewChange);
       
@@ -1839,12 +1846,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Show full-screen loading when home tab is loading
   const showFullScreenLoading = activeTab === 'home' && homeLoading;
 
-  // Dismiss initial app load overlay once home, planner, family data, subjects, and materials have loaded
+  // Dismiss initial app load overlay once current tab's data is ready (home or planner)
   useEffect(() => {
-    if (activeTab === 'home' && !homeLoading && !plannerLoading && familyDataLoaded && !subjectsLoading && !materialsLoading) {
+    const homeReady = activeTab === 'home' && !homeLoading && !plannerLoading && familyDataLoaded && !subjectsLoading && !materialsLoading;
+    const plannerReady = (activeTab === 'planner' || activeTab === 'calendar') && !plannerLoading && (familyId != null);
+    if (homeReady || plannerReady) {
       setInitialAppLoadDone(true);
     }
-  }, [activeTab, homeLoading, plannerLoading, familyDataLoaded, subjectsLoading, materialsLoading]);
+  }, [activeTab, homeLoading, plannerLoading, familyDataLoaded, subjectsLoading, materialsLoading, familyId]);
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {

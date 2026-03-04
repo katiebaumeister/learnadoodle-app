@@ -614,9 +614,10 @@ async def invite_tutor(
                 detail="Failed to create invite: No invite was created"
             )
 
-        # Generate invite URL: send users to learnadoodle.com/invites/{token} (landing), then they continue to app to sign in/accept
+        # Generate invite URLs: copy link = landing page; email button = create-password page (for child) or same (for others)
         invite_landing_base = os.environ.get("INVITE_LANDING_URL", "https://learnadoodle.com")
         invite_url = f"{invite_landing_base}/invites/{token}"
+        accept_url = f"{invite_landing_base}/invites/{token}/accept"
 
         # Get inviter's name for email
         inviter_name = None
@@ -637,13 +638,14 @@ async def invite_tutor(
             except:
                 pass
 
-        # Send invite email via Postmark
+        # Send invite email via Postmark (button = accept_url, copy-paste link = invite_url)
         email_sent = send_invite_email(
             to_email=body.email,
             invite_url=invite_url,
             role=body.role,
             inviter_name=inviter_name,
             child_name=child_name,
+            accept_url=accept_url,
         )
 
         log_event(

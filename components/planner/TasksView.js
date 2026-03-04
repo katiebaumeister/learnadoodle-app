@@ -677,7 +677,6 @@ export default function TasksView({
           timeFontSize={12}
           showDate={true}
           hideDoneStyling={activeSection === 'completed' || activeSection === 'trash'}
-          hideSlotBadge={activeSection === 'trash'}
         />
       </View>
     );

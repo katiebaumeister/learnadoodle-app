@@ -5,6 +5,7 @@ import PasswordResetPage from './PasswordResetPage';
 import WebLayout from './WebLayout';
 import InviteAcceptancePage from './InviteAcceptancePage';
 import InviteLandingPage from './InviteLandingPage';
+import InviteAcceptPasswordPage from './InviteAcceptPasswordPage';
 import ChildInvitePage from './auth/ChildInvitePage';
 import ContinueLearningPage from './ContinueLearningPage';
 import TermsPage from './TermsPage';
@@ -194,10 +195,16 @@ export default function WebRouter() {
     );
   }
 
-  // Public invite landing (learnadoodle.com/invites/:token) — friendly message then CTA to app to sign in/accept
+  // Public invite accept from email (create password): /invites/:token/accept
+  const invitesAcceptMatch = currentPath.match(/^\/invites\/([^/]+)\/accept\/?$/);
+  const invitesAcceptToken = invitesAcceptMatch ? invitesAcceptMatch[1] : null;
+  if (invitesAcceptToken) {
+    return <InviteAcceptPasswordPage token={invitesAcceptToken} />;
+  }
+
+  // Public invite landing (learnadoodle.com/invites/:token) — copy link; friendly message then CTA to sign up
   const invitesLandingMatch = currentPath.match(/^\/invites\/(.+)$/);
   const invitesLandingToken = invitesLandingMatch ? invitesLandingMatch[1] : null;
-
   if (invitesLandingToken) {
     return (
       <InviteLandingPage

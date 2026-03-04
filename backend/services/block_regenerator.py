@@ -5,7 +5,7 @@ and generated_by='plan_year'. They are real events (event_type=Lesson); plan lin
 "count as instructional time" (counts_toward_plan) are how we attach/detach from the plan.
 
 Only touches events from this plan for this block that have no curriculum_lesson_id (user-owned
-filled slots are never overwritten). If an insert fails (e.g. DB overlap), it is skipped.
+filled slots are never overwritten).
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -242,31 +242,9 @@ def regenerate_block(
             print(f"[BACKEND] block_regen update failed for id={row.get('id')}: {exc}", flush=True)
 
     inserted_count = 0
-    skipped_count = 0
-    skipped_dates: List[str] = []
     if to_insert:
-        try:
-            ins = supabase.table("events").insert(to_insert).execute()
-            inserted_count = len(ins.data) if ins.data else len(to_insert)
-        except Exception as bulk_err:
-            err_str = str(bulk_err).lower()
-            if "overlap" in err_str or "p0001" in err_str:
-                for ev in to_insert:
-                    try:
-                        supabase.table("events").insert(ev).execute()
-                        inserted_count += 1
-                    except Exception as single_err:
-                        skipped_count += 1
-                        start_ts = ev.get("start_ts") or ev.get("start", "")
-                        date_ymd = (start_ts[:10] if isinstance(start_ts, str) and len(start_ts) >= 10 else None) or ""
-                        if date_ymd and date_ymd not in skipped_dates:
-                            skipped_dates.append(date_ymd)
-                        print(
-                            f"[BACKEND] block_regen insert skipped (overlap/constraint): start_ts={start_ts} title={ev.get('title')} block_id={block_id}: {single_err}",
-                            flush=True,
-                        )
-            else:
-                raise
+        ins = supabase.table("events").insert(to_insert).execute()
+        inserted_count = len(ins.data) if ins.data else len(to_insert)
 
     deleted_count = 0
     if to_delete_ids:
@@ -300,6 +278,4 @@ def regenerate_block(
         "updated": updated_count,
         "inserted": inserted_count,
         "deleted": deleted_count,
-        "skipped": skipped_count,
-        "skipped_dates": skipped_dates,
     }

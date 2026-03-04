@@ -27,17 +27,23 @@ def send_invite_email(
     role: str,
     inviter_name: Optional[str] = None,
     child_name: Optional[str] = None,
+    accept_url: Optional[str] = None,
 ) -> bool:
     """
     Send an invite email via Postmark.
-    
+
+    When accept_url is provided, the "Accept Invitation" button links to accept_url
+    (e.g. create-password page); the "copy and paste this link" text uses invite_url
+    (landing page). When accept_url is None, invite_url is used for both.
+
     Args:
         to_email: Recipient email address
-        invite_url: Full URL to accept the invite
+        invite_url: Full URL for the copy-paste link (landing page)
         role: Role being invited ('parent', 'tutor', or 'child')
         inviter_name: Name of the person sending the invite (optional)
         child_name: Name of the child (for child invites, optional)
-    
+        accept_url: Optional URL for the email button (e.g. create-password page)
+
     Returns:
         True if email was sent successfully, False otherwise
     """
@@ -141,7 +147,7 @@ def send_invite_email(
         <p>{greeting}</p>
         <p>{intro}</p>
         <p>Click the button below to accept your invitation and get started:</p>
-        <a href="{invite_url}" class="button">Accept Invitation</a>
+        <a href="{accept_url or invite_url}" class="button">Accept Invitation</a>
         <p>Or copy and paste this link into your browser:</p>
         <p style="word-break: break-all; color: #6b7280; font-size: 14px;">{invite_url}</p>
         <p>This invitation will expire in 30 days.</p>
@@ -163,7 +169,7 @@ Welcome to Learnadoodle!
 
 Click the link below to accept your invitation and get started:
 
-{invite_url}
+{accept_url or invite_url}
 
 This invitation will expire in 30 days.
 

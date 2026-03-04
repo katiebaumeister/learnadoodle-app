@@ -135,8 +135,6 @@ class BlockRegenResult(BaseModel):
     updated: int
     inserted: int
     deleted: int
-    skipped: int = 0  # inserts skipped due to overlap with existing events
-    skipped_dates: List[str] = []  # YYYY-MM-DD dates that were skipped (so UI can list them)
 
 
 class ApplyToCalendarOutput(BaseModel):
@@ -145,9 +143,7 @@ class ApplyToCalendarOutput(BaseModel):
     planned_days: int
     academic_year_id: Optional[str] = None
     blocks: Optional[List[BlockRegenResult]] = None
-    totals: Optional[Dict[str, int]] = None  # updated, inserted, deleted, skipped
-    skipped_overlap: Optional[int] = None  # total inserts skipped due to time overlap (so UI can show message)
-    skipped_dates: Optional[List[str]] = None  # YYYY-MM-DD dates that had overlap (so UI can say "Feb 20, Feb 27")
+    totals: Optional[Dict[str, int]] = None  # updated, inserted, deleted
 
 
 class SchedulePotentialInput(BaseModel):
@@ -1441,10 +1437,25 @@ async def schedule_potential(
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
 
-        start_date_obj = date.fromisoformat(body.start_date)
-        end_date_obj = date.fromisoformat(body.end_date)
+        try:
+            start_date_obj = date.fromisoformat(body.start_date)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start_date must be YYYY-MM-DD: got {body.start_date!r}",
+            ) from e
+        try:
+            end_date_obj = date.fromisoformat(body.end_date)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"end_date must be YYYY-MM-DD: got {body.end_date!r}",
+            ) from e
         if start_date_obj > end_date_obj:
-            raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+            raise HTTPException(
+                status_code=400,
+                detail=f"start_date must be <= end_date (got start_date={body.start_date!r}, end_date={body.end_date!r})",
+            )
 
         holiday_dates = [h.date for h in body.custom_holidays]
         if body.follow_public_holidays and body.holiday_region:
@@ -2248,8 +2259,7 @@ async def apply_to_calendar(
         events_to_insert = []
         planned_dates_set = set()
         block_regen_results: List[BlockRegenResult] = []
-        totals_updated, totals_inserted, totals_deleted, totals_skipped = 0, 0, 0, 0
-        all_skipped_dates: List[str] = []
+        totals_updated, totals_inserted, totals_deleted = 0, 0, 0
 
         # Persist plan (target_days, end_date, blocks) immediately so Edit Plan shows saved values even if placeholder generation fails
         if academic_year_id:
@@ -2333,22 +2343,15 @@ async def apply_to_calendar(
                     log_event_fn=log_event,
                     user_id=user["id"],
                 )
-                skipped_dates = result.get("skipped_dates") or []
                 block_regen_results.append(BlockRegenResult(
                     block_id=str(block["block_id"]),
                     updated=result["updated"],
                     inserted=result["inserted"],
                     deleted=result["deleted"],
-                    skipped=result.get("skipped", 0),
-                    skipped_dates=skipped_dates,
                 ))
                 totals_updated += result["updated"]
                 totals_inserted += result["inserted"]
                 totals_deleted += result["deleted"]
-                totals_skipped += result.get("skipped", 0)
-                for d in skipped_dates:
-                    if d and d not in all_skipped_dates:
-                        all_skipped_dates.append(d)
                 for d in get_block_occurrence_dates(block, start_date_obj, end_date_obj, exclusion_ranges):
                     planned_dates_set.add(d)
             created_count = totals_inserted
@@ -2396,23 +2399,8 @@ async def apply_to_calendar(
         if not use_blocks:
             created_count = 0
         if events_to_insert and not use_blocks:
-            try:
-                supabase.table("events").insert(events_to_insert).execute()
-                created_count = len(events_to_insert)
-            except Exception as bulk_err:
-                err_str = str(bulk_err).lower()
-                is_overlap = "overlap" in err_str or "p0001" in err_str
-                if is_overlap:
-                    # Inline conflict resolution: insert one-by-one, skip conflicting
-                    for ev in events_to_insert:
-                        try:
-                            supabase.table("events").insert(ev).execute()
-                            created_count += 1
-                        except Exception:
-                            pass  # skip this event (overlap or other)
-                    log_event("academic_year.apply_to_calendar.conflicts_skipped", user_id=user["id"], created=created_count, skipped=len(events_to_insert) - created_count)
-                else:
-                    raise
+            supabase.table("events").insert(events_to_insert).execute()
+            created_count = len(events_to_insert)
 
         planned_days = len(planned_dates_set)
         log_event("academic_year.apply_to_calendar.success", user_id=user["id"], created=created_count, planned_days=planned_days)
@@ -2433,9 +2421,7 @@ async def apply_to_calendar(
             planned_days=planned_days,
             academic_year_id=academic_year_id,
             blocks=block_regen_results if use_blocks else None,
-            totals={"updated": totals_updated, "inserted": totals_inserted, "deleted": totals_deleted, "skipped": totals_skipped} if use_blocks else None,
-            skipped_overlap=totals_skipped if use_blocks and totals_skipped else None,
-            skipped_dates=sorted(all_skipped_dates) if use_blocks and all_skipped_dates else None,
+            totals={"updated": totals_updated, "inserted": totals_inserted, "deleted": totals_deleted} if use_blocks else None,
         )
 
     except HTTPException:

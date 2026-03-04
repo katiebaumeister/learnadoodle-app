@@ -4,9 +4,8 @@ import { Check, BookOpen, Calculator, FlaskConical, Palette, Music, Dumbbell, Co
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import CompletionRing from './CompletionRing';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
-import { STRINGS } from '../../lib/i18n/strings';
 
-export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], hideSlotBadge = false }) {
+export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
   // Holidays should not be clickable, movable, or show time
   const isHoliday = ev?.type === 'holiday' || ev?.event_type === 'holiday';
   const effectiveHideTime = hideTime || isHoliday;
@@ -497,10 +496,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const shouldShowDoneStyling = isDone && !hideDoneStyling;
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
-  const isPlanEvent = ev?.generated_by === 'plan_year';
-  const isEmptySlot = isPlanEvent && !ev?.curriculum_lesson_id;
-  const isFilledSlot = !!(ev?.curriculum_lesson_id);
-  const slotBadgeLabel = hideSlotBadge ? null : (isFilledSlot ? null : (isEmptySlot ? STRINGS.calendarSlotActions.emptySlot.title : null));
   // Lesson that does not count toward 180-day/hour requirement (show muted + tooltip)
   const isExcludedFromPlan = ((ev?.event_type || ev?.type || '').toLowerCase() === 'lesson') && ev?.counts_toward_plan === false;
 
@@ -663,11 +658,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {slotBadgeLabel && (
-                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-                    <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
-                  </View>
-                )}
                 {isExcludedFromPlan && (
                   <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
                 )}
@@ -764,11 +754,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {slotBadgeLabel && (
-                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-                    <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
-                  </View>
-                )}
                 {isExcludedFromPlan && (
                   <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
                 )}
@@ -976,11 +961,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           >
             {ev.title || 'Untitled Event'}
           </Text>
-          {slotBadgeLabel && (
-            <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-              <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
-            </View>
-          )}
           {isExcludedFromPlan && (
             <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
           )}
@@ -1246,11 +1226,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         >
           {ev.title || 'Untitled Event'}
         </Text>
-        {slotBadgeLabel && (
-          <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: isFilledSlot ? '#D1FAE5' : '#F3F4F6', borderRadius: 4, marginLeft: 4 }}>
-            <Text style={{ fontSize: 9, color: isFilledSlot ? '#065F46' : '#6B7280', fontWeight: '500' }}>{slotBadgeLabel}</Text>
-          </View>
-        )}
         {isExcludedFromPlan && (
           <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
         )}

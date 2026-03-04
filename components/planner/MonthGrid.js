@@ -34,7 +34,7 @@ const filterTextNodes = (children) => {
   });
 };
 
-export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [], children = [], onSwitchToBoardView, familyId = null }) {
+export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [], children = [], onSwitchToBoardView, onSwitchToBoardViewForDay, familyId = null }) {
   // Validate date prop before using it
   if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
     console.error('[MonthGrid] Invalid date prop:', date);
@@ -1167,8 +1167,10 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                   onPress={() => {
                     // Only call onSelectDate if the day is in the current month
                     // This prevents jumping to a different month when clicking on days from adjacent months
-                    if (onSelectDate && inMonth) {
-                      onSelectDate(day);
+                    if (inMonth) {
+                      if (onSelectDate) onSelectDate(day);
+                      // Switch to Board view for the week of this day, centered on this day
+                      if (onSwitchToBoardViewForDay) onSwitchToBoardViewForDay(day);
                     }
                   }}
                   {...(Platform.OS === 'web' && {

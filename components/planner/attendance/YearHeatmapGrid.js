@@ -203,12 +203,12 @@ export default function YearHeatmapGrid({
           <Text style={styles.legendPillText}>Attended</Text>
         </View>
         <View style={styles.legendPill}>
-          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
-          <Text style={styles.legendPillText}>Upcoming</Text>
-        </View>
-        <View style={styles.legendPill}>
           <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
           <Text style={styles.legendPillText}>Unattended</Text>
+        </View>
+        <View style={styles.legendPill}>
+          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
+          <Text style={styles.legendPillText}>Upcoming</Text>
         </View>
         <View style={styles.legendPill}>
           <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />

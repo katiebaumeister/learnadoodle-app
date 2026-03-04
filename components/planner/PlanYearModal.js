@@ -265,55 +265,6 @@ function formatTimeRange(startTime, endTime) {
   return `${fmt(start)}–${fmt(end)}`;
 }
 
-/** Parse "09:00" or "09:30" to minutes since midnight. */
-function timeToMinutes(t) {
-  if (!t || typeof t !== 'string') return 0;
-  const [h, m] = t.trim().split(':').map((n) => parseInt(n, 10) || 0);
-  return h * 60 + m;
-}
-
-/** Detect when the same child has two blocks at the same weekday and overlapping time. */
-function getBlockConflicts(blocks, children, baseSubjectList) {
-  if (!blocks || blocks.length < 2) return [];
-  const conflicts = [];
-  for (let i = 0; i < blocks.length; i++) {
-    for (let j = i + 1; j < blocks.length; j++) {
-      const a = blocks[i];
-      const b = blocks[j];
-      const childIdsA = (a.child_ids && a.child_ids.length) ? a.child_ids : (children || []).map((c) => c.id).filter(Boolean);
-      const childIdsB = (b.child_ids && b.child_ids.length) ? b.child_ids : (children || []).map((c) => c.id).filter(Boolean);
-      const sharedChildren = childIdsA.filter((cid) => childIdsB.includes(cid));
-      if (sharedChildren.length === 0) continue;
-      const weekdaysA = a.weekdays || [];
-      const weekdaysB = b.weekdays || [];
-      const sharedDays = weekdaysA.filter((d) => weekdaysB.includes(d));
-      if (sharedDays.length === 0) continue;
-      const startA = timeToMinutes(a.start_time || '09:00');
-      const endA = timeToMinutes(a.end_time || '10:00');
-      const startB = timeToMinutes(b.start_time || '09:00');
-      const endB = timeToMinutes(b.end_time || '10:00');
-      if (startA >= endB || startB >= endA) continue;
-      const subjA = baseSubjectList?.find((s) => s.id === a.subject_id);
-      const subjB = baseSubjectList?.find((s) => s.id === b.subject_id);
-      const subjectAName = subjA?.name || 'Subject';
-      const subjectBName = subjB?.name || 'Subject';
-      sharedChildren.forEach((childId) => {
-        const child = (children || []).find((c) => String(c.id) === String(childId));
-        conflicts.push({
-          blockIndexA: i,
-          blockIndexB: j,
-          childId,
-          childName: child?.name || child?.first_name || 'Child',
-          subjectAName,
-          subjectBName,
-          sharedDays,
-        });
-      });
-    }
-  }
-  return conflicts;
-}
-
 function expandBreaksToHolidayDates(breaks) {
   const out = [];
   for (const b of breaks || []) {
@@ -476,7 +427,6 @@ export default function PlanYearModal({
   const [hoverSourceKey, setHoverSourceKey] = useState(null); // for step 1 option hover (web)
   const [entryChoiceHoverKey, setEntryChoiceHoverKey] = useState(null); // 'edit' | 'create' for arrow on hover
   const [footerCancelHover, setFooterCancelHover] = useState(false);
-  const [dismissedConflictKeys, setDismissedConflictKeys] = useState(() => new Set());
   const [highlightBlockIndex, setHighlightBlockIndex] = useState(null);
 
   const recalculateTimeoutRef = useRef(null);
@@ -497,10 +447,6 @@ export default function PlanYearModal({
     subjectsForCurrentSelection.some((s) => s.id === id)
   );
 
-  const blockConflicts = useMemo(
-    () => getBlockConflicts(blocks, children, baseSubjectList),
-    [blocks, children, baseSubjectList]
-  );
 
   // Preview: exact dates and times that will get slots (for display under "X eligible days" and on preview screen)
   const previewSlotLines = useMemo(() => {
@@ -930,7 +876,6 @@ export default function PlanYearModal({
         setSuggestionAccepted(false);
         setExtendSuggestionAccepted(false);
         setAcceptedExtendDate(null);
-        setDismissedConflictKeys(new Set());
         setHighlightBlockIndex(null);
         setPlanStep('source');
         setShowPlanManagerView(false);
@@ -1142,6 +1087,13 @@ export default function PlanYearModal({
     const delay = immediate || !schedulePotentialFetchedRef.current ? 0 : 120;
     schedulePotentialTimeoutRef.current = setTimeout(async () => {
       if (!familyId || !startDate || !endDate || blocks.length === 0) {
+        setSchedulePotential(null);
+        setComputingPotential(false);
+        return;
+      }
+      // Backend returns 400 if start_date > end_date; skip request to avoid calendar error
+      const ymd = /^\d{4}-\d{2}-\d{2}$/;
+      if (ymd.test(startDate) && ymd.test(endDate) && startDate > endDate) {
         setSchedulePotential(null);
         setComputingPotential(false);
         return;
@@ -1451,29 +1403,8 @@ export default function PlanYearModal({
       if (healthData) setPlanHealth(healthData);
 
       const added = data?.totals?.inserted ?? data?.created ?? 0;
-      const skipped = data?.skipped_overlap ?? data?.totals?.skipped ?? 0;
-      const skippedDates = Array.isArray(data?.skipped_dates) ? data.skipped_dates : [];
-      let message;
-      let toastType = 'success';
-      if (added === 0 && skipped > 0) {
-        const dateList = skippedDates.length > 0
-          ? skippedDates.map((d) => (d && d.length >= 10 ? formatDateDisplay(d) : d)).join(', ')
-          : '';
-        message = dateList
-          ? `No new events added. The scheduled time is already in use on ${dateList}. Try a different time in your plan.`
-          : 'No new events added. The scheduled time is already in use on those days. Try a different time in your plan.';
-        toastType = 'warning';
-      } else if (skipped > 0) {
-        const dateList = skippedDates.length > 0
-          ? skippedDates.map((d) => (d && d.length >= 10 ? formatDateDisplay(d) : d)).join(', ')
-          : '';
-        message = dateList
-          ? `${added} new lesson${added !== 1 ? 's' : ''} added. ${skipped} not added (time in use on ${dateList}).`
-          : `${added} new lesson${added !== 1 ? 's' : ''} added. ${skipped} not added — time already in use.`;
-        toastType = 'warning';
-      } else {
-        message = added === 1 ? '1 new lesson added' : `${added} new lessons added`;
-      }
+      const message = added === 1 ? '1 new lesson added' : `${added} new lessons added`;
+      const toastType = 'success';
       loadedYearIdRef.current = null;
       if (typeof window !== 'undefined') {
         // Force immediate calendar refetch so new plan events show without page refresh
@@ -1965,7 +1896,6 @@ export default function PlanYearModal({
       setSelectedSubjectIds([]);
       setPlanForChildIds([]);
       setBlocks([]);
-      setDismissedConflictKeys(new Set());
       setSchedulePotential(null);
       setStartDate('');
       setEndDate('');
@@ -3233,9 +3163,6 @@ export default function PlanYearModal({
                       {blocks.map((block, idx) => {
                       const subj = baseSubjectList.find((s) => s.id === block.subject_id);
                       const weekdays = block.weekdays || [];
-                      const conflictsForBlock = blockConflicts.filter((c) => c.blockIndexA === idx || c.blockIndexB === idx);
-                      const conflictKey = (c) => `${Math.min(c.blockIndexA, c.blockIndexB)}-${Math.max(c.blockIndexA, c.blockIndexB)}-${c.childId}`;
-                      const visibleConflicts = conflictsForBlock.filter((c) => !dismissedConflictKeys.has(conflictKey(c)));
                       const isHighlighted = highlightBlockIndex === idx;
                       return (
                         <View
@@ -3372,43 +3299,6 @@ export default function PlanYearModal({
                             </View>
                           )}
                           </View>
-                          {visibleConflicts.length > 0 && (
-                            <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: BORDER, gap: 8 }}>
-                              {visibleConflicts.map((c) => {
-                                const key = conflictKey(c);
-                                const otherIdx = c.blockIndexA === idx ? c.blockIndexB : c.blockIndexA;
-                                const daysStr = (c.sharedDays || []).map((d) => WEEKDAY_LABELS[d] || '').filter(Boolean).join(', ');
-                                return (
-                                  <View key={key} style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-                                    <Text style={{ fontSize: 12, color: '#b91c1c', fontWeight: '500', flex: 1, minWidth: 0 }}>
-                                      Conflict: {c.childName} has {c.blockIndexA === idx ? c.subjectAName : c.subjectBName} and {c.blockIndexA === idx ? c.subjectBName : c.subjectAName} at same time{c.sharedDays?.length ? ` on ${daysStr}` : ''}.
-                                    </Text>
-                                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                                      <TouchableOpacity
-                                        onPress={() => setDismissedConflictKeys((prev) => new Set(prev).add(key))}
-                                        style={{ paddingVertical: 4, paddingHorizontal: 8 }}
-                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                      >
-                                        <Text style={{ fontSize: 12, color: SUB }}>Ignore</Text>
-                                      </TouchableOpacity>
-                                      <TouchableOpacity
-                                        onPress={() => {
-                                          setSectionScheduleExpanded(true);
-                                          setHighlightBlockIndex(otherIdx);
-                                          setTimeout(() => setHighlightBlockIndex(null), 2500);
-                                          scrollRef.current?.scrollTo({ y: scheduleSectionYRef.current - 24, animated: true });
-                                        }}
-                                        style={{ paddingVertical: 4, paddingHorizontal: 8 }}
-                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                      >
-                                        <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600' }}>Change</Text>
-                                      </TouchableOpacity>
-                                    </View>
-                                  </View>
-                                );
-                              })}
-                            </View>
-                          )}
                         </View>
                       );
                     })}

@@ -178,8 +178,10 @@ async def accept_child_invite(
                 detail="Invite has already been accepted"
             )
         
-        child_id = invite.get("child_id")
         family_id = invite.get("family_id")
+        child_id = invite.get("child_id") or (
+            invite.get("child_scope") and len(invite["child_scope"]) and invite["child_scope"][0]
+        )
         
         if not child_id or not family_id:
             raise HTTPException(

@@ -1,7 +1,7 @@
 // Pastel system for Learnadoodle attendance (diverse colors for heatmap/calendar)
 export const ATTENDANCE_COLORS = {
   present: '#6BB8E8',   // attended (at least one event)
-  unmarked: '#FAEB9E',  // upcoming
+  unmarked: '#E5E7EB',  // upcoming (slightly darker than no events)
   absent: '#F5A6A2',   // unattended
   noEvents: '#F2F4F7',  // no events
 };
