@@ -14,12 +14,19 @@ const MODE_OPTIONS = [
 
 export default function PlanningModeStep({ value, onChange, onNext, isSaving }) {
   const [who, setWho] = useState(null);
+  const [ageLocationConfirmed, setAgeLocationConfirmed] = useState(false);
   const [hoveredWho, setHoveredWho] = useState(null);
   const [hoveredMode, setHoveredMode] = useState(null);
   const [continueHovered, setContinueHovered] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnimsWho = useRef(WHO_OPTIONS.map(() => new Animated.Value(1))).current;
   const scaleAnimsMode = useRef(MODE_OPTIONS.map(() => new Animated.Value(1))).current;
+
+  // Reset age/location confirmation when role changes
+  const handleSetWho = (id) => {
+    setWho(id);
+    setAgeLocationConfirmed(false);
+  };
 
   // Fade in second row when "who" is selected
   useEffect(() => {
@@ -56,7 +63,14 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
     });
   }, [value]);
 
-  const canContinue = who && value;
+  const canContinue = who && ageLocationConfirmed && value;
+
+  const ageLocationText =
+    who === 'student'
+      ? 'I confirm I am 13 years or older and in the U.S.'
+      : who === 'parent'
+        ? 'I confirm I am 18 years or older and in the U.S.'
+        : null;
 
   return (
     <View style={styles.container}>
@@ -80,7 +94,7 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
             >
               <TouchableOpacity
                 style={cardStyle}
-                onPress={() => setWho(opt.id)}
+                onPress={() => handleSetWho(opt.id)}
                 onMouseEnter={Platform.OS === 'web' ? () => setHoveredWho(opt.id) : undefined}
                 onMouseLeave={Platform.OS === 'web' ? () => setHoveredWho(null) : undefined}
                 activeOpacity={1}
@@ -94,8 +108,26 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
         })}
       </View>
 
-      {/* Second row: Homeschool / Afterschool / Just scheduling (fade in) */}
-      {who && (
+      {/* Age/location confirmation (after role selected) */}
+      {who && ageLocationText && (
+        <Animated.View style={[styles.confirmRow, { opacity: fadeAnim }]}>
+          <TouchableOpacity
+            style={styles.checkboxRow}
+            onPress={() => setAgeLocationConfirmed((c) => !c)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.checkbox, ageLocationConfirmed && styles.checkboxChecked]}>
+              {ageLocationConfirmed ? (
+                <Text style={styles.checkboxCheck}>✓</Text>
+              ) : null}
+            </View>
+            <Text style={styles.confirmLabel}>{ageLocationText}</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
+
+      {/* Second row: Homeschool / Afterschool / Just scheduling (fade in after confirmation) */}
+      {who && ageLocationConfirmed && (
         <Animated.View style={[styles.secondRow, { opacity: fadeAnim }]}>
           <View style={styles.row}>
             {MODE_OPTIONS.map((mode, index) => {
@@ -166,6 +198,40 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     marginBottom: 16,
+  },
+  confirmRow: {
+    marginBottom: 20,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#9CA3AF',
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    borderColor: '#4A5FEB',
+    backgroundColor: '#4A5FEB',
+  },
+  checkboxCheck: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  confirmLabel: {
+    flex: 1,
+    fontSize: 16,
+    color: 'rgba(15,23,42,0.9)',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   secondRow: {
     marginBottom: 28,

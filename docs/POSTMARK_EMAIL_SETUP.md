@@ -4,6 +4,8 @@
 
 Invite emails are now automatically sent via Postmark when a parent, tutor, or child invite is created. The invite link is also automatically copied to the clipboard for manual sharing.
 
+**Email works locally but not from learnadoodle.com?** Set Postmark env vars in your **production** backend and ensure the domain is verified. See **[POSTMARK_PRODUCTION_LEARNADOODLE.md](./POSTMARK_PRODUCTION_LEARNADOODLE.md)**.
+
 ## Backend Setup
 
 ### 1. Install Dependencies

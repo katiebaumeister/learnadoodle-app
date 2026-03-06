@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock, Download } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock, Download, Bot } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
@@ -3061,9 +3061,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
       />
 
-      {/* Doodle bot search modal - only opened via floating icon */}
+      {/* Doodle bot search modal - opened via floating Ask AI button */}
       {showDoodleSearchModal && (
         <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} />
+      )}
+
+      {/* Floating Ask AI button - bottom right */}
+      {user && (
+        <TouchableOpacity
+          onPress={() => setShowDoodleSearchModal(true)}
+          style={styles.fabAskAI}
+          activeOpacity={0.85}
+          accessibilityLabel="Ask AI"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Bot size={22} color="#ffffff" />
+          <Text style={styles.fabAskAIText}>Ask AI</Text>
+        </TouchableOpacity>
       )}
 
       <GlobalNewMenu
@@ -4013,5 +4027,37 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 9999,
+  },
+  fabAskAI: {
+    position: Platform.OS === 'web' ? 'fixed' : 'absolute',
+    bottom: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 28,
+    backgroundColor: '#4285F4',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 14px rgba(66, 133, 244, 0.4)',
+      zIndex: 9998,
+    }),
+    ...(Platform.OS !== 'web' && {
+      elevation: 8,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+    }),
+  },
+  fabAskAIText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

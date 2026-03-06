@@ -14,6 +14,25 @@ import { STRINGS } from '../lib/i18n/strings';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
+// School year options: 2025/26 through 2040/41 (16 years)
+function getSchoolYearOptions() {
+  const options = [];
+  for (let y = 2025; y <= 2040; y++) {
+    options.push(`${y}/${String(y + 1).slice(-2)}`);
+  }
+  return options;
+}
+const SCHOOL_YEAR_OPTIONS = getSchoolYearOptions();
+
+// Default: before May = current year/next (e.g. 2025/26), May or later = next year (e.g. 2026/27)
+function getDefaultSchoolYear() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+  if (month < 5) return `${year}/${String(year + 1).slice(-2)}`;
+  return `${year + 1}/${String(year + 2).slice(-2)}`;
+}
+
 export default function AddSubjectModal({ 
   visible, 
   onClose, 
@@ -28,6 +47,8 @@ export default function AddSubjectModal({
   const [summary, setSummary] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
+  const [schoolYear, setSchoolYear] = useState(getDefaultSchoolYear());
+  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [credits, setCredits] = useState('');
   const [notes, setNotes] = useState('');
   const [children, setChildren] = useState(propChildren || []);
@@ -83,6 +104,7 @@ export default function AddSubjectModal({
         setSubjectName(subject.name || '');
         setSummary(subject.summary || '');
         setGrade(subject.grade || GRADE_OPTIONS[0] || '');
+        setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setCredits(subject.credits ? String(subject.credits) : '');
         setNotes(subject.notes || '');
         // Child IDs will be set in the next useEffect after children load
@@ -90,6 +112,7 @@ export default function AddSubjectModal({
         loadSubjectEvents(subject.id);
       } else {
         // Add mode - use defaults
+        setSchoolYear(getDefaultSchoolYear());
         if (defaultSubjectName) {
           setSubjectName(defaultSubjectName);
         }
@@ -103,6 +126,8 @@ export default function AddSubjectModal({
       setSummary('');
       setSelectedChildIds([]);
       setGrade(GRADE_OPTIONS[0] || '');
+      setSchoolYear(getDefaultSchoolYear());
+      setShowSchoolYearDropdown(false);
       setCredits('');
       setNotes('');
       setError(null);
@@ -437,6 +462,7 @@ export default function AddSubjectModal({
         summary: summary.trim() || null,
         child_id: childIdString, // Now stores semicolon-separated IDs
         grade: grade || null,
+        school_year: schoolYear || getDefaultSchoolYear(),
         credits: credits ? parseFloat(credits) : null,
         notes: notes.trim() || null,
       };
@@ -684,6 +710,39 @@ export default function AddSubjectModal({
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+            </View>
+
+            {/* School year */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>School year</Text>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowSchoolYearDropdown(!showSchoolYearDropdown)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
+                <ChevronDown size={18} color="#6b7280" />
+              </TouchableOpacity>
+              {showSchoolYearDropdown && (
+                <View style={styles.dropdownList}>
+                  <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
+                    {SCHOOL_YEAR_OPTIONS.map((opt) => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
+                        onPress={() => {
+                          setSchoolYear(opt);
+                          setShowSchoolYearDropdown(false);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>{opt}</Text>
+                        {opt === schoolYear && <CheckCircle size={16} color={colors.accent || '#4F46E5'} />}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
             </View>
 
             {/* Credits (Optional) */}
@@ -1131,6 +1190,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
     backgroundColor: '#fafbfc',
+  },
+  dropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: '#fafbfc',
+  },
+  dropdownButtonText: {
+    fontSize: 14,
+    color: '#111827',
+  },
+  dropdownList: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    maxHeight: 200,
+  },
+  dropdownScroll: {
+    maxHeight: 200,
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: 'rgba(79, 70, 229, 0.08)',
+  },
+  dropdownOptionText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  dropdownOptionTextSelected: {
+    color: colors.accent || '#4F46E5',
+    fontWeight: '600',
   },
   textArea: {
     minHeight: 80,

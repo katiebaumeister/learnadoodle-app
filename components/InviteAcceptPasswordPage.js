@@ -26,7 +26,6 @@ export default function InviteAcceptPasswordPage({ token }) {
   const [inviteData, setInviteData] = useState(null);
   const [error, setError] = useState(null);
 
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -58,7 +57,6 @@ export default function InviteAcceptPasswordPage({ token }) {
           return;
         }
         setInviteData(data);
-        if (data.email) setUsername((data.child_name || data.email.split('@')[0] || '').trim().toLowerCase().replace(/\s+/g, ''));
       } catch (err) {
         if (!cancelled) setError(err?.message || 'Failed to load invite');
       } finally {
@@ -71,6 +69,22 @@ export default function InviteAcceptPasswordPage({ token }) {
   const isChildInvite = inviteData?.role === 'child' && (inviteData?.child_id || (inviteData?.child_scope && inviteData.child_scope.length > 0));
   const copyLinkUrl = typeof window !== 'undefined' ? `${window.location.origin}/invites/${token}` : '';
 
+  /** Human-readable error message; detects "email already exists" for friendly UI. */
+  const getDisplayError = (errMessage) => {
+    if (!errMessage || typeof errMessage !== 'string') return errMessage || 'Something went wrong.';
+    const lower = errMessage.toLowerCase();
+    if (lower.includes('email already exists') || lower.includes('already been registered') || lower.includes('email_exists')) {
+      return 'An account with this email already exists. Sign in below to use it.';
+    }
+    return errMessage;
+  };
+
+  const isEmailExistsError = (errMessage) => {
+    if (!errMessage || typeof errMessage !== 'string') return false;
+    const lower = errMessage.toLowerCase();
+    return lower.includes('email already exists') || lower.includes('already been registered') || lower.includes('email_exists');
+  };
+
   const validate = () => {
     if (!password || password.length < 6) {
       setError('Password must be at least 6 characters');
@@ -78,10 +92,6 @@ export default function InviteAcceptPasswordPage({ token }) {
     }
     if (password !== confirmPassword) {
       setError('Passwords do not match');
-      return false;
-    }
-    if (!username.trim()) {
-      setError('Username is required');
       return false;
     }
     setError(null);
@@ -95,12 +105,11 @@ export default function InviteAcceptPasswordPage({ token }) {
     try {
       const { data, error: err } = await acceptChildInvite({
         token,
-        username: username.trim(),
         email: inviteData.email,
         password,
       });
       if (err || !data?.success) {
-        throw new Error(err?.message || data?.error || 'Failed to create account');
+        throw new Error(getDisplayError(err?.message || data?.error) || 'Failed to create account');
       }
       try {
         await signIn(inviteData.email, password);
@@ -113,7 +122,7 @@ export default function InviteAcceptPasswordPage({ token }) {
         }
       }
     } catch (err) {
-      setError(err?.message || 'Failed to create account');
+      setError(getDisplayError(err?.message) || 'Failed to create account');
     } finally {
       setAccepting(false);
     }
@@ -186,17 +195,6 @@ export default function InviteAcceptPasswordPage({ token }) {
             </View>
           </View>
           <View style={styles.field}>
-            <Text style={styles.label}>Username</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Choose a username"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-          <View style={styles.field}>
             <Text style={styles.label}>Password</Text>
             <TextInput
               style={styles.input}
@@ -221,7 +219,20 @@ export default function InviteAcceptPasswordPage({ token }) {
           {error ? (
             <View style={styles.errorBox}>
               <AlertCircle size={18} color="#ef4444" />
-              <Text style={styles.errorText}>{error}</Text>
+              <View style={styles.errorContent}>
+                <Text style={styles.errorText}>{error}</Text>
+                {isEmailExistsError(error) && (
+                  <TouchableOpacity
+                    style={styles.signInLink}
+                    onPress={() => {
+                      const params = inviteData?.email ? `?email=${encodeURIComponent(inviteData.email)}` : '';
+                      window.location.href = `/${params}`;
+                    }}
+                  >
+                    <Text style={styles.signInLinkText}>Sign in to your account</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           ) : null}
           <TouchableOpacity
@@ -305,14 +316,17 @@ const styles = StyleSheet.create({
   readOnlyText: { fontSize: 16, color: '#6b7280' },
   errorBox: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
     backgroundColor: '#fef2f2',
     padding: 12,
     borderRadius: 10,
     marginBottom: 16,
   },
-  errorText: { flex: 1, fontSize: 14, color: '#dc2626' },
+  errorContent: { flex: 1 },
+  errorText: { fontSize: 14, color: '#dc2626', marginBottom: 4 },
+  signInLink: { marginTop: 8, alignSelf: 'flex-start' },
+  signInLinkText: { fontSize: 14, fontWeight: '600', color: '#2563eb', textDecorationLine: 'underline' },
   errorTitle: { fontSize: 20, fontWeight: 'bold', color: '#ef4444', marginTop: 16, textAlign: 'center' },
   button: {
     backgroundColor: '#60a5fa',

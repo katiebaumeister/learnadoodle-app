@@ -65,6 +65,7 @@ export default function SubjectsPage({
   const [selectedChildFilter, setSelectedChildFilter] = useState(
     isChildView && childId ? childId : 'all'
   );
+  const [selectedYearFilter, setSelectedYearFilter] = useState('all');
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
@@ -194,9 +195,21 @@ export default function SubjectsPage({
         return subject.assignedChildren.includes(selectedChildFilter);
       });
     }
+
+    // Filter by school year
+    if (selectedYearFilter !== 'all') {
+      filtered = filtered.filter(subject => (subject.school_year || '2025/26') === selectedYearFilter);
+    }
     
     return filtered;
-  }, [subjects, searchQuery, selectedChildFilter]);
+  }, [subjects, searchQuery, selectedChildFilter, selectedYearFilter]);
+
+  // Years that have at least one subject (for chip row - only show chips for registered years)
+  const registeredYears = useMemo(() => {
+    if (!subjects || subjects.length === 0) return [];
+    const years = [...new Set(subjects.map(s => s.school_year || '2025/26').filter(Boolean))];
+    return years.sort();
+  }, [subjects]);
 
   // Overall averages across filtered subjects (for compact summary card)
   const overallSummary = useMemo(() => {
@@ -687,6 +700,54 @@ export default function SubjectsPage({
                     isActive && styles.filterChipTextActive,
                   ]}>
                     {child.name || child.first_name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Year Filter Chips - only show when we have at least one year */}
+      {registeredYears.length > 0 && (
+        <View style={styles.filterRow}>
+          <Text style={styles.filterLabel}>Year</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterChips}
+            contentContainerStyle={styles.filterChipsContent}
+          >
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                selectedYearFilter === 'all' && styles.filterChipActive,
+              ]}
+              onPress={() => setSelectedYearFilter('all')}
+            >
+              <Text style={[
+                styles.filterChipText,
+                selectedYearFilter === 'all' && styles.filterChipTextActive,
+              ]}>
+                All years
+              </Text>
+            </TouchableOpacity>
+            {registeredYears.map((year) => {
+              const isActive = selectedYearFilter === year;
+              return (
+                <TouchableOpacity
+                  key={year}
+                  style={[
+                    styles.filterChip,
+                    isActive && styles.filterChipActive,
+                  ]}
+                  onPress={() => setSelectedYearFilter(year)}
+                >
+                  <Text style={[
+                    styles.filterChipText,
+                    isActive && styles.filterChipTextActive,
+                  ]}>
+                    {year}
                   </Text>
                 </TouchableOpacity>
               );

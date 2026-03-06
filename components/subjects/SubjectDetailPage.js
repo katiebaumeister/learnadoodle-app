@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  Modal,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -48,6 +49,7 @@ export default function SubjectDetailPage({
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showRecentlySubmittedModal, setShowRecentlySubmittedModal] = useState(false);
+  const [showProgressCheckInModal, setShowProgressCheckInModal] = useState(false);
   const loadingRef = useRef(false);
 
   useEffect(() => {
@@ -485,41 +487,76 @@ export default function SubjectDetailPage({
           {/* Grades Tile */}
           <TouchableOpacity
             style={styles.summaryTile}
-            onPress={() => {
-              if (avgGradePercent !== null && avgGradePercent !== undefined && !isNaN(avgGradePercent)) {
-                scrollToSection('grades-section');
-              } else {
-                handleAddAssignment();
-              }
-            }}
+            onPress={() => scrollToSection('grades-section')}
           >
             <Text style={styles.summaryTileLabel}>Grades</Text>
-            {avgGradePercent !== null && avgGradePercent !== undefined && !isNaN(avgGradePercent) ? (
-              <>
-                <Text style={styles.summaryTileValue}>Avg: {avgGradePercent}%</Text>
-                <Text style={styles.summaryTileCaption}>graded items</Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.summaryTileValue}>Not graded yet</Text>
-                <Text style={styles.summaryTileSubtext}>Add 1 assignment to track progress.</Text>
-                <TouchableOpacity
-                  style={styles.summaryTileAction}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    handleAddAssignment();
-                  }}
-                >
-                  <Text style={styles.summaryTileActionText}>Add assignment</Text>
-                </TouchableOpacity>
-              </>
-            )}
+            <Text style={styles.summaryTileValue}>Coming soon</Text>
           </TouchableOpacity>
+
+          {/* Compliance Tile */}
+          <TouchableOpacity
+            style={styles.summaryTile}
+            onPress={() => {}}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.summaryTileLabel}>Compliance</Text>
+            <Text style={styles.summaryTileValue}>Coming soon</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Materials Snapshot */}
+        <View style={styles.section}>
+          <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
+            {onNavigateToLibrary && (
+              <TouchableOpacity
+                style={styles.exportIconButton}
+                onPress={() => onNavigateToLibrary(subjectId)}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <ExternalLink size={18} color="#6B7280" />
+              </TouchableOpacity>
+            )}
+          </View>
+          {materials.length > 0 ? (
+            <View style={styles.materialsGrid}>
+              {materials.slice(0, 6).map((material) => (
+                <TouchableOpacity
+                  key={material.id}
+                  style={styles.materialChip}
+                  onPress={() => onNavigateToLibrary?.(subjectId)}
+                >
+                  <BookOpen size={14} color={colors.accent || '#4F46E5'} />
+                  <Text style={styles.materialChipText} numberOfLines={1}>
+                    {material.title || material.provider_name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyStateBox}>
+              <Text style={styles.emptyStateText}>
+                No materials associated with this subject. Adding materials over time helps Learnadoodle plan lessons, track coverage, and generate insights.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Section 1: Progress - next 7 days only; then link to Planner */}
         <View id="progress-section" style={styles.section}>
           <Text style={styles.sectionTitle}>Progress</Text>
+          <View style={styles.progressCheckInRow}>
+            <Text style={styles.progressCheckInPrompt}>Where are you in the syllabus?</Text>
+            <TouchableOpacity
+              style={styles.progressCheckInButton}
+              onPress={() => setShowProgressCheckInModal(true)}
+              activeOpacity={0.7}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.progressCheckInButtonText}>Tell us where we are</Text>
+            </TouchableOpacity>
+          </View>
           {whatsNextInNext7Days.length > 0 ? (
             <>
               <View style={styles.timelineList}>
@@ -738,14 +775,12 @@ export default function SubjectDetailPage({
         {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
           <Text style={styles.sectionTitle}>Grades</Text>
+          <View style={styles.gradeAverage}>
+            <Text style={styles.gradeAverageLabel}>Current Average</Text>
+            <Text style={styles.gradeAverageComingSoon}>Logic for calculating grade averages is still being built, check back soon...</Text>
+          </View>
           {gradedItems.length > 0 ? (
             <>
-              {avgGradePercent !== null && (
-                <View style={styles.gradeAverage}>
-                  <Text style={styles.gradeAverageLabel}>Current Average</Text>
-                  <Text style={styles.gradeAverageValue}>{avgGradePercent}%</Text>
-                </View>
-              )}
               <View style={styles.gradesList}>
                 {gradedItems.map((item) => {
                   const Wrapper = item.eventId ? TouchableOpacity : View;
@@ -807,49 +842,14 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section 4: Materials Snapshot */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Materials Snapshot</Text>
-            {materials.length > 0 && (
-              <TouchableOpacity
-                style={styles.viewAllButton}
-                onPress={() => onNavigateToLibrary?.(subjectId)}
-              >
-                <Text style={styles.viewAllButtonText}>Go to Library</Text>
-                <ExternalLink size={14} color="#6B7280" />
-              </TouchableOpacity>
-            )}
+        {/* Section: Compliance */}
+        <View id="compliance-section" style={styles.section}>
+          <Text style={styles.sectionTitle}>Compliance</Text>
+          <View style={styles.emptyStateBox}>
+            <Text style={styles.emptyStateText}>
+              Compliance logic is still being built to provide you with typical state learning requirements. Check back soon...
+            </Text>
           </View>
-          {materials.length > 0 ? (
-            <View style={styles.materialsGrid}>
-              {materials.slice(0, 6).map((material) => (
-                <TouchableOpacity
-                  key={material.id}
-                  style={styles.materialChip}
-                  onPress={() => onNavigateToLibrary?.(subjectId)}
-                >
-                  <BookOpen size={14} color={colors.accent || '#4F46E5'} />
-                  <Text style={styles.materialChipText} numberOfLines={1}>
-                    {material.title || material.provider_name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.emptyStateBox}>
-              <Text style={styles.emptyStateText}>
-                Adding materials over time helps Learnadoodle plan lessons, track coverage, and generate insights.
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyStateButton}
-                onPress={() => onNavigateToLibrary?.(subjectId)}
-              >
-                <BookOpen size={18} color="#6B7280" />
-                <Text style={styles.emptyStateButtonText}>Go to Library</Text>
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
       </ScrollView>
       <ReviewInboxModal
@@ -858,6 +858,35 @@ export default function SubjectDetailPage({
         familyId={familyId}
         initialSection="submissions"
       />
+      <Modal
+        visible={showProgressCheckInModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowProgressCheckInModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.progressCheckInModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowProgressCheckInModal(false)}
+        >
+          <View style={styles.progressCheckInModalContent}>
+            <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+              <Text style={styles.progressCheckInModalTitle}>Where are you in the syllabus?</Text>
+              <Text style={styles.progressCheckInModalBody}>
+                We're building a quick check-in so you can tell us where you are (e.g. % through the year or which unit). We'll then offer to mark attendance based on that pace and show your year progress here. Check back soon.
+              </Text>
+              <TouchableOpacity
+                style={styles.progressCheckInModalCloseButton}
+                onPress={() => setShowProgressCheckInModal(false)}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.progressCheckInModalCloseButtonText}>Close</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -1086,6 +1115,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  materialsSectionHeader: {
+    marginBottom: 2,
+  },
   attendanceSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1101,6 +1133,91 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1F2937',
     marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCheckInRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F4F7FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(79, 70, 229, 0.12)',
+  },
+  progressCheckInPrompt: {
+    fontSize: 14,
+    color: '#374151',
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCheckInButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: colors.accent || '#4F46E5',
+    borderRadius: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  progressCheckInButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCheckInModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  progressCheckInModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 24,
+    maxWidth: 400,
+    width: '100%',
+  },
+  progressCheckInModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCheckInModalBody: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 22,
+    marginBottom: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCheckInModalCloseButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  progressCheckInModalCloseButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1391,6 +1508,15 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  gradeAverageComingSoon: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B7280',
+    marginTop: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

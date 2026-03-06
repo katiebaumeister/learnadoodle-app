@@ -8,6 +8,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 import secrets
 import os
+import json
 import httpx
 
 from auth import get_current_user, rate_limiter
@@ -32,9 +33,9 @@ class CreateChildInviteOut(BaseModel):
 
 class AcceptChildInviteIn(BaseModel):
     token: str
-    username: str
     email: EmailStr
     password: str
+    username: Optional[str] = None  # optional; login is email-only
 
 
 class AcceptChildInviteOut(BaseModel):
@@ -215,7 +216,7 @@ async def accept_child_invite(
                 "role": "child",
                 "child_id": child_id,
                 "family_id": family_id,
-                "username": body.username
+                "username": (body.username or "").strip() or body.email.split("@")[0]
             }
         }
         
@@ -225,6 +226,20 @@ async def accept_child_invite(
                 if resp.status_code not in [200, 201]:
                     error_text = resp.text
                     log_event("child_auth.accept_invite.http_error", status=resp.status_code, error=error_text)
+                    # Supabase Auth returns 422 with email_exists when email already registered
+                    if resp.status_code == 422:
+                        try:
+                            err_body = resp.json()
+                            msg = (err_body.get("msg") or "") if isinstance(err_body.get("msg"), str) else ""
+                            if err_body.get("error_code") == "email_exists" or "already been registered" in msg.lower():
+                                raise HTTPException(
+                                    status_code=status.HTTP_409_CONFLICT,
+                                    detail="An account with this email already exists. Please sign in instead.",
+                                )
+                        except HTTPException:
+                            raise
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            pass
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail=f"Failed to create user: {error_text}"

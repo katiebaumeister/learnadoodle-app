@@ -23,8 +23,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON children TO service_role;
 -- Grant permissions on family (needed for queries and onboarding)
 GRANT SELECT, INSERT, UPDATE, DELETE ON family TO service_role;
 
--- Grant permissions on profiles (needed for family lookups)
-GRANT SELECT ON profiles TO service_role;
+-- Grant permissions on profiles (family lookups + child accept-invite upsert)
+GRANT SELECT, INSERT, UPDATE ON profiles TO service_role;
 
 -- Grant permissions on subject_goals (might be queried indirectly)
 GRANT SELECT ON subject_goals TO service_role;

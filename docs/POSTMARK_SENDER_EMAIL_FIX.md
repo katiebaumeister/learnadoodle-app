@@ -1,70 +1,53 @@
-# Fixing Postmark Sender Email
+# Postmark Sender Email: kate@ vs contact@
 
-## Issue
+## How to change from kate@learnadoodle.com to contact@learnadoodle.com
 
-Emails are being sent from `kate@learnadoodle.com` instead of `contact@learnadoodle.com`, even though `contact@learnadoodle.com` is set in the code.
+### Step 1: Verify contact@learnadoodle.com in Postmark
 
-## Root Cause
+Postmark only allows sending from **verified** sender addresses. Add and verify `contact@learnadoodle.com`:
 
-Postmark requires that the `From` email address matches a **verified sender signature** in your Postmark account. If `contact@learnadoodle.com` is not verified, Postmark will automatically use a verified sender (like `kate@learnadoodle.com`) instead.
+1. Go to [Postmark Dashboard](https://account.postmarkapp.com) → **Servers** → your Learnadoodle server.
+2. Open **Signatures** → **Sender Signatures**.
+3. Click **Add Sender Signature**.
+4. Enter **From email**: `contact@learnadoodle.com`.
+5. Complete verification:
+   - **Email verification**: Postmark sends a link to `contact@learnadoodle.com`; click it to verify. Easiest if you can receive mail at that address.
+   - **Domain verification**: If `learnadoodle.com` is already verified (DKIM + Return-Path), some setups allow any address at that domain; if not, add the sender and use the method Postmark shows (often email verification for one address).
 
-## Solutions
+Wait until the signature shows as **Verified**.
 
-### Option 1: Verify contact@learnadoodle.com (Recommended)
+### Step 2: Set the sender in your environment
 
-1. Go to [Postmark Dashboard](https://account.postmarkapp.com)
-2. Navigate to **Signatures** → **Sender Signatures**
-3. Click **Add Signature** or **Verify Domain**
-4. Add `contact@learnadoodle.com` as a sender signature
-5. Verify it (via email verification or DNS records)
-6. Once verified, emails will send from `contact@learnadoodle.com`
+The app uses `POSTMARK_SENDER_EMAIL`; the code default is `contact@learnadoodle.com` when unset.
 
-### Option 2: Use kate@learnadoodle.com as Sender
+- **Local**  
+  In `backend/.env` set:
+  ```bash
+  POSTMARK_SENDER_EMAIL=contact@learnadoodle.com
+  ```
+  (Remove the line or change it if it currently says `kate@learnadoodle.com`.)
 
-If you want to use `kate@learnadoodle.com` as the sender:
+- **Production**  
+  In your hosting dashboard (e.g. Render), set the same variable:
+  ```bash
+  POSTMARK_SENDER_EMAIL=contact@learnadoodle.com
+  ```
+  Redeploy the backend so the new value is used.
 
-1. Update your `.env` file:
-   ```bash
-   POSTMARK_SENDER_EMAIL=kate@learnadoodle.com
-   ```
+### Step 3: Restart / redeploy
 
-2. Restart your backend server
+- Local: restart the backend server.
+- Production: redeploy after changing the env var.
 
-### Option 3: Use ReplyTo (Current Implementation)
+After this, invite (and other) emails will send **From:** contact@learnadoodle.com. Replies already go to `contact@learnadoodle.com` via the existing `ReplyTo` in code.
 
-The code now sets `ReplyTo=contact@learnadoodle.com` so that:
-- Emails send from the verified sender (e.g., `kate@learnadoodle.com`)
-- Replies go to `contact@learnadoodle.com`
+---
 
-This is a good temporary solution while you verify `contact@learnadoodle.com`.
+## Why it was sending from kate@
 
-## How to Check Verified Senders
+Postmark requires the `From` address to match a **verified sender signature**. If `contact@learnadoodle.com` wasn’t verified, Postmark would reject or substitute a verified sender (e.g. `kate@learnadoodle.com`). Once `contact@learnadoodle.com` is verified and set in `POSTMARK_SENDER_EMAIL`, it will be used.
 
-1. Go to Postmark Dashboard → **Signatures** → **Sender Signatures**
-2. You'll see all verified sender emails
-3. Only these emails can be used in the `From` field
+## Quick check
 
-## Verification Methods
-
-### Email Verification (Easiest)
-1. Postmark sends a verification email to `contact@learnadoodle.com`
-2. Click the verification link
-3. Done!
-
-### Domain Verification (Best for Multiple Emails)
-1. Add DNS records to your domain
-2. Verify the domain once
-3. Use any email from that domain (e.g., `contact@`, `noreply@`, etc.)
-
-## Current Behavior
-
-With the current code:
-- **From**: Uses verified sender (likely `kate@learnadoodle.com`)
-- **ReplyTo**: `contact@learnadoodle.com` (replies go here)
-- **Display Name**: "Learnadoodle"
-
-This means recipients will see the email from `kate@learnadoodle.com`, but when they reply, it goes to `contact@learnadoodle.com`.
-
-## Recommended Action
-
-**Verify `contact@learnadoodle.com` in Postmark** so emails send from the correct address. This is the cleanest solution.
+- **Postmark** → Signatures → Sender Signatures: `contact@learnadoodle.com` should be listed and **Verified**.
+- **Env**: `POSTMARK_SENDER_EMAIL=contact@learnadoodle.com` in both local and production.

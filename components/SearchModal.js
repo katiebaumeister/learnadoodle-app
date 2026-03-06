@@ -49,6 +49,7 @@ export default function SearchModal({ visible, onClose }) {
   }, [visible])
 
   const initializeModal = async () => {
+    if (!user?.id) return
     try {
       // Get user's family_id
       const { data: profile } = await supabase
@@ -177,9 +178,9 @@ How can I help you today?`
             )}
           </ScrollView>
 
-          <View style={styles.inputContainer}>
+          <View style={styles.searchContainer}>
             <TextInput
-              style={styles.input}
+              style={styles.searchInput}
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="Ask Doodle anything..."
@@ -266,6 +267,15 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
     backgroundColor: '#fafbfc',
+  },
+  messagesContent: {
+    paddingBottom: 16,
+  },
+  message: {
+    marginBottom: 16,
+    padding: 16,
+    borderRadius: 12,
+    maxWidth: '85%',
   },
   messageItem: {
     marginBottom: 16,
