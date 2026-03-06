@@ -27,6 +27,7 @@ export default function EditChildModal({
   const [academicYear, setAcademicYear] = useState(null);
   const [loadingChildData, setLoadingChildData] = useState(false);
   const [formCanSubmit, setFormCanSubmit] = useState(false);
+  const [connectedEmail, setConnectedEmail] = useState(null);
 
   const toast = useToast();
 
@@ -42,6 +43,7 @@ export default function EditChildModal({
       setConfirmName('');
       setFullChildData(null);
       setFormCanSubmit(false);
+      setConnectedEmail(null);
     }
   }, [visible, child?.id]);
 
@@ -64,7 +66,31 @@ export default function EditChildModal({
       setFullChildData(data);
       setIsArchived(data.archived || false);
 
+      // If child has a linked account (verified), get the connected email (read-only, one per child)
       const fid = familyId || data.family_id;
+      if (fid) {
+        const { data: fmRows } = await supabase
+          .from('family_members')
+          .select('user_id')
+          .eq('family_id', fid)
+          .eq('child_id', child.id)
+          .eq('member_role', 'child')
+          .limit(1);
+        const userId = fmRows?.[0]?.user_id;
+        if (userId) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('email')
+            .eq('id', userId)
+            .maybeSingle();
+          setConnectedEmail(profile?.email || null);
+        } else {
+          setConnectedEmail(null);
+        }
+      } else {
+        setConnectedEmail(null);
+      }
+
       if (fid) {
         const { data: ay } = await supabase
           .from('academic_years')
@@ -433,6 +459,12 @@ export default function EditChildModal({
               </View>
             ) : fullChildData ? (
               <>
+                {connectedEmail != null && connectedEmail !== '' && (
+                  <View style={styles.connectedEmailRow}>
+                    <Text style={styles.connectedEmailLabel}>Connected to email:</Text>
+                    <Text style={styles.connectedEmailValue} numberOfLines={1}>{connectedEmail}</Text>
+                  </View>
+                )}
                 <AddChildForm
                   ref={formRef}
                   initial={initialData}
@@ -646,6 +678,25 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+  },
+  connectedEmailRow: {
+    marginBottom: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  connectedEmailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 4,
+  },
+  connectedEmailValue: {
+    fontSize: 15,
+    color: '#0f172a',
   },
   dangerZone: {
     marginTop: 24,

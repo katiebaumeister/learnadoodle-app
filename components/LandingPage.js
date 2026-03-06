@@ -9,13 +9,17 @@ import {
   Image,
   Animated,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { X, ChevronDown } from 'lucide-react';
+
+const LANDING_IMAGE_COUNT = 17;
 
 export default function LandingPage({ onGetStarted, onLogIn }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
+  const [pageReady, setPageReady] = useState(Platform.OS !== 'web');
   const [isMobile, setIsMobile] = useState(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       return window.innerWidth <= 768;
@@ -27,6 +31,22 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
   const superDoodleRef = useRef(null);
+  const loadedImageCount = useRef(0);
+
+  const handleImageLoad = () => {
+    if (Platform.OS !== 'web' || pageReady) return;
+    loadedImageCount.current += 1;
+    if (loadedImageCount.current >= LANDING_IMAGE_COUNT) {
+      setPageReady(true);
+    }
+  };
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const t = setTimeout(() => setPageReady(true), 5000);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -87,8 +107,8 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
     });
   };
 
-  return (
-    <Animated.View style={{ flex: 1, opacity: pageFadeAnim }}>
+  const mainContent = (
+    <Animated.View style={[styles.landingContentWrapper, { opacity: pageFadeAnim }, Platform.OS === 'web' && !pageReady && styles.landingContentHidden]}>
       {/* Corner Text - Only visible when not scrolled and not mobile */}
       {!isScrolled && !isMobile && (
         <View style={styles.cornerText}>
@@ -111,6 +131,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 source={require('../assets/icon.png')} 
                 style={styles.logoImage}
                 resizeMode="contain"
+                onLoad={handleImageLoad}
               />
               <Text style={styles.logoText}>learnadoodle</Text>
             </View>
@@ -124,6 +145,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 source={require('../assets/icon.png')} 
                 style={styles.logoImage}
                 resizeMode="contain"
+                onLoad={handleImageLoad}
               />
               <Text style={styles.logoText}>learnadoodle</Text>
             </View>
@@ -169,6 +191,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/landing.gif')} 
                   style={styles.heroImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             </View>
@@ -214,6 +237,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/schedule.png')}
                   style={styles.featureImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             )}
@@ -224,6 +248,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     source={require('../assets/schedule.png')}
                     style={styles.featureImageMobile}
                     resizeMode="contain"
+                    onLoad={handleImageLoad}
                   />
                 </View>
               )}
@@ -248,6 +273,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     source={require('../assets/curriculum.png')}
                     style={styles.featureImageMobile}
                     resizeMode="contain"
+                    onLoad={handleImageLoad}
                   />
                 </View>
               )}
@@ -264,6 +290,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/curriculum.png')}
                   style={styles.featureImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             )}
@@ -277,6 +304,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/progress.png')}
                   style={styles.featureImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             )}
@@ -287,6 +315,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     source={require('../assets/progress.png')}
                     style={styles.featureImageMobile}
                     resizeMode="contain"
+                    onLoad={handleImageLoad}
                   />
                 </View>
               )}
@@ -308,6 +337,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     source={require('../assets/support.png')}
                     style={styles.featureImageMobile}
                     resizeMode="contain"
+                    onLoad={handleImageLoad}
                   />
                 </View>
               )}
@@ -324,6 +354,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/support.png')}
                   style={styles.featureImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             )}
@@ -337,6 +368,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/teach.png')}
                   style={styles.featureImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             )}
@@ -347,6 +379,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     source={require('../assets/teach.png')}
                     style={styles.featureImageMobile}
                     resizeMode="contain"
+                    onLoad={handleImageLoad}
                   />
                 </View>
               )}
@@ -368,6 +401,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                     source={require('../assets/privacy.png')}
                     style={styles.featureImageMobile}
                     resizeMode="contain"
+                    onLoad={handleImageLoad}
                   />
                 </View>
               )}
@@ -384,6 +418,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source={require('../assets/privacy.png')}
                   style={styles.featureImage}
                   resizeMode="contain"
+                  onLoad={handleImageLoad}
                 />
               </View>
             )}
@@ -403,6 +438,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 source={require('../assets/superdoodlesection.png')}
                 style={styles.superDoodleSectionImage}
                 resizeMode="contain"
+                onLoad={handleImageLoad}
               />
               <View style={styles.superDoodleButtonContainer}>
                 <TouchableOpacity
@@ -428,6 +464,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
               source={require('../assets/superdoodlesection.png')}
               style={styles.superDoodleSectionImage}
               resizeMode="contain"
+              onLoad={handleImageLoad}
             />
             <View style={styles.superDoodleButtonContainer}>
               <TouchableOpacity
@@ -554,6 +591,20 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
     </Modal>
     </Animated.View>
   );
+
+  return (
+    <>
+      {Platform.OS === 'web' && !pageReady && (
+        <View style={styles.landingLoaderOverlay}>
+          <View style={styles.landingLoaderInner}>
+            <ActivityIndicator size="large" color="#60a5fa" />
+            <Text style={styles.landingLoaderText}>learnadoodle</Text>
+          </View>
+        </View>
+      )}
+      {mainContent}
+    </>
+  );
 }
 
 function FooterCol({ title, links, onShowComingSoon }) {
@@ -597,6 +648,36 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  landingContentWrapper: {
+    flex: 1,
+  },
+  landingContentHidden: {
+    opacity: 0,
+    pointerEvents: 'none',
+  },
+  landingLoaderOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: '#ffffff',
+    zIndex: 9999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  landingLoaderInner: {
+    alignItems: 'center',
+    gap: 16,
+  },
+  landingLoaderText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#0f172a',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   contentContainer: {
     ...(Platform.OS === 'web' && {

@@ -154,6 +154,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showInviteUrlModal, setShowInviteUrlModal] = useState(false);
   const [inviteUrlToShow, setInviteUrlToShow] = useState(null);
   const [inviteUrlCopied, setInviteUrlCopied] = useState(false);
+  const [inviteSuccessRole, setInviteSuccessRole] = useState(null); // 'parent' | 'child' | 'tutor'
 
   // ID card modal: 'parent' | 'child' | 'tutor', selected member (or null to show picker), list of candidates
   const [showIdCardModal, setShowIdCardModal] = useState(false);
@@ -210,14 +211,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     return url;
   };
 
-  // Show invite URL modal
-  const showInviteSuccessModal = (url) => {
-    const normalized = normalizeInviteUrl(url);
+  // Show invite success modal (role: 'parent' | 'child' | 'tutor' for message)
+  const showInviteSuccessModal = (url, role = 'parent') => {
+    const normalized = url ? normalizeInviteUrl(url) : null;
     setInviteUrlToShow(normalized);
+    setInviteSuccessRole(role);
     setShowInviteUrlModal(true);
     setInviteUrlCopied(false);
-    // Try to copy automatically, but don't show error if it fails
-    copyToClipboard(normalized, 'Invite link').catch(() => {});
   };
 
   // Provider logo assets (PNG)
@@ -786,7 +786,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setSelectedChildIds([]);
       toast.push('Invite sent successfully!', 'success');
       if (data.invite_url) {
-        showInviteSuccessModal(data.invite_url);
+        showInviteSuccessModal(data.invite_url, 'tutor');
       }
     } catch (err) {
       setError(err.message || 'Failed to invite tutor');
@@ -819,12 +819,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setChildInviteResultUrl(data.invite_url);
       setChildInviteEmail('');
       setSelectedChildForInvite(null);
-      setShowChildInviteModal(false);
       setChildInviteStep('select');
       toast.push('Child invite sent successfully!', 'success');
       if (data.invite_url) {
-        showInviteSuccessModal(data.invite_url);
+        showInviteSuccessModal(data.invite_url, 'child');
       }
+      setShowChildInviteModal(false);
       if (onFamilyUpdate) onFamilyUpdate();
     } catch (err) {
       setError(err.message || 'Failed to invite child');
@@ -862,11 +862,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       if (err) throw err;
       setParentInviteResultUrl(data.invite_url);
       setParentInviteEmail('');
-      setShowParentInviteModal(false);
       toast.push('Parent invite sent successfully!', 'success');
       if (data.invite_url) {
-        showInviteSuccessModal(data.invite_url);
+        showInviteSuccessModal(data.invite_url, 'parent');
       }
+      setShowParentInviteModal(false);
       if (onFamilyUpdate) onFamilyUpdate();
     } catch (err) {
       setError(err.message || 'Failed to invite parent');
@@ -892,11 +892,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       });
       if (err) throw err;
       setTutorInviteEmail('');
-      setShowTutorInviteModal(false);
       toast.push('Tutor invite sent successfully!', 'success');
       if (data?.invite_url) {
-        showInviteSuccessModal(data.invite_url);
+        showInviteSuccessModal(data.invite_url, 'tutor');
       }
+      setShowTutorInviteModal(false);
       if (onFamilyUpdate) onFamilyUpdate();
     } catch (err) {
       setError(err.message || 'Failed to invite tutor');
@@ -3899,66 +3899,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             
             <Text style={styles.inviteUrlModalDescription}>
-              Share this invite link with the person you're inviting:
+              {inviteSuccessRole === 'child' && 'Invite sent! Ensure the child checks their email to verify their account.'}
+              {inviteSuccessRole === 'parent' && 'Invite sent! Ensure the parent checks their email to verify their account.'}
+              {inviteSuccessRole === 'tutor' && 'Invite sent! Ensure the tutor checks their email to verify their account.'}
+              {!inviteSuccessRole && 'Invite sent! Ensure they check their email to verify their account.'}
             </Text>
             
-            <View style={styles.inviteUrlContainer}>
-              {Platform.OS === 'web' ? (
-                <TextInput
-                  style={styles.inviteUrlInput}
-                  value={inviteUrlToShow || ''}
-                  editable={false}
-                  selectTextOnFocus={true}
-                  multiline={true}
-                  data-invite-url-input={true}
-                />
-              ) : (
-                <TextInput
-                  style={styles.inviteUrlInput}
-                  value={inviteUrlToShow || ''}
-                  editable={false}
-                  selectTextOnFocus={true}
-                  multiline={true}
-                />
-              )}
-            </View>
-            
             <View style={styles.inviteUrlModalActions}>
-              <TouchableOpacity
-                style={[styles.inviteUrlCopyButton, inviteUrlCopied && styles.inviteUrlCopyButtonSuccess]}
-                onPress={async () => {
-                  if (inviteUrlToShow) {
-                    const success = await copyToClipboard(inviteUrlToShow, 'Invite link');
-                    if (!success && Platform.OS === 'web') {
-                      // If clipboard fails, select text so user can manually copy
-                      setTimeout(() => {
-                        const input = document.querySelector('[data-invite-url-input]');
-                        if (input) {
-                          input.focus();
-                          input.select();
-                          if (input.setSelectionRange) {
-                            input.setSelectionRange(0, 99999);
-                          }
-                        }
-                      }, 100);
-                    }
-                  }
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                {inviteUrlCopied ? (
-                  <>
-                    <Check size={16} color="#ffffff" />
-                    <Text style={styles.inviteUrlCopyButtonText}>Copied!</Text>
-                  </>
-                ) : (
-                  <>
-                    <Copy size={16} color="#ffffff" />
-                    <Text style={styles.inviteUrlCopyButtonText}>Copy Link</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              
               <TouchableOpacity
                 style={styles.inviteUrlDoneButton}
                 onPress={() => setShowInviteUrlModal(false)}

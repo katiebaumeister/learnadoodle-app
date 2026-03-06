@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, ScrollView, ActivityIndicator, Animated } from 'react-native'
-import { X, Send, Bot } from 'lucide-react'
+import { X, Send } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { processDoodleMessage, executeTool } from '../lib/doodleAssistant.js'
 import { supabase } from '../lib/supabase'
@@ -64,21 +64,11 @@ export default function SearchModal({ visible, onClose }) {
     } catch (error) {
       }
     
-    // Add welcome message
-    const welcomeMessage = `Hi! I'm Doodle, your fast chat assistant for Learnadoodle! 🤖
-
-I can help you with:
-• Quick questions → direct answers
-• Log homework/activities → add_activity
-• Check recent progress → progress_summary
-• Request short-term schedule shifts → queue_reschedule
-• Suggest subjects for a child/year
-• Suggest courses (live-class, self-paced, custom)
-
-How can I help you today?`
-    
-    setMessages([{ role: 'assistant', content: welcomeMessage, timestamp: Date.now() }])
+    setMessages([])
   }
+
+  const INTRO_TEXT = `Hi! I'm Doodle , your fast chat assistant. Ask away... 🐩💌`
+  const showCenteredIntro = messages.length === 0
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -131,50 +121,61 @@ How can I help you today?`
       animationType="none"
       onRequestClose={onClose}
     >
-      <View style={styles.modalOverlay} onTouchEnd={onClose}>
-        <Animated.View
-          style={[
-            styles.modalContent,
-            {
-              transform: [
-                { translateY: slideAnim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) },
-                { scale: scaleAnim }
-              ]
-            }
-          ]}
-          onTouchEnd={(e) => e.stopPropagation()}
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => {}}
+          style={styles.modalContentTouchable}
         >
-          <View style={styles.modalHeader}>
-            <View style={styles.headerLeft}>
-              <Bot size={20} color="#4285F4" />
-              <Text style={styles.modalTitle}>Doodle Assistant</Text>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <X size={20} color="#666" />
-            </TouchableOpacity>
-          </View>
+          <Animated.View
+            style={[
+              styles.modalContent,
+              {
+                transform: [
+                  { translateY: slideAnim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) },
+                  { scale: scaleAnim }
+                ]
+              }
+            ]}
+          >
+          <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <X size={20} color="#666" />
+          </TouchableOpacity>
 
-          <ScrollView style={styles.messagesContainer} contentContainerStyle={styles.messagesContent}>
-            {messages.map((msg, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.message,
-                  msg.role === 'user' ? styles.userMessage : styles.assistantMessage
-                ]}
-              >
-                <Text style={[
-                  styles.messageText,
-                  msg.role === 'user' ? styles.userMessageText : styles.assistantMessageText
-                ]}>
-                  {msg.content}
-                </Text>
-              </View>
-            ))}
-            {isLoading && (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="#4285F4" />
-              </View>
+          <ScrollView
+            style={styles.messagesContainer}
+            contentContainerStyle={[styles.messagesContent, showCenteredIntro && styles.messagesContentCentered]}
+          >
+            {showCenteredIntro ? (
+              <Text style={styles.introText}>{INTRO_TEXT}</Text>
+            ) : (
+              <>
+                {messages.map((msg, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.message,
+                      msg.role === 'user' ? styles.userMessage : styles.assistantMessage
+                    ]}
+                  >
+                    <Text style={[
+                      styles.messageText,
+                      msg.role === 'user' ? styles.userMessageText : styles.assistantMessageText
+                    ]}>
+                      {msg.content}
+                    </Text>
+                  </View>
+                ))}
+                {isLoading && (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color="#4285F4" />
+                  </View>
+                )}
+              </>
             )}
           </ScrollView>
 
@@ -199,8 +200,9 @@ How can I help you today?`
               <Send size={20} color={searchQuery.trim() ? "#ffffff" : "#cccccc"} />
             </TouchableOpacity>
           </View>
-        </Animated.View>
-      </View>
+          </Animated.View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   )
 }
@@ -214,11 +216,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     zIndex: 1000,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+  },
+  modalContentTouchable: {
+    marginBottom: 20,
+    marginRight: 20,
   },
   modalContent: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
     backgroundColor: '#ffffff',
     borderRadius: 20,
     width: 400,
@@ -228,36 +233,20 @@ const styles = StyleSheet.create({
     boxShadow: '0 25px 80px rgba(0, 0, 0, 0.25)',
     overflow: 'hidden',
   },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f3f4',
-    backgroundColor: '#fafbfc',
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-  },
   closeButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 10,
     width: 32,
     height: 32,
     borderRadius: 16,
     backgroundColor: '#f8f9fa',
     alignItems: 'center',
     justifyContent: 'center',
-    cursor: 'pointer',
     borderWidth: 1,
     borderColor: '#e9ecef',
+    ...(typeof document !== 'undefined' && { cursor: 'pointer' }),
   },
   closeButtonHover: {
     backgroundColor: '#e9ecef',
@@ -266,10 +255,23 @@ const styles = StyleSheet.create({
   messagesContainer: {
     flex: 1,
     padding: 24,
-    backgroundColor: '#fafbfc',
+    paddingTop: 52,
+    backgroundColor: '#ffffff',
   },
   messagesContent: {
     paddingBottom: 16,
+  },
+  messagesContentCentered: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  introText: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#374151',
+    textAlign: 'center',
   },
   message: {
     marginBottom: 16,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator } from 'react-native';
+import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator, Image } from 'react-native';
 
 // For web portal rendering
 let ReactDOM;
@@ -3066,7 +3066,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} />
       )}
 
-      {/* Floating Ask AI button - bottom right */}
+      {/* Floating Ask AI button - circular icon, learnadoodle blue */}
       {user && (
         <TouchableOpacity
           onPress={() => setShowDoodleSearchModal(true)}
@@ -3075,8 +3075,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           accessibilityLabel="Ask AI"
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
-          <Bot size={22} color="#ffffff" />
-          <Text style={styles.fabAskAIText}>Ask AI</Text>
+          <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
         </TouchableOpacity>
       )}
 
@@ -4032,16 +4031,14 @@ const styles = StyleSheet.create({
     position: Platform.OS === 'web' ? 'fixed' : 'absolute',
     bottom: 24,
     right: 24,
-    flexDirection: 'row',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#9ECFFB',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 28,
-    backgroundColor: '#4285F4',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 14px rgba(66, 133, 244, 0.4)',
+      boxShadow: '0 4px 14px rgba(158, 207, 251, 0.4)',
       zIndex: 9998,
     }),
     ...(Platform.OS !== 'web' && {
@@ -4052,12 +4049,8 @@ const styles = StyleSheet.create({
       shadowRadius: 4,
     }),
   },
-  fabAskAIText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#ffffff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  fabAskAIIcon: {
+    width: 44,
+    height: 44,
   },
 });
