@@ -43,6 +43,7 @@ export default function WebAuthScreen() {
   const [successMessage, setSuccessMessage] = useState('');
   const [existingEmailOfferReset, setExistingEmailOfferReset] = useState(false);
   const [showAccountCreatedConfirmation, setShowAccountCreatedConfirmation] = useState(false);
+  const [justClosedModal, setJustClosedModal] = useState(false);
 
   const { signIn, signUp, resetPassword } = useAuth();
 
@@ -55,13 +56,13 @@ export default function WebAuthScreen() {
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
 
   const handleClose = () => {
+    setJustClosedModal(true);
     Animated.timing(pageFadeAnim, {
       toValue: 0,
       duration: 300,
       useNativeDriver: Platform.OS !== 'web',
     }).start(() => {
       setShowWelcome(true);
-      // Reset animation for next time
       pageFadeAnim.setValue(1);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.history.pushState({}, '', '/');
@@ -81,6 +82,14 @@ export default function WebAuthScreen() {
       }).start();
     }
   }, [showWelcome, pageFadeAnim]);
+
+  // Clear justClosedModal after landing has rendered (so next close can set it again)
+  useEffect(() => {
+    if (showWelcome && justClosedModal) {
+      const t = setTimeout(() => setJustClosedModal(false), 100);
+      return () => clearTimeout(t);
+    }
+  }, [showWelcome, justClosedModal]);
 
   // Helper to update URL without reload
   const updateURL = (view) => {
@@ -417,18 +426,27 @@ export default function WebAuthScreen() {
   }
 
   if (showAccountCreatedConfirmation) {
+    const closeAccountCreated = () => {
+      setJustClosedModal(true);
+      Animated.timing(pageFadeAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: Platform.OS !== 'web',
+      }).start(() => {
+        setShowAccountCreatedConfirmation(false);
+        setShowWelcome(true);
+        pageFadeAnim.setValue(1);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.pushState({}, '', '/');
+        }
+      });
+    };
     return (
       <Animated.View style={[styles.container, { opacity: pageFadeAnim }]}>
         {Platform.OS === 'web' && <View style={styles.backgroundPattern} />}
         <TouchableOpacity
           style={styles.closeButton}
-          onPress={() => {
-            setShowAccountCreatedConfirmation(false);
-            setShowWelcome(true);
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.history.pushState({}, '', '/');
-            }
-          }}
+          onPress={closeAccountCreated}
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           <X size={24} color="#64748b" />
@@ -441,18 +459,6 @@ export default function WebAuthScreen() {
                   Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
                 </Text>
               </View>
-              <TouchableOpacity
-                style={styles.linkButton}
-                onPress={() => {
-                  setShowAccountCreatedConfirmation(false);
-                  setShowWelcome(true);
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.history.pushState({}, '', '/');
-                  }
-                }}
-              >
-                <Text style={styles.linkText}>Back to home</Text>
-              </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
@@ -460,16 +466,19 @@ export default function WebAuthScreen() {
     );
   }
 
-  // Show landing page first
+  // Show landing page (skip loader when returning from modal close so it shows immediately)
   if (showWelcome) {
     return (
       <LandingPage
+        skipLoader={justClosedModal}
         onGetStarted={() => {
+          setJustClosedModal(false);
           setShowWelcome(false);
           setIsSignUp(true);
           updateURL('signup');
         }}
         onLogIn={() => {
+          setJustClosedModal(false);
           setShowWelcome(false);
           setIsSignUp(false);
           updateURL('signin');

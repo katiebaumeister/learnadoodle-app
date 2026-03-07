@@ -15,11 +15,11 @@ import { X, ChevronDown } from 'lucide-react';
 
 const LANDING_IMAGE_COUNT = 17;
 
-export default function LandingPage({ onGetStarted, onLogIn }) {
+export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
-  const [pageReady, setPageReady] = useState(Platform.OS !== 'web');
+  const [pageReady, setPageReady] = useState(Platform.OS !== 'web' || skipLoader);
   const [isMobile, setIsMobile] = useState(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       return window.innerWidth <= 768;
@@ -594,7 +594,7 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
 
   return (
     <>
-      {Platform.OS === 'web' && !pageReady && (
+      {Platform.OS === 'web' && !pageReady && !skipLoader && (
         <View style={styles.landingLoaderOverlay}>
           <View style={styles.landingLoaderInner}>
             <ActivityIndicator size="large" color="#60a5fa" />
