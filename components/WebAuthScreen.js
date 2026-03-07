@@ -158,10 +158,17 @@ export default function WebAuthScreen() {
 
   const handleAuth = async () => {
     clearMessages();
-    
-    if (!email || !password) {
-      setErrorMessage('Please fill in all fields');
-      return;
+
+    if (isSignUp) {
+      if (!email || !email.trim()) {
+        setErrorMessage('Please enter your email address');
+        return;
+      }
+    } else {
+      if (!email || !password) {
+        setErrorMessage('Please fill in email and password');
+        return;
+      }
     }
 
     if (isSignUp) {
