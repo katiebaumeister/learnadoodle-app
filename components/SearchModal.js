@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, ScrollView, ActivityIndicator, Animated } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, ScrollView, ActivityIndicator, Animated, Platform } from 'react-native'
 import { X, Send } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { processDoodleMessage, executeTool } from '../lib/doodleAssistant.js'
+import { processDoodleMessage, executeTool, getDisplayMessage, getToolName, getToolParams } from '../lib/doodleAssistant.js'
 import { supabase } from '../lib/supabase'
+import { createEventViaSupabaseRpc } from '../lib/services/plannerClientWithOffline'
 
-export default function SearchModal({ visible, onClose }) {
+export default function SearchModal({ visible, onClose, onNavigate }) {
   const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
   const [messages, setMessages] = useState([])
@@ -13,6 +14,8 @@ export default function SearchModal({ visible, onClose }) {
   const [familyId, setFamilyId] = useState(null)
   const slideAnim = useRef(new Animated.Value(0)).current
   const scaleAnim = useRef(new Animated.Value(0.8)).current
+  const searchInputRef = useRef(null)
+  const handleSearchRef = useRef(null)
 
   // Initialize when modal opens
   useEffect(() => {
@@ -86,24 +89,41 @@ export default function SearchModal({ visible, onClose }) {
 
     try {
       if (familyId) {
-        // Process with actual Doodle assistant
-        const response = await processDoodleMessage(userMessage, familyId, null)
-        
-        let finalResponse = response.message || response
-        
-        // Handle tool execution if needed
-        if (response.tool) {
+        const recentMessages = messages.map((m) => ({ role: m.role, content: m.content }))
+        const response = await processDoodleMessage(userMessage, familyId, null, { recentMessages })
+        let finalResponse = getDisplayMessage(response)
+
+        const toolName = getToolName(response)
+        if (toolName) {
           try {
-            const toolResult = await executeTool(response.tool, response.params, familyId)
-            if (toolResult.success) {
-              finalResponse += `\n\n✅ ${response.tool} completed successfully!`
+            const toolResult = await executeTool(toolName, getToolParams(response), familyId)
+            if (toolResult.success && toolResult.userMessage) {
+              finalResponse += `\n\n${toolResult.userMessage}`
+            } else if (toolResult.success) {
+              finalResponse += `\n\n✅ Done.`
             }
           } catch (toolError) {
             console.error('Tool execution error:', toolError)
           }
         }
-        
-        // Add assistant response
+
+        if (response.fetch && response.fetch.startsWith('navigate_') && onNavigate) {
+          onNavigate(response.fetch)
+        }
+        if (response.openTaskModal && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('openTaskModal', { detail: response.openTaskModal }))
+        }
+        if (response.createEventInBackground) {
+          const { eventData, familyId: famId, childIds } = response.createEventInBackground
+          const { data: created, error } = await createEventViaSupabaseRpc(eventData, famId, childIds)
+          if (error) {
+            console.warn('[SearchModal] Doodle createEvent RPC failed:', error)
+            finalResponse += '\n\nSorry, I couldn’t save that event. Please try adding it from the planner.'
+          } else if (created?.length > 0 && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshCalendar'))
+            window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+          }
+        }
         setMessages([...newMessages, { role: 'assistant', content: finalResponse, timestamp: Date.now() }])
       }
     } catch (error) {
@@ -113,6 +133,33 @@ export default function SearchModal({ visible, onClose }) {
       setIsLoading(false)
     }
   }
+
+  handleSearchRef.current = handleSearch
+
+  // On web, attach native keydown so Enter reliably sends (RN Web can miss onKeyDown)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return
+    let cleanup = () => {}
+    const id = setTimeout(() => {
+      const node = searchInputRef.current
+      if (!node) return
+      const el = typeof node.querySelector === 'function' ? node.querySelector('input, textarea') || node : node
+      if (typeof el.addEventListener !== 'function') return
+      const handler = (e) => {
+        if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (handleSearchRef.current) handleSearchRef.current()
+        }
+      }
+      el.addEventListener('keydown', handler, true)
+      cleanup = () => el.removeEventListener('keydown', handler, true)
+    }, 100)
+    return () => {
+      clearTimeout(id)
+      cleanup()
+    }
+  }, [visible])
 
   return (
     <Modal
@@ -181,12 +228,28 @@ export default function SearchModal({ visible, onClose }) {
 
           <View style={styles.searchContainer}>
             <TextInput
+              ref={searchInputRef}
               style={styles.searchInput}
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="Ask Doodle anything..."
-              placeholderTextColor="#999"
+              placeholderTextColor="#b8b8b8"
               onSubmitEditing={handleSearch}
+              onKeyDown={Platform.OS === 'web' ? (e) => {
+                if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSearch();
+                }
+              } : undefined}
+              onKeyPress={(e) => {
+                const key = e.nativeEvent?.key ?? e.key;
+                const keyCode = e.nativeEvent?.keyCode ?? e.keyCode;
+                if ((key === 'Enter' || keyCode === 13) && !e.shiftKey) {
+                  if (Platform.OS === 'web' && e.preventDefault) e.preventDefault();
+                  handleSearch();
+                }
+              }}
               multiline
               maxLength={500}
               returnKeyType="send"

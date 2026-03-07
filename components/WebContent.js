@@ -488,7 +488,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { Clock, ArrowRight, UserCircle, Link, MapPin, Eye, Plus, Upload, Copy, Sparkles, Download, Users, Settings, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { proposeReschedule, getWeekStart, apiRequest } from '../lib/apiClient'
-import { deleteEvent as deletePlannerEvent, restoreEventFromTrash, permanentlyDeleteTrashEvent } from '../lib/services/plannerClientWithOffline'
+import { createEventViaSupabaseRpc, deleteEvent as deletePlannerEvent, restoreEventFromTrash, permanentlyDeleteTrashEvent } from '../lib/services/plannerClientWithOffline'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import SyllabusUpload from './SyllabusUpload'
@@ -624,7 +624,7 @@ import SubjectSelectForm from './SubjectSelectForm'
 import TemplatePicker from './templates/TemplatePicker'
 import { getSubjectRecommendations, processLiveClass, analyzeProgress, chatWithDoodleBot } from '../lib/aiProcessor.js'
 import { AIConversationService } from '../lib/aiConversationService.js'
-import { processDoodleMessage, executeTool } from '../lib/doodleAssistant.js'
+import { processDoodleMessage, executeTool, getDisplayMessage, getToolName, getToolParams } from '../lib/doodleAssistant.js'
 import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
@@ -7042,34 +7042,73 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return
       }
       
-      // Use the new Doodle assistant
-      const response = await processDoodleMessage(message, familyId, conversationId);
-      
+      // Recent messages for short-term conversational memory (e.g. "And science?")
+      const recentMessages = doodleMessages.map((m) => ({ role: m.role, content: m.content }));
+      const response = await processDoodleMessage(message, familyId, conversationId, { recentMessages });
+
+      let displayText = getDisplayMessage(response);
+
       // Handle tool execution if needed
-      if (response.tool) {
+      const toolName = getToolName(response);
+      if (toolName) {
         try {
-          const toolResult = await executeTool(response.tool, response.params, familyId);
-          if (toolResult.success) {
-            response.message += `\n\n✅ ${response.tool} completed successfully!`;
+          const toolResult = await executeTool(toolName, getToolParams(response), familyId);
+          if (toolResult.success && toolResult.userMessage) {
+            displayText += `\n\n${toolResult.userMessage}`;
+          } else if (toolResult.success) {
+            displayText += `\n\n✅ Done.`;
           }
         } catch (toolError) {
           console.error('Tool execution error:', toolError);
-          response.message += `\n\n❌ Sorry, I couldn't complete that action. Please try again.`;
+          displayText += `\n\n❌ Sorry, I couldn't complete that action. Please try again.`;
         }
       }
-      
+
       // Handle fetch requests
-      if (response.fetch) {
-        if (response.fetch === 'custom-plan') {
-          response.message += `\n\n🔄 I'm working on your custom plan. This may take a moment...`;
-        } else if (response.fetch === '2-week-plan') {
-          response.message += `\n\n📅 I'm generating your 2-week plan. This may take a moment...`;
+      if (response.fetch === 'custom-plan') {
+        displayText += `\n\n🔄 I'm working on your custom plan. This may take a moment...`;
+      } else if (response.fetch === '2-week-plan') {
+        displayText += `\n\n📅 I'm generating your 2-week plan. This may take a moment...`;
+      }
+
+      // Navigate: switch tab and (for planner attendance) set view
+      if (response.fetch === 'navigate_planner_attendance' && onTabChange) {
+        onTabChange('planner');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/planner?view=attendance');
+          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+        }
+      } else if (response.fetch === 'navigate_planner' && onTabChange) {
+        onTabChange('planner');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/planner');
+        }
+      } else if (response.fetch === 'navigate_home' && onTabChange) {
+        onTabChange('home');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/');
         }
       }
-      
-      await AIConversationService.addMessage(conversationId, 'assistant', response.message);
-      
-      setDoodleMessages(prev => [...prev, { role: 'assistant', content: response.message, timestamp: Date.now() }])
+
+      if (response.openTaskModal && Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openTaskModal', { detail: response.openTaskModal }));
+      }
+
+      if (response.createEventInBackground) {
+        const { eventData, familyId: famId, childIds } = response.createEventInBackground;
+        const { data: created, error } = await createEventViaSupabaseRpc(eventData, famId, childIds);
+        if (error) {
+          console.warn('[WebContent] Doodle createEvent RPC failed:', error);
+          displayText += '\n\nSorry, I couldn’t save that event. Please try adding it from the planner.';
+        } else if (created?.length > 0 && Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshCalendar'));
+          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+          if (invalidateHomeDataCache && famId) invalidateHomeDataCache(famId);
+        }
+      }
+
+      await AIConversationService.addMessage(conversationId, 'assistant', displayText);
+      setDoodleMessages(prev => [...prev, { role: 'assistant', content: displayText, timestamp: Date.now() }])
       
     } catch (error) {
       console.error('Error chatting with Doodle:', error)
@@ -7090,6 +7129,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDoodlePrompt, activeTab])
+
+  // Hydrate Doodle chat from DB when opening Search tab and we have no messages in state
+  useEffect(() => {
+    if (activeTab !== 'search' || !familyId || doodleMessages.length > 0) return;
+    let cancelled = false;
+    AIConversationService.getLatestDoodleConversation(familyId).then((result) => {
+      if (cancelled || !result?.conversationId || !result.messages?.length) return;
+      setDoodleConversationId(result.conversationId);
+      setDoodleMessages(result.messages.map((m) => ({ role: m.role, content: m.content, timestamp: m.timestamp || Date.now() })));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeTab, familyId, doodleMessages.length]);
 
   const handleSendMessage = () => {
     console.log('handleSendMessage called, current input:', doodleInput)

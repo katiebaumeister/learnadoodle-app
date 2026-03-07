@@ -121,17 +121,20 @@ export default function WebAuthScreen() {
     setSuccessMessage('');
   };
 
+  const hasSpecialCharRe = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/;
   const validatePassword = (password) => {
     const hasUpperCase = /[A-Z]/.test(password);
     const hasLowerCase = /[a-z]/.test(password);
     const hasDigits = /\d/.test(password);
+    const hasSpecialChar = hasSpecialCharRe.test(password);
     const hasMinLength = password.length >= 10;
-    
+
     return {
-      isValid: hasUpperCase && hasLowerCase && hasDigits && hasMinLength,
+      isValid: hasUpperCase && hasLowerCase && hasDigits && hasSpecialChar && hasMinLength,
       hasUpperCase,
       hasLowerCase,
       hasDigits,
+      hasSpecialChar,
       hasMinLength
     };
   };
@@ -159,16 +162,17 @@ export default function WebAuthScreen() {
         return;
       }
 
-      // Check password requirements
+      // Check password requirements — only list what's missing
       const passwordValidation = validatePassword(password);
       if (!passwordValidation.isValid) {
         const missingRequirements = [];
-        if (!passwordValidation.hasMinLength) missingRequirements.push('10 characters');
-        if (!passwordValidation.hasUpperCase) missingRequirements.push('uppercase letter');
-        if (!passwordValidation.hasLowerCase) missingRequirements.push('lowercase letter');
-        if (!passwordValidation.hasDigits) missingRequirements.push('number');
-        
-        setErrorMessage(`Password must contain: ${missingRequirements.join(', ')}`);
+        if (!passwordValidation.hasMinLength) missingRequirements.push('at least 10 characters');
+        if (!passwordValidation.hasUpperCase) missingRequirements.push('1 uppercase letter');
+        if (!passwordValidation.hasLowerCase) missingRequirements.push('1 lowercase letter');
+        if (!passwordValidation.hasDigits) missingRequirements.push('1 number');
+        if (!passwordValidation.hasSpecialChar) missingRequirements.push('1 special character');
+
+        setErrorMessage(`Please include: ${missingRequirements.join(', ')}.`);
         return;
       }
     }
@@ -439,12 +443,15 @@ export default function WebAuthScreen() {
                 <Text style={[styles.requirement, /\d/.test(password) && styles.requirementMet]}>
                   • Contains number
                 </Text>
+                <Text style={[styles.requirement, hasSpecialCharRe.test(password) && styles.requirementMet]}>
+                  • Contains special character
+                </Text>
                 {password && confirmPassword && (
                   <Text style={[styles.requirement, password === confirmPassword && styles.requirementMet]}>
                     • Passwords match
                   </Text>
                 )}
-          </View>
+              </View>
             )}
           </>
         )}

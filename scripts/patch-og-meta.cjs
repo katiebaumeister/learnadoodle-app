@@ -17,8 +17,8 @@ const ogDist = path.join(distDir, 'og-image.png');
 const faviconDist = path.join(distDir, 'favicon.png');
 
 const SITE_URL = process.env.SITE_URL || 'https://learnadoodle.com';
-const TITLE = 'Learnadoodle';
-const DESCRIPTION = 'Plan, track, and celebrate learning with your family.';
+const TITLE = 'Learnadoodle – Homeschool Planning That Adapts to Real Life';
+const META_DESCRIPTION = 'Flexible homeschool planning for real families: adaptive schedules, one-place curriculum, progress tracking, privacy-first. Built for different learners and real life.';
 
 if (!fs.existsSync(distHtml)) {
   console.warn('[patch-og-meta] dist/index.html not found, skipping');
@@ -38,23 +38,37 @@ if (fs.existsSync(ogAsset)) {
 
 const imageUrl = SITE_URL + '/og-image.png';
 
+const KEYWORDS = 'homeschool planning, homeschool app, flexible curriculum, homeschool schedule, learning progress, homeschool records, neurodiverse learning, homeschool for families';
+
 const metaTags = [
+  '<meta name="description" content="' + META_DESCRIPTION.replace(/"/g, '&quot;') + '" />',
+  '<meta name="keywords" content="' + KEYWORDS + '" />',
+  '<meta name="robots" content="index, follow" />',
+  '<link rel="canonical" href="' + SITE_URL + '/" />',
   '<meta property="og:type" content="website" />',
   '<meta property="og:url" content="' + SITE_URL + '" />',
-  '<meta property="og:title" content="' + TITLE + '" />',
-  '<meta property="og:description" content="' + DESCRIPTION + '" />',
+  '<meta property="og:title" content="' + TITLE.replace(/"/g, '&quot;') + '" />',
+  '<meta property="og:description" content="' + META_DESCRIPTION.replace(/"/g, '&quot;') + '" />',
   '<meta property="og:image" content="' + imageUrl + '" />',
+  '<meta property="og:site_name" content="Learnadoodle" />',
   '<meta name="twitter:card" content="summary_large_image" />',
-  '<meta name="twitter:title" content="' + TITLE + '" />',
-  '<meta name="twitter:description" content="' + DESCRIPTION + '" />',
+  '<meta name="twitter:title" content="' + TITLE.replace(/"/g, '&quot;') + '" />',
+  '<meta name="twitter:description" content="' + META_DESCRIPTION.replace(/"/g, '&quot;') + '" />',
   '<meta name="twitter:image" content="' + imageUrl + '" />',
 ].join('\n    ');
 
 let html = fs.readFileSync(distHtml, 'utf8');
 
-// Remove existing OG/Twitter meta tags so we don't duplicate
+// Set document title (replace whatever Expo put in)
+html = html.replace(/<title>[^<]*<\/title>/, '<title>' + TITLE.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</title>');
+
+// Remove existing description/keywords/robots/canonical and OG/Twitter meta so we don't duplicate
+const metaDescriptionRegex = /<meta\s+name="description"\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
+const metaKeywordsRegex = /<meta\s+name="keywords"\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
+const metaRobotsRegex = /<meta\s+name="robots"\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
+const canonicalRegex = /<link\s+rel="canonical"\s+href="[^"]*"\s*\/?\s*>\s*\n?/gi;
 const ogTwitterRegex = /<meta\s+(property="og:[^"]+"|name="twitter:[^"]+")\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
-html = html.replace(ogTwitterRegex, '');
+html = html.replace(metaDescriptionRegex, '').replace(metaKeywordsRegex, '').replace(metaRobotsRegex, '').replace(canonicalRegex, '').replace(ogTwitterRegex, '');
 
 // Inject after <head> or at start of head
 if (html.includes('<head>')) {

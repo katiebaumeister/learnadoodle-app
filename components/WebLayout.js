@@ -103,6 +103,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalDefaultEventType, setTaskModalDefaultEventType] = useState(null);
   const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
   const [taskModalDefaultStartTime, setTaskModalDefaultStartTime] = useState(null);
+  const [taskModalDefaultTitle, setTaskModalDefaultTitle] = useState(null);
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -1497,6 +1498,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setTaskModalDefaultEventType(detail.eventType || null);
       setTaskModalDefaultPlacement(detail.placement || 'calendar');
       setTaskModalDefaultStartTime(detail.startTime || null);
+      setTaskModalDefaultTitle(detail.title ?? null);
       setShowTaskModal(true);
     };
     
@@ -1669,6 +1671,28 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
     if (params.section && Platform.OS === 'web') {
       updateUrlParams({ section: params.section });
+    }
+  }, [handleTabChange]);
+
+  // Doodle modal: when assistant returns navigate_*, close modal and go to that page
+  const handleDoodleNavigate = useCallback((target) => {
+    setShowDoodleSearchModal(false);
+    if (target === 'navigate_planner_attendance') {
+      handleTabChange('planner');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/planner?view=attendance');
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+      }
+    } else if (target === 'navigate_planner') {
+      handleTabChange('planner');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/planner');
+      }
+    } else if (target === 'navigate_home') {
+      handleTabChange('home');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/');
+      }
     }
   }, [handleTabChange]);
 
@@ -3063,7 +3087,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       {/* Doodle bot search modal - opened via floating Ask AI button */}
       {showDoodleSearchModal && (
-        <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} />
+        <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} onNavigate={handleDoodleNavigate} />
       )}
 
       {/* Floating Ask AI button - circular icon, learnadoodle blue */}
@@ -3109,6 +3133,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setTaskModalDefaultEventType(null);
             setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
             setTaskModalDefaultStartTime(null);
+            setTaskModalDefaultTitle(null);
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
@@ -3117,6 +3142,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultEventType={taskModalDefaultEventType}
           defaultPlacement={taskModalDefaultPlacement}
           defaultStartTime={taskModalDefaultStartTime}
+          defaultTitle={taskModalDefaultTitle}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,

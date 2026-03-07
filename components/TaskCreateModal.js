@@ -124,6 +124,7 @@ export default function TaskCreateModal({
   defaultSubjectId = null, // Default subject ID to set when opening modal
   defaultEventType = null, // Default event type to set when opening modal (e.g., 'Lesson')
   defaultStartTime = null, // Default start time (e.g. '9:00 AM') when opening from plan slot
+  defaultTitle = null, // Default title when opening from Doodle (e.g. 'Doctors' for appointment)
 }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
@@ -843,7 +844,7 @@ export default function TaskCreateModal({
 
   useEffect(() => {
     if (visible) {
-      setTitle('');
+      setTitle(defaultTitle && String(defaultTitle).trim() ? defaultTitle : '');
       setDueDate(defaultDate ?? new Date());
       setEventEndDate(null);
       const resetAssigneeIds =
@@ -897,7 +898,7 @@ export default function TaskCreateModal({
       setSuggestedChange(null);
       setChangeAccepted(false);
     }
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime]);
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;

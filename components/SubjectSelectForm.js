@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { processDoodleMessage } from '../lib/doodleAssistant';
+import { processDoodleMessage, getDisplayMessage } from '../lib/doodleAssistant';
 
 const CORE_ELEM = ['English/ELA','Math','Science','Social Studies'];
 const EXTRA_ELEM = ['Art','Music','PE','Handwriting'];
@@ -80,7 +80,7 @@ export default function SubjectSelectForm({ child, onClose, onSaved }) {
 
       const msg = `What subjects for ${child.grade} grade?`;
       const res = await processDoodleMessage(msg, profile.family_id);
-      const text = res?.message || '';
+      const text = getDisplayMessage(res);
       // Parse bullets like "• Math" lines
       const picks = text
         .split('\n')
