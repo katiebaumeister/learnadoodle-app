@@ -24,6 +24,13 @@ export default function AuthScreen() {
   
   const { signIn, signUp, resetPassword } = useAuth()
 
+  const isExistingEmailError = (msg) => {
+    if (!msg || typeof msg !== 'string') return false
+    const lower = msg.toLowerCase()
+    return lower.includes('already registered') || lower.includes('already been registered') ||
+      lower.includes('email already exists') || lower.includes('user already exists') || lower.includes('email_exists')
+  }
+
   const validatePassword = (password) => {
     const hasUpperCase = /[A-Z]/.test(password)
     const hasLowerCase = /[a-z]/.test(password)
@@ -83,24 +90,44 @@ export default function AuthScreen() {
         : await signIn(email, password)
 
       if (error) {
-        Alert.alert('Error', error.message)
-      } else if (isSignUp) {
-        // Check if user needs email confirmation
-        if (data?.user && !data?.session) {
+        if (isSignUp && isExistingEmailError(error.message)) {
           Alert.alert(
-            'Account Created!', 
+            'Account exists',
+            'An account with this email already exists. Would you like a password reset link?',
+            [
+              { text: 'Sign in', onPress: () => setIsSignUp(false) },
+              { text: 'Send reset link', onPress: () => { setLoading(true); handleResetPassword(); } },
+            ]
+          )
+        } else {
+          Alert.alert('Error', error.message)
+        }
+      } else if (isSignUp) {
+        const existingAccount = data?.user && (!data.user.identities || data.user.identities.length === 0)
+        if (existingAccount) {
+          Alert.alert(
+            'Account exists',
+            'An account with this email already exists. Would you like a password reset link?',
+            [
+              { text: 'Sign in', onPress: () => setIsSignUp(false) },
+              { text: 'Send reset link', onPress: () => { setLoading(true); handleResetPassword(); } },
+            ]
+          )
+        } else if (data?.user && !data?.session) {
+          Alert.alert(
+            'Account Created!',
             'Please check your email and click the confirmation link to verify your account. You can then sign in.',
             [{ text: 'OK', onPress: () => setIsSignUp(false) }]
           )
         } else if (data?.session) {
           Alert.alert(
-            'Success!', 
+            'Success!',
             'Account created and signed in successfully!',
             [{ text: 'OK' }]
           )
         } else {
           Alert.alert(
-            'Account Created!', 
+            'Account Created!',
             'Please check your email to verify your account.',
             [{ text: 'OK', onPress: () => setIsSignUp(false) }]
           )

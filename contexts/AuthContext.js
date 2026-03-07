@@ -105,14 +105,13 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  const signUp = async (email, password) => {
+  const signUp = async (email, password, options = {}) => {
     try {
-      // Use same origin for email confirmation link (so it doesn't point to localhost in production)
       const siteUrl = typeof window !== 'undefined'
         ? (process.env.REACT_APP_SITE_URL || process.env.EXPO_PUBLIC_SITE_URL || window.location.origin)
         : (process.env.REACT_APP_SITE_URL || process.env.EXPO_PUBLIC_SITE_URL || '')
       const { data, error } = await auth.signUp(email, password, {
-        emailRedirectTo: siteUrl || undefined,
+        emailRedirectTo: options.emailRedirectTo || siteUrl || undefined,
       })
       if (error) throw error
       return { data, error: null }
@@ -146,9 +145,9 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
-  const resetPassword = async (email) => {
+  const resetPassword = async (email, options = {}) => {
     try {
-      const { data, error } = await auth.resetPassword(email)
+      const { data, error } = await auth.resetPassword(email, options)
       if (error) throw error
       return { data, error: null }
     } catch (error) {

@@ -44,6 +44,7 @@ The confirmation link in the email is built using Supabase’s **Site URL**. If 
      - `https://learnadoodle.com/**`
      - `https://www.learnadoodle.com/**`
      - `http://localhost:3000/**` (only if you test email confirmation locally)
+     - The app sends new users to `/set-password` after they click “Confirm Email”; the `/**` pattern allows that path.
 
 3. Save.
 
@@ -90,3 +91,15 @@ To match your brand (e.g. Learnadoodle):
 - [ ] (Optional) `REACT_APP_SITE_URL` / `EXPO_PUBLIC_SITE_URL` set in production env.
 
 After this, new user verification emails route through Postmark and the confirmation link points to your app instead of localhost.
+
+---
+
+## 5. New user flow (email → confirm → set password)
+
+The app uses a three-step flow so the account is not fully usable until the user has confirmed their email and set a password:
+
+1. **Send sign up link** – User enters only their email; the app sends a confirmation email (via Postmark).
+2. **Confirm email** – User clicks “Confirm Email” in the email and is sent to `/set-password`.
+3. **Set password** – User sees a sign-in style page with email pre-filled and creates their password. After submitting, they are redirected to **their home page** (`/home`).
+
+Supabase still creates the auth user at step 1 (required by Supabase). The user cannot sign in until their email is confirmed (Supabase setting), and they set a real password on `/set-password` (the app uses a temporary password until then). After step 3, they are logged in and taken to `/home`.

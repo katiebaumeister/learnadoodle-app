@@ -26,8 +26,17 @@ export default function WebAuthScreen() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [existingEmailOfferReset, setExistingEmailOfferReset] = useState(false);
+  const [showAccountCreatedConfirmation, setShowAccountCreatedConfirmation] = useState(false);
 
   const { signIn, signUp, resetPassword } = useAuth();
+
+  const isExistingEmailError = (msg) => {
+    if (!msg || typeof msg !== 'string') return false;
+    const lower = msg.toLowerCase();
+    return lower.includes('already registered') || lower.includes('already been registered') ||
+      lower.includes('email already exists') || lower.includes('user already exists') || lower.includes('email_exists');
+  };
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
 
   const handleClose = () => {
@@ -119,6 +128,8 @@ export default function WebAuthScreen() {
   const clearMessages = () => {
     setErrorMessage('');
     setSuccessMessage('');
+    setExistingEmailOfferReset(false);
+    setShowAccountCreatedConfirmation(false);
   };
 
   const hasSpecialCharRe = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/;
@@ -139,13 +150,11 @@ export default function WebAuthScreen() {
     };
   };
 
-  // Check if form is valid for sign up
+  // Check if form is valid for sign up (email-only flow: we send signup link, password is set on /set-password)
   const isSignUpFormValid = useMemo(() => {
-    if (!isSignUp) return true; // Not relevant for sign in
-    if (!email || !password || !confirmPassword) return false;
-    const passwordValidation = validatePassword(password);
-    return passwordValidation.isValid && password === confirmPassword;
-  }, [isSignUp, email, password, confirmPassword]);
+    if (!isSignUp) return true;
+    return !!email && email.trim().length > 0;
+  }, [isSignUp, email]);
 
   const handleAuth = async () => {
     clearMessages();
@@ -156,61 +165,62 @@ export default function WebAuthScreen() {
     }
 
     if (isSignUp) {
-      // Check password confirmation
-      if (password !== confirmPassword) {
-        setErrorMessage('Passwords do not match');
-        return;
+      // Email-only signup: we send a confirmation link; user sets password on /set-password after confirming
+      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/set-password` : undefined;
+      const tempPassword = typeof crypto !== 'undefined' && crypto.getRandomValues
+        ? Array.from(crypto.getRandomValues(new Uint8Array(24))).map((b) => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%'[b % 66]).join('')
+        : `Temp${Date.now()}!x`;
+      setLoading(true);
+      try {
+        const { data, error } = await signUp(email.trim(), tempPassword, { emailRedirectTo: redirectTo });
+        if (error) {
+          if (isExistingEmailError(error.message)) {
+            setErrorMessage('An account with this email already exists.');
+            setExistingEmailOfferReset(true);
+          } else {
+            const errMsg = error.message || '';
+            const errLower = errMsg.toLowerCase();
+            const isEmailNotVerified = errLower.includes('email not confirmed') || errLower.includes('email not verified') || errLower.includes('verification');
+            setErrorMessage(isEmailNotVerified ? 'Please check your email for verification!' : error.message);
+          }
+          setLoading(false);
+          return;
+        }
+        const existingAccount = data?.user && (!data.user.identities || data.user.identities.length === 0);
+        if (existingAccount) {
+          setErrorMessage('An account with this email already exists.');
+          setExistingEmailOfferReset(true);
+          setLoading(false);
+          return;
+        }
+        if (data?.user && !data?.session) {
+          setShowAccountCreatedConfirmation(true);
+        } else if (data?.session && typeof window !== 'undefined') {
+          window.location.href = '/?signup=true';
+        }
+      } catch (err) {
+        setErrorMessage(err?.message || 'An unexpected error occurred.');
+      } finally {
+        setLoading(false);
       }
-
-      // Check password requirements — only list what's missing
-      const passwordValidation = validatePassword(password);
-      if (!passwordValidation.isValid) {
-        const missingRequirements = [];
-        if (!passwordValidation.hasMinLength) missingRequirements.push('at least 10 characters');
-        if (!passwordValidation.hasUpperCase) missingRequirements.push('1 uppercase letter');
-        if (!passwordValidation.hasLowerCase) missingRequirements.push('1 lowercase letter');
-        if (!passwordValidation.hasDigits) missingRequirements.push('1 number');
-        if (!passwordValidation.hasSpecialChar) missingRequirements.push('1 special character');
-
-        setErrorMessage(`Please include: ${missingRequirements.join(', ')}.`);
-        return;
-      }
+      return;
     }
 
     setLoading(true);
 
     try {
-      const { data, error } = isSignUp 
-        ? await signUp(email, password)
-        : await signIn(email, password);
+      const { data, error } = await signIn(email, password);
 
       if (error) {
-        // Check if error is due to unverified email
         const errorMessage = error.message || '';
         const errorLower = errorMessage.toLowerCase();
-        const isEmailNotVerified = 
+        const isEmailNotVerified =
           errorLower.includes('email not confirmed') ||
           errorLower.includes('email not verified') ||
           errorLower.includes('email address not verified') ||
           errorLower.includes('confirm your email') ||
           errorLower.includes('verification');
-        
-        if (isEmailNotVerified && !isSignUp) {
-          setErrorMessage('Please check your email for verification!');
-        } else {
-        setErrorMessage(error.message);
-        }
-      } else if (isSignUp) {
-        // Check if user needs email confirmation
-        if (data?.user && !data?.session) {
-          setSuccessMessage('Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.');
-          setIsSignUp(false); // Switch to sign in mode
-        } else {
-          // Account created and signed in - redirect to onboarding
-          if (typeof window !== 'undefined') {
-            window.location.href = '/?signup=true';
-          }
-        }
+        setErrorMessage(isEmailNotVerified ? 'Please check your email for verification!' : error.message);
       } else {
         setSuccessMessage('Signed in successfully!');
       }
@@ -232,19 +242,39 @@ export default function WebAuthScreen() {
     setLoading(true);
 
     try {
-      // Include redirectTo URL so users land on the password reset page
-      const { error } = await resetPassword(email, {
-        redirectTo: `${window.location.origin}/reset-password`
-      });
+      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
+      const { error } = await resetPassword(email, { redirectTo });
       
       if (error) {
         setErrorMessage(error.message);
       } else {
         setSuccessMessage('Success! If an account is associated with the provided email, you will receive an email to reset. If you do not receive an email, please create a new account.');
         setIsResetPassword(false);
+        setExistingEmailOfferReset(false);
       }
     } catch (error) {
       setErrorMessage('An unexpected error occurred: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendResetForExistingEmail = async () => {
+    if (!email) return;
+    setLoading(true);
+    clearMessages();
+    try {
+      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
+      const { error } = await resetPassword(email, { redirectTo });
+      if (error) {
+        setErrorMessage(error.message);
+      } else {
+        setSuccessMessage('Password reset link sent! Check your email, then sign in below.');
+        setExistingEmailOfferReset(false);
+        setIsSignUp(false);
+      }
+    } catch (error) {
+      setErrorMessage(error.message || 'Failed to send reset link.');
     } finally {
       setLoading(false);
     }
@@ -314,6 +344,50 @@ export default function WebAuthScreen() {
     );
   }
 
+  if (showAccountCreatedConfirmation) {
+    return (
+      <Animated.View style={[styles.container, { opacity: pageFadeAnim }]}>
+        {Platform.OS === 'web' && <View style={styles.backgroundPattern} />}
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={() => {
+            setShowAccountCreatedConfirmation(false);
+            setShowWelcome(true);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.history.pushState({}, '', '/');
+            }
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <X size={24} color="#64748b" />
+        </TouchableOpacity>
+        <ScrollView contentContainerStyle={styles.contentContainer}>
+          <View style={styles.authCardWrapper}>
+            <View style={styles.authCard}>
+              <View style={styles.successBox}>
+                <Text style={styles.successText}>
+                  Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.linkButton}
+                onPress={() => {
+                  setShowAccountCreatedConfirmation(false);
+                  setShowWelcome(true);
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.history.pushState({}, '', '/');
+                  }
+                }}
+              >
+                <Text style={styles.linkText}>Back to home</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </Animated.View>
+    );
+  }
+
   // Show landing page first
   if (showWelcome) {
     return (
@@ -349,8 +423,8 @@ export default function WebAuthScreen() {
         <View style={styles.authCard}>
         <Text style={styles.title}>{isSignUp ? 'Create Account' : 'Hello again!'}</Text>
         <Text style={styles.subtitle}>
-          {isSignUp 
-            ? 'Sign up to start your learning journey' 
+          {isSignUp
+            ? "Enter your email and we'll send you a link to create your account"
             : 'SIGN IN TO CONTINUE LEARNING'
           }
         </Text>
@@ -358,6 +432,19 @@ export default function WebAuthScreen() {
         {errorMessage ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+        
+        {existingEmailOfferReset ? (
+          <View style={styles.existingEmailBox}>
+            <Text style={styles.existingEmailText}>Send a password reset link to this email?</Text>
+            <TouchableOpacity
+              style={styles.resetLinkButton}
+              onPress={handleSendResetForExistingEmail}
+              disabled={loading}
+            >
+              <Text style={styles.resetLinkButtonText}>{loading ? 'Sending…' : 'Send password reset link'}</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
         
@@ -379,93 +466,42 @@ export default function WebAuthScreen() {
           />
         </View>
         
-        <View style={styles.inputGroup}>
-          <View style={styles.passwordInputContainer}>
-          <TextInput
-              style={styles.passwordInput}
-            value={password}
-            onChangeText={setPassword}
-              placeholder="Password"
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-            <TouchableOpacity
-              style={styles.eyeButton}
-              onPress={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? (
-                <EyeOff size={20} color="#6b7280" />
-              ) : (
-                <Eye size={20} color="#6b7280" />
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-        
-        {isSignUp && (
-            <>
+        {!isSignUp && (
           <View style={styles.inputGroup}>
-                <View style={styles.passwordInputContainer}>
-            <TextInput
-                  style={styles.passwordInput}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-                  placeholder="Confirm Password"
-              secureTextEntry={!showConfirmPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-                <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                >
-                  {showConfirmPassword ? (
-                    <EyeOff size={20} color="#6b7280" />
-                  ) : (
-                    <Eye size={20} color="#6b7280" />
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-            {isSignUp && (
-              <View style={styles.passwordRequirements}>
-                <Text style={styles.requirementsTitle}>Password Requirements:</Text>
-                <Text style={[styles.requirement, password.length >= 10 && styles.requirementMet]}>
-                  • At least 10 characters long
-                </Text>
-                <Text style={[styles.requirement, /[A-Z]/.test(password) && styles.requirementMet]}>
-                  • Contains uppercase letter
-                </Text>
-                <Text style={[styles.requirement, /[a-z]/.test(password) && styles.requirementMet]}>
-                  • Contains lowercase letter
-                </Text>
-                <Text style={[styles.requirement, /\d/.test(password) && styles.requirementMet]}>
-                  • Contains number
-                </Text>
-                <Text style={[styles.requirement, hasSpecialCharRe.test(password) && styles.requirementMet]}>
-                  • Contains special character
-                </Text>
-                {password && confirmPassword && (
-                  <Text style={[styles.requirement, password === confirmPassword && styles.requirementMet]}>
-                    • Passwords match
-                  </Text>
+            <View style={styles.passwordInputContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Password"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={styles.eyeButton}
+                onPress={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? (
+                  <EyeOff size={20} color="#6b7280" />
+                ) : (
+                  <Eye size={20} color="#6b7280" />
                 )}
-              </View>
-            )}
-          </>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
         
         <TouchableOpacity
           style={[
-            styles.authButton, 
+            styles.authButton,
             (loading || (isSignUp && !isSignUpFormValid)) && styles.disabledButton
           ]}
           onPress={handleAuth}
           disabled={loading || (isSignUp && !isSignUpFormValid)}
         >
           <Text style={styles.authButtonText}>
-            {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
+            {loading ? 'Sending link…' : (isSignUp ? 'Send sign up link' : 'Sign In')}
           </Text>
         </TouchableOpacity>
         
@@ -768,6 +804,32 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     fontSize: 14,
     textAlign: 'center',
+  },
+  existingEmailBox: {
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  existingEmailText: {
+    color: '#0369a1',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  resetLinkButton: {
+    backgroundColor: '#0ea5e9',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignSelf: 'center',
+  },
+  resetLinkButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   successBox: {
     backgroundColor: '#f0fdf4',

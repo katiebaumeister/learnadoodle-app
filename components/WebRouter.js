@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import WebAuthScreen from './WebAuthScreen';
 import PasswordResetPage from './PasswordResetPage';
+import SetPasswordPage from './SetPasswordPage';
 import WebLayout from './WebLayout';
 import InviteAcceptancePage from './InviteAcceptancePage';
 import InviteLandingPage from './InviteLandingPage';
@@ -423,9 +424,15 @@ export default function WebRouter() {
     if (currentPath === '/reset-password') {
       return <PasswordResetPage />;
     }
-    // Show WebAuthScreen for sign in/sign up
-    // Account creation happens here, then user verifies email, then signs in
+    if (currentPath === '/set-password') {
+      return <SetPasswordPage />;
+    }
     return <WebAuthScreen />;
+  }
+
+  // Authenticated user on /set-password (e.g. just confirmed email, needs to set password)
+  if (currentPath === '/set-password') {
+    return <SetPasswordPage />;
   }
 
   // User is authenticated, show main app
