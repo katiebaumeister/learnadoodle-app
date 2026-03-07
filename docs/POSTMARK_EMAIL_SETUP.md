@@ -6,6 +6,8 @@ Invite emails are now automatically sent via Postmark when a parent, tutor, or c
 
 **Email works locally but not from learnadoodle.com?** Set Postmark env vars in your **production** backend and ensure the domain is verified. See **[POSTMARK_PRODUCTION_LEARNADOODLE.md](./POSTMARK_PRODUCTION_LEARNADOODLE.md)**.
 
+**New user verification email still from Supabase or linking to localhost?** Route auth emails through Postmark and fix the link by configuring Supabase SMTP + Site URL. See **[SUPABASE_AUTH_POSTMARK_VERIFICATION.md](./SUPABASE_AUTH_POSTMARK_VERIFICATION.md)**.
+
 ## Backend Setup
 
 ### 1. Install Dependencies
