@@ -12,7 +12,22 @@ import {
 } from 'react-native';
 import { Eye, EyeOff, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { getAPIBase } from '../lib/apiClient';
 import LandingPage from './LandingPage';
+
+function formatConfirmationSentAt(isoString) {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    const day = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const month = d.toLocaleDateString('en-US', { month: 'short' });
+    const date = d.getDate();
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${day}, ${month} ${date} at ${time}`;
+  } catch (_) {
+    return isoString;
+  }
+}
 
 export default function WebAuthScreen() {
   const [showWelcome, setShowWelcome] = useState(true);
@@ -172,11 +187,48 @@ export default function WebAuthScreen() {
     }
 
     if (isSignUp) {
-      // Email-only signup: we send a confirmation link; user sets password on /set-password after confirming
+      // If we already sent a confirmation to this email, show friendly message instead of calling signUp again.
+      setLoading(true);
+      try {
+        const base = getAPIBase();
+        const checkRes = await fetch(`${base}/api/auth/signup-confirmation-sent?email=${encodeURIComponent(email.trim())}`);
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData.sent_at) {
+            const formatted = formatConfirmationSentAt(checkData.sent_at);
+            setSuccessMessage(formatted ? `Confirmation sent on ${formatted}. Please check your email!` : 'Confirmation already sent. Please check your email!');
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (_) {
+        // Ignore; proceed with signUp
+      } finally {
+        setLoading(false);
+      }
+
+      // Email-only signup: we send a confirmation link; user sets password on /set-password after confirming.
+      // Temp password must satisfy Supabase policy (lower, upper, digit, special) so the API never returns a password error to the user.
       const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/set-password` : undefined;
-      const tempPassword = typeof crypto !== 'undefined' && crypto.getRandomValues
-        ? Array.from(crypto.getRandomValues(new Uint8Array(24))).map((b) => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%'[b % 66]).join('')
-        : `Temp${Date.now()}!x`;
+      const lower = 'abcdefghijklmnopqrstuvwxyz';
+      const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const digit = '0123456789';
+      const special = "!@#$%^&*()_+-=[]{};':\"|<>?,./`~";
+      const all = lower + upper + digit + special;
+      const pick = (str, n = 1) => {
+        const arr = str.split('');
+        for (let i = 0; i < n; i++) {
+          const j = typeof crypto !== 'undefined' && crypto.getRandomValues
+            ? crypto.getRandomValues(new Uint8Array(1))[0] % arr.length
+            : Math.floor(Math.random() * arr.length);
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr.slice(0, n).join('');
+      };
+      const tempPassword = pick(lower, 1) + pick(upper, 1) + pick(digit, 1) + pick(special, 1) +
+        (typeof crypto !== 'undefined' && crypto.getRandomValues
+          ? Array.from(crypto.getRandomValues(new Uint8Array(20))).map((b) => all[b % all.length]).join('')
+          : Array.from({ length: 20 }, () => all[Math.floor(Math.random() * all.length)]).join(''));
       setLoading(true);
       try {
         const { data, error } = await signUp(email.trim(), tempPassword, { emailRedirectTo: redirectTo });
@@ -188,7 +240,12 @@ export default function WebAuthScreen() {
             const errMsg = error.message || '';
             const errLower = errMsg.toLowerCase();
             const isEmailNotVerified = errLower.includes('email not confirmed') || errLower.includes('email not verified') || errLower.includes('verification');
-            setErrorMessage(isEmailNotVerified ? 'Please check your email for verification!' : error.message);
+            const isPasswordPolicyError = errLower.includes('password should contain') || errLower.includes('at least one character of each');
+            setErrorMessage(
+              isEmailNotVerified ? 'Please check your email for verification!' :
+              isPasswordPolicyError ? 'Unable to send sign-up link. Please try again.' :
+              errMsg
+            );
           }
           setLoading(false);
           return;
@@ -202,6 +259,14 @@ export default function WebAuthScreen() {
         }
         if (data?.user && !data?.session) {
           setShowAccountCreatedConfirmation(true);
+          try {
+            const base = getAPIBase();
+            await fetch(`${base}/api/auth/signup-confirmation-sent`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: email.trim() }),
+            });
+          } catch (_) {}
         } else if (data?.session && typeof window !== 'undefined') {
           window.location.href = '/?signup=true';
         }

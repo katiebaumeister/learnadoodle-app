@@ -47,6 +47,7 @@ from routers.parent_motivation_routes import router as parent_motivation_router
 from routers.conversation_routes import router as conversation_router
 from routers.confidence_routes import router as confidence_router
 from routers.child_auth_routes import router as child_auth_router
+from routers.signup_confirmation_routes import router as signup_confirmation_router
 from routers.skills_routes import router as skills_router
 from routers.accreditation_routes import router as accreditation_router
 from routers.insights_routes import router as insights_router
@@ -241,6 +242,7 @@ app.include_router(parent_motivation_router)
 app.include_router(conversation_router)
 app.include_router(confidence_router)
 app.include_router(child_auth_router)
+app.include_router(signup_confirmation_router)
 app.include_router(skills_router)
 app.include_router(accreditation_router)
 app.include_router(insights_router)
