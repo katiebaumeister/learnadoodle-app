@@ -40,19 +40,16 @@ export default function WebRouter() {
     // Initial path
     updatePath();
 
-    // Handle email verification tokens in URL hash
-    // Supabase automatically processes these, but we should clean up the URL
+    // Signup confirmation: if user lands on / (or any path) with confirmation tokens in hash, send them to /set-password
     if (typeof window !== 'undefined' && window.location.hash) {
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const type = hashParams.get('type');
-      
-      // If we have email verification tokens, clean up the URL hash
-      // Supabase client will automatically process these via onAuthStateChange
-      if (accessToken && type === 'email') {
-        // Clean up the URL hash without reloading
-        const cleanUrl = window.location.origin + window.location.pathname + (window.location.search || '');
-        window.history.replaceState({}, typeof document !== 'undefined' ? document.title : '', cleanUrl);
+      const pathname = window.location.pathname.replace(/\/$/, '') || '/';
+      const isSignupConfirm = type === 'email' || type === 'signup';
+      if (accessToken && isSignupConfirm && pathname !== '/set-password') {
+        window.location.replace(window.location.origin + '/set-password' + window.location.hash);
+        return;
       }
     }
 
