@@ -1,3 +1,18 @@
+// Redirect signup confirmation to /set-password before React loads (Supabase tokens in hash or query)
+if (typeof window !== 'undefined') {
+  const hash = window.location.hash || '';
+  const search = window.location.search || '';
+  const hashParams = new URLSearchParams(hash ? hash.substring(1) : '');
+  const searchParams = new URLSearchParams(search ? search.substring(1) : '');
+  const accessToken = hashParams.get('access_token') || searchParams.get('access_token');
+  const type = hashParams.get('type') || searchParams.get('type');
+  const path = (window.location.pathname || '/').replace(/\/$/, '') || '/';
+  if (accessToken && (type === 'email' || type === 'signup') && path !== '/set-password') {
+    const fragment = hash || (search ? '#' + search.substring(1) : '');
+    window.location.replace(window.location.origin + '/set-password' + fragment);
+  }
+}
+
 // Must run first: block UUID image URIs at DOM layer (no deps), then React/ImageLoader
 import './lib/patchImageLoaderWebDom';
 import './lib/patchImageLoaderWeb';

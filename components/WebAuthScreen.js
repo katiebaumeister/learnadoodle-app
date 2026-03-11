@@ -454,11 +454,9 @@ export default function WebAuthScreen() {
         <ScrollView contentContainerStyle={styles.contentContainer}>
           <View style={styles.authCardWrapper}>
             <View style={styles.authCard}>
-              <View style={styles.successBox}>
-                <Text style={styles.successText}>
-                  Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
-                </Text>
-              </View>
+              <Text style={styles.successText}>
+                Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
+              </Text>
             </View>
           </View>
         </ScrollView>
