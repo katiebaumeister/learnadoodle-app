@@ -461,7 +461,7 @@ export default function WebAuthScreen() {
           <View style={styles.authCardWrapper}>
             <View style={styles.authCard}>
               <Text style={styles.accountCreatedText}>
-                Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
+                Account created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
               </Text>
             </View>
           </View>

@@ -78,7 +78,7 @@ To match your brand (e.g. Learnadoodle):
 
 1. **Project Settings** → **Authentication** → **Email Templates**.
 2. Edit **Confirm signup** (and optionally **Reset password**).
-3. You can change subject and body; the `{{ .ConfirmationURL }}` (or reset URL) must stay so the link still works.
+3. You can change subject and body; the link **must** use `{{ .ConfirmationURL }}` so it includes the redirect. Do **not** replace it with `{{ .SiteURL }}` or a static URL, or the redirect to `/set-password` will not work.
 
 ---
 
@@ -86,11 +86,18 @@ To match your brand (e.g. Learnadoodle):
 
 - [ ] Postmark SMTP configured in Supabase (Authentication → SMTP Settings).
 - [ ] Site URL set to production app URL (e.g. `https://learnadoodle.com`).
-- [ ] Redirect URLs include production (and localhost only if needed).
+- [ ] Redirect URLs include `https://learnadoodle.com/set-password` and `https://learnadoodle.com/**`.
+- [ ] Confirm signup email template uses `{{ .ConfirmationURL }}` (not `{{ .SiteURL }}`) so the link includes `redirect_to`.
 - [ ] Sender email used in SMTP is verified in Postmark (same as invites).
 - [ ] (Optional) `REACT_APP_SITE_URL` / `EXPO_PUBLIC_SITE_URL` set in production env.
 
 After this, new user verification emails route through Postmark and the confirmation link points to your app instead of localhost.
+
+## Troubleshooting: Confirm link goes to landing page instead of set-password
+
+1. **Check the email template** – Supabase Dashboard → Authentication → Email Templates → Confirm signup. The link must use `{{ .ConfirmationURL }}`. If it uses `{{ .SiteURL }}` or a hardcoded URL, the redirect will not work.
+2. **Check Redirect URLs** – `https://learnadoodle.com/set-password` must be in the allow list. Add it explicitly if only wildcards are present.
+3. **Redeploy** – Ensure the latest app code (with `detectSessionInUrl` and pre-React redirect) is deployed.
 
 ---
 

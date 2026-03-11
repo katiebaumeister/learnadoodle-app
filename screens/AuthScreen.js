@@ -115,7 +115,7 @@ export default function AuthScreen() {
           )
         } else if (data?.user && !data?.session) {
           Alert.alert(
-            'Account Created!',
+            'Account created!',
             'Please check your email and click the confirmation link to verify your account. You can then sign in.',
             [{ text: 'OK', onPress: () => setIsSignUp(false) }]
           )
@@ -127,7 +127,7 @@ export default function AuthScreen() {
           )
         } else {
           Alert.alert(
-            'Account Created!',
+            'Account created!',
             'Please check your email to verify your account.',
             [{ text: 'OK', onPress: () => setIsSignUp(false) }]
           )
