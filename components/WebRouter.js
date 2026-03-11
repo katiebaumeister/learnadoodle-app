@@ -48,7 +48,11 @@ export default function WebRouter() {
       const pathname = window.location.pathname.replace(/\/$/, '') || '/';
       const isSignupConfirm = type === 'email' || type === 'signup';
       if (accessToken && isSignupConfirm && pathname !== '/set-password') {
-        window.location.replace(window.location.origin + '/set-password' + window.location.hash);
+        const host = window.location.hostname || '';
+        const canonical = (host === 'www.learnadoodle.com' || host === 'learnadoodle.com')
+          ? 'https://learnadoodle.com'
+          : window.location.origin;
+        window.location.replace(canonical + '/set-password' + window.location.hash);
         return;
       }
     }

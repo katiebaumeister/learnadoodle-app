@@ -217,8 +217,14 @@ export default function WebAuthScreen() {
       }
 
       // Email-only signup: we send a confirmation link; user sets password on /set-password after confirming.
-      // Temp password must satisfy Supabase policy (lower, upper, digit, special) so the API never returns a password error to the user.
-      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/set-password` : undefined;
+      // Use canonical domain (learnadoodle.com, no www) to match Supabase Site URL and avoid hash loss on www→non-www redirects.
+      const redirectTo = typeof window !== 'undefined' ? (() => {
+        const host = window.location.hostname || '';
+        const canonical = (host === 'www.learnadoodle.com' || host === 'learnadoodle.com')
+          ? 'https://learnadoodle.com'
+          : window.location.origin;
+        return `${canonical}/set-password`;
+      })() : undefined;
       const lower = 'abcdefghijklmnopqrstuvwxyz';
       const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
       const digit = '0123456789';
@@ -454,7 +460,7 @@ export default function WebAuthScreen() {
         <ScrollView contentContainerStyle={styles.contentContainer}>
           <View style={styles.authCardWrapper}>
             <View style={styles.authCard}>
-              <Text style={styles.successText}>
+              <Text style={styles.accountCreatedText}>
                 Account Created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
               </Text>
             </View>
@@ -920,6 +926,11 @@ const styles = StyleSheet.create({
   },
   successText: {
     color: '#16a34a',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  accountCreatedText: {
+    color: '#000',
     fontSize: 14,
     textAlign: 'center',
   },

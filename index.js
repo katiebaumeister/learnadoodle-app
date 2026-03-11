@@ -8,8 +8,12 @@ if (typeof window !== 'undefined') {
   const type = hashParams.get('type') || searchParams.get('type');
   const path = (window.location.pathname || '/').replace(/\/$/, '') || '/';
   if (accessToken && (type === 'email' || type === 'signup') && path !== '/set-password') {
+    const host = window.location.hostname || '';
+    const canonical = (host === 'www.learnadoodle.com' || host === 'learnadoodle.com')
+      ? 'https://learnadoodle.com'
+      : window.location.origin;
     const fragment = hash || (search ? '#' + search.substring(1) : '');
-    window.location.replace(window.location.origin + '/set-password' + fragment);
+    window.location.replace(canonical + '/set-password' + fragment);
   }
 }
 
