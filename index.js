@@ -8,6 +8,9 @@ if (typeof window !== 'undefined') {
   const type = hashParams.get('type') || searchParams.get('type');
   const path = (window.location.pathname || '/').replace(/\/$/, '') || '/';
   if (accessToken && (type === 'email' || type === 'signup') && path !== '/set-password') {
+    try {
+      sessionStorage.setItem('learnadoodle_needs_password_set', 'true');
+    } catch (_) {}
     const host = window.location.hostname || '';
     const canonical = (host === 'www.learnadoodle.com' || host === 'learnadoodle.com')
       ? 'https://learnadoodle.com'

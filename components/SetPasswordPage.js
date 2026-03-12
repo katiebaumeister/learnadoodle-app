@@ -52,6 +52,9 @@ export default function SetPasswordPage() {
           }
           if (setData?.user?.email) {
             setUserEmail(setData.user.email);
+            try {
+              sessionStorage.setItem('learnadoodle_needs_password_set', 'true');
+            } catch (_) {}
             const cleanUrl = window.location.origin + '/set-password';
             window.history.replaceState({}, document.title || '', cleanUrl);
           }
@@ -128,6 +131,9 @@ export default function SetPasswordPage() {
         return;
       }
       setSuccessMessage('Password set! Redirecting you to your home page...');
+      try {
+        sessionStorage.removeItem('learnadoodle_needs_password_set');
+      } catch (_) {}
       const homeUrl = window.location.origin + '/home';
       window.history.replaceState({}, document.title || '', homeUrl);
       setTimeout(() => {

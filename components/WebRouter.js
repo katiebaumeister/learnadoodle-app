@@ -436,6 +436,16 @@ export default function WebRouter() {
     return <SetPasswordPage />;
   }
 
+  // Block main app until password is set (user clicked confirm email but hasn't completed set-password form)
+  if (user && typeof window !== 'undefined') {
+    try {
+      if (sessionStorage.getItem('learnadoodle_needs_password_set') === 'true') {
+        window.location.replace(window.location.origin + '/set-password');
+        return null;
+      }
+    } catch (_) {}
+  }
+
   // User is authenticated, show main app
   // Wrap with SessionProvider for role-based access control
   // RoleGate will choose the appropriate navigator based on role
