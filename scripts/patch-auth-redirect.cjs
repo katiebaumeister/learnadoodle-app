@@ -16,15 +16,17 @@ if (!fs.existsSync(distPath)) {
 const script = `<script id="patch-auth-redirect-injected">
 (function(){
   var h=window.location.hash||'',s=window.location.search||'',hp=h?h.substring(1):'',sp=s?s.substring(1):'';
+  var host=window.location.hostname||'',p=(window.location.pathname||'/').replace(/\\/$/,'')||'/';
+  var canon=(host==='www.learnadoodle.com'||host==='learnadoodle.com')?'https://learnadoodle.com':window.location.origin;
   try{
     var hp2=new URLSearchParams(hp),sp2=new URLSearchParams(sp);
     var at=hp2.get('access_token')||sp2.get('access_token'),ty=hp2.get('type')||sp2.get('type');
-    var p=(window.location.pathname||'/').replace(/\\/$/,'')||'/';
+    var frag=h||(s?'#'+sp:'');
     if(at&&(ty==='email'||ty==='signup')&&p!=='/set-password'){
       try{sessionStorage.setItem('learnadoodle_needs_password_set','true');}catch(e){}
-      var host=window.location.hostname||'',canon=(host==='www.learnadoodle.com'||host==='learnadoodle.com')?'https://learnadoodle.com':window.location.origin;
-      var frag=h||(s?'#'+sp:'');
       window.location.replace(canon+'/set-password'+frag);
+    }else if(host==='www.learnadoodle.com'&&h&&p==='/set-password'){
+      window.location.replace(canon+'/set-password'+h);
     }
   }catch(e){}
 })();

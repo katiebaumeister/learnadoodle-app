@@ -93,14 +93,15 @@ To match your brand (e.g. Learnadoodle):
 
 After this, new user verification emails route through Postmark and the confirmation link points to your app instead of localhost.
 
-## Troubleshooting: Confirm link goes to landing page instead of set-password
+## Troubleshooting: Confirm link goes to landing page or invalid link
 
-**Root cause:** The auth tokens are in the URL hash. If there’s a server redirect (e.g. www→non-www), the hash is dropped and the user ends up on the landing page.
+**Root cause:** Auth tokens and errors are in the URL hash. If Supabase redirects to `www.learnadoodle.com` and your server redirects www→non-www, the hash is dropped and the user sees the invalid link page with no context.
 
 1. **Site URL must be non-www** – Supabase Dashboard → Authentication → URL Configuration. Set **Site URL** to `https://learnadoodle.com` (no `www`). If it’s `https://www.learnadoodle.com`, Supabase redirects to www, your server redirects www→non-www, and the hash is lost.
 2. **Redirect URLs** – Add `https://learnadoodle.com/set-password` exactly. Supabase ignores `redirect_to` if it’s not in the list.
 3. **Email template** – Confirm signup template must use `{{ .ConfirmationURL }}`, not `{{ .SiteURL }}`.
-4. **Verify** – After saving, sign up with a new email and test the link. Use incognito and hard-refresh to avoid cache.
+4. **otp_expired** – Some email providers (Outlook Safe Links, Gmail) prefetch links and consume the token before the user clicks. The user then sees “link expired.” Use a personal email or request a new link.
+5. **Verify** – After saving, sign up with a new email and test the link. Use incognito and hard-refresh to avoid cache.
 
 ---
 

@@ -36,6 +36,8 @@ export default function SetPasswordPage() {
         const accessToken = hashParams.get('access_token');
         const refreshToken = hashParams.get('refresh_token');
         const type = hashParams.get('type');
+        const errorCode = hashParams.get('error_code');
+        const errorDesc = hashParams.get('error_description');
 
         const isSignupConfirm = type === 'signup' || type === 'email';
 
@@ -64,8 +66,12 @@ export default function SetPasswordPage() {
           if (session?.user?.email) {
             setUserEmail(session.user.email);
           } else {
-            // No tokens in hash and no session: link may have expired, or hash was lost (e.g. www→non-www redirect)
-            setErrorMessage('Your confirmation link may have expired or was altered. This can happen if your email provider modified the link. Please request a new sign-up link.');
+            // No tokens: link expired, hash was lost (www→non-www redirect), or email prefetch consumed it
+            let msg = 'Your confirmation link may have expired or was altered. This can happen if your email provider modified the link. Please request a new sign-up link.';
+            if (errorCode === 'otp_expired' || (errorDesc && errorDesc.toLowerCase().includes('expired'))) {
+              msg = 'This link has expired. Some email providers scan links before you click them, which can invalidate the link. Please request a new sign-up link.';
+            }
+            setErrorMessage(msg);
             setCheckingSession(false);
             setUserEmail(''); // Will show the "request new link" UI
             return;

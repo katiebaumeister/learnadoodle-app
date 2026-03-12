@@ -22,9 +22,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { SessionProvider } from '../contexts/SessionContext';
 import RoleGate from './navigation/RoleGate';
 
+function getPath() {
+  if (typeof window === 'undefined') return '/';
+  return (window.location.pathname || '/').replace(/\/$/, '') || '/';
+}
+
 export default function WebRouter() {
   const { user, loading, session } = useAuth();
-  const [currentPath, setCurrentPath] = useState('/');
+  const [currentPath, setCurrentPath] = useState(getPath);
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
   const [resetFlowStartTime, setResetFlowStartTime] = useState(null);
 
@@ -422,19 +427,23 @@ export default function WebRouter() {
     );
   }
 
+  // Use actual path for /set-password so we never flash landing or redirect away from invalid-link state
+  const actualPath = getPath();
+  const isSetPassword = actualPath === '/set-password' || currentPath === '/set-password';
+
   // If no user, show appropriate auth screen based on route
   if (!user) {
     if (currentPath === '/reset-password') {
       return <PasswordResetPage />;
     }
-    if (currentPath === '/set-password') {
+    if (isSetPassword) {
       return <SetPasswordPage />;
     }
     return <WebAuthScreen />;
   }
 
   // Authenticated user on /set-password (e.g. just confirmed email, needs to set password)
-  if (currentPath === '/set-password') {
+  if (isSetPassword) {
     return <SetPasswordPage />;
   }
 
