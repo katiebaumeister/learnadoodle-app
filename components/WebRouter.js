@@ -57,17 +57,19 @@ export default function WebRouter() {
       }
     }
 
-    // Check if we're in a password reset flow
+    // Check if we're in a password reset flow (NOT signup confirmation - that uses type=signup/email)
     const checkPasswordResetFlow = () => {
-      // Check URL parameters for password reset indicators
       const urlParams = new URLSearchParams(window.location.search);
       const hasResetToken = urlParams.has('access_token') || urlParams.has('refresh_token');
       const isResetPath = window.location.pathname === '/reset-password';
-      
-      // Check if we have a hash fragment that might contain reset info
-      const hasResetHash = window.location.hash.includes('access_token') || 
-                          window.location.hash.includes('type=recovery');
-      
+      const hashParams = new URLSearchParams((window.location.hash || '').substring(1));
+      const hashType = hashParams.get('type');
+      const isSignupConfirm = hashType === 'signup' || hashType === 'email';
+      const hasResetHash = !isSignupConfirm && (
+        window.location.hash.includes('access_token') ||
+        window.location.hash.includes('type=recovery')
+      );
+
       if (hasResetToken || isResetPath || hasResetHash) {
         // Only set reset flow if not already set
         if (!isPasswordResetFlow) {
