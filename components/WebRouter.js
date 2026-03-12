@@ -451,8 +451,10 @@ export default function WebRouter() {
   if (user && typeof window !== 'undefined') {
     try {
       if (sessionStorage.getItem('learnadoodle_needs_password_set') === 'true') {
-        window.location.replace(window.location.origin + '/set-password');
-        return null;
+        if (!isSetPassword) {
+          window.location.replace(window.location.origin + '/set-password');
+          return null;
+        }
       }
     } catch (_) {}
   }

@@ -25,8 +25,6 @@ const script = `<script id="patch-auth-redirect-injected">
     if(at&&(ty==='email'||ty==='signup')&&p!=='/set-password'){
       try{sessionStorage.setItem('learnadoodle_needs_password_set','true');}catch(e){}
       window.location.replace(canon+'/set-password'+frag);
-    }else if(host==='www.learnadoodle.com'&&h&&p==='/set-password'){
-      window.location.replace(canon+'/set-password'+h);
     }
   }catch(e){}
 })();

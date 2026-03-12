@@ -39,6 +39,10 @@ async def get_signup_confirmation_sent(
             return SignupConfirmationSentOut(sent_at=res.data[0]["sent_at"])
         return SignupConfirmationSentOut(sent_at=None)
     except Exception as e:
+        # Table may not exist yet (migration not run); return empty instead of 500
+        err_msg = str(e).lower()
+        if "does not exist" in err_msg or "relation" in err_msg or "42p01" in err_msg:
+            return SignupConfirmationSentOut(sent_at=None)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to check confirmation status",
@@ -57,6 +61,10 @@ async def record_signup_confirmation_sent(body: SignupConfirmationRecordIn):
         }).execute()
         return {"ok": True}
     except Exception as e:
+        # Table may not exist yet (migration not run); succeed silently
+        err_msg = str(e).lower()
+        if "does not exist" in err_msg or "relation" in err_msg or "42p01" in err_msg:
+            return {"ok": True}
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to record confirmation sent",
