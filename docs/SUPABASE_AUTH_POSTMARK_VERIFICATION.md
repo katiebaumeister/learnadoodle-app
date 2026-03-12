@@ -95,10 +95,12 @@ After this, new user verification emails route through Postmark and the confirma
 
 ## Troubleshooting: Confirm link goes to landing page instead of set-password
 
-1. **Check the email template** – Supabase Dashboard → Authentication → Email Templates → Confirm signup. The link must use `{{ .ConfirmationURL }}`. If it uses `{{ .SiteURL }}` or a hardcoded URL, the redirect will not work.
-2. **Check Redirect URLs** – `https://learnadoodle.com/set-password` must be in the allow list. Add it **exactly** (not just a wildcard). Supabase ignores `redirect_to` if it’s not in the list and falls back to the Site URL.
-3. **Site URL must be non-www** – Set **Site URL** to `https://learnadoodle.com` (no www). If it’s `https://www.learnadoodle.com` and your server redirects www→non-www, the redirect **drops the hash** (tokens) and the user lands on the landing page with no session.
-4. **Redeploy** – Ensure the latest app code (with HTML-level patch script and no-cache for index.html) is deployed. Hard-refresh or use incognito to avoid cached HTML.
+**Root cause:** The auth tokens are in the URL hash. If there’s a server redirect (e.g. www→non-www), the hash is dropped and the user ends up on the landing page.
+
+1. **Site URL must be non-www** – Supabase Dashboard → Authentication → URL Configuration. Set **Site URL** to `https://learnadoodle.com` (no `www`). If it’s `https://www.learnadoodle.com`, Supabase redirects to www, your server redirects www→non-www, and the hash is lost.
+2. **Redirect URLs** – Add `https://learnadoodle.com/set-password` exactly. Supabase ignores `redirect_to` if it’s not in the list.
+3. **Email template** – Confirm signup template must use `{{ .ConfirmationURL }}`, not `{{ .SiteURL }}`.
+4. **Verify** – After saving, sign up with a new email and test the link. Use incognito and hard-refresh to avoid cache.
 
 ---
 

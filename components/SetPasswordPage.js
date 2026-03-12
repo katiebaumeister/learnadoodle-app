@@ -64,7 +64,10 @@ export default function SetPasswordPage() {
           if (session?.user?.email) {
             setUserEmail(session.user.email);
           } else {
-            window.location.href = '/';
+            // No tokens in hash and no session: link may have expired, or hash was lost (e.g. www→non-www redirect)
+            setErrorMessage('Your confirmation link may have expired or was altered. This can happen if your email provider modified the link. Please request a new sign-up link.');
+            setCheckingSession(false);
+            setUserEmail(''); // Will show the "request new link" UI
             return;
           }
         }
@@ -171,9 +174,11 @@ export default function SetPasswordPage() {
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         <View style={styles.card}>
           <Text style={styles.title}>Invalid or expired link</Text>
-          <Text style={styles.subtitle}>Please request a new sign up link from the sign up page.</Text>
+          <Text style={styles.subtitle}>
+            {errorMessage || 'Please request a new sign up link from the sign up page.'}
+          </Text>
           <TouchableOpacity style={styles.primaryButton} onPress={() => { window.location.href = '/'; }}>
-            <Text style={styles.primaryButtonText}>Go to home</Text>
+            <Text style={styles.primaryButtonText}>Go to sign up</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
