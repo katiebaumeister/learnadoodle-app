@@ -130,6 +130,15 @@ export default function SetPasswordPage() {
         setErrorMessage(error.message || 'Failed to set password.');
         return;
       }
+      // Supabase invalidates the session when password changes; sign in again to get a fresh token
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password: newPassword,
+      });
+      if (signInErr) {
+        setErrorMessage(signInErr.message || 'Password set but sign-in failed. Please sign in manually.');
+        return;
+      }
       setSuccessMessage('Password set! Redirecting you to your home page...');
       try {
         sessionStorage.removeItem('learnadoodle_needs_password_set');
