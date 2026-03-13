@@ -69,6 +69,7 @@ export default function InviteLandingPage({ token }) {
           <AlertCircle size={48} color="#ef4444" />
           <Text style={styles.errorTitle}>Invite link invalid or expired</Text>
           <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.footer}>Invite links expire in 30 days. If yours has expired, ask the person who invited you to send a new one.</Text>
           <TouchableOpacity style={styles.button} onPress={() => (window.location.href = getAppBase() || '/')}>
             <Text style={styles.buttonText}>Go to Learnadoodle</Text>
           </TouchableOpacity>
@@ -109,7 +110,7 @@ export default function InviteLandingPage({ token }) {
         <View style={styles.emailNote}>
           <Mail size={20} color="#6b7280" />
           <Text style={styles.emailNoteText}>
-            You'll need to sign in or create an account with your own email to join this family.
+            This invitation was sent to {inviteData?.email || 'you'}. Click below to set your password and join—no extra email will be sent.
           </Text>
         </View>
 
@@ -118,17 +119,28 @@ export default function InviteLandingPage({ token }) {
           onPress={() => {
             const appBase = getAppBase() || '';
             const base = appBase.replace(/\/$/, '');
-            const emailParam = inviteData?.email ? `&email=${encodeURIComponent(inviteData.email)}` : '';
-            window.location.href = `${base}/?view=signup${emailParam}`;
+            window.location.href = `${base}/invites/${token}/accept`;
           }}
           activeOpacity={0.8}
         >
           <UserPlus size={20} color="#ffffff" />
-          <Text style={styles.signUpButtonText}>Continue with sign up</Text>
+          <Text style={styles.signUpButtonText}>Accept invitation</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.signInLink}
+          onPress={() => {
+            const appBase = getAppBase() || '';
+            const base = appBase.replace(/\/$/, '');
+            const emailParam = inviteData?.email ? `?email=${encodeURIComponent(inviteData.email)}` : '';
+            window.location.href = `${base}/${emailParam}`;
+          }}
+        >
+          <Text style={styles.signInLinkText}>Already have an account? Sign in</Text>
         </TouchableOpacity>
 
         <Text style={styles.footer}>
-          This invitation was sent to {inviteData?.email || 'you'}. Expires in 30 days.
+          Invite links expire in 30 days. If yours has expired, ask the person who invited you to send a new one.
         </Text>
       </View>
     </ScrollView>
@@ -226,6 +238,15 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: '#ffffff',
+  },
+  signInLink: {
+    marginTop: 16,
+    paddingVertical: 8,
+  },
+  signInLinkText: {
+    fontSize: 15,
+    color: '#60a5fa',
+    textDecorationLine: 'underline',
   },
   footer: {
     marginTop: 24,

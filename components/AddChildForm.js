@@ -80,7 +80,12 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const [age, setAge] = useState(initial.age ? String(initial.age) : '');
   const [grade, setGrade] = useState(initial.grade || initial.grade_label || '');
   const [standardsState, setStandardsState] = useState(initial.standards_state || initial.standardsState || 'None');
-  const [interests, setInterests] = useState(Array.isArray(initial.interests) ? initial.interests : []);
+  const [interests, setInterests] = useState(() => {
+    const arr = Array.isArray(initial.interests) ? initial.interests : [];
+    const otherItem = arr.find((i) => typeof i === 'string' && i.startsWith('Other: '));
+    if (!otherItem) return arr;
+    return arr.filter((i) => i !== otherItem).concat('Other');
+  });
   const [avatar, setAvatar] = useState(initial.avatar || initial.avatar_url || 'prof1');
   
   // Support profile state
@@ -90,6 +95,11 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const [executiveFunction, setExecutiveFunction] = useState(Array.isArray(initial.executive_function) ? initial.executive_function : []);
   const [supportNotes, setSupportNotes] = useState(initial.support_notes || '');
   const [otherDiagnosis, setOtherDiagnosis] = useState('');
+  const [otherInterest, setOtherInterest] = useState(() => {
+    const arr = Array.isArray(initial.interests) ? initial.interests : [];
+    const otherItem = arr.find((i) => typeof i === 'string' && i.startsWith('Other: '));
+    return otherItem ? otherItem.replace(/^Other: \s*/, '') : '';
+  });
 
   // School year & target (optional) — used for attendance / progress
   const [targetMode, setTargetMode] = useState(initial.targetMode || '');
@@ -118,7 +128,15 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       setStandardsState(initial.standards_state || initial.standardsState || 'None');
     }
     if (initial.interests !== undefined) {
-      setInterests(Array.isArray(initial.interests) ? initial.interests : []);
+      const arr = Array.isArray(initial.interests) ? initial.interests : [];
+      const otherItem = arr.find((i) => typeof i === 'string' && i.startsWith('Other: '));
+      if (otherItem) {
+        setInterests(arr.filter((i) => i !== otherItem).concat('Other'));
+        setOtherInterest(otherItem.replace(/^Other: \s*/, ''));
+      } else {
+        setInterests(arr);
+        setOtherInterest('');
+      }
     }
     if (initial.avatar !== undefined || initial.avatar_url !== undefined) {
       setAvatar(initial.avatar || initial.avatar_url || 'prof1');
@@ -185,14 +203,20 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
       finalDiagnoses = diagnoses.filter(d => d !== 'Other');
       finalDiagnoses.push(`Other: ${otherDiagnosis.trim()}`);
     }
-    
+    // Handle "Other" interest
+    let finalInterests = [...(interests || [])];
+    if (interests && interests.includes('Other') && otherInterest.trim()) {
+      finalInterests = interests.filter((i) => i !== 'Other');
+      finalInterests.push(`Other: ${otherInterest.trim()}`);
+    }
+
     const payload = {
       name: name.trim(),
       nickname: nickname.trim() || null,
       age: Number(age),
       grade: grade || null,
       standardsState: standardsState === 'None' ? null : standardsState,
-      interests: interests || [],
+      interests: finalInterests,
       avatar: avatar || null,
       // Support profile fields (only include if any are filled)
       diagnoses: finalDiagnoses.length > 0 ? finalDiagnoses : null,
@@ -294,6 +318,15 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
             </TouchableOpacity>
           ))}
         </View>
+        {interests && interests.includes('Other') && (
+          <TextInput
+            style={[styles.input, { marginTop: 8 }]}
+            placeholder="Specify other interest"
+            value={otherInterest}
+            onChangeText={setOtherInterest}
+            placeholderTextColor="#9ca3af"
+          />
+        )}
       </View>
 
       {/* Section: School year (optional) */}

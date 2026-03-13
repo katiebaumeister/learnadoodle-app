@@ -371,9 +371,14 @@ export default function EditChildModal({
           text: 'Delete Forever',
           style: 'destructive',
           onPress: async () => {
+            const effectiveFamilyId = familyId || fullChildData?.family_id;
+            if (!effectiveFamilyId) {
+              Alert.alert('Error', 'Family not found. Please refresh and try again.');
+              return;
+            }
             setDeleting(true);
             const { data, error } = await supabase.rpc('delete_child_permanently', {
-              _family: familyId,
+              _family: effectiveFamilyId,
               _child: child.id,
               _confirm_name: confirmName
             });

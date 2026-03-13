@@ -7,9 +7,12 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 from datetime import datetime, timedelta
 import sys
+import os
+import json
 from pathlib import Path
 import secrets
 import string
+import httpx
 
 # Add parent directory to path
 backend_dir = Path(__file__).parent.parent
@@ -52,6 +55,17 @@ class AcceptInviteOut(BaseModel):
     family_id: Optional[str] = None
     role: Optional[str] = None
     child_scope: Optional[List[str]] = None
+    error: Optional[str] = None
+
+
+class AcceptInviteWithPasswordIn(BaseModel):
+    token: str = Field(..., description="Invite token from email link")
+    email: EmailStr = Field(..., description="Email address on the invite")
+    password: str = Field(..., min_length=6, description="Password for the new account")
+
+
+class AcceptInviteWithPasswordOut(BaseModel):
+    success: bool
     error: Optional[str] = None
 
 
@@ -236,6 +250,129 @@ async def accept_invite(
         raise
     except Exception as e:
         log_event("invite.accept.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to accept invite: {str(e)}"
+        )
+
+
+@router.post("/accept_with_password", response_model=AcceptInviteWithPasswordOut)
+async def accept_invite_with_password(
+    body: AcceptInviteWithPasswordIn,
+    __: None = Depends(rate_limiter),
+):
+    """
+    Accept a parent or tutor invite by creating an account with the invited email.
+    No second email is sent (account is created with email_confirm=True via Admin API).
+    Use the invite link's /invites/:token/accept page and set password there.
+    """
+    log_event("invite.accept_with_password.start", token_preview=body.token[:8], email=body.email[:10])
+    try:
+        supabase = get_admin_client()
+        invite_res = supabase.table("invites").select("*").eq("token", body.token).single().execute()
+        if not invite_res.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found")
+        invite = invite_res.data
+
+        if invite.get("role") not in ("parent", "tutor"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This endpoint is for parent or tutor invites only. Use the child invite flow for child invites."
+            )
+        if invite.get("accepted_at"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This invite has already been accepted")
+        if invite.get("expires_at"):
+            expires_at = datetime.fromisoformat(invite["expires_at"].replace("Z", "+00:00"))
+            if expires_at < datetime.now(expires_at.tzinfo):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This invite has expired")
+
+        invite_email = (invite.get("email") or "").strip().lower()
+        body_email = (body.email or "").strip().lower()
+        if invite_email != body_email:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email does not match the invite")
+
+        family_id = invite.get("family_id")
+        if not family_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid invite: missing family")
+
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_url or not service_role_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Missing Supabase configuration"
+            )
+        admin_url = f"{supabase_url}/auth/v1/admin/users"
+        headers = {
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "email": body.email,
+            "password": body.password,
+            "email_confirm": True,
+            "user_metadata": {"role": invite.get("role"), "family_id": family_id},
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(admin_url, headers=headers, json=payload, timeout=15.0)
+                if resp.status_code not in (200, 201):
+                    error_text = resp.text
+                    log_event("invite.accept_with_password.http_error", status=resp.status_code, error=error_text[:200])
+                    if resp.status_code == 422:
+                        try:
+                            err_body = resp.json()
+                            msg = (err_body.get("msg") or "") if isinstance(err_body.get("msg"), str) else ""
+                            if err_body.get("error_code") == "email_exists" or "already been registered" in (msg or "").lower():
+                                return AcceptInviteWithPasswordOut(
+                                    success=False,
+                                    error="An account with this email already exists. Please sign in and accept the invite from the app."
+                                )
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            pass
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=error_text or "Failed to create account"
+                    )
+                user_data = resp.json()
+                user_id = user_data.get("id")
+                if not user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to create account: no user ID returned"
+                    )
+        except httpx.RequestError as e:
+            log_event("invite.accept_with_password.request_error", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create account: network error. Please try again."
+            )
+
+        supabase.table("profiles").upsert({
+            "id": user_id,
+            "email": body.email,
+            "family_id": family_id,
+            "role": invite.get("role"),
+        }).execute()
+
+        rpc_result = supabase.rpc(
+            "accept_invite",
+            {"p_token": body.token, "p_user_id": user_id},
+        ).execute()
+        if not rpc_result.data:
+            log_event("invite.accept_with_password.rpc_failed", user_id=user_id)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to complete invite acceptance")
+        result = rpc_result.data[0] if isinstance(rpc_result.data, list) and rpc_result.data else rpc_result.data
+        if not result.get("success"):
+            return AcceptInviteWithPasswordOut(success=False, error=result.get("error", "Failed to accept invite"))
+
+        log_event("invite.accept_with_password.success", user_id=user_id, role=invite.get("role"))
+        return AcceptInviteWithPasswordOut(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("invite.accept_with_password.error", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to accept invite: {str(e)}"

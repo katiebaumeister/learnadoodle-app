@@ -194,8 +194,8 @@ export default function SetPasswordPage() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <View style={styles.card}>
-        <Text style={styles.title}>Hello again!</Text>
-        <Text style={styles.subtitle}>Sign in to continue learning. Create your password below.</Text>
+        <Text style={styles.title}>Thanks for confirming!</Text>
+        <Text style={styles.subtitle}>Finish setting up your password to create your account.</Text>
 
         {errorMessage ? (
           <View style={styles.errorBox}>

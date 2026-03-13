@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -105,6 +105,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
   const [deleteSubjectConfirm, setDeleteSubjectConfirm] = useState({ visible: false, subject: null });
+  const [showDangerZoneCourses, setShowDangerZoneCourses] = useState(false);
+  const [courseToDelete, setCourseToDelete] = useState(null);
+  const [confirmDeleteCourseName, setConfirmDeleteCourseName] = useState('');
+  const [deletingCourse, setDeletingCourse] = useState(false);
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
   
   // Feedback form state
@@ -594,15 +598,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  // Only load subjects if preloadedSubjects is not available
+  // When switching to Courses section, always refetch so the list matches DB (stays in sync with "top" list / adds from elsewhere)
   useEffect(() => {
     if (familyId && activeSection === 'courses') {
-      // If we have preloaded subjects, use them; otherwise load
-      if (!propPreloadedSubjects || propPreloadedSubjects.length === 0) {
-        loadSubjects();
-      }
+      loadSubjects();
     }
-  }, [familyId, activeSection, propPreloadedSubjects]);
+  }, [familyId, activeSection]);
 
   // Handle browser back button for About page
   useEffect(() => {
@@ -2215,6 +2216,132 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 })}
               </View>
             )}
+
+            {/* Danger Zone - delete course permanently (same pattern as Edit Child) */}
+            {!isChildMode && (
+              <View style={styles.dangerZone}>
+                <TouchableOpacity
+                  style={styles.dangerZoneToggle}
+                  onPress={() => {
+                    setShowDangerZoneCourses(!showDangerZoneCourses);
+                    if (showDangerZoneCourses) {
+                      setCourseToDelete(null);
+                      setConfirmDeleteCourseName('');
+                    }
+                  }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                  <Text style={styles.dangerZoneTitle}>
+                    {showDangerZoneCourses ? 'Hide' : 'Show'} Danger Zone
+                  </Text>
+                </TouchableOpacity>
+
+                {showDangerZoneCourses && (
+                  <View style={styles.dangerZoneContent}>
+                    <View style={styles.dangerSection}>
+                      <Text style={styles.dangerSectionTitle}>Delete permanently</Text>
+                      <Text style={styles.dangerSectionDescription}>
+                        This removes the course and all its events, materials, and data for{' '}
+                        {courseToDelete ? (
+                          <Text style={styles.bold}>{courseToDelete.name}</Text>
+                        ) : (
+                          'the selected course'
+                        )}
+                        . This cannot be undone.
+                      </Text>
+
+                      {!courseToDelete ? (
+                        <Text style={styles.dangerSectionSubtext}>Choose a course to delete:</Text>
+                      ) : null}
+                      {!courseToDelete ? (
+                        <View style={styles.dangerCourseList}>
+                          {(coursesList || []).map((subj) => (
+                            <TouchableOpacity
+                              key={subj.id}
+                              style={styles.dangerCourseChip}
+                              onPress={() => {
+                                setCourseToDelete(subj);
+                                setConfirmDeleteCourseName('');
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Trash2 size={14} color="#6b7280" />
+                              <Text style={styles.dangerCourseChipText}>{subj.name}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      ) : (
+                        <>
+                          <TouchableOpacity
+                            style={styles.dangerCourseBack}
+                            onPress={() => {
+                              setCourseToDelete(null);
+                              setConfirmDeleteCourseName('');
+                            }}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <ChevronLeft size={14} color="#6b7280" />
+                            <Text style={styles.dangerCourseBackText}>Change course</Text>
+                          </TouchableOpacity>
+                          <Text style={styles.inputLabel}>
+                            Type the course name to confirm
+                          </Text>
+                          <TextInput
+                            style={styles.dangerInput}
+                            value={confirmDeleteCourseName}
+                            onChangeText={setConfirmDeleteCourseName}
+                            placeholder={courseToDelete.name}
+                            placeholderTextColor="#9ca3af"
+                            autoCapitalize="words"
+                          />
+                          <TouchableOpacity
+                            style={[
+                              styles.deleteButton,
+                              (confirmDeleteCourseName.trim().toLowerCase() !== courseToDelete.name.trim().toLowerCase() || deletingCourse) && styles.deleteButtonDisabled,
+                            ]}
+                            onPress={async () => {
+                              if (
+                                confirmDeleteCourseName.trim().toLowerCase() !==
+                                courseToDelete.name.trim().toLowerCase() ||
+                                deletingCourse
+                              )
+                                return;
+                              setDeletingCourse(true);
+                              try {
+                                await performDeleteSubject(courseToDelete);
+                                setCourseToDelete(null);
+                                setConfirmDeleteCourseName('');
+                                if (typeof window !== 'undefined') {
+                                  window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                                }
+                              } finally {
+                                setDeletingCourse(false);
+                              }
+                            }}
+                            disabled={
+                              confirmDeleteCourseName.trim().toLowerCase() !==
+                                courseToDelete.name.trim().toLowerCase() || deletingCourse
+                            }
+                            {...(Platform.OS === 'web' && {
+                              cursor:
+                                confirmDeleteCourseName.trim().toLowerCase() ===
+                                  courseToDelete.name.trim().toLowerCase() && !deletingCourse
+                                  ? 'pointer'
+                                  : 'not-allowed',
+                            })}
+                          >
+                            <Text style={styles.deleteButtonText}>
+                              {deletingCourse ? 'Deleting...' : `Delete ${courseToDelete.name}`}
+                            </Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
         );
       }
@@ -3447,11 +3574,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={styles.sidebarButtonText}>Connected accounts</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'preferences' && styles.sidebarButtonActive]} onPress={() => setActiveSection('preferences')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'preferences' && styles.sidebarButtonTextActive]}>Preferences</Text>
+            <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={styles.sidebarButtonText}>Preferences</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]} onPress={() => setActiveSection('notifications')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>Notifications</Text>
+            <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={styles.sidebarButtonText}>Notifications</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
@@ -3756,6 +3883,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setEditingSubjectInModal(null);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('subjectCreated'));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}
       />
@@ -6433,6 +6561,119 @@ function createStyles(tokens) {
     },
     subjectsList: {
       // No gap needed - dividers handle spacing
+    },
+    // Danger Zone (courses) - same pattern as Edit Child
+    dangerZone: {
+      marginTop: 24,
+      paddingTop: 24,
+      borderTopWidth: 1,
+      borderTopColor: '#e5e7eb',
+    },
+    dangerZoneToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 8,
+    },
+    dangerZoneTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.redBold || '#dc2626',
+    },
+    dangerZoneContent: {
+      marginTop: 16,
+    },
+    dangerSection: {
+      backgroundColor: colors.redSoft || '#fef2f2',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: (colors.redBold || '#dc2626') + '40',
+      padding: 16,
+    },
+    dangerSectionTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#111827',
+      marginBottom: 4,
+    },
+    dangerSectionDescription: {
+      fontSize: 12,
+      color: '#6b7280',
+      lineHeight: 18,
+      marginBottom: 12,
+    },
+    dangerSectionSubtext: {
+      fontSize: 12,
+      color: '#6b7280',
+      marginBottom: 8,
+    },
+    dangerCourseList: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
+    dangerCourseChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
+    },
+    dangerCourseChipText: {
+      fontSize: 13,
+      fontWeight: '500',
+      color: '#374151',
+    },
+    dangerCourseBack: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginBottom: 12,
+    },
+    dangerCourseBackText: {
+      fontSize: 12,
+      color: '#6b7280',
+    },
+    inputLabel: {
+      fontSize: 11,
+      color: '#6b7280',
+      marginBottom: 4,
+      marginTop: 8,
+    },
+    dangerInput: {
+      borderWidth: 1,
+      borderColor: '#d1d5db',
+      borderRadius: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      fontSize: 12,
+      color: '#111827',
+      backgroundColor: '#ffffff',
+      marginBottom: 12,
+    },
+    deleteButton: {
+      backgroundColor: colors.redBold || '#dc2626',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 6,
+      alignItems: 'center',
+    },
+    deleteButtonDisabled: {
+      backgroundColor: colors.redSoft || '#fef2f2',
+      opacity: 0.5,
+    },
+    deleteButtonText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#ffffff',
+    },
+    bold: {
+      fontWeight: '600',
     },
     subjectDivider: {
       height: 1,

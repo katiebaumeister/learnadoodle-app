@@ -2,7 +2,7 @@
 Public endpoints for sign-up flow: record when we sent a confirmation email
 and return last sent time so the UI can show "Confirmation sent on [date/time]. Please check your email!"
 """
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from supabase_client import get_admin_client
@@ -38,15 +38,9 @@ async def get_signup_confirmation_sent(
         if res.data and len(res.data) > 0:
             return SignupConfirmationSentOut(sent_at=res.data[0]["sent_at"])
         return SignupConfirmationSentOut(sent_at=None)
-    except Exception as e:
-        # Table may not exist yet (migration not run); return empty instead of 500
-        err_msg = str(e).lower()
-        if "does not exist" in err_msg or "relation" in err_msg or "42p01" in err_msg:
-            return SignupConfirmationSentOut(sent_at=None)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to check confirmation status",
-        ) from e
+    except Exception:
+        # Table missing, Supabase down, or any other failure: return empty so frontend never sees 500
+        return SignupConfirmationSentOut(sent_at=None)
 
 
 @router.post("/signup-confirmation-sent")
@@ -60,12 +54,6 @@ async def record_signup_confirmation_sent(body: SignupConfirmationRecordIn):
             "email": body.email.strip().lower(),
         }).execute()
         return {"ok": True}
-    except Exception as e:
-        # Table may not exist yet (migration not run); succeed silently
-        err_msg = str(e).lower()
-        if "does not exist" in err_msg or "relation" in err_msg or "42p01" in err_msg:
-            return {"ok": True}
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to record confirmation sent",
-        ) from e
+    except Exception:
+        # Table missing, Supabase down, or any other failure: succeed silently so frontend never sees 500
+        return {"ok": True}

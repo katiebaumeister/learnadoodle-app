@@ -2533,7 +2533,7 @@ export default function PlanYearModal({
                 {/* Parsed content block for upload/link/paste: generate preview before Next */}
                 {(planSource === 'upload' || planSource === 'link' || planSource === 'paste') && (
                   <View style={{ marginTop: 24 }}>
-                    <Text style={[styles.label, { marginBottom: 8 }]}>Parsed content</Text>
+                    <Text style={[styles.label, { marginBottom: 8 }]}>Preview</Text>
                     {parsingContent ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 8 }}>
                         <ActivityIndicator size="small" color={ACCENT} />

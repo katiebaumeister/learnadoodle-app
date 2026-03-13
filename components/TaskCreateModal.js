@@ -614,6 +614,7 @@ export default function TaskCreateModal({
   const [recurrenceEndAfter, setRecurrenceEndAfter] = useState(null); // Number of occurrences
   const [recurrenceEndAfterText, setRecurrenceEndAfterText] = useState(''); // Local text state for input
   const [recurrenceEndDate, setRecurrenceEndDate] = useState(null); // End date
+  const [recurrenceExcludeWeekends, setRecurrenceExcludeWeekends] = useState(false); // For daily: only weekdays
   
   const toast = useToast();
   const session = useSession();
@@ -1548,7 +1549,9 @@ export default function TaskCreateModal({
             frequency: recurrenceType.toUpperCase(), // DAILY, WEEKLY, MONTHLY
             interval: interval,
           };
-          
+          if (recurrenceType === 'daily' && recurrenceExcludeWeekends) {
+            rule.exclude_weekends = true;
+          }
           if (recurrenceEndType === 'after') {
             // Parse from text if state is null (user might not have blurred the field)
             const countValue = recurrenceEndAfter || (recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : null);
@@ -3088,6 +3091,19 @@ export default function TaskCreateModal({
                         </View>
                       )}
                     </View>
+                    {recurrenceType === 'daily' && (
+                      <View style={{ marginBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <TouchableOpacity
+                          onPress={() => setRecurrenceExcludeWeekends((v) => !v)}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                        >
+                          <View style={[styles.checkbox, recurrenceExcludeWeekends && styles.checkboxChecked]}>
+                            {recurrenceExcludeWeekends ? <Check size={14} color="#fff" /> : null}
+                          </View>
+                          <Text style={{ fontSize: 14, color: FG }}>Exclude weekends</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
                 )}
               </View>
@@ -4884,6 +4900,19 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     width: '100%',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderWidth: 2,
+    borderColor: BORDER,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#60a5fa',
+    borderColor: '#60a5fa',
   },
   dropdownOption: {
     paddingVertical: 6,

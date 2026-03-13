@@ -100,6 +100,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   const [supportNeeds, setSupportNeeds] = useState([]);
   const [executiveFunction, setExecutiveFunction] = useState([]);
   const [otherDiagnosis, setOtherDiagnosis] = useState('');
+  const [otherInterest, setOtherInterest] = useState('');
   const [targetMode, setTargetMode] = useState('');
   const [targetDays, setTargetDays] = useState('');
   const [targetHours, setTargetHours] = useState('');
@@ -155,6 +156,11 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       finalDiagnoses = diagnoses.filter((d) => d !== 'Other');
       finalDiagnoses.push(`Other: ${otherDiagnosis.trim()}`);
     }
+    let finalInterests = [...interests];
+    if (interests.includes('Other') && otherInterest.trim()) {
+      finalInterests = interests.filter((i) => i !== 'Other');
+      finalInterests.push(`Other: ${otherInterest.trim()}`);
+    }
     return {
       name: name.trim(),
       nickname: null,
@@ -162,7 +168,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       grade: grade,
       standardsState: standardsState === 'None' ? null : standardsState,
       avatar,
-      interests,
+      interests: finalInterests,
       diagnoses: finalDiagnoses.length > 0 ? finalDiagnoses : null,
       learningModalities: learningModalities.length > 0 ? learningModalities : null,
       supportNeeds: supportNeeds.length > 0 ? supportNeeds : null,
@@ -196,6 +202,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       setSupportNeeds([]);
       setExecutiveFunction([]);
       setOtherDiagnosis('');
+      setOtherInterest('');
       setShowAdditional(false);
       setTargetMode('');
       setTargetDays('');
@@ -362,6 +369,15 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               </TouchableOpacity>
             ))}
           </View>
+          {interests.includes('Other') && (
+            <TextInput
+              style={[styles.input, { marginTop: 10 }]}
+              placeholder="Specify other interest"
+              value={otherInterest}
+              onChangeText={(t) => { setOtherInterest(t); setError(null); }}
+              placeholderTextColor="#9CA3AF"
+            />
+          )}
 
           <Text style={styles.label}>Follow State Standards?</Text>
           <View style={styles.row}>
@@ -509,8 +525,8 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           </View>
 
           {showDatePickerFor ? (
-            Platform.OS === 'web' && datePickerPortalContainer ? (() => {
-              ReactDOM.createPortal(
+            Platform.OS === 'web' ? (
+              datePickerPortalContainer && ReactDOM.createPortal(
                 <TouchableOpacity style={[styles.datePickerOverlay, styles.datePickerOverlayZ]} activeOpacity={1} onPress={() => setShowDatePickerFor(null)}>
                   <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.datePickerModal, styles.datePickerModalZ]}>
                     <View style={styles.datePickerMonthRow}>
@@ -589,9 +605,8 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
                   </TouchableOpacity>
                 </TouchableOpacity>,
                 datePickerPortalContainer
-              );
-              return null;
-            })() : (
+              )
+            ) : (
             <Modal animationType="fade" transparent visible onRequestClose={() => setShowDatePickerFor(null)} statusBarTranslucent>
               <TouchableOpacity style={[styles.datePickerOverlay, styles.datePickerOverlayZ]} activeOpacity={1} onPress={() => setShowDatePickerFor(null)}>
                 <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.datePickerModal, styles.datePickerModalZ]}>

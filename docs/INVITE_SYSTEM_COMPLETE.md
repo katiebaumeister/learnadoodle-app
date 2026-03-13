@@ -12,6 +12,10 @@ The invite system is fully set up for all three role types. Here's how each work
 | **Tutor** | `POST /api/family/invite` | `POST /api/invite/accept` | `member_role='tutor'`, `child_scope=[selected]`, `child_id=NULL` | Only children in `child_scope` |
 | **Child** | `POST /api/child/create_invite` | `POST /api/child/accept_invite` | `member_role='child'`, `child_scope=[child_id]`, `child_id=child_id` | Only themselves |
 
+## Invite expiration
+
+Invite links expire in 30 days. If a link has expired, the recipient should ask the person who invited them to send a new invite. The app and invite landing/accept pages show this note to users when an invite is invalid or expired.
+
 ## Parent Invites
 
 ### How It Works

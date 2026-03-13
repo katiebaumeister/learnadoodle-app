@@ -226,11 +226,30 @@ export default function OnboardingModal({
     }
   };
 
-  const removeOneSubject = (childId, subjectId) => {
+  const removeOneSubject = async (childId, subjectId) => {
+    // Update local list immediately so the top chip list reflects the change
     setCreatedSubjectsByChild((prev) => {
       const list = prev[childId] || [];
       return { ...prev, [childId]: list.filter((s) => s.id !== subjectId) };
     });
+    // Delete the subject in the DB so the course list (Profile > Courses) stays in sync
+    if (!familyId || !subjectId) return;
+    try {
+      const { error } = await supabase
+        .from('subject')
+        .delete()
+        .eq('id', subjectId)
+        .eq('family_id', familyId);
+      if (error) {
+        console.warn('[OnboardingModal] Failed to delete subject:', error);
+        return;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (err) {
+      console.warn('[OnboardingModal] Error deleting subject:', err);
+    }
   };
 
   const onSubjectStepContinue = () => {
