@@ -59,11 +59,10 @@ export default function OnboardingModal({
           setStep('add_child');
           setPlanningMode(data.default_planning_mode);
           setCreatedChildren([]);
-        } else if (!data?.has_subjects) {
+        } else {
           setStep('add_subject');
-          setCreatedSubjectsByChild({});
+          setPlanningMode(data.default_planning_mode ?? null);
           setSubjectStepChildIndex(0);
-          // Load children for per-child subject step
           try {
             const membersRes = await getFamilyMembers();
             const membersData = membersRes?.data ?? membersRes;
@@ -71,9 +70,28 @@ export default function OnboardingModal({
             if (kids.length > 0) {
               setCreatedChildren(kids.map((c) => ({ id: c.id, name: c.first_name || c.name || 'Child' })));
             }
-          } catch (_) {}
-        } else {
-          setStep('complete');
+            if (data?.has_subjects && familyId) {
+              const { data: subjRows } = await supabase
+                .from('subject')
+                .select('id, name, child_id')
+                .eq('family_id', familyId);
+              if (subjRows && subjRows.length > 0) {
+                const byChild = {};
+                subjRows.forEach((s) => {
+                  const cid = s.child_id || null;
+                  if (!byChild[cid]) byChild[cid] = [];
+                  byChild[cid].push({ id: s.id, name: s.name || 'Subject' });
+                });
+                setCreatedSubjectsByChild(byChild);
+              } else {
+                setCreatedSubjectsByChild({});
+              }
+            } else {
+              setCreatedSubjectsByChild({});
+            }
+          } catch (_) {
+            setCreatedSubjectsByChild({});
+          }
         }
       } catch (_) {
         // Don't reset step on fetch error (e.g. 429) — only set step from successful API data
@@ -318,8 +336,8 @@ export default function OnboardingModal({
             keyboardShouldPersistTaps="handled"
           >
             {error ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{error}</Text>
+              <View style={styles.friendlyErrorBanner}>
+                <Text style={styles.friendlyErrorText}>UH OH. SOMETHING WENT WRONG. PLEASE TRY REFRESHING OR CONTACT US: CONTACT@LEARNADOODLE.COM</Text>
               </View>
             ) : null}
             {resuming ? (
@@ -456,6 +474,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#DC2626',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
+  friendlyErrorBanner: {
+    backgroundColor: 'rgba(15, 23, 42, 0.06)',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  friendlyErrorText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   loadingWrap: {
     paddingVertical: 48,

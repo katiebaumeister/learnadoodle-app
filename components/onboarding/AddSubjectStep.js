@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { ChevronDown, ChevronUp, X, Calculator, BookOpen, Pencil, FlaskConical, Clock, Layers, Plus } from 'lucide-react';
+import { ChevronDown, ChevronUp, X, Calculator, BookOpen, Pencil, FlaskConical, Clock, Layers, Plus, Check } from 'lucide-react';
 import { getMaterials } from '../../lib/services/materialsClient';
 import AddMaterialModal from '../materials/AddMaterialModal';
 
@@ -147,10 +147,12 @@ export default function AddSubjectStep({
     setError(`Choose or type a subject for ${childName}, or add one above.`);
   };
 
+  const friendlyErrorMessage = 'UH OH. SOMETHING WENT WRONG. PLEASE TRY REFRESHING OR CONTACT US: CONTACT@LEARNADOODLE.COM';
+
   if (!currentChild) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>No child selected. Go back and add a child.</Text>
+        <Text style={styles.friendlyErrorText}>{friendlyErrorMessage}</Text>
       </View>
     );
   }
@@ -209,14 +211,28 @@ export default function AddSubjectStep({
           );
         })}
       </View>
-      <TextInput
-        style={styles.input}
-        value={customName}
-        onChangeText={(t) => { setCustomName(t); setError(null); }}
-        placeholder="Add a custom subject (Art, Piano, Robotics…)"
-        placeholderTextColor="#9CA3AF"
-        onFocus={() => selectedPreset === 'Other' || setSelectedPreset(null)}
-      />
+      {selectedPreset === 'Other' && (
+        <View style={styles.customSubjectRow}>
+          <TextInput
+            style={[styles.input, styles.customSubjectInput]}
+            value={customName}
+            onChangeText={(t) => { setCustomName(t); setError(null); }}
+            placeholder="Add a custom subject (Art, Piano, Robotics…)"
+            placeholderTextColor="#9CA3AF"
+          />
+          <TouchableOpacity
+            onPress={() => {
+              const name = customName.trim();
+              if (!name || adding || isSaving) return;
+              addSubjectByName(name);
+            }}
+            style={[styles.otherConfirmButton, (!customName.trim() || adding || isSaving) && styles.otherConfirmButtonDisabled]}
+            disabled={!customName.trim() || adding || isSaving}
+          >
+            <Check size={20} color={customName.trim() && !adding && !isSaving ? '#1d4ed8' : '#9CA3AF'} strokeWidth={2.5} />
+          </TouchableOpacity>
+        </View>
+      )}
 
       <TouchableOpacity
         style={styles.additionalToggle}
@@ -368,7 +384,7 @@ export default function AddSubjectStep({
       >
         <Text style={styles.addBtnText}>{adding || isSaving ? 'Adding...' : 'Add another'}</Text>
       </TouchableOpacity>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {error ? <Text style={styles.friendlyErrorText}>{friendlyErrorMessage}</Text> : null}
       <TouchableOpacity
         style={[styles.continueBtn, (!canContinue || isSaving || adding) && styles.continueBtnDisabled]}
         onPress={handleContinue}
@@ -502,6 +518,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
+  customSubjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+  },
+  customSubjectInput: {
+    flex: 1,
+    marginTop: 0,
+  },
+  otherConfirmButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  otherConfirmButtonDisabled: {
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F3F4F6',
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
   addBtn: {
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -527,6 +569,13 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     marginTop: 8,
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
+  friendlyErrorText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginTop: 8,
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   additionalToggle: {
     marginTop: 22,
