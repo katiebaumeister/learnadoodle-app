@@ -548,6 +548,10 @@ export default function WebAuthScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
+            onSubmitEditing={handleAuth}
+            onKeyPress={e => {
+              if (e.nativeEvent.key === 'Enter') handleAuth();
+            }}
           />
         </View>
         
@@ -562,6 +566,10 @@ export default function WebAuthScreen() {
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
+                onSubmitEditing={handleAuth}
+                onKeyPress={e => {
+                  if (e.nativeEvent.key === 'Enter') handleAuth();
+                }}
               />
               <TouchableOpacity
                 style={styles.eyeButton}

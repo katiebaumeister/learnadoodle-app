@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image, Animated, Modal } from 'react-native';
 import ReactDOM from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 
 const AVATAR_SIZE = 64;
 const AVATAR_PREVIEW_SIZE = 72;
@@ -136,9 +136,9 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   useEffect(() => {
     if (canContinue) {
       Animated.sequence([
-        Animated.timing(continueScale, { toValue: 1.03, duration: 120, useNativeDriver: true }),
+        Animated.timing(continueScale, { toValue: 1.03, duration: 120, useNativeDriver: Platform.OS !== 'web' }),
         Animated.delay(150),
-        Animated.timing(continueScale, { toValue: 1, duration: 100, useNativeDriver: true }),
+        Animated.timing(continueScale, { toValue: 1, duration: 100, useNativeDriver: Platform.OS !== 'web' }),
       ]).start();
     } else {
       continueScale.setValue(1);
@@ -237,8 +237,6 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
     setError('Enter the required fields for at least one child.');
   };
 
-  const showGrade = Boolean(age);
-
   return (
     <View style={styles.container}>
       <Text style={styles.mainHeading}>Let's add your first learner</Text>
@@ -321,25 +319,21 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
             );
           })}
         </View>
-        {showGrade && (
-          <>
-            <Text style={styles.label}>Grade <Text style={styles.requiredAsterisk}>*</Text></Text>
-            <View style={styles.row}>
-              {GRADES.map((g) => {
-                const selected = grade === g;
-                return (
-                  <TouchableOpacity
-                    key={g}
-                    style={[styles.chipAgeGrade, selected && styles.chipAgeGradeSelected]}
-                    onPress={() => { setGrade(g); setError(null); }}
-                  >
-                    <Text style={[styles.chipAgeGradeText, selected && styles.chipAgeGradeTextSelected]}>{g}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </>
-        )}
+        <Text style={styles.label}>Grade <Text style={styles.requiredAsterisk}>*</Text></Text>
+        <View style={styles.row}>
+          {GRADES.map((g) => {
+            const selected = grade === g;
+            return (
+              <TouchableOpacity
+                key={g}
+                style={[styles.chipAgeGrade, selected && styles.chipAgeGradeSelected]}
+                onPress={() => { setGrade(g); setError(null); }}
+              >
+                <Text style={[styles.chipAgeGradeText, selected && styles.chipAgeGradeTextSelected]}>{g}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
 
       {/* Section 3 — Optional info */}
@@ -368,15 +362,47 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
                 <Text style={[styles.chipText, interests.includes(it) && styles.chipTextSelected]}>{it}</Text>
               </TouchableOpacity>
             ))}
+            {interests.filter((i) => typeof i === 'string' && i.startsWith('Other: ')).map((custom) => (
+              <TouchableOpacity
+                key={custom}
+                style={[styles.chip, styles.chipSelected]}
+                onPress={() => setInterests((prev) => prev.filter((i) => i !== custom))}
+              >
+                <Text style={[styles.chipText, styles.chipTextSelected]}>{custom.replace(/^Other: \s*/, '')}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
           {interests.includes('Other') && (
-            <TextInput
-              style={[styles.input, { marginTop: 10 }]}
-              placeholder="Specify other interest"
-              value={otherInterest}
-              onChangeText={(t) => { setOtherInterest(t); setError(null); }}
-              placeholderTextColor="#9CA3AF"
-            />
+            <View style={styles.otherInterestRow}>
+              <TextInput
+                style={[styles.input, styles.otherInterestInput]}
+                placeholder="Type interest, then tap Add"
+                value={otherInterest}
+                onChangeText={(t) => { setOtherInterest(t); setError(null); }}
+                placeholderTextColor="#9CA3AF"
+                onSubmitEditing={() => {
+                  const t = otherInterest.trim();
+                  if (!t) return;
+                  setInterests((prev) => [...prev.filter((i) => i !== 'Other'), `Other: ${t}`]);
+                  setOtherInterest('');
+                  setError(null);
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => {
+                  const t = otherInterest.trim();
+                  if (!t) return;
+                  setInterests((prev) => [...prev.filter((i) => i !== 'Other'), `Other: ${t}`]);
+                  setOtherInterest('');
+                  setError(null);
+                }}
+                style={[styles.otherConfirmButton, !otherInterest.trim() && styles.otherConfirmButtonDisabled]}
+                disabled={!otherInterest.trim()}
+              >
+                <Check size={20} color={otherInterest.trim() ? '#ffffff' : '#9CA3AF'} strokeWidth={2.5} />
+                <Text style={[styles.otherConfirmButtonText, !otherInterest.trim() && styles.otherConfirmButtonTextDisabled]}>Add</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           <Text style={styles.label}>Follow State Standards?</Text>
@@ -818,6 +844,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
+  otherInterestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
+  otherInterestInput: {
+    flex: 1,
+    marginTop: 0,
+    minWidth: 0,
+  },
+  otherConfirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  otherConfirmButtonDisabled: {
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F3F4F6',
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  otherConfirmButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  },
+  otherConfirmButtonTextDisabled: {
+    color: '#9CA3AF',
+  },
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -864,8 +929,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipAgeGradeSelected: {
-    backgroundColor: '#85C4F2',
-    borderWidth: 0,
+    borderColor: '#2563eb',
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
   },
   chipAgeGradeText: {
     fontSize: 14,
@@ -873,7 +938,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   chipAgeGradeTextSelected: {
-    color: '#FFFFFF',
+    color: '#1d4ed8',
     fontWeight: '600',
   },
   addBtn: {

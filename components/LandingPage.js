@@ -9,8 +9,8 @@ import {
   Image,
   Animated,
   Modal,
-  ActivityIndicator,
 } from 'react-native';
+import AppLoader from './AppLoader';
 import { X, ChevronDown } from 'lucide-react';
 
 const LANDING_IMAGE_COUNT = 17;
@@ -594,14 +594,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
 
   return (
     <>
-      {Platform.OS === 'web' && !pageReady && !skipLoader && (
-        <View style={styles.landingLoaderOverlay}>
-          <View style={styles.landingLoaderInner}>
-            <ActivityIndicator size="large" color="#60a5fa" />
-            <Text style={styles.landingLoaderText}>learnadoodle</Text>
-          </View>
-        </View>
-      )}
+      {Platform.OS === 'web' && !pageReady && !skipLoader && <AppLoader />}
       {mainContent}
     </>
   );
@@ -655,29 +648,6 @@ const styles = StyleSheet.create({
   landingContentHidden: {
     opacity: 0,
     pointerEvents: 'none',
-  },
-  landingLoaderOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: '#ffffff',
-    zIndex: 9999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  landingLoaderInner: {
-    alignItems: 'center',
-    gap: 16,
-  },
-  landingLoaderText: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#0f172a',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   contentContainer: {
     ...(Platform.OS === 'web' && {

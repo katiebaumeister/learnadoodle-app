@@ -1,0 +1,74 @@
+<!--
+  Supabase "Confirm signup" email template.
+  Copy this entire file into: Supabase Dashboard → Project Settings → Authentication → Email Templates → Confirm signup (Message body).
+  Keep {{ .ConfirmationURL }} exactly as-is so the redirect to /set-password works.
+  Button: black background (#000), white text.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: 'DM Sans', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #E6F4FC;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .button {
+            background-color: #000;
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            display: inline-block;
+            margin: 20px 0;
+            font-weight: 600;
+            text-align: center;
+        }
+        .footer {
+            margin-top: 40px;
+            font-size: 14px;
+            color: #666;
+            text-align: center;
+        }
+        h2 {
+            font-size: 24px;
+            color: #000;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>Learnadoodle</h1>
+        </div>
+        <h2>Welcome to Learnadoodle!</h2>
+        <p>Hello,</p>
+        <p>Thank you for signing up! Please confirm your email address to get started:</p>
+        
+        <div style="text-align: center;">
+            <a href="{{ .ConfirmationURL }}" class="button">Confirm Email</a>
+        </div>
+        
+        <div class="footer">
+            <p>Best regards,<br>The Learnadoodle Team</p>
+            <p>Need help? Contact us at contact@learnadoodle.com</p>
+        </div>
+    </div>
+</body>
+</html>

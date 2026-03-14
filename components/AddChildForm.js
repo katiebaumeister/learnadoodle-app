@@ -1,6 +1,6 @@
 import React, { useState, useImperativeHandle, forwardRef, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Platform, Modal } from 'react-native';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 
 const GRADES = ['Pre-K','K','1','2','3','4','5','6','7','8','9','10','11','12'];
@@ -317,15 +317,45 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
               <Text style={[styles.chipText, interests.includes(it) && styles.chipTextSelected]}>{it}</Text>
             </TouchableOpacity>
           ))}
+          {interests && interests.filter((i) => typeof i === 'string' && i.startsWith('Other: ')).map((custom) => (
+            <TouchableOpacity
+              key={custom}
+              style={[styles.chip, styles.chipSelected]}
+              onPress={() => setInterests((prev) => prev.filter((i) => i !== custom))}
+            >
+              <Text style={[styles.chipText, styles.chipTextSelected]}>{custom.replace(/^Other: \s*/, '')}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
         {interests && interests.includes('Other') && (
-          <TextInput
-            style={[styles.input, { marginTop: 8 }]}
-            placeholder="Specify other interest"
-            value={otherInterest}
-            onChangeText={setOtherInterest}
-            placeholderTextColor="#9ca3af"
-          />
+          <View style={styles.otherInterestRow}>
+            <TextInput
+              style={[styles.input, styles.otherInterestInput]}
+              placeholder="Type interest, then tap Add"
+              value={otherInterest}
+              onChangeText={setOtherInterest}
+              placeholderTextColor="#9ca3af"
+              onSubmitEditing={() => {
+                const t = otherInterest.trim();
+                if (!t) return;
+                setInterests((prev) => [...prev.filter((i) => i !== 'Other'), `Other: ${t}`]);
+                setOtherInterest('');
+              }}
+            />
+            <TouchableOpacity
+              onPress={() => {
+                const t = otherInterest.trim();
+                if (!t) return;
+                setInterests((prev) => [...prev.filter((i) => i !== 'Other'), `Other: ${t}`]);
+                setOtherInterest('');
+              }}
+              style={[styles.otherConfirmButton, !otherInterest.trim() && styles.otherConfirmButtonDisabled]}
+              disabled={!otherInterest.trim()}
+            >
+              <Check size={20} color={otherInterest.trim() ? '#ffffff' : '#9ca3af'} strokeWidth={2.5} />
+              <Text style={[styles.otherConfirmButtonText, !otherInterest.trim() && styles.otherConfirmButtonTextDisabled]}>Add</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -713,8 +743,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ageButtonSelected: {
-    borderColor: '#B8D7F9',
-    backgroundColor: '#B8D7F9',
+    borderColor: '#2563eb',
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
   },
   ageButtonText: {
     fontSize: 14,
@@ -722,8 +752,8 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   ageButtonTextSelected: {
-    color: '#1e40af',
-    fontWeight: '700',
+    color: '#1d4ed8',
+    fontWeight: '600',
   },
   chip: {
     borderWidth: 1,
@@ -734,8 +764,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   chipSelected: {
-    borderColor: '#B8D7F9',
-    backgroundColor: '#B8D7F9',
+    borderColor: '#2563eb',
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
   },
   chipText: {
     color: '#6b7280',
@@ -747,8 +777,47 @@ const styles = StyleSheet.create({
     }),
   },
   chipTextSelected: {
-    color: '#1e40af',
+    color: '#1d4ed8',
     fontWeight: '600',
+  },
+  otherInterestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+  },
+  otherInterestInput: {
+    flex: 1,
+    marginTop: 0,
+    minWidth: 0,
+  },
+  otherConfirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  otherConfirmButtonDisabled: {
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f3f4f6',
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  otherConfirmButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  },
+  otherConfirmButtonTextDisabled: {
+    color: '#9ca3af',
   },
   avatarsWrap: {
     flexDirection: 'row',

@@ -56,6 +56,7 @@ import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 import PlanHealthIcon from './planner/PlanHealthIcon';
 import OnboardingModal from './onboarding/OnboardingModal';
+import AppLoader from './AppLoader';
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function toLocalYYYYMMDD(d) {
@@ -1981,11 +1982,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Don't show main content until onboarding status is known (avoids flash of landing without modal)
   if (user && session && !onboardingCheckDone) {
-    return (
-      <View style={styles.initialLoadOverlay}>
-        <ActivityIndicator size="large" color="#6b7280" />
-      </View>
-    );
+    return <AppLoader />;
   }
 
   return (
@@ -4023,13 +4020,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )}
         </PlannerDiffProvider>
       </FiltersProvider>
-      {/* Initial app load: plain white + neutral grey spinner until home content is ready */}
+      {/* Initial app load: same loader as landing (white + light blue spinner + learnadoodle) */}
       {!initialAppLoadDone && (
-        <View
-          style={[StyleSheet.absoluteFillObject, styles.initialLoadOverlay]}
-          pointerEvents="auto"
-        >
-          <ActivityIndicator size="large" color="#6b7280" />
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
+          <AppLoader />
         </View>
       )}
     </ToastProvider>
@@ -4045,13 +4039,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-  },
-  initialLoadOverlay: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 9999,
   },
   fabAskAI: {
     position: Platform.OS === 'web' ? 'fixed' : 'absolute',

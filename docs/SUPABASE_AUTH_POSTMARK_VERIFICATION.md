@@ -80,6 +80,8 @@ To match your brand (e.g. Learnadoodle):
 2. Edit **Confirm signup** (and optionally **Reset password**).
 3. You can change subject and body; the link **must** use `{{ .ConfirmationURL }}` so it includes the redirect. Do **not** replace it with `{{ .SiteURL }}` or a static URL, or the redirect to `/set-password` will not work.
 
+A ready-to-paste **Confirm signup** template with black “Confirm Email” button and white text is in **[docs/SUPABASE_CONFIRM_SIGNUP_EMAIL_TEMPLATE.html](../docs/SUPABASE_CONFIRM_SIGNUP_EMAIL_TEMPLATE.html)**. Copy the full HTML (skip the comment block at the top) into the Confirm signup **Message body** in Supabase.
+
 ---
 
 ## Checklist

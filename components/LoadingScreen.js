@@ -1,27 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ActivityIndicator,
-  Platform,
-} from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import AppLoader from './AppLoader';
 
 export default function LoadingScreen({ message = 'Loading...', timeout = 10000 }) {
   const [showTimeoutMessage, setShowTimeoutMessage] = useState(false);
   const [dots, setDots] = useState('');
 
   useEffect(() => {
-    // Show timeout message after specified time
-    const timeoutId = setTimeout(() => {
-      setShowTimeoutMessage(true);
-    }, timeout);
-
-    // Animate loading dots
+    const timeoutId = setTimeout(() => setShowTimeoutMessage(true), timeout);
     const dotsInterval = setInterval(() => {
       setDots(prev => prev.length >= 3 ? '' : prev + '.');
     }, 500);
-
     return () => {
       clearTimeout(timeoutId);
       clearInterval(dotsInterval);
@@ -30,20 +19,8 @@ export default function LoadingScreen({ message = 'Loading...', timeout = 10000 
 
   return (
     <View style={styles.container}>
+      <AppLoader style={styles.loaderFill} />
       <View style={styles.content}>
-        <View style={styles.logoContainer}>
-        </View>
-        
-        <Text style={styles.title}>Welcome to Learnadoodle</Text>
-        <Text style={styles.subtitle}>Loading your learning environment</Text>
-        
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#38B6FF" />
-          <Text style={styles.loadingText}>
-            {message}{dots}
-          </Text>
-        </View>
-
         {showTimeoutMessage && (
           <View style={styles.timeoutContainer}>
             <Text style={styles.timeoutTitle}>Taking longer than expected?</Text>
@@ -72,9 +49,6 @@ const styles = StyleSheet.create({
       height: '100vh',
       minHeight: '100vh',
       minWidth: '100vw',
-      backgroundColor: '#80C1E1',
-      justifyContent: 'center',
-      alignItems: 'center',
       zIndex: 99999,
     } : {
       position: 'absolute',
@@ -85,49 +59,28 @@ const styles = StyleSheet.create({
       width: '100%',
       height: '100%',
       flex: 1,
-      backgroundColor: '#80C1E1',
-      justifyContent: 'center',
-      alignItems: 'center',
       zIndex: 9999,
     }),
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loaderFill: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
   content: {
+    position: 'absolute',
+    bottom: 48,
+    left: 20,
+    right: 20,
     alignItems: 'center',
-    padding: 20,
-  },
-  logoContainer: {
-    marginBottom: 20,
-  },
-  logo: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 18,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 40,
-    textAlign: 'center',
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  loadingText: {
-    fontSize: 16,
-    color: 'white',
-    marginTop: 16,
-    textAlign: 'center',
   },
   timeoutContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(15, 23, 42, 0.06)',
     borderRadius: 12,
     padding: 20,
     alignItems: 'center',
@@ -136,20 +89,21 @@ const styles = StyleSheet.create({
   timeoutTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: 'white',
+    color: '#1E293B',
     marginBottom: 12,
     textAlign: 'center',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   timeoutMessage: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#475569',
     marginBottom: 12,
     textAlign: 'center',
     lineHeight: 20,
   },
   timeoutTip: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: '#64748B',
     textAlign: 'center',
     fontStyle: 'italic',
   },

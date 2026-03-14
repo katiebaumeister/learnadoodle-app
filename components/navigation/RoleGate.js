@@ -9,21 +9,18 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { useSession } from '../../contexts/SessionContext';
 import ParentNavigator from './ParentNavigator';
 import TutorNavigator from './TutorNavigator';
+import AppLoader from '../AppLoader';
 
 export default function RoleGate({ children, ...props }) {
   const session = useSession();
 
-  // Show loading while session is being resolved (plain white + neutral grey spinner)
+  // Show loading while session is being resolved (same as landing: white + light blue spinner + learnadoodle)
   if (session.loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6b7280" />
-      </View>
-    );
+    return <AppLoader />;
   }
 
   // If no session or no family, show error
@@ -53,12 +50,6 @@ export default function RoleGate({ children, ...props }) {
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-  },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',

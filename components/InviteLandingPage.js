@@ -6,8 +6,8 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
-  ActivityIndicator,
 } from 'react-native';
+import AppLoader from './AppLoader';
 import { previewInvite } from '../lib/apiClient';
 import { getAppBase } from '../lib/apiClient';
 import { Mail, AlertCircle, UserPlus } from 'lucide-react';
@@ -78,14 +78,11 @@ export default function InviteLandingPage({ token }) {
     );
   }
 
-  // Don't show any content until invite is loaded so "learnadoodle" doesn't flash alone
+  // Don't show any content until invite is loaded (same loader as landing: white + light blue spinner + learnadoodle)
   if (loading || !inviteData) {
     return (
       <View style={styles.container}>
-        <View style={[styles.content, styles.loadingState]}>
-          <ActivityIndicator size="large" color="#60a5fa" />
-          <Text style={styles.loadingText}>Loading invitation…</Text>
-        </View>
+        <AppLoader />
       </View>
     );
   }

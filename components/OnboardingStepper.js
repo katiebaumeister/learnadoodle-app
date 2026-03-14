@@ -206,12 +206,12 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
           Animated.timing(bounceAnim, {
             toValue: 1,
             duration: 1000,
-            useNativeDriver: true,
+            useNativeDriver: Platform.OS !== 'web',
           }),
           Animated.timing(bounceAnim, {
             toValue: 0,
             duration: 1000,
-            useNativeDriver: true,
+            useNativeDriver: Platform.OS !== 'web',
           }),
         ])
       );

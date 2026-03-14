@@ -34,7 +34,7 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 280,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }).start();
     } else {
       fadeAnim.setValue(0);
@@ -47,7 +47,7 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
       Animated.timing(scaleAnimsWho[i], {
         toValue: who === opt.id ? 1.02 : 1,
         duration: 120,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }).start();
     });
   }, [who]);
@@ -58,7 +58,7 @@ export default function PlanningModeStep({ value, onChange, onNext, isSaving }) 
       Animated.timing(scaleAnimsMode[i], {
         toValue: value === opt.id ? 1.02 : 1,
         duration: 120,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }).start();
     });
   }, [value]);
