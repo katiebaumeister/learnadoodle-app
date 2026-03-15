@@ -107,6 +107,51 @@ After this, new user verification emails route through Postmark and the confirma
 
 ---
 
+## Troubleshooting: 500 on signup (confirm email sent)
+
+If the browser shows **500** when the user clicks "Send sign up link" (Supabase `auth/v1/signup`), the failure is inside Supabase Auth, not the app backend.
+
+**Likely causes:**
+
+1. **Custom SMTP (Postmark)** – Supabase sends the confirmation email via your SMTP. If Postmark rejects the send (wrong Server API Token, unverified sender, rate limit, or template error), Supabase can return 500.
+   - **Check:** Supabase Dashboard → Project Settings → Authentication → SMTP Settings. Confirm the token matches your Postmark Server API Token and the sender email is verified in Postmark.
+   - **Check:** Postmark dashboard for bounces or errors for the sender/domain.
+2. **Auth hooks** – If you use Supabase Auth Hooks (e.g. "Send confirmation email" or "Create user" hook) that call an external URL or database and that fails, Supabase may return 500.
+   - **Check:** Supabase Dashboard → Authentication → Hooks. Temporarily disable or fix the hook and retry.
+3. **Supabase logs** – In the Supabase Dashboard, open **Logs** → **Auth** (or API) and retry signup. The log entry for the failed request usually shows the underlying error (e.g. SMTP or hook failure).
+
+The app now shows a friendly message when signup returns 500: *"We couldn't send the confirmation email right now (server error). Please try again in a few minutes or contact contact@learnadoodle.com."*
+
+---
+
+## Troubleshooting: "Database error saving new user" (code: unexpected_failure)
+
+This error means Supabase Auth created the user in `auth.users` but something failed in the database during signup—usually a **trigger** that runs on new user creation (e.g. to insert a row into `public.profiles`).
+
+**Fix (recommended):** Apply the migration that creates a safe trigger to add a profile row on signup:
+
+1. **Run the migration**  
+   `supabase/migrations/20260315_handle_new_user_create_profile.sql`  
+   - It defines `public.handle_new_user()` and trigger `on_auth_user_created` on `auth.users` (AFTER INSERT) to insert one row into `public.profiles` with `id`, `role` (default `'parent'`), and `email`.  
+   - If your migration runner cannot create triggers on `auth.users`, run the trigger part manually in **Supabase Dashboard → SQL Editor** (as a user with permission to create triggers on `auth`):
+
+   ```sql
+   CREATE TRIGGER on_auth_user_created
+     AFTER INSERT ON auth.users
+     FOR EACH ROW
+     EXECUTE FUNCTION public.handle_new_user();
+   ```
+
+2. **If a trigger already exists and is broken**  
+   The migration drops `on_auth_user_created` and `handle_new_user_trigger` (if present) before creating the new one. After applying it, sign up again.
+
+3. **Check Postgres / Auth logs**  
+   In **Supabase Dashboard → Logs → Postgres** (or **Auth**), reproduce the signup and inspect the failing statement or trigger for other causes (e.g. missing column, RLS, constraint).
+
+The app shows a friendly message for this error: *"We couldn't create your account right now (server setup issue). Please try again in a few minutes or contact contact@learnadoodle.com."*
+
+---
+
 ## 5. New user flow (email → confirm → set password)
 
 The app uses a three-step flow so the account is not fully usable until the user has confirmed their email and set a password:

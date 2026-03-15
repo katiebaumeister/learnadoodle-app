@@ -55,6 +55,20 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
 
       // getMe may return 401 if backend requires verified email; we still resolve role from family_members/profiles below
       const meRes = await getMe();
+      // If backend says 401 (e.g. user deleted), check if profile still exists; if not or error, sign out so user sees landing page
+      if (meRes?.error?.status === 401) {
+        const { data: profileCheck, error: profileErr } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (!profileCheck || profileErr) {
+          await supabase.auth.signOut({ scope: 'local' });
+          setSession(null);
+          setLoading(false);
+          return;
+        }
+      }
       if (meRes?.data && (meRes.data.family_id || meRes.data.role)) {
         activeFamilyId = activeFamilyId || meRes.data.family_id || null;
         memberRole = meRes.data.role || null;

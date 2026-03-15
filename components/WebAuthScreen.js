@@ -251,6 +251,10 @@ export default function WebAuthScreen() {
           if (isExistingEmailError(error.message)) {
             setErrorMessage('An account with this email already exists.');
             setExistingEmailOfferReset(true);
+          } else if (error.status === 500 || (error.message && String(error.message).toLowerCase().includes('500'))) {
+            setErrorMessage('We couldn\'t send the confirmation email right now (server error). Please try again in a few minutes or contact contact@learnadoodle.com.');
+          } else if (error.code === 'unexpected_failure' || (error.message && String(error.message).toLowerCase().includes('database error saving new user'))) {
+            setErrorMessage('We couldn\'t create your account right now (server setup issue). Please try again in a few minutes or contact contact@learnadoodle.com.');
           } else {
             const errMsg = error.message || '';
             const errLower = errMsg.toLowerCase();
@@ -286,7 +290,15 @@ export default function WebAuthScreen() {
           window.location.href = '/?signup=true';
         }
       } catch (err) {
-        setErrorMessage(err?.message || 'An unexpected error occurred.');
+        const is500 = err?.status === 500 || (err?.message && String(err.message).toLowerCase().includes('500'));
+        const isDbSaveUser = err?.code === 'unexpected_failure' || (err?.message && String(err.message).toLowerCase().includes('database error saving new user'));
+        setErrorMessage(
+          is500
+            ? 'We couldn\'t send the confirmation email right now (server error). Please try again in a few minutes or contact contact@learnadoodle.com.'
+            : isDbSaveUser
+              ? 'We couldn\'t create your account right now (server setup issue). Please try again in a few minutes or contact contact@learnadoodle.com.'
+              : (err?.message || 'An unexpected error occurred.')
+        );
       } finally {
         setLoading(false);
       }

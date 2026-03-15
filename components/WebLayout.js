@@ -67,7 +67,7 @@ function toLocalYYYYMMDD(d) {
 }
 
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   // Try to get session from context if not provided as prop
   let session = propSession;
   try {
@@ -1158,7 +1158,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   };
 
   const fetchFamilyMembers = useCallback(async () => {
-    if (!user) return;
+    if (!user || !session) return;
     try {
       const { data: profileData } = await supabase
         .from('profiles')
@@ -1248,10 +1248,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       console.error('[WebLayout] Unable to load family children', error);
       setChildren([]);
     }
-  }, [user, subjectsLoaded, fullSubjectsLoaded]);
+  }, [user, session, subjectsLoaded, fullSubjectsLoaded]);
 
   const fetchFamilyData = useCallback(async () => {
-    if (!user) return;
+    if (!user || !session) return;
     try {
       const { data, error } = await getFamilyMembers();
       if (!error && data) {
@@ -1263,10 +1263,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } catch (error) {
       console.error('[WebLayout] Unable to load family data', error);
     }
-  }, [user]);
+  }, [user, session]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !session) {
       setFamilyDataLoaded(true);
       return;
     }
@@ -1275,7 +1275,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       .then(() => { if (mounted) setFamilyDataLoaded(true); })
       .catch(() => { if (mounted) setFamilyDataLoaded(true); });
     return () => { mounted = false; };
-  }, [fetchFamilyData, fetchFamilyMembers, user]);
+  }, [fetchFamilyData, fetchFamilyMembers, user, session]);
 
   // Resolve onboarding status before showing main content so we never flash landing without modal
   useEffect(() => {
@@ -3080,6 +3080,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}
+        onSignOut={signOut}
       />
 
       {/* Doodle bot search modal - opened via floating Ask AI button */}
