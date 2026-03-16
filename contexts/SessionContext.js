@@ -88,7 +88,10 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       }
 
       if (!activeFamilyId) {
-        console.warn('[SessionContext] No family_id found');
+        // Expected for new parents until ensure_family runs; only warn for non-parents (unexpected)
+        if ((memberRole || 'parent') !== 'parent') {
+          console.warn('[SessionContext] No family_id found');
+        }
         setSession({
           family_id: null,
           member_role: memberRole || 'parent',

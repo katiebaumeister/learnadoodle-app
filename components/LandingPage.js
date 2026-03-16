@@ -188,7 +188,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             <View style={styles.heroRight}>
               <View style={styles.heroImageContainer}>
                 <Image 
-                  source={require('../assets/landing.gif')} 
+                  source={require('../assets/landing.png')} 
                   style={styles.heroImage}
                   resizeMode="contain"
                   onLoad={handleImageLoad}

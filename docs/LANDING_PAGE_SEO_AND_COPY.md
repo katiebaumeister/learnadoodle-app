@@ -7,7 +7,7 @@
 3. **Hero**
    - Title: *Homeschool planning that adapts to real life*
    - Buttons: GET STARTED | I ALREADY HAVE AN ACCOUNT
-   - Asset: `landing.gif`
+   - Asset: `landing.png`
    - Scroll cue: *See how it works*
 4. **Features** (id=`why`)
    - Section heading: *Homeschool planning, simplified. Built for real families and real schedules.*

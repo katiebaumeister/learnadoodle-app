@@ -1308,7 +1308,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [user, session]);
 
   // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
+  const ensureFamilyInFlightRef = useRef(false);
   const ensureFamilyAndSet = useCallback(async () => {
+    if (ensureFamilyInFlightRef.current) return null;
+    ensureFamilyInFlightRef.current = true;
     const tryOnce = async () => {
       const res = await ensureFamily();
       const fid = res?.data?.family_id;
@@ -1330,8 +1333,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         if (retry.fid) return retry.fid;
       }
       return null;
-    } catch (_) {}
-    return null;
+    } catch (_) {
+      return null;
+    } finally {
+      ensureFamilyInFlightRef.current = false;
+    }
   }, [fetchFamilyData, fetchFamilyMembers]);
 
   useEffect(() => {
