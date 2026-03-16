@@ -1270,6 +1270,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setFamilyDataLoaded(true);
       return;
     }
+    // Skip family/members fetch when user has no family yet (new signup); avoids 404s until ensure_family runs
+    if (!session.family_id) {
+      setFamilyDataLoaded(true);
+      return;
+    }
     let mounted = true;
     Promise.all([fetchFamilyMembers(), fetchFamilyData()])
       .then(() => { if (mounted) setFamilyDataLoaded(true); })
@@ -1303,24 +1308,38 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [user, session]);
 
   // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
+  const ensureFamilyAndSet = useCallback(async () => {
+    const tryOnce = async () => {
+      const res = await ensureFamily();
+      const fid = res?.data?.family_id;
+      if (fid) {
+        setFamilyId(fid);
+        fetchFamilyData();
+        fetchFamilyMembers();
+        return { fid, status: res?.error?.status };
+      }
+      return { fid: null, status: res?.error?.status };
+    };
+    try {
+      let { fid, status } = await tryOnce();
+      if (fid) return fid;
+      // 404 = route missing; 500 = backend/db error (e.g. missing GRANT). Retry once after delay.
+      if (status === 404 || status === 500) {
+        await new Promise(r => setTimeout(r, 2500));
+        const retry = await tryOnce();
+        if (retry.fid) return retry.fid;
+      }
+      return null;
+    } catch (_) {}
+    return null;
+  }, [fetchFamilyData, fetchFamilyMembers]);
+
   useEffect(() => {
     if (!user || !session?.role_flags?.isParent || familyId) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await ensureFamily();
-        const fid = res?.data?.family_id;
-        if (!cancelled && fid) {
-          setFamilyId(fid);
-          fetchFamilyData();
-          fetchFamilyMembers();
-        }
-      } catch (_) {
-        // Leave familyId null; user may see onboarding with limited state or retry on refresh
-      }
-    })();
+    ensureFamilyAndSet().then(() => { if (!cancelled) {} });
     return () => { cancelled = true; };
-  }, [user, session?.role_flags?.isParent, familyId, fetchFamilyData, fetchFamilyMembers]);
+  }, [user, session?.role_flags?.isParent, familyId, ensureFamilyAndSet]);
 
   // Listen for children refresh events
   useEffect(() => {
@@ -3101,6 +3120,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
         }}
         onSignOut={signOut}
+        onEnsureFamily={ensureFamilyAndSet}
       />
 
       {/* Doodle bot search modal - opened via floating Ask AI button */}

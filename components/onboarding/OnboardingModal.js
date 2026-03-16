@@ -23,6 +23,8 @@ export default function OnboardingModal({
   initialPlanningMode = null,
   onCompleted,
   onSignOut,
+  /** When familyId is null, parent can try to create/fetch family. Returns Promise<familyId | null>. */
+  onEnsureFamily = null,
 }) {
   const [step, setStep] = useState('planning_mode');
   const [planningMode, setPlanningMode] = useState(initialPlanningMode);
@@ -41,8 +43,20 @@ export default function OnboardingModal({
 
   // Resume: set step from backend status every time modal opens (avoids stale state if user deletes child/subject mid-flow)
   useEffect(() => {
-    if (!visible || !familyId) return;
+    if (!visible) return;
     let cancelled = false;
+    if (!familyId) {
+      // New signup: no family yet (ensure_family may 404 if backend not deployed). Stop loading after delay so user sees first step.
+      const t = setTimeout(() => {
+        if (!cancelled) {
+          setStep('planning_mode');
+          setPlanningMode(initialPlanningMode ?? null);
+          setCreatedChildren([]);
+          setResuming(false);
+        }
+      }, 2000);
+      return () => { cancelled = true; clearTimeout(t); };
+    }
     (async () => {
       try {
         const res = await getOnboardingStatus();
@@ -119,10 +133,15 @@ export default function OnboardingModal({
 
   const persistPlanningMode = async () => {
     if (!planningMode) return;
+    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+    if (!fid) {
+      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+      return;
+    }
     setIsSaving(true);
     setError(null);
     try {
-      const res = await setOnboardingPlanningMode({ family_id: familyId, planning_mode: planningMode });
+      const res = await setOnboardingPlanningMode({ family_id: fid, planning_mode: planningMode });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to save');
       setStep('add_child');
     } catch (e) {
@@ -133,11 +152,16 @@ export default function OnboardingModal({
   };
 
   const addOneChild = async (child) => {
+    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+    if (!fid) {
+      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+      return;
+    }
     setIsSaving(true);
     setError(null);
     try {
       const res = await addChild({
-        family_id: familyId,
+        family_id: fid,
         name: child.name,
         nickname: child.nickname ?? null,
         age: child.age ?? null,
@@ -158,11 +182,11 @@ export default function OnboardingModal({
 
       const hasTarget = (child.targetMode === 'days' && child.targetDays) || (child.targetMode === 'hours' && child.targetHours);
       const hasRange = child.schoolYearStart && child.schoolYearEnd;
-      if (familyId && (hasTarget || hasRange)) {
+      if (fid && (hasTarget || hasRange)) {
         const { data: existing } = await supabase
           .from('academic_years')
           .select('id, start_date, end_date')
-          .eq('family_id', familyId)
+          .eq('family_id', fid)
           .order('updated_at', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -177,7 +201,7 @@ export default function OnboardingModal({
           await supabase.from('academic_years').update(toUpdate).eq('id', existing.id);
         } else if (startDate && endDate) {
           await supabase.from('academic_years').insert({
-            family_id: familyId,
+            family_id: fid,
             year_name: 'School year',
             start_date: startDate,
             end_date: endDate,
@@ -203,11 +227,16 @@ export default function OnboardingModal({
 
   const addOneSubject = async (subject) => {
     if (!subject.child_id) return;
+    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+    if (!fid) {
+      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+      return;
+    }
     setIsSaving(true);
     setError(null);
     try {
       const res = await createOnboardingSubject({
-        family_id: familyId,
+        family_id: fid,
         name: subject.name,
         child_id: subject.child_id,
         summary: subject.summary ?? null,
@@ -286,10 +315,15 @@ export default function OnboardingModal({
   };
 
   const finalize = async () => {
+    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+    if (!fid) {
+      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+      return;
+    }
     setIsSaving(true);
     setError(null);
     try {
-      const res = await completeOnboarding({ family_id: familyId });
+      const res = await completeOnboarding({ family_id: fid });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to complete.');
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
