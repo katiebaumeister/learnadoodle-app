@@ -33,7 +33,7 @@ import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
 import AIModal from './AIModal';
-import { proposeReschedule, getFamilyMembers, getOnboardingStatus } from '../lib/apiClient';
+import { proposeReschedule, getFamilyMembers, getOnboardingStatus, ensureFamily } from '../lib/apiClient';
 import { getPlanHealth } from '../lib/services/academicYearClient';
 import AnalyticsDashboard from './analytics/AnalyticsDashboard';
 import ProgressReport from './analytics/ProgressReport';
@@ -1301,6 +1301,26 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     })();
     return () => { cancelled = true; };
   }, [user, session]);
+
+  // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
+  useEffect(() => {
+    if (!user || !session?.role_flags?.isParent || familyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await ensureFamily();
+        const fid = res?.data?.family_id;
+        if (!cancelled && fid) {
+          setFamilyId(fid);
+          fetchFamilyData();
+          fetchFamilyMembers();
+        }
+      } catch (_) {
+        // Leave familyId null; user may see onboarding with limited state or retry on refresh
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, session?.role_flags?.isParent, familyId, fetchFamilyData, fetchFamilyMembers]);
 
   // Listen for children refresh events
   useEffect(() => {

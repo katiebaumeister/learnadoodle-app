@@ -23,8 +23,9 @@ export default function RoleGate({ children, ...props }) {
     return <AppLoader />;
   }
 
-  // If no session or no family, show error
-  if (!session || !session.family_id) {
+  // If no session, show error. If session but no family_id: allow parent through (new signup → onboarding will create family); others show error.
+  const isNewParent = session?.role_flags?.isParent === true;
+  if (!session || (!session.family_id && !isNewParent)) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorTitle}>Unable to Load</Text>
