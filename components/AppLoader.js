@@ -65,9 +65,6 @@ export default function AppLoader({ style }) {
 
   useEffect(() => {
     if (phase !== 'avatars') return;
-    if ((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development')) {
-      console.log('[AppLoader] avatar cycle effect RUN (phase=avatars)');
-    }
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -86,9 +83,6 @@ export default function AppLoader({ style }) {
     };
     rafId = requestAnimationFrame(tick);
     return () => {
-      if ((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development')) {
-        console.log('[AppLoader] avatar cycle effect CLEANUP');
-      }
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
   }, [phase]);
@@ -102,11 +96,14 @@ export default function AppLoader({ style }) {
           </Animated.View>
         )}
         <Animated.View style={[styles.avatarWrap, { opacity: avatarContainerOpacity }]} pointerEvents="none">
-          <Image
-            source={AVATAR_SOURCES[AVATAR_KEYS[avatarIndex]]}
-            style={styles.avatar}
-            resizeMode="contain"
-          />
+          {AVATAR_KEYS.map((key, i) => (
+            <Image
+              key={key}
+              source={AVATAR_SOURCES[key]}
+              style={[styles.avatar, styles.avatarStack, { opacity: avatarIndex === i ? 1 : 0 }]}
+              resizeMode="contain"
+            />
+          ))}
         </Animated.View>
       </View>
     </View>
@@ -161,5 +158,8 @@ const styles = StyleSheet.create({
   avatar: {
     width: 88,
     height: 88,
+  },
+  avatarStack: {
+    position: 'absolute',
   },
 });

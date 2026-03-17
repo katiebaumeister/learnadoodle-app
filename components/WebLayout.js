@@ -220,16 +220,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (!onboardingBlocked) setOnboardingModalReady(false);
   }, [onboardingBlocked]);
 
-  const prevShowLoaderRef = useRef(showLoader);
-  useEffect(() => {
-    if (prevShowLoaderRef.current !== showLoader) {
-      if ((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development')) {
-        console.log('[WebLayout] showLoader changed', prevShowLoaderRef.current, '->', showLoader);
-      }
-      prevShowLoaderRef.current = showLoader;
-    }
-  }, [showLoader]);
-
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const filterButtonRef = useRef(null);
