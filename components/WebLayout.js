@@ -3125,7 +3125,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}
-        onSignOut={signOut}
         onEnsureFamily={ensureFamilyAndSet}
       />
 

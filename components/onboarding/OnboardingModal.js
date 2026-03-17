@@ -22,7 +22,6 @@ export default function OnboardingModal({
   familyId,
   initialPlanningMode = null,
   onCompleted,
-  onSignOut,
   /** When familyId is null, parent can try to create/fetch family. Returns Promise<familyId | null>. */
   onEnsureFamily = null,
 }) {
@@ -413,11 +412,6 @@ export default function OnboardingModal({
                 <View style={step === 'complete' ? undefined : styles.stepHidden}>
                   <CompleteStep onFinish={finalize} isSaving={isSaving} />
                 </View>
-                {onSignOut && (
-                  <TouchableOpacity onPress={onSignOut} style={styles.signOutLink} activeOpacity={0.7}>
-                    <Text style={styles.signOutLinkText}>Sign out / use a different account</Text>
-                  </TouchableOpacity>
-                )}
               </>
             )}
           </ScrollView>
@@ -536,16 +530,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
-  },
-  signOutLink: {
-    marginTop: 24,
-    paddingVertical: 8,
-    alignSelf: 'flex-start',
-  },
-  signOutLinkText: {
-    fontSize: 14,
-    color: '#6b7280',
-    textDecorationLine: 'underline',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif', cursor: 'pointer' }),
   },
 });
