@@ -98,28 +98,30 @@ async def get_me(
     try:
         supabase = get_admin_client()
         
-        # Get profile
-        profile_res = supabase.table("profiles").select("*").eq("id", user["id"]).single().execute()
-        if not profile_res.data:
+        # Get profile (use limit(1) to avoid PostgREST 406 when 0 rows)
+        profile_res = supabase.table("profiles").select("*").eq("id", user["id"]).limit(1).execute()
+        profile = (profile_res.data[0] if profile_res.data and len(profile_res.data) > 0 else None)
+        if not profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Profile not found"
             )
         
-        profile = profile_res.data
         family_id = profile.get("family_id")
         role = profile.get("role", "parent")
         
         # Get family_members entry - filter by family_id when available so we get the correct role for the user's primary family.
         # A user can have multiple rows (e.g. parent in family A, child in family B); without family_id filter we might get the wrong one.
+        # Use limit(1).execute() instead of maybe_single() so 0 rows returns 200 + [] (avoid PostgREST 406 when new user has no row).
         try:
             query = supabase.table("family_members").select("*").eq("user_id", user["id"])
             if family_id:
                 query = query.eq("family_id", family_id)
-            member_res = query.maybe_single().execute()
-            if member_res.data:
-                role = member_res.data.get("member_role", role)
-                family_id = member_res.data.get("family_id", family_id)
+            member_res = query.limit(1).execute()
+            member_data = member_res.data[0] if member_res.data and len(member_res.data) > 0 else None
+            if member_data:
+                role = member_data.get("member_role", role)
+                family_id = member_data.get("family_id", family_id)
             elif family_id:
                 # No row for profile's family_id - try any membership; prefer parent (user may be parent in another family)
                 all_members = supabase.table("family_members").select("*").eq("user_id", user["id"]).execute()

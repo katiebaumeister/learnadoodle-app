@@ -17,11 +17,15 @@ def get_placeholder_conversion_fields(event: dict) -> Tuple[dict, bool]:
 
 
 def get_family_id_for_user(user_id: str) -> Optional[str]:
-    """Resolve family_id for any user (parent or child). Tries profiles first, then family_members."""
+    """Resolve family_id for any user (parent or child). Tries profiles first, then family_members.
+    Uses limit(1) instead of maybe_single() to avoid PostgREST 406 when 0 rows (e.g. new user, no family yet)."""
     supabase = get_admin_client()
-    resp = supabase.table("profiles").select("family_id").eq("id", user_id).maybe_single().execute()
-    if resp.data and resp.data.get("family_id"):
-        return resp.data.get("family_id")
+    try:
+        resp = supabase.table("profiles").select("family_id").eq("id", user_id).limit(1).execute()
+        if resp.data and len(resp.data) > 0 and resp.data[0].get("family_id"):
+            return resp.data[0].get("family_id")
+    except Exception:
+        pass
     # Fallback for child users whose profiles.family_id may not be set (e.g. invite flow only wrote family_members)
     try:
         fm = supabase.table("family_members").select("family_id").eq("user_id", user_id).limit(1).execute()
@@ -36,6 +40,25 @@ def child_belongs_to_family(child_id: str, family_id: str) -> bool:
     supabase = get_admin_client()
     resp = supabase.table("children").select("id").eq("id", child_id).eq("family_id", family_id).limit(1).execute()
     return bool(resp.data)
+
+
+def delete_signup_confirmation_sent_for_email(email: str) -> None:
+    """
+    Delete any signup_confirmation_sent rows for the given email.
+    Call this when deleting an auth user (e.g. from Family Settings "Erase Personal Data" flow)
+    so the user can sign up again without seeing "Confirmation sent on...".
+    A DB trigger (cleanup_signup_confirmation_sent_on_auth_user_delete) also runs when auth.users
+    is deleted; this helper is for code paths that want to clean up explicitly.
+    """
+    if not email or not str(email).strip():
+        return
+    try:
+        supabase = get_admin_client()
+        supabase.table("signup_confirmation_sent").delete().eq(
+            "email", str(email).strip().lower()
+        ).execute()
+    except Exception:
+        pass
 
 
 def require_onboarding_complete(family_id: str) -> None:

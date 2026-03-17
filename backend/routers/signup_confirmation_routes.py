@@ -22,11 +22,36 @@ class SignupConfirmationSentOut(BaseModel):
 async def get_signup_confirmation_sent(
     email: str = Query(..., description="Email address to check"),
 ):
-    """Return the most recent time we sent a sign-up confirmation to this email, if any."""
+    """Return the most recent time we sent a sign-up confirmation to this email, if any.
+    If the account was deleted from Auth (no user for this email), return sent_at=None so
+    the UI treats it as fresh and allows sending a new confirmation."""
     if not email or not email.strip():
         return SignupConfirmationSentOut(sent_at=None)
     try:
         supabase = get_admin_client()
+        # Only show "confirmation sent" if there is still a user in Auth for this email (pending or confirmed).
+        # If the user was deleted (e.g. manual delete in Supabase), treat as fresh so they can sign up again.
+        user_exists = False
+        try:
+            exists_res = supabase.rpc("auth_user_exists_by_email", {"p_email": email.strip()}).execute()
+            if exists_res.data is True:
+                user_exists = True
+            elif isinstance(exists_res.data, list) and len(exists_res.data) > 0:
+                user_exists = exists_res.data[0] is True or exists_res.data[0] == "true"
+            elif getattr(exists_res, "data", None) in (True, "true"):
+                user_exists = True
+        except Exception:
+            # RPC missing or failed: treat as fresh (don't show stale "confirmation sent")
+            user_exists = False
+        if not user_exists:
+            # Optionally clear stale rows so future requests don't rely on RPC
+            try:
+                supabase.table("signup_confirmation_sent").delete().eq(
+                    "email", email.strip().lower()
+                ).execute()
+            except Exception:
+                pass
+            return SignupConfirmationSentOut(sent_at=None)
         res = (
             supabase.table("signup_confirmation_sent")
             .select("sent_at")
