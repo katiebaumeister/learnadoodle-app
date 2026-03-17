@@ -1,3 +1,4 @@
+// Onboarding modal: plan → add child → subjects → complete
 import React, { useState, useEffect } from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, ScrollView } from 'react-native';
 import { ChevronLeft } from 'lucide-react';
