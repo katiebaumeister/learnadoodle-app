@@ -175,13 +175,16 @@ export default function OnboardingModal({
     })();
   };
 
-  const addOneChild = async (child) => {
+  const addOneChild = async (child, pendingId = null) => {
     const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
     if (!fid) {
       setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
       return;
     }
-    setIsSaving(true);
+    const isBackground = pendingId != null;
+    if (!isBackground) {
+      setIsSaving(true);
+    }
     setError(null);
     try {
       const res = await addChild({
@@ -202,7 +205,21 @@ export default function OnboardingModal({
       });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to create child.');
       const id = res?.data?.id ?? res?.id;
-      if (id) setCreatedChildren((prev) => [...prev, { id, name: child.name }]);
+      if (id) {
+        if (pendingId) {
+          setCreatedChildren((prev) => prev.map((c) => (c.id === pendingId ? { id, name: child.name } : c)));
+          setCreatedSubjectsByChild((prev) => {
+            const next = { ...prev };
+            if (prev[pendingId]) {
+              next[id] = prev[pendingId];
+              delete next[pendingId];
+            }
+            return next;
+          });
+        } else {
+          setCreatedChildren((prev) => [...prev, { id, name: child.name }]);
+        }
+      }
 
       const hasTarget = (child.targetMode === 'days' && child.targetDays) || (child.targetMode === 'hours' && child.targetHours);
       const hasRange = child.schoolYearStart && child.schoolYearEnd;
@@ -235,11 +252,35 @@ export default function OnboardingModal({
         }
       }
     } catch (e) {
+      if (pendingId) {
+        setCreatedChildren((prev) => prev.filter((c) => c.id !== pendingId));
+        setCreatedSubjectsByChild((prev) => {
+          const next = { ...prev };
+          delete next[pendingId];
+          return next;
+        });
+      }
       setError(e?.message ?? 'Failed to create child.');
-      throw e;
+      if (!isBackground) throw e;
     } finally {
-      setIsSaving(false);
+      if (!isBackground) setIsSaving(false);
     }
+  };
+
+  const goToSubjectStepWithChild = (childPayload) => {
+    setError(null);
+    const pendingId = `pending-child-${Date.now()}`;
+    setCreatedChildren((prev) => [...prev, { id: pendingId, name: childPayload.name }]);
+    setSubjectStepChildIndex(0);
+    setCreatedSubjectsByChild({});
+    transitionToStep('add_subject');
+    (async () => {
+      try {
+        await addOneChild(childPayload, pendingId);
+      } catch (_) {
+        // Error already set in addOneChild
+      }
+    })();
   };
 
   const removeOneChild = async (childId, childName) => {
@@ -491,6 +532,7 @@ export default function OnboardingModal({
                   <AddChildStep
                     createdChildren={createdChildren}
                     onAddChild={addOneChild}
+                    onContinueWithNewChild={goToSubjectStepWithChild}
                     onRemoveChild={removeOneChild}
                     onContinue={goToSubjectStep}
                     isSaving={isSaving}

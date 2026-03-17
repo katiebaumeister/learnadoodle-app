@@ -596,6 +596,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
                 disabled={!otherDiagnosis.trim()}
               >
                 <Check size={20} color={otherDiagnosis.trim() ? '#ffffff' : '#9ca3af'} strokeWidth={2.5} />
+                <Text style={[styles.otherConfirmButtonText, !otherDiagnosis.trim() && styles.otherConfirmButtonTextDisabled]}>Add</Text>
               </TouchableOpacity>
             </View>
           )}

@@ -234,7 +234,8 @@ export default function AddSubjectStep({
             style={[styles.otherConfirmButton, (!customName.trim() || adding || isSaving) && styles.otherConfirmButtonDisabled]}
             disabled={!customName.trim() || adding || isSaving}
           >
-            <Check size={20} color={customName.trim() && !adding && !isSaving ? '#1d4ed8' : '#9CA3AF'} strokeWidth={2.5} />
+            <Check size={20} color={customName.trim() && !adding && !isSaving ? '#ffffff' : '#9CA3AF'} strokeWidth={2.5} />
+            <Text style={[styles.otherConfirmButtonText, (!customName.trim() || adding || isSaving) && styles.otherConfirmButtonTextDisabled]}>Add</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -534,20 +535,32 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   otherConfirmButton: {
-    width: 48,
-    height: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 48,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#2563eb',
-    backgroundColor: 'rgba(37, 99, 235, 0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#2563eb',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   otherConfirmButtonDisabled: {
     borderColor: '#E5E7EB',
     backgroundColor: '#F3F4F6',
     ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  otherConfirmButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  },
+  otherConfirmButtonTextDisabled: {
+    color: '#9CA3AF',
   },
   addBtn: {
     paddingVertical: 12,

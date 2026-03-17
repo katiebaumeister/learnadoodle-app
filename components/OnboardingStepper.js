@@ -618,6 +618,7 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
                     disabled={!childOtherDiagnosis.trim()}
                   >
                     <Check size={20} color={childOtherDiagnosis.trim() ? '#ffffff' : '#9ca3af'} strokeWidth={2.5} />
+                    <Text style={[styles.otherConfirmButtonText, !childOtherDiagnosis.trim() && styles.otherConfirmButtonTextDisabled]}>Add</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -1163,6 +1164,15 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: '#f3f4f6',
     ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  otherConfirmButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  },
+  otherConfirmButtonTextDisabled: {
+    color: '#9ca3af',
   },
   avatarsWrap: {
     flexDirection: 'row',

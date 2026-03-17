@@ -84,7 +84,7 @@ const avatarSources = {
   prof8: require('../../assets/prof8.png'),
 };
 
-export default function AddChildStep({ createdChildren = [], onAddChild, onRemoveChild, onContinue, isSaving, isStudentOnboarding = false }) {
+export default function AddChildStep({ createdChildren = [], onAddChild, onContinueWithNewChild, onRemoveChild, onContinue, isSaving, isStudentOnboarding = false }) {
   // Required fields (match AddChildModal/AddChildForm)
   const [name, setName] = useState('');
   const [age, setAge] = useState(''); // required
@@ -233,6 +233,10 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onRemov
 
   const handleContinue = async () => {
     setError(null);
+    if (formValid && onContinueWithNewChild) {
+      onContinueWithNewChild(getChildPayload());
+      return;
+    }
     if (formValid) {
       setAdding(true);
       try {
@@ -496,6 +500,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onRemov
                 disabled={!otherDiagnosis.trim()}
               >
                 <Check size={20} color={otherDiagnosis.trim() ? '#ffffff' : '#9CA3AF'} strokeWidth={2.5} />
+                <Text style={[styles.otherConfirmButtonText, !otherDiagnosis.trim() && styles.otherConfirmButtonTextDisabled]}>Add</Text>
               </TouchableOpacity>
             </View>
           )}
