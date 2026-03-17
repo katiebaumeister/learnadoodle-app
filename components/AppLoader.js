@@ -19,17 +19,35 @@ const AVATAR_SOURCES = {
 let globalIconSequenceDone = false;
 
 /**
- * Loading screen: show icon, brief hold, fade out, then prof1–10 fast cycle.
- * When app is ready, loader unmounts and we go straight from avatars to app (no icon again).
+ * Loading screen: preload all images, then show icon, brief hold, fade out, then prof1–10 fast cycle.
+ * We only show icon/avatars after they have fully loaded so nothing appears half-drawn.
  */
 export default function AppLoader({ style }) {
-  const [phase, setPhase] = useState(() => (globalIconSequenceDone ? 'avatars' : 'icon'));
+  const [phase, setPhase] = useState(() => (globalIconSequenceDone ? 'avatars' : 'loading'));
   const [avatarIndex, setAvatarIndex] = useState(0);
+  const [iconLoaded, setIconLoaded] = useState(false);
+  const avatarLoadedRef = useRef(new Set());
+  const [avatarsLoadedCount, setAvatarsLoadedCount] = useState(0);
+
   const iconOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 0 : 1)).current;
   const avatarContainerOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 1 : 0)).current;
-  const cycleRef = useRef(null);
-
   const holdTimeoutRef = useRef(null);
+
+  const allImagesLoaded = iconLoaded && avatarsLoadedCount >= AVATAR_KEYS.length;
+
+  useEffect(() => {
+    if (phase === 'loading' && allImagesLoaded) {
+      setPhase(globalIconSequenceDone ? 'avatars' : 'icon');
+      if (globalIconSequenceDone) {
+        avatarContainerOpacity.setValue(1);
+      }
+    }
+  }, [phase, allImagesLoaded, avatarContainerOpacity]);
+
+  const handleAvatarLoad = (key) => {
+    avatarLoadedRef.current.add(key);
+    setAvatarsLoadedCount((prev) => Math.min(AVATAR_KEYS.length, avatarLoadedRef.current.size));
+  };
 
   useEffect(() => {
     if (globalIconSequenceDone) {
@@ -37,6 +55,7 @@ export default function AppLoader({ style }) {
       avatarContainerOpacity.setValue(1);
       return;
     }
+    if (phase !== 'icon') return;
 
     const holdMs = 1000;
     const fadeOutMs = 250;
@@ -56,7 +75,7 @@ export default function AppLoader({ style }) {
     return () => {
       if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
     };
-  }, [iconOpacity, avatarContainerOpacity]);
+  }, [phase, iconOpacity, avatarContainerOpacity]);
 
   // Even, continuous avatar cycle: use elapsed time so timing stays consistent under load
   const avatarIntervalMs = 100;
@@ -86,6 +105,33 @@ export default function AppLoader({ style }) {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
   }, [phase]);
+
+  // Preload phase: render all images hidden so they load; only show icon/avatars after all have onLoad
+  if (phase === 'loading') {
+    return (
+      <View style={[styles.overlay, style]}>
+        <View style={styles.inner}>
+          <View style={styles.preloadWrap}>
+            <Image
+              source={require('../assets/icon.png')}
+              style={styles.icon}
+              resizeMode="contain"
+              onLoad={() => setIconLoaded(true)}
+            />
+            {AVATAR_KEYS.map((key) => (
+              <Image
+                key={key}
+                source={AVATAR_SOURCES[key]}
+                style={[styles.avatar, styles.avatarStack]}
+                resizeMode="contain"
+                onLoad={() => handleAvatarLoad(key)}
+              />
+            ))}
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.overlay, style]}>
@@ -136,6 +182,14 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     position: 'relative',
+  },
+  preloadWrap: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    opacity: 0,
+    overflow: 'hidden',
+    pointerEvents: 'none',
   },
   iconWrap: {
     position: 'absolute',

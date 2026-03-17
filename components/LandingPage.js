@@ -19,7 +19,8 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
-  const [pageReady, setPageReady] = useState(Platform.OS !== 'web' || skipLoader);
+  // On web, start ready so we go straight to landing with actual page load (no loading screen)
+  const [pageReady, setPageReady] = useState(true);
   const [isMobile, setIsMobile] = useState(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       return window.innerWidth <= 768;
@@ -41,12 +42,6 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
     }
   };
 
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      const t = setTimeout(() => setPageReady(true), 5000);
-      return () => clearTimeout(t);
-    }
-  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
