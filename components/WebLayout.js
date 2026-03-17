@@ -2037,19 +2037,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
 
-  // Don't show main content until onboarding status is known (avoids flash of landing without modal)
-  // Preload avatar PNGs during this phase so the onboarding "add learner" step shows avatars immediately
-  if (user && session && !onboardingCheckDone) {
+  // Single persistent loader: same instance from load until app ready (avoids remount = icon showing twice)
+  const showLoader = !!(user && session && (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady));
+
+  // When user+session: one tree so loader never remounts; content is either preload placeholder or full app
+  if (user && session) {
     return (
       <>
-        <AppLoader />
-        <AvatarPreloader />
-      </>
-    );
-  }
-
-  return (
-    <ToastProvider>
+        {showLoader && (
+          <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
+            <AppLoader />
+          </View>
+        )}
+        {!onboardingCheckDone ? (
+          <AvatarPreloader />
+        ) : (
+          <ToastProvider>
       <FiltersProvider>
         <PlannerDiffProvider>
         <AppShell
@@ -4084,14 +4087,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )}
         </PlannerDiffProvider>
       </FiltersProvider>
-      {/* Initial app load: same loader as landing; also keep loader until onboarding modal has mounted (preload) */}
-      {(!initialAppLoadDone || (user && session && onboardingCheckDone && !onboardingUiReady)) && (
+      {/* Loader shown at top level when !onboardingCheckDone; when in full tree same condition keeps one persistent loader until ready */}
+      {showLoader && (
         <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
           <AppLoader />
         </View>
       )}
     </ToastProvider>
-  );
+        )}
+      </>
+    );
+  }
+
+  return null;
 }
 
 const styles = StyleSheet.create({

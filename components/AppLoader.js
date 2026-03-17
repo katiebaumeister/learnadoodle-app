@@ -70,9 +70,11 @@ export default function AppLoader({ style }) {
   return (
     <View style={[styles.overlay, style]}>
       <View style={styles.inner}>
-        <Animated.View style={[styles.iconWrap, { opacity: iconOpacity }]} pointerEvents="none">
-          <Image source={require('../assets/icon.png')} style={styles.icon} resizeMode="contain" />
-        </Animated.View>
+        {phase === 'icon' && (
+          <Animated.View style={[styles.iconWrap, { opacity: iconOpacity }]} pointerEvents="none">
+            <Image source={require('../assets/icon.png')} style={styles.icon} resizeMode="contain" />
+          </Animated.View>
+        )}
         <Animated.View style={[styles.avatarWrap, { opacity: avatarContainerOpacity }]} pointerEvents="none">
           <Image
             source={AVATAR_SOURCES[AVATAR_KEYS[avatarIndex]]}

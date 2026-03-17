@@ -17,7 +17,7 @@ const ogDist = path.join(distDir, 'og-image.png');
 const faviconDist = path.join(distDir, 'favicon.png');
 
 const SITE_URL = process.env.SITE_URL || 'https://learnadoodle.com';
-const TITLE = 'Learnadoodle – Homeschool Planning That Adapts to Real Life';
+const TITLE = 'Learnadoodle';
 const META_DESCRIPTION = 'Flexible homeschool planning for real families: adaptive schedules, one-place curriculum, progress tracking, privacy-first. Built for different learners and real life.';
 
 if (!fs.existsSync(distHtml)) {
