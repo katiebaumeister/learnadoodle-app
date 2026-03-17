@@ -15,42 +15,42 @@ const AVATAR_SOURCES = {
   prof10: require('../assets/prof10.png'),
 };
 
+// Run icon sequence only once per page load (survives Strict Mode remount so we don't flash icon twice)
+let globalIconSequenceDone = false;
+
 /**
- * Loading screen: fade in icon, hold 2s, fade out, then cycle prof1–10 on repeat (no icon/fade again).
+ * Loading screen: icon immediately, hold 2s, fade out, then prof1–10 fast cycle.
+ * When app is ready, loader unmounts and we go straight from avatars to app (no icon again).
  */
 export default function AppLoader({ style }) {
-  const [phase, setPhase] = useState('icon'); // 'icon' | 'avatars'
+  const [phase, setPhase] = useState(() => (globalIconSequenceDone ? 'avatars' : 'icon'));
   const [avatarIndex, setAvatarIndex] = useState(0);
-  const iconOpacity = useRef(new Animated.Value(0)).current;
-  const avatarContainerOpacity = useRef(new Animated.Value(0)).current;
-  const cycleRef = useRef(null);
+  const iconOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 0 : 1)).current;
+  const avatarContainerOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 1 : 0)).current;
   const holdTimeoutRef = useRef(null);
-  const sequenceStartedRef = useRef(false);
+  const cycleRef = useRef(null);
 
   useEffect(() => {
-    if (sequenceStartedRef.current) return;
-    sequenceStartedRef.current = true;
+    if (globalIconSequenceDone) {
+      setPhase('avatars');
+      avatarContainerOpacity.setValue(1);
+      return;
+    }
 
-    const fadeInMs = 280;
     const holdMs = 2000;
     const fadeOutMs = 200;
 
-    Animated.timing(iconOpacity, {
-      toValue: 1,
-      duration: fadeInMs,
-      useNativeDriver: true,
-    }).start(() => {
-      holdTimeoutRef.current = setTimeout(() => {
-        Animated.timing(iconOpacity, {
-          toValue: 0,
-          duration: fadeOutMs,
-          useNativeDriver: true,
-        }).start(() => {
-          setPhase('avatars');
-          avatarContainerOpacity.setValue(1);
-        });
-      }, holdMs);
-    });
+    holdTimeoutRef.current = setTimeout(() => {
+      Animated.timing(iconOpacity, {
+        toValue: 0,
+        duration: fadeOutMs,
+        useNativeDriver: true,
+      }).start(() => {
+        globalIconSequenceDone = true;
+        setPhase('avatars');
+        avatarContainerOpacity.setValue(1);
+      });
+    }, holdMs);
 
     return () => {
       if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
@@ -59,9 +59,10 @@ export default function AppLoader({ style }) {
 
   useEffect(() => {
     if (phase !== 'avatars') return;
+    const intervalMs = 100;
     cycleRef.current = setInterval(() => {
       setAvatarIndex((i) => (i + 1) % AVATAR_KEYS.length);
-    }, 120);
+    }, intervalMs);
     return () => {
       if (cycleRef.current) clearInterval(cycleRef.current);
     };

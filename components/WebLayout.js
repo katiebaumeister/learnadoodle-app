@@ -4087,12 +4087,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )}
         </PlannerDiffProvider>
       </FiltersProvider>
-      {/* Loader shown at top level when !onboardingCheckDone; when in full tree same condition keeps one persistent loader until ready */}
-      {showLoader && (
-        <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
-          <AppLoader />
-        </View>
-      )}
     </ToastProvider>
         )}
       </>
