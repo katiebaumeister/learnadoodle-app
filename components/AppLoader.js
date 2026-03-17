@@ -65,6 +65,9 @@ export default function AppLoader({ style }) {
 
   useEffect(() => {
     if (phase !== 'avatars') return;
+    if ((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development')) {
+      console.log('[AppLoader] avatar cycle effect RUN (phase=avatars)');
+    }
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -83,6 +86,9 @@ export default function AppLoader({ style }) {
     };
     rafId = requestAnimationFrame(tick);
     return () => {
+      if ((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development')) {
+        console.log('[AppLoader] avatar cycle effect CLEANUP');
+      }
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
   }, [phase]);

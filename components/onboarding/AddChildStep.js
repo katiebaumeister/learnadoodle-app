@@ -1007,8 +1007,8 @@ const styles = StyleSheet.create({
   },
   addBtnFilled: {
     borderStyle: 'solid',
-    borderColor: '#2563eb',
-    backgroundColor: '#2563eb',
+    borderColor: '#85C4F2',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addBtnOutline: {
@@ -1021,11 +1021,10 @@ const styles = StyleSheet.create({
   addBtnText: {
     fontSize: 16,
     fontWeight: '700',
-    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   addBtnTextFilled: {
-    color: '#FFFFFF',
+    color: '#85C4F2',
   },
   addBtnTextOutline: {
     color: '#85C4F2',
