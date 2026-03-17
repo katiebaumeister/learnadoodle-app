@@ -68,8 +68,9 @@ const styles = StyleSheet.create({
   },
   finishBtnText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#FFFFFF',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
 });

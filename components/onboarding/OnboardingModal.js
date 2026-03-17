@@ -29,6 +29,7 @@ export default function OnboardingModal({
   onEnsureFamily = null,
 }) {
   const [step, setStep] = useState('welcome');
+  const [onboardingWho, setOnboardingWho] = useState('parent'); // 'parent' | 'student' from "I'm using Learnadoodle for..."
   const [planningMode, setPlanningMode] = useState(initialPlanningMode);
   const [createdChildren, setCreatedChildren] = useState([]); // [{ id, name }]
   const [createdSubjectsByChild, setCreatedSubjectsByChild] = useState({}); // { [childId]: [{ id, name }, ...] }
@@ -353,7 +354,7 @@ export default function OnboardingModal({
   return (
     <Modal visible={visible} transparent animationType="none">
       <View style={styles.overlay}>
-        <View style={styles.modal}>
+        <View style={[styles.modal, step === 'welcome' && styles.modalWelcome]}>
           <View style={styles.header}>
             {step !== 'welcome' ? (
               <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
@@ -398,7 +399,10 @@ export default function OnboardingModal({
                 </View>
                 <View style={step === 'planning_mode' ? undefined : styles.stepHidden}>
                   <PlanningModeStep
-                    onNext={() => setStep('learning_context')}
+                    onNext={(who) => {
+                      setOnboardingWho(who || 'parent');
+                      setStep('learning_context');
+                    }}
                     isSaving={isSaving}
                   />
                 </View>
@@ -416,6 +420,7 @@ export default function OnboardingModal({
                     onAddChild={addOneChild}
                     onContinue={goToSubjectStep}
                     isSaving={isSaving}
+                    isStudentOnboarding={onboardingWho === 'student'}
                   />
                 </View>
                 <View style={step === 'add_subject' ? undefined : styles.stepHidden}>
@@ -463,6 +468,9 @@ const styles = StyleSheet.create({
       maxHeight: '95vh',
     }),
     ...(Platform.OS !== 'web' && { flex: 1 }),
+  },
+  modalWelcome: {
+    maxWidth: 420,
   },
   scrollView: {
     ...(Platform.OS === 'web' && { maxHeight: '85vh' }),

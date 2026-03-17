@@ -84,7 +84,7 @@ const avatarSources = {
   prof8: require('../../assets/prof8.png'),
 };
 
-export default function AddChildStep({ createdChildren = [], onAddChild, onContinue, isSaving }) {
+export default function AddChildStep({ createdChildren = [], onAddChild, onContinue, isSaving, isStudentOnboarding = false }) {
   // Required fields (match AddChildModal/AddChildForm)
   const [name, setName] = useState('');
   const [age, setAge] = useState(''); // required
@@ -137,7 +137,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   const formHasContent = Boolean(name.trim() || age || grade);
 
   const missingRequired = [
-    !name.trim() && 'Child name',
+    !name.trim() && (isStudentOnboarding ? 'Name' : 'Child name'),
     !age && 'Age',
     !grade && 'Grade',
   ].filter(Boolean);
@@ -254,9 +254,13 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
 
   return (
     <View style={styles.container}>
-      <Text style={styles.mainHeading}>Let's add your first learner</Text>
-      <Text style={styles.mainSubtext}>You can edit, add, and delete later on too.</Text>
-      {createdChildren.length > 0 && (
+      <Text style={styles.mainHeading}>
+        {isStudentOnboarding ? "Let's add some basic profile info" : "Let's add your first learner"}
+      </Text>
+      {!isStudentOnboarding && (
+        <Text style={styles.mainSubtext}>You can edit, add, and delete later on too.</Text>
+      )}
+      {!isStudentOnboarding && createdChildren.length > 0 && (
         <View style={styles.list}>
           {createdChildren.map((c) => (
             <View key={c.id} style={styles.chipReadOnly}>
@@ -280,13 +284,15 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
             )}
           </View>
         )}
-        <Text style={[styles.label, styles.labelFirstInSection]}>Child name <Text style={styles.requiredAsterisk}>*</Text></Text>
+        <Text style={[styles.label, styles.labelFirstInSection]}>
+          {isStudentOnboarding ? 'Name' : 'Child name'} <Text style={styles.requiredAsterisk}>*</Text>
+        </Text>
         <View style={styles.inputWrap}>
           <TextInput
             style={styles.input}
             value={name}
             onChangeText={(t) => { setName(t); setError(null); }}
-            placeholder="Enter child's name"
+            placeholder={isStudentOnboarding ? 'Enter your name' : "Enter child's name"}
             placeholderTextColor="#9CA3AF"
             autoCapitalize="words"
           />
@@ -731,32 +737,34 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           ) : null}
         </View>
       )}
-      <View style={styles.addAnotherRow}>
-        <TouchableOpacity
-          style={[
-            styles.addBtn,
-            formValid && !isSaving && !adding && styles.addBtnFilled,
-            (!formValid || isSaving || adding) && styles.addBtnOutline,
-          ]}
-          onPress={handleAddAnother}
-          disabled={!formValid || isSaving || adding}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.addBtnText, formValid && !isSaving && !adding && styles.addBtnTextFilled, (!formValid || isSaving || adding) && styles.addBtnTextOutline]}>
-            {adding || isSaving ? 'Adding...' : 'Add another child'}
-          </Text>
-        </TouchableOpacity>
-        {formHasContent && (
+      {!isStudentOnboarding && (
+        <View style={styles.addAnotherRow}>
           <TouchableOpacity
-            style={styles.clearBtn}
-            onPress={resetCurrentForm}
-            disabled={isSaving || adding}
+            style={[
+              styles.addBtn,
+              formValid && !isSaving && !adding && styles.addBtnFilled,
+              (!formValid || isSaving || adding) && styles.addBtnOutline,
+            ]}
+            onPress={handleAddAnother}
+            disabled={!formValid || isSaving || adding}
             activeOpacity={0.8}
           >
-            <Text style={styles.clearBtnText}>Clear</Text>
+            <Text style={[styles.addBtnText, formValid && !isSaving && !adding && styles.addBtnTextFilled, (!formValid || isSaving || adding) && styles.addBtnTextOutline]}>
+              {adding || isSaving ? 'Adding...' : 'Add another child'}
+            </Text>
           </TouchableOpacity>
-        )}
-      </View>
+          {formHasContent && (
+            <TouchableOpacity
+              style={styles.clearBtn}
+              onPress={resetCurrentForm}
+              disabled={isSaving || adding}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.clearBtnText}>Clear</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
       </View>
       {showMissingHint && (
         <View style={styles.missingHint}>
@@ -1009,7 +1017,8 @@ const styles = StyleSheet.create({
   },
   addBtnText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   addBtnTextFilled: {
@@ -1026,9 +1035,10 @@ const styles = StyleSheet.create({
   },
   clearBtnText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#6B7280',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   missingHint: {
     marginTop: 16,
@@ -1074,8 +1084,9 @@ const styles = StyleSheet.create({
   },
   continueBtnText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#FFFFFF',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   continueBtnTextDisabled: {

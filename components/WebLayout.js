@@ -137,6 +137,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Onboarding: resolve status before first paint so we never flash landing without modal
   const [onboardingCheckDone, setOnboardingCheckDone] = useState(false);
+  const [onboardingUiReady, setOnboardingUiReady] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
   const [activeRightTool, setActiveRightTool] = useState(null);
@@ -1307,6 +1308,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     })();
     return () => { cancelled = true; };
   }, [user, session]);
+
+  // After onboarding status is known, keep loader visible until app + onboarding modal have mounted (preload modal)
+  useEffect(() => {
+    if (!onboardingCheckDone) {
+      setOnboardingUiReady(false);
+      return;
+    }
+    const id = setTimeout(() => setOnboardingUiReady(true), 50);
+    return () => clearTimeout(id);
+  }, [onboardingCheckDone]);
 
   // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
   const ensureFamilyInFlightRef = useRef(false);
@@ -4073,9 +4084,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )}
         </PlannerDiffProvider>
       </FiltersProvider>
-      {/* Initial app load: same loader as landing (white + light blue spinner + learnadoodle) */}
-      {!initialAppLoadDone && (
-        <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
+      {/* Initial app load: same loader as landing; also keep loader until onboarding modal has mounted (preload) */}
+      {(!initialAppLoadDone || (user && session && onboardingCheckDone && !onboardingUiReady)) && (
+        <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
           <AppLoader />
         </View>
       )}

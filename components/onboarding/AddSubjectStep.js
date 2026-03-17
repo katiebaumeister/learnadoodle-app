@@ -565,8 +565,9 @@ const styles = StyleSheet.create({
   },
   addBtnText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#85C4F2',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   errorText: {
@@ -697,8 +698,9 @@ const styles = StyleSheet.create({
   },
   continueBtnText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#FFFFFF',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
 });

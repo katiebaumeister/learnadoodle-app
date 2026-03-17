@@ -1,16 +1,77 @@
-import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, StyleSheet, Platform, Image, Animated } from 'react-native';
+
+const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
+const AVATAR_SOURCES = {
+  prof1: require('../assets/prof1.png'),
+  prof2: require('../assets/prof2.png'),
+  prof3: require('../assets/prof3.png'),
+  prof4: require('../assets/prof4.png'),
+  prof5: require('../assets/prof5.png'),
+  prof6: require('../assets/prof6.png'),
+  prof7: require('../assets/prof7.png'),
+  prof8: require('../assets/prof8.png'),
+  prof9: require('../assets/prof9.png'),
+  prof10: require('../assets/prof10.png'),
+};
 
 /**
- * Shared loading screen: white background, light blue spinner, "learnadoodle" text.
+ * Loading screen: show app icon 1s, fade out, fade in to cycling prof avatars.
  * Use for initial landing page, app load/refresh, and any full-page loading spinner.
  */
 export default function AppLoader({ style }) {
+  const [phase, setPhase] = useState('icon'); // 'icon' | 'avatars'
+  const [avatarIndex, setAvatarIndex] = useState(0);
+  const iconOpacity = useRef(new Animated.Value(1)).current;
+  const avatarContainerOpacity = useRef(new Animated.Value(0)).current;
+  const cycleRef = useRef(null);
+
+  useEffect(() => {
+    const showIconMs = 500;
+    const fadeOutMs = 150;
+    const fadeInMs = 150;
+
+    const t1 = setTimeout(() => {
+      Animated.timing(iconOpacity, {
+        toValue: 0,
+        duration: fadeOutMs,
+        useNativeDriver: true,
+      }).start(() => {
+        setPhase('avatars');
+        Animated.timing(avatarContainerOpacity, {
+          toValue: 1,
+          duration: fadeInMs,
+          useNativeDriver: true,
+        }).start();
+      });
+    }, showIconMs);
+
+    return () => clearTimeout(t1);
+  }, [iconOpacity, avatarContainerOpacity]);
+
+  useEffect(() => {
+    if (phase !== 'avatars') return;
+    cycleRef.current = setInterval(() => {
+      setAvatarIndex((i) => (i + 1) % AVATAR_KEYS.length);
+    }, 120);
+    return () => {
+      if (cycleRef.current) clearInterval(cycleRef.current);
+    };
+  }, [phase]);
+
   return (
     <View style={[styles.overlay, style]}>
       <View style={styles.inner}>
-        <ActivityIndicator size="large" color="#60a5fa" />
-        <Text style={styles.brandText}>learnadoodle</Text>
+        <Animated.View style={[styles.iconWrap, { opacity: iconOpacity }]} pointerEvents="none">
+          <Image source={require('../assets/icon.png')} style={styles.icon} resizeMode="contain" />
+        </Animated.View>
+        <Animated.View style={[styles.avatarWrap, { opacity: avatarContainerOpacity }]} pointerEvents="none">
+          <Image
+            source={AVATAR_SOURCES[AVATAR_KEYS[avatarIndex]]}
+            style={styles.avatar}
+            resizeMode="contain"
+          />
+        </Animated.View>
       </View>
     </View>
   );
@@ -38,14 +99,31 @@ const styles = StyleSheet.create({
   },
   inner: {
     alignItems: 'center',
-    gap: 16,
+    justifyContent: 'center',
+    width: 120,
+    height: 120,
+    position: 'relative',
   },
-  brandText: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#0f172a',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  iconWrap: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  icon: {
+    width: 80,
+    height: 80,
+  },
+  avatarWrap: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatar: {
+    width: 72,
+    height: 72,
   },
 });

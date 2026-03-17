@@ -113,7 +113,7 @@ export default function PlanningModeStep({ onNext, isSaving }) {
           !canContinue && styles.continueBtnDisabled,
           Platform.OS === 'web' && canContinue && continueHovered && styles.continueBtnHovered,
         ]}
-        onPress={onNext}
+        onPress={() => onNext(who)}
         disabled={!canContinue || isSaving}
         onMouseEnter={Platform.OS === 'web' ? () => setContinueHovered(true) : undefined}
         onMouseLeave={Platform.OS === 'web' ? () => setContinueHovered(false) : undefined}
@@ -129,7 +129,7 @@ export default function PlanningModeStep({ onNext, isSaving }) {
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: 8,
+    paddingTop: 28,
     paddingBottom: 16,
   },
   prompt: {
@@ -214,9 +214,10 @@ const styles = StyleSheet.create({
   },
   cardLabel: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
     color: 'rgba(15,23,42,0.9)',
     textAlign: 'center',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardLabelSelected: {
@@ -244,8 +245,9 @@ const styles = StyleSheet.create({
   },
   continueBtnText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#FFFFFF',
+    textTransform: 'uppercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
 });
