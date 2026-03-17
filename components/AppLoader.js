@@ -38,7 +38,7 @@ export default function AppLoader({ style }) {
       return;
     }
 
-    const holdMs = 900;
+    const holdMs = 100;
     const fadeOutMs = 250;
 
     holdTimeoutRef.current = setTimeout(() => {

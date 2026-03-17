@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image, Animated, Modal } from 'react-native';
 import ReactDOM from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Check, X } from 'lucide-react';
 
 const AVATAR_SIZE = 64;
 const AVATAR_PREVIEW_SIZE = 72;
@@ -84,7 +84,7 @@ const avatarSources = {
   prof8: require('../../assets/prof8.png'),
 };
 
-export default function AddChildStep({ createdChildren = [], onAddChild, onContinue, isSaving, isStudentOnboarding = false }) {
+export default function AddChildStep({ createdChildren = [], onAddChild, onRemoveChild, onContinue, isSaving, isStudentOnboarding = false }) {
   // Required fields (match AddChildModal/AddChildForm)
   const [name, setName] = useState('');
   const [age, setAge] = useState(''); // required
@@ -265,6 +265,16 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           {createdChildren.map((c) => (
             <View key={c.id} style={styles.chipReadOnly}>
               <Text style={styles.chipReadOnlyText}>{c.name}</Text>
+              {onRemoveChild ? (
+                <TouchableOpacity
+                  onPress={() => onRemoveChild(c.id, c.name)}
+                  style={styles.chipRemoveBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  disabled={isSaving || adding}
+                >
+                  <X size={14} color="#6B7280" />
+                </TouchableOpacity>
+              ) : null}
             </View>
           ))}
         </View>
@@ -767,20 +777,8 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
       )}
       {!isStudentOnboarding && (
-        <>
-          {formHasContent && (
-            <TouchableOpacity
-              style={styles.clearBtn}
-              onPress={resetCurrentForm}
-              disabled={isSaving || adding}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.clearBtnText}>Clear</Text>
-            </TouchableOpacity>
-          )}
-          <View style={styles.addAnotherDivider} />
-          <View style={styles.addAnotherRow}>
-            <TouchableOpacity
+        <View style={styles.addAnotherRow}>
+          <TouchableOpacity
               style={[
                 styles.addBtn,
                 formValid && !isSaving && !adding && styles.addBtnFilled,
@@ -794,8 +792,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
                 {adding || isSaving ? 'Adding...' : 'Add another child'}
               </Text>
             </TouchableOpacity>
-          </View>
-        </>
+        </View>
       )}
       </View>
       {showMissingHint && (
@@ -899,10 +896,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   chipReadOnly: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingLeft: 12,
+    paddingRight: 6,
     borderRadius: 8,
     backgroundColor: 'rgba(37, 99, 235, 0.12)',
+  },
+  chipRemoveBtn: {
+    marginLeft: 4,
+    padding: 2,
   },
   chipReadOnlyText: {
     fontSize: 14,
@@ -1024,13 +1028,6 @@ const styles = StyleSheet.create({
     color: '#1d4ed8',
     fontWeight: '600',
   },
-  addAnotherDivider: {
-    height: 1,
-    backgroundColor: '#E5E7EB',
-    marginTop: 24,
-    marginBottom: 4,
-    width: '100%',
-  },
   addAnotherRow: {
     flexDirection: 'column',
     alignItems: 'flex-start',
@@ -1067,20 +1064,6 @@ const styles = StyleSheet.create({
   },
   addBtnTextOutline: {
     color: '#85C4F2',
-  },
-  clearBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    alignSelf: 'flex-start',
-    marginBottom: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  clearBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   missingHint: {
     marginTop: 16,

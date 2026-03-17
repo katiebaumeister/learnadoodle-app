@@ -242,6 +242,35 @@ export default function OnboardingModal({
     }
   };
 
+  const removeOneChild = async (childId, childName) => {
+    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+    if (!fid) {
+      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+      return;
+    }
+    setError(null);
+    try {
+      const { error: rpcError } = await supabase.rpc('delete_child_permanently', {
+        _family: fid,
+        _child: childId,
+        _confirm_name: childName || '',
+      });
+      if (rpcError) throw new Error(rpcError.message || 'Failed to delete child.');
+      setCreatedChildren((prev) => {
+        const next = prev.filter((c) => c.id !== childId);
+        setSubjectStepChildIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
+        return next;
+      });
+      setCreatedSubjectsByChild((prev) => {
+        const next = { ...prev };
+        delete next[childId];
+        return next;
+      });
+    } catch (e) {
+      setError(e?.message ?? 'Failed to delete child.');
+    }
+  };
+
   const goToSubjectStep = () => {
     setError(null);
     setSubjectStepChildIndex(0);
@@ -462,6 +491,7 @@ export default function OnboardingModal({
                   <AddChildStep
                     createdChildren={createdChildren}
                     onAddChild={addOneChild}
+                    onRemoveChild={removeOneChild}
                     onContinue={goToSubjectStep}
                     isSaving={isSaving}
                     isStudentOnboarding={onboardingWho === 'student'}
