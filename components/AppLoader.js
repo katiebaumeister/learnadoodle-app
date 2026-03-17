@@ -25,8 +25,12 @@ export default function AppLoader({ style }) {
   const avatarContainerOpacity = useRef(new Animated.Value(0)).current;
   const cycleRef = useRef(null);
   const holdTimeoutRef = useRef(null);
+  const sequenceStartedRef = useRef(false);
 
   useEffect(() => {
+    if (sequenceStartedRef.current) return;
+    sequenceStartedRef.current = true;
+
     const fadeInMs = 280;
     const holdMs = 2000;
     const fadeOutMs = 200;
