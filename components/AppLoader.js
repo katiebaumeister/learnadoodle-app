@@ -45,7 +45,7 @@ export default function AppLoader({ style }) {
       Animated.timing(iconOpacity, {
         toValue: 0,
         duration: fadeOutMs,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }).start(() => {
         globalIconSequenceDone = true;
         setPhase('avatars');

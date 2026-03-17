@@ -141,6 +141,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [onboardingModalReady, setOnboardingModalReady] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
+
+  // Derived: must be declared before any useEffect that depends on them (avoids "Cannot access before initialization")
+  const onboardingBlocked = !!(
+    session &&
+    !onboardingJustCompleted &&
+    (initialOnboardingBlocked || (family && !family.onboarding_completed))
+  );
+  const showLoader = !!(
+    user &&
+    session &&
+    (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady || (onboardingBlocked && !onboardingModalReady))
+  );
+
+  useEffect(() => {
+    if (!onboardingBlocked) setOnboardingModalReady(false);
+  }, [onboardingBlocked]);
+
   const [activeRightTool, setActiveRightTool] = useState(null);
   const prevActiveTabRef = useRef(null);
   // AI Tool Modals
@@ -1320,11 +1337,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => clearTimeout(id);
   }, [onboardingCheckDone]);
 
-  // Reset onboarding modal ready when modal is not shown so we wait for it again next time
-  useEffect(() => {
-    if (!onboardingBlocked) setOnboardingModalReady(false);
-  }, [onboardingBlocked]);
-
   // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
   const ensureFamilyInFlightRef = useRef(false);
   const ensureFamilyAndSet = useCallback(async () => {
@@ -2034,21 +2046,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.open('https://learnadoodle.com/contact', '_blank');
     }
   }, []);
-
-  // Onboarding gating: only close modal when user has reached "You're all set" and clicked Finish (onboarding_completed)
-  // onboardingJustCompleted: close immediately when complete API succeeds (avoids depending on follow-up family fetch, e.g. 429)
-  const onboardingBlocked = !!(
-    session &&
-    !onboardingJustCompleted &&
-    (initialOnboardingBlocked || (family && !family.onboarding_completed))
-  );
-
-  // Keep loader (avatars) until app is fully ready and onboarding modal (if shown) has finished loading
-  const showLoader = !!(
-    user &&
-    session &&
-    (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady || (onboardingBlocked && !onboardingModalReady))
-  );
 
   // When user+session: one tree so loader never remounts; content is either preload placeholder or full app
   if (user && session) {
