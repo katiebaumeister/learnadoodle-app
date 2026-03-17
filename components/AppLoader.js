@@ -58,14 +58,32 @@ export default function AppLoader({ style }) {
     };
   }, [iconOpacity, avatarContainerOpacity]);
 
+  // Even, continuous avatar cycle: use elapsed time so timing stays consistent under load
+  const avatarIntervalMs = 100;
+  const lastTickRef = useRef(null);
+  const indexRef = useRef(0);
+
   useEffect(() => {
     if (phase !== 'avatars') return;
-    const intervalMs = 100;
-    cycleRef.current = setInterval(() => {
-      setAvatarIndex((i) => (i + 1) % AVATAR_KEYS.length);
-    }, intervalMs);
+    let rafId;
+    lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    indexRef.current = 0;
+    setAvatarIndex(0);
+
+    const tick = () => {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const elapsed = now - lastTickRef.current;
+      const advance = Math.floor(elapsed / avatarIntervalMs);
+      if (advance > 0) {
+        lastTickRef.current = lastTickRef.current + advance * avatarIntervalMs;
+        indexRef.current = (indexRef.current + advance) % AVATAR_KEYS.length;
+        setAvatarIndex(indexRef.current);
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
     return () => {
-      if (cycleRef.current) clearInterval(cycleRef.current);
+      if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
   }, [phase]);
 
