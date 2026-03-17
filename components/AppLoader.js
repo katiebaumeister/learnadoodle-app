@@ -16,7 +16,7 @@ const AVATAR_SOURCES = {
 };
 
 /**
- * Loading screen: show app icon 1s, fade out, fade in to cycling prof avatars.
+ * Loading screen: flash app icon once, then cycle prof1–10 on repeat.
  * Use for initial landing page, app load/refresh, and any full-page loading spinner.
  */
 export default function AppLoader({ style }) {
@@ -27,9 +27,9 @@ export default function AppLoader({ style }) {
   const cycleRef = useRef(null);
 
   useEffect(() => {
-    const showIconMs = 500;
-    const fadeOutMs = 150;
-    const fadeInMs = 150;
+    const showIconMs = 1350; // show icon ~1.35s then fade out
+    const fadeOutMs = 120;
+    const fadeInMs = 120;
 
     const t1 = setTimeout(() => {
       Animated.timing(iconOpacity, {
