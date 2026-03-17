@@ -82,27 +82,27 @@ export default function LearningContextStep({ value, onChange, onNext, isSaving 
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: 0,
-    paddingBottom: 8,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   prompt: {
     fontSize: 30,
     fontWeight: '600',
     color: 'rgba(15,23,42,0.95)',
-    marginBottom: 8,
+    marginBottom: 16,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   subtext: {
     fontSize: 16,
     color: '#6B7280',
-    marginBottom: 24,
+    marginBottom: 32,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   row: {
     flexDirection: 'row',
-    marginBottom: 28,
+    marginBottom: 36,
   },
   cardWrapper: {
     flex: 1,
@@ -155,6 +155,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     alignSelf: 'flex-end',
+    marginTop: 28,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
       fontFamily: '"League Spartan", sans-serif',

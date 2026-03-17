@@ -362,16 +362,18 @@ export default function OnboardingModal({
             ) : (
               <View style={styles.backBtn} />
             )}
-            <View style={styles.progressWrap}>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    { width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%` },
-                  ]}
-                />
+            {step !== 'welcome' && (
+              <View style={styles.progressWrap}>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%` },
+                    ]}
+                  />
+                </View>
               </View>
-            </View>
+            )}
           </View>
           <ScrollView
             style={styles.scrollView}

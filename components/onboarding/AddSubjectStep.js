@@ -219,6 +219,11 @@ export default function AddSubjectStep({
             onChangeText={(t) => { setCustomName(t); setError(null); }}
             placeholder="Add a custom subject (Art, Piano, Robotics…)"
             placeholderTextColor="#9CA3AF"
+            onSubmitEditing={() => {
+              const name = customName.trim();
+              if (name && !adding && !isSaving) addSubjectByName(name);
+            }}
+            returnKeyType="done"
           />
           <TouchableOpacity
             onPress={() => {

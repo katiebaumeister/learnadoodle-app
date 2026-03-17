@@ -129,23 +129,23 @@ export default function PlanningModeStep({ onNext, isSaving }) {
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: 0,
-    paddingBottom: 8,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   prompt: {
     fontSize: 30,
     fontWeight: '600',
     color: 'rgba(15,23,42,0.95)',
-    marginBottom: 24,
+    marginBottom: 36,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   row: {
     flexDirection: 'row',
-    marginBottom: 16,
+    marginBottom: 28,
   },
   confirmRow: {
-    marginBottom: 20,
+    marginBottom: 32,
   },
   checkboxRow: {
     flexDirection: 'row',
@@ -229,6 +229,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     alignSelf: 'flex-end',
+    marginTop: 28,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
       fontFamily: '"League Spartan", sans-serif',
