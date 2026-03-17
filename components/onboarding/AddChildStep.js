@@ -336,7 +336,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onRemov
       <View style={styles.section}>
         <Text style={[styles.label, styles.labelFirstInSection]}>Age <Text style={styles.requiredAsterisk}>*</Text></Text>
         <View style={styles.row}>
-          {Array.from({ length: 18 }, (_, i) => i + 3).map((n) => {
+          {(isStudentOnboarding ? Array.from({ length: 6 }, (_, i) => i + 13) : Array.from({ length: 16 }, (_, i) => i + 3)).map((n) => {
             const val = String(n);
             const selected = age === val;
             return (
@@ -1032,7 +1032,7 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'flex-start',
     gap: 12,
-    marginTop: 0,
+    marginTop: 24,
   },
   addBtn: {
     paddingVertical: 12,
