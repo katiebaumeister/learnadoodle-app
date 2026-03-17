@@ -11,12 +11,14 @@ import {
   getFamilyMembers,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
+import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
+import LearningContextStep from './LearningContextStep';
 import AddChildStep from './AddChildStep';
 import AddSubjectStep from './AddSubjectStep';
 import CompleteStep from './CompleteStep';
 
-const STEPS = ['planning_mode', 'add_child', 'add_subject', 'complete'];
+const STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_child', 'add_subject', 'complete'];
 
 export default function OnboardingModal({
   visible,
@@ -26,7 +28,7 @@ export default function OnboardingModal({
   /** When familyId is null, parent can try to create/fetch family. Returns Promise<familyId | null>. */
   onEnsureFamily = null,
 }) {
-  const [step, setStep] = useState('planning_mode');
+  const [step, setStep] = useState('welcome');
   const [planningMode, setPlanningMode] = useState(initialPlanningMode);
   const [createdChildren, setCreatedChildren] = useState([]); // [{ id, name }]
   const [createdSubjectsByChild, setCreatedSubjectsByChild] = useState({}); // { [childId]: [{ id, name }, ...] }
@@ -49,7 +51,7 @@ export default function OnboardingModal({
       // New signup: no family yet (ensure_family may 404 if backend not deployed). Stop loading after delay so user sees first step.
       const t = setTimeout(() => {
         if (!cancelled) {
-          setStep('planning_mode');
+          setStep('welcome');
           setPlanningMode(initialPlanningMode ?? null);
           setCreatedChildren([]);
           setResuming(false);
@@ -67,7 +69,7 @@ export default function OnboardingModal({
           return;
         }
         if (!data?.default_planning_mode) {
-          setStep('planning_mode');
+          setStep('welcome');
           setPlanningMode(initialPlanningMode ?? null);
           setCreatedChildren([]);
         } else if (!data?.has_children) {
@@ -232,8 +234,13 @@ export default function OnboardingModal({
       setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
       return;
     }
-    setIsSaving(true);
+    const optimisticId = `pending-${subject.child_id}-${subject.name}-${Date.now()}`;
     setError(null);
+    setCreatedSubjectsByChild((prev) => {
+      const list = prev[subject.child_id] || [];
+      return { ...prev, [subject.child_id]: [...list, { id: optimisticId, name: subject.name }] };
+    });
+    setIsSaving(true);
     try {
       const res = await createOnboardingSubject({
         family_id: fid,
@@ -250,7 +257,7 @@ export default function OnboardingModal({
       if (id) {
         setCreatedSubjectsByChild((prev) => {
           const list = prev[subject.child_id] || [];
-          return { ...prev, [subject.child_id]: [...list, { id, name: subject.name }] };
+          return { ...prev, [subject.child_id]: list.map((s) => (s.id === optimisticId ? { id, name: subject.name } : s)) };
         });
         if (subject.material_ids?.length > 0) {
           try {
@@ -267,6 +274,10 @@ export default function OnboardingModal({
         }
       }
     } catch (e) {
+      setCreatedSubjectsByChild((prev) => {
+        const list = (prev[subject.child_id] || []).filter((s) => s.id !== optimisticId);
+        return { ...prev, [subject.child_id]: list };
+      });
       setError(e?.message ?? 'Failed to create subject.');
       throw e;
     } finally {
@@ -280,8 +291,8 @@ export default function OnboardingModal({
       const list = prev[childId] || [];
       return { ...prev, [childId]: list.filter((s) => s.id !== subjectId) };
     });
-    // Delete the subject in the DB so the course list (Profile > Courses) stays in sync
-    if (!familyId || !subjectId) return;
+    // Skip DB delete for optimistic (pending) entries; only delete real subjects
+    if (!familyId || !subjectId || String(subjectId).startsWith('pending-')) return;
     try {
       const { error } = await supabase
         .from('subject')
@@ -344,25 +355,23 @@ export default function OnboardingModal({
       <View style={styles.overlay}>
         <View style={styles.modal}>
           <View style={styles.header}>
-            {step !== 'planning_mode' ? (
+            {step !== 'welcome' ? (
               <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                 <ChevronLeft size={20} color="#374151" />
               </TouchableOpacity>
             ) : (
               <View style={styles.backBtn} />
             )}
-            {step !== 'planning_mode' && (
-              <View style={styles.progressWrap}>
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%` },
-                    ]}
-                  />
-                </View>
+            <View style={styles.progressWrap}>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    { width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%` },
+                  ]}
+                />
               </View>
-            )}
+            </View>
           </View>
           <ScrollView
             style={styles.scrollView}
@@ -382,8 +391,17 @@ export default function OnboardingModal({
               </View>
             ) : (
               <>
+                <View style={step === 'welcome' ? undefined : styles.stepHidden}>
+                  <WelcomeStep onNext={() => setStep('planning_mode')} />
+                </View>
                 <View style={step === 'planning_mode' ? undefined : styles.stepHidden}>
                   <PlanningModeStep
+                    onNext={() => setStep('learning_context')}
+                    isSaving={isSaving}
+                  />
+                </View>
+                <View style={step === 'learning_context' ? undefined : styles.stepHidden}>
+                  <LearningContextStep
                     value={planningMode}
                     onChange={setPlanningMode}
                     onNext={persistPlanningMode}
@@ -432,7 +450,7 @@ const styles = StyleSheet.create({
   },
   modal: {
     width: '100%',
-    maxWidth: 720,
+    maxWidth: 960,
     maxHeight: '90%',
     backgroundColor: '#FFFFFF',
     borderRadius: 20,

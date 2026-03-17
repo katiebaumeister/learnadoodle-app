@@ -1,67 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 
-const WHO_OPTIONS = [
-  { id: 'parent', label: 'My family (I\'m a parent)' },
-  { id: 'student', label: 'Myself (I\'m a student)' },
+const MODE_OPTIONS = [
+  { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschool' },
+  { id: 'AFTERSCHOOL_GOALS', label: 'Afterschool' },
+  { id: 'NONE', label: 'Just scheduling' },
 ];
 
-export default function PlanningModeStep({ onNext, isSaving }) {
-  const [who, setWho] = useState(null);
-  const [ageLocationConfirmed, setAgeLocationConfirmed] = useState(false);
-  const [hoveredWho, setHoveredWho] = useState(null);
+export default function LearningContextStep({ value, onChange, onNext, isSaving }) {
+  const [hoveredMode, setHoveredMode] = useState(null);
   const [continueHovered, setContinueHovered] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnimsWho = useRef(WHO_OPTIONS.map(() => new Animated.Value(1))).current;
+  const scaleAnimsMode = useRef(MODE_OPTIONS.map(() => new Animated.Value(1))).current;
 
-  // Reset age/location confirmation when role changes
-  const handleSetWho = (id) => {
-    setWho(id);
-    setAgeLocationConfirmed(false);
-  };
-
-  // Fade in second row when "who" is selected
   useEffect(() => {
-    if (who) {
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 280,
-        useNativeDriver: Platform.OS !== 'web',
-      }).start();
-    } else {
-      fadeAnim.setValue(0);
-    }
-  }, [who, fadeAnim]);
-
-  // Scale effect on who selection
-  useEffect(() => {
-    WHO_OPTIONS.forEach((opt, i) => {
-      Animated.timing(scaleAnimsWho[i], {
-        toValue: who === opt.id ? 1.02 : 1,
+    MODE_OPTIONS.forEach((opt, i) => {
+      Animated.timing(scaleAnimsMode[i], {
+        toValue: value === opt.id ? 1.02 : 1,
         duration: 120,
         useNativeDriver: Platform.OS !== 'web',
       }).start();
     });
-  }, [who]);
+  }, [value]);
 
-  const canContinue = who && ageLocationConfirmed;
-
-  const ageLocationText =
-    who === 'student'
-      ? 'I confirm I am 13 years or older and in the U.S.'
-      : who === 'parent'
-        ? 'I confirm I am 18 years or older and in the U.S.'
-        : null;
+  const canContinue = Boolean(value);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.prompt}>I'm using Learnadoodle for…</Text>
+      <Text style={styles.prompt}>How are you using Learnadoodle?</Text>
+      <Text style={styles.subtext}>Choose the option that best fits your situation.</Text>
 
-      {/* First row: Who */}
       <View style={styles.row}>
-        {WHO_OPTIONS.map((opt, index) => {
-          const selected = who === opt.id;
-          const hovered = hoveredWho === opt.id;
+        {MODE_OPTIONS.map((mode, index) => {
+          const selected = value === mode.id;
+          const hovered = hoveredMode === mode.id;
           const cardStyle = [
             styles.card,
             selected && styles.cardSelected,
@@ -70,42 +41,24 @@ export default function PlanningModeStep({ onNext, isSaving }) {
           ];
           return (
             <Animated.View
-              key={opt.id}
-              style={[styles.cardWrapper, { transform: [{ scale: scaleAnimsWho[index] }] }]}
+              key={mode.id}
+              style={[styles.cardWrapper, { transform: [{ scale: scaleAnimsMode[index] }] }]}
             >
               <TouchableOpacity
                 style={cardStyle}
-                onPress={() => handleSetWho(opt.id)}
-                onMouseEnter={Platform.OS === 'web' ? () => setHoveredWho(opt.id) : undefined}
-                onMouseLeave={Platform.OS === 'web' ? () => setHoveredWho(null) : undefined}
+                onPress={() => onChange(mode.id)}
+                onMouseEnter={Platform.OS === 'web' ? () => setHoveredMode(mode.id) : undefined}
+                onMouseLeave={Platform.OS === 'web' ? () => setHoveredMode(null) : undefined}
                 activeOpacity={1}
               >
                 <Text style={[styles.cardLabel, selected && styles.cardLabelSelected]}>
-                  {opt.label}
+                  {mode.label}
                 </Text>
               </TouchableOpacity>
             </Animated.View>
           );
         })}
       </View>
-
-      {/* Age/location confirmation (after role selected) */}
-      {who && ageLocationText && (
-        <Animated.View style={[styles.confirmRow, { opacity: fadeAnim }]}>
-          <TouchableOpacity
-            style={styles.checkboxRow}
-            onPress={() => setAgeLocationConfirmed((c) => !c)}
-            activeOpacity={0.8}
-          >
-            <View style={[styles.checkbox, ageLocationConfirmed && styles.checkboxChecked]}>
-              {ageLocationConfirmed ? (
-                <Text style={styles.checkboxCheck}>✓</Text>
-              ) : null}
-            </View>
-            <Text style={styles.confirmLabel}>{ageLocationText}</Text>
-          </TouchableOpacity>
-        </Animated.View>
-      )}
 
       <TouchableOpacity
         style={[
@@ -136,47 +89,20 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '600',
     color: 'rgba(15,23,42,0.95)',
-    marginBottom: 24,
+    marginBottom: 8,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
+  subtext: {
+    fontSize: 16,
+    color: '#6B7280',
+    marginBottom: 24,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
   row: {
     flexDirection: 'row',
-    marginBottom: 16,
-  },
-  confirmRow: {
-    marginBottom: 20,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#9CA3AF',
-    marginRight: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    borderColor: '#4A5FEB',
-    backgroundColor: '#4A5FEB',
-  },
-  checkboxCheck: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  confirmLabel: {
-    flex: 1,
-    fontSize: 16,
-    color: 'rgba(15,23,42,0.9)',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    marginBottom: 28,
   },
   cardWrapper: {
     flex: 1,

@@ -56,6 +56,7 @@ import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 import PlanHealthIcon from './planner/PlanHealthIcon';
 import OnboardingModal from './onboarding/OnboardingModal';
+import AvatarPreloader from './onboarding/AvatarPreloader';
 import AppLoader from './AppLoader';
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -2026,8 +2027,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   );
 
   // Don't show main content until onboarding status is known (avoids flash of landing without modal)
+  // Preload avatar PNGs during this phase so the onboarding "add learner" step shows avatars immediately
   if (user && session && !onboardingCheckDone) {
-    return <AppLoader />;
+    return (
+      <>
+        <AppLoader />
+        <AvatarPreloader />
+      </>
+    );
   }
 
   return (

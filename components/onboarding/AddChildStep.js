@@ -131,7 +131,17 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   const continueScale = useRef(new Animated.Value(1)).current;
 
   const formValid = Boolean(name.trim() && age && grade && avatar);
-  const canContinue = formValid || createdChildren.length >= 1;
+  const formEmpty = !name.trim() && !age && !grade;
+  // If user has added at least one child and current form has any content (partial second child), they must finish or clear before continuing
+  const canContinue = formValid || (createdChildren.length >= 1 && formEmpty);
+  const formHasContent = Boolean(name.trim() || age || grade);
+
+  const missingRequired = [
+    !name.trim() && 'Child name',
+    !age && 'Age',
+    !grade && 'Grade',
+  ].filter(Boolean);
+  const showMissingHint = !canContinue && missingRequired.length > 0;
 
   useEffect(() => {
     if (canContinue) {
@@ -182,6 +192,28 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
     };
   };
 
+  const resetCurrentForm = () => {
+    setError(null);
+    setName('');
+    setAge('');
+    setGrade('');
+    setStandardsState('None');
+    setAvatar('prof1');
+    setInterests([]);
+    setDiagnoses([]);
+    setLearningModalities([]);
+    setSupportNeeds([]);
+    setExecutiveFunction([]);
+    setOtherDiagnosis('');
+    setOtherInterest('');
+    setShowAdditional(false);
+    setTargetMode('');
+    setTargetDays('');
+    setTargetHours('');
+    setSchoolYearStart('');
+    setSchoolYearEnd('');
+  };
+
   const handleAddAnother = async () => {
     setError(null);
     if (!formValid) {
@@ -191,24 +223,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
     setAdding(true);
     try {
       await onAddChild(getChildPayload());
-      setName('');
-      setAge('');
-      setGrade('');
-      setStandardsState('None');
-      setAvatar('prof1');
-      setInterests([]);
-      setDiagnoses([]);
-      setLearningModalities([]);
-      setSupportNeeds([]);
-      setExecutiveFunction([]);
-      setOtherDiagnosis('');
-      setOtherInterest('');
-      setShowAdditional(false);
-      setTargetMode('');
-      setTargetDays('');
-      setTargetHours('');
-      setSchoolYearStart('');
-      setSchoolYearEnd('');
+      resetCurrentForm();
     } catch (e) {
       setError(e?.message ?? 'Failed to add child.');
     } finally {
@@ -240,7 +255,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   return (
     <View style={styles.container}>
       <Text style={styles.mainHeading}>Let's add your first learner</Text>
-      <Text style={styles.mainSubtext}>You can add more later anytime.</Text>
+      <Text style={styles.mainSubtext}>You can edit, add, and delete later on too.</Text>
       {createdChildren.length > 0 && (
         <View style={styles.list}>
           {createdChildren.map((c) => (
@@ -716,15 +731,40 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           ) : null}
         </View>
       )}
-      <TouchableOpacity
-        style={[styles.addBtn, (!formValid || isSaving || adding) && styles.addBtnDisabled]}
-        onPress={handleAddAnother}
-        disabled={!formValid || isSaving || adding}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.addBtnText}>{adding || isSaving ? 'Adding...' : 'Add another child'}</Text>
-      </TouchableOpacity>
+      <View style={styles.addAnotherRow}>
+        <TouchableOpacity
+          style={[
+            styles.addBtn,
+            formValid && !isSaving && !adding && styles.addBtnFilled,
+            (!formValid || isSaving || adding) && styles.addBtnOutline,
+          ]}
+          onPress={handleAddAnother}
+          disabled={!formValid || isSaving || adding}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.addBtnText, formValid && !isSaving && !adding && styles.addBtnTextFilled, (!formValid || isSaving || adding) && styles.addBtnTextOutline]}>
+            {adding || isSaving ? 'Adding...' : 'Add another child'}
+          </Text>
+        </TouchableOpacity>
+        {formHasContent && (
+          <TouchableOpacity
+            style={styles.clearBtn}
+            onPress={resetCurrentForm}
+            disabled={isSaving || adding}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.clearBtnText}>Clear</Text>
+          </TouchableOpacity>
+        )}
       </View>
+      </View>
+      {showMissingHint && (
+        <View style={styles.missingHint}>
+          <Text style={styles.missingHintText}>
+            To continue, add: {missingRequired.join(', ')}
+          </Text>
+        </View>
+      )}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <Animated.View style={[styles.continueWrap, { transform: [{ scale: continueScale }] }]}>
         <TouchableOpacity
@@ -742,7 +782,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               (!canContinue || isSaving || adding) && styles.continueBtnTextDisabled,
             ]}
           >
-            {isSaving || adding ? 'Saving…' : 'Continue'}
+            {isSaving || adding ? 'Saving…' : `Next: ${(createdChildren.length >= 1 ? createdChildren[0].name : (name.trim() || 'learner'))}'s subjects`}
           </Text>
         </TouchableOpacity>
       </Animated.View>
@@ -941,25 +981,66 @@ const styles = StyleSheet.create({
     color: '#1d4ed8',
     fontWeight: '600',
   },
+  addAnotherRow: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginTop: 20,
+  },
   addBtn: {
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 10,
     borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  addBtnFilled: {
+    borderStyle: 'solid',
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  addBtnOutline: {
     borderStyle: 'dashed',
     borderColor: '#C7D2FE',
     backgroundColor: '#FAFBFF',
-    alignSelf: 'flex-start',
-    marginTop: 20,
-  },
-  addBtnDisabled: {
-    opacity: 0.6,
+    opacity: 0.85,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
   addBtnText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#85C4F2',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  },
+  addBtnTextFilled: {
+    color: '#FFFFFF',
+  },
+  addBtnTextOutline: {
+    color: '#85C4F2',
+  },
+  clearBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  clearBtnText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
+  missingHint: {
+    marginTop: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.06)',
+  },
+  missingHintText: {
+    fontSize: 14,
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   errorText: {
     fontSize: 13,
