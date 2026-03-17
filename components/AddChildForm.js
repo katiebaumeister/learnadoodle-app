@@ -560,15 +560,44 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
                 <Text style={[styles.chipText, diagnoses.includes(d) && styles.chipTextSelected]}>{d}</Text>
               </TouchableOpacity>
             ))}
+            {diagnoses.filter((d) => typeof d === 'string' && d.startsWith('Other: ')).map((custom) => (
+              <TouchableOpacity
+                key={custom}
+                style={[styles.chip, styles.chipSelected]}
+                onPress={() => setDiagnoses((prev) => prev.filter((x) => x !== custom))}
+              >
+                <Text style={[styles.chipText, styles.chipTextSelected]}>{custom.replace(/^Other: \s*/, '')}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
           {diagnoses.includes('Other') && (
-            <TextInput
-              style={[styles.input, { marginTop: 8 }]}
-              placeholder="Specify other diagnosis"
-              value={otherDiagnosis}
-              onChangeText={setOtherDiagnosis}
-              placeholderTextColor="#9ca3af"
-            />
+            <View style={styles.otherInterestRow}>
+              <TextInput
+                style={[styles.input, styles.otherInterestInput]}
+                placeholder="Specify other, then tap checkmark"
+                value={otherDiagnosis}
+                onChangeText={setOtherDiagnosis}
+                placeholderTextColor="#9ca3af"
+                onSubmitEditing={() => {
+                  const t = otherDiagnosis.trim();
+                  if (!t) return;
+                  setDiagnoses((prev) => [...prev.filter((x) => x !== 'Other'), `Other: ${t}`]);
+                  setOtherDiagnosis('');
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => {
+                  const t = otherDiagnosis.trim();
+                  if (!t) return;
+                  setDiagnoses((prev) => [...prev.filter((x) => x !== 'Other'), `Other: ${t}`]);
+                  setOtherDiagnosis('');
+                }}
+                style={[styles.otherConfirmButton, !otherDiagnosis.trim() && styles.otherConfirmButtonDisabled]}
+                disabled={!otherDiagnosis.trim()}
+              >
+                <Check size={20} color={otherDiagnosis.trim() ? '#ffffff' : '#9ca3af'} strokeWidth={2.5} />
+              </TouchableOpacity>
+            </View>
           )}
         </View>
 

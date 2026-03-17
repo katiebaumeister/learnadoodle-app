@@ -582,15 +582,44 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
                     <Text style={[styles.chipText, childDiagnoses.includes(d) && styles.chipTextSelected]}>{d}</Text>
                   </TouchableOpacity>
                 ))}
+                {childDiagnoses.filter((d) => typeof d === 'string' && d.startsWith('Other: ')).map((custom) => (
+                  <TouchableOpacity
+                    key={custom}
+                    style={[styles.chip, styles.chipSelected]}
+                    onPress={() => setChildDiagnoses((prev) => prev.filter((x) => x !== custom))}
+                  >
+                    <Text style={[styles.chipText, styles.chipTextSelected]}>{custom.replace(/^Other: \s*/, '')}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
               {childDiagnoses.includes('Other') && (
-                <TextInput
-                  style={[styles.inputPill, { marginTop: 8 }]}
-                  placeholder="Specify other diagnosis"
-                  placeholderTextColor="#9ca3af"
-                  value={childOtherDiagnosis}
-                  onChangeText={setChildOtherDiagnosis}
-                />
+                <View style={styles.otherDiagnosisRow}>
+                  <TextInput
+                    style={[styles.inputPill, styles.otherDiagnosisInput]}
+                    placeholder="Specify other, then tap checkmark"
+                    placeholderTextColor="#9ca3af"
+                    value={childOtherDiagnosis}
+                    onChangeText={setChildOtherDiagnosis}
+                    onSubmitEditing={() => {
+                      const t = childOtherDiagnosis.trim();
+                      if (!t) return;
+                      setChildDiagnoses((prev) => [...prev.filter((x) => x !== 'Other'), `Other: ${t}`]);
+                      setChildOtherDiagnosis('');
+                    }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => {
+                      const t = childOtherDiagnosis.trim();
+                      if (!t) return;
+                      setChildDiagnoses((prev) => [...prev.filter((x) => x !== 'Other'), `Other: ${t}`]);
+                      setChildOtherDiagnosis('');
+                    }}
+                    style={[styles.otherConfirmButton, !childOtherDiagnosis.trim() && styles.otherConfirmButtonDisabled]}
+                    disabled={!childOtherDiagnosis.trim()}
+                  >
+                    <Check size={20} color={childOtherDiagnosis.trim() ? '#ffffff' : '#9ca3af'} strokeWidth={2.5} />
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
 
@@ -1104,6 +1133,36 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: '#1e40af',
     fontWeight: '600',
+  },
+  otherDiagnosisRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+  },
+  otherDiagnosisInput: {
+    flex: 1,
+    marginTop: 0,
+    minWidth: 0,
+  },
+  otherConfirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  otherConfirmButtonDisabled: {
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f3f4f6',
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
   },
   avatarsWrap: {
     flexDirection: 'row',

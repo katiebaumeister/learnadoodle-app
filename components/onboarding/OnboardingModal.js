@@ -1,6 +1,6 @@
 // Onboarding modal: plan → add child → subjects → complete
-import React, { useState, useEffect } from 'react';
-import { View, Text, Modal, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, ScrollView } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, Modal, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, ScrollView, Animated } from 'react-native';
 import { ChevronLeft } from 'lucide-react';
 import {
   setOnboardingPlanningMode,
@@ -39,12 +39,28 @@ export default function OnboardingModal({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
   const [resuming, setResuming] = useState(true);
+  const stepContentOpacity = useRef(new Animated.Value(0)).current;
+  const STEP_FADE_MS = 180;
+
+  const transitionToStep = (nextStep) => {
+    stepContentOpacity.setValue(0);
+    setStep(nextStep);
+  };
 
   useEffect(() => {
     if (!visible) return;
     setError(null);
     setResuming(true);
   }, [visible]);
+
+  useEffect(() => {
+    if (resuming) return;
+    Animated.timing(stepContentOpacity, {
+      toValue: 1,
+      duration: STEP_FADE_MS,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [step, resuming, stepContentOpacity]);
 
   // Resume: set step from backend status every time modal opens (avoids stale state if user deletes child/subject mid-flow)
   useEffect(() => {
@@ -137,27 +153,26 @@ export default function OnboardingModal({
       return;
     }
     const idx = STEPS.indexOf(step);
-    if (idx > 0) setStep(STEPS[idx - 1]);
+    if (idx > 0) transitionToStep(STEPS[idx - 1]);
   };
 
-  const persistPlanningMode = async () => {
+  const persistPlanningMode = () => {
     if (!planningMode) return;
-    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
-    if (!fid) {
-      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
-      return;
-    }
-    setIsSaving(true);
     setError(null);
-    try {
-      const res = await setOnboardingPlanningMode({ family_id: fid, planning_mode: planningMode });
-      if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to save');
-      setStep('add_child');
-    } catch (e) {
-      setError(e?.message ?? 'Failed to save planning mode.');
-    } finally {
-      setIsSaving(false);
-    }
+    transitionToStep('add_child');
+    (async () => {
+      try {
+        const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+        if (!fid) {
+          setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
+          return;
+        }
+        const res = await setOnboardingPlanningMode({ family_id: fid, planning_mode: planningMode });
+        if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to save');
+      } catch (e) {
+        setError(e?.message ?? 'Failed to save planning mode.');
+      }
+    })();
   };
 
   const addOneChild = async (child) => {
@@ -231,7 +246,7 @@ export default function OnboardingModal({
     setError(null);
     setSubjectStepChildIndex(0);
     setCreatedSubjectsByChild({});
-    setStep('add_subject');
+    transitionToStep('add_subject');
   };
 
   const addOneSubject = async (subject) => {
@@ -323,13 +338,13 @@ export default function OnboardingModal({
     if (subjectStepChildIndex < createdChildren.length - 1) {
       setSubjectStepChildIndex(subjectStepChildIndex + 1);
     } else {
-      setStep('complete');
+      transitionToStep('complete');
     }
   };
 
   const goToCompleteStep = () => {
     setError(null);
-    setStep('complete');
+    transitionToStep('complete');
   };
 
   const finalize = async () => {
@@ -399,9 +414,9 @@ export default function OnboardingModal({
                 <Text style={styles.loadingText}>Loading…</Text>
               </View>
             ) : (
-              <>
+              <Animated.View style={{ opacity: stepContentOpacity }}>
                 <View style={step === 'welcome' ? undefined : styles.stepHidden}>
-                  <WelcomeStep onNext={() => setStep('planning_mode')} />
+                  <WelcomeStep onNext={() => transitionToStep('planning_mode')} />
                 </View>
                 <View style={step === 'planning_mode' ? undefined : styles.stepHidden}>
                   <PlanningModeStep
@@ -430,7 +445,7 @@ export default function OnboardingModal({
                         setSubjectStepChildIndex(0);
                       }
                       setOnboardingWho(newWho);
-                      setStep('learning_context');
+                      transitionToStep('learning_context');
                     }}
                     isSaving={isSaving}
                   />
@@ -467,7 +482,7 @@ export default function OnboardingModal({
                 <View style={step === 'complete' ? undefined : styles.stepHidden}>
                   <CompleteStep onFinish={finalize} isSaving={isSaving} />
                 </View>
-              </>
+              </Animated.View>
             )}
           </ScrollView>
         </View>

@@ -450,15 +450,44 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
                 <Text style={[styles.chipText, diagnoses.includes(d) && styles.chipTextSelected]}>{d}</Text>
               </TouchableOpacity>
             ))}
+            {diagnoses.filter((d) => typeof d === 'string' && d.startsWith('Other: ')).map((custom) => (
+              <TouchableOpacity
+                key={custom}
+                style={[styles.chip, styles.chipSelected]}
+                onPress={() => { setDiagnoses((prev) => prev.filter((x) => x !== custom)); setError(null); }}
+              >
+                <Text style={[styles.chipText, styles.chipTextSelected]}>{custom.replace(/^Other: \s*/, '')}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
           {diagnoses.includes('Other') && (
-            <TextInput
-              style={[styles.input, { marginTop: 10 }]}
-              placeholder="Specify other"
-              value={otherDiagnosis}
-              onChangeText={(t) => { setOtherDiagnosis(t); setError(null); }}
-              placeholderTextColor="#9CA3AF"
-            />
+            <View style={styles.otherInterestRow}>
+              <TextInput
+                style={[styles.input, styles.otherInterestInput, { marginTop: 10 }]}
+                placeholder="Specify other, then tap checkmark"
+                value={otherDiagnosis}
+                onChangeText={(t) => { setOtherDiagnosis(t); setError(null); }}
+                placeholderTextColor="#9CA3AF"
+                onSubmitEditing={() => {
+                  const t = otherDiagnosis.trim();
+                  if (!t) return;
+                  setDiagnoses((prev) => [...prev.filter((x) => x !== 'Other'), `Other: ${t}`]);
+                  setOtherDiagnosis('');
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => {
+                  const t = otherDiagnosis.trim();
+                  if (!t) return;
+                  setDiagnoses((prev) => [...prev.filter((x) => x !== 'Other'), `Other: ${t}`]);
+                  setOtherDiagnosis('');
+                }}
+                style={[styles.otherConfirmButton, !otherDiagnosis.trim() && styles.otherConfirmButtonDisabled]}
+                disabled={!otherDiagnosis.trim()}
+              >
+                <Check size={20} color={otherDiagnosis.trim() ? '#ffffff' : '#9CA3AF'} strokeWidth={2.5} />
+              </TouchableOpacity>
+            </View>
           )}
 
           <Text style={styles.label}>Executive function needs</Text>
@@ -738,21 +767,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
       )}
       {!isStudentOnboarding && (
-        <View style={styles.addAnotherRow}>
-          <TouchableOpacity
-            style={[
-              styles.addBtn,
-              formValid && !isSaving && !adding && styles.addBtnFilled,
-              (!formValid || isSaving || adding) && styles.addBtnOutline,
-            ]}
-            onPress={handleAddAnother}
-            disabled={!formValid || isSaving || adding}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.addBtnText, formValid && !isSaving && !adding && styles.addBtnTextFilled, (!formValid || isSaving || adding) && styles.addBtnTextOutline]}>
-              {adding || isSaving ? 'Adding...' : 'Add another child'}
-            </Text>
-          </TouchableOpacity>
+        <>
           {formHasContent && (
             <TouchableOpacity
               style={styles.clearBtn}
@@ -763,7 +778,24 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               <Text style={styles.clearBtnText}>Clear</Text>
             </TouchableOpacity>
           )}
-        </View>
+          <View style={styles.addAnotherDivider} />
+          <View style={styles.addAnotherRow}>
+            <TouchableOpacity
+              style={[
+                styles.addBtn,
+                formValid && !isSaving && !adding && styles.addBtnFilled,
+                (!formValid || isSaving || adding) && styles.addBtnOutline,
+              ]}
+              onPress={handleAddAnother}
+              disabled={!formValid || isSaving || adding}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.addBtnText, formValid && !isSaving && !adding && styles.addBtnTextFilled, (!formValid || isSaving || adding) && styles.addBtnTextOutline]}>
+                {adding || isSaving ? 'Adding...' : 'Add another child'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
       )}
       </View>
       {showMissingHint && (
@@ -992,11 +1024,18 @@ const styles = StyleSheet.create({
     color: '#1d4ed8',
     fontWeight: '600',
   },
+  addAnotherDivider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginTop: 24,
+    marginBottom: 4,
+    width: '100%',
+  },
   addAnotherRow: {
     flexDirection: 'column',
     alignItems: 'flex-start',
     gap: 12,
-    marginTop: 20,
+    marginTop: 0,
   },
   addBtn: {
     paddingVertical: 12,
@@ -1033,6 +1072,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     alignSelf: 'flex-start',
+    marginBottom: 8,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   clearBtnText: {
