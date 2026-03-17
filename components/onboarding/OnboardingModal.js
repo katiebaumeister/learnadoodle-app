@@ -25,6 +25,8 @@ export default function OnboardingModal({
   familyId,
   initialPlanningMode = null,
   onCompleted,
+  /** Called when modal has finished loading (resume complete) so parent can hide app loader. */
+  onReady = null,
   /** When familyId is null, parent can try to create/fetch family. Returns Promise<familyId | null>. */
   onEnsureFamily = null,
 }) {
@@ -56,6 +58,7 @@ export default function OnboardingModal({
           setPlanningMode(initialPlanningMode ?? null);
           setCreatedChildren([]);
           setResuming(false);
+          if (onReady) onReady();
         }
       }, 2000);
       return () => { cancelled = true; clearTimeout(t); };
@@ -114,11 +117,14 @@ export default function OnboardingModal({
       } catch (_) {
         // Don't reset step on fetch error (e.g. 429) — only set step from successful API data
       } finally {
-        if (!cancelled) setResuming(false);
+        if (!cancelled) {
+          setResuming(false);
+          if (onReady) onReady();
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, familyId, onCompleted, initialPlanningMode]);
+  }, [visible, familyId, onCompleted, onReady, initialPlanningMode]);
 
   const goBack = () => {
     setError(null);

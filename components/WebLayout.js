@@ -138,6 +138,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Onboarding: resolve status before first paint so we never flash landing without modal
   const [onboardingCheckDone, setOnboardingCheckDone] = useState(false);
   const [onboardingUiReady, setOnboardingUiReady] = useState(false);
+  const [onboardingModalReady, setOnboardingModalReady] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
   const [activeRightTool, setActiveRightTool] = useState(null);
@@ -1319,6 +1320,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => clearTimeout(id);
   }, [onboardingCheckDone]);
 
+  // Reset onboarding modal ready when modal is not shown so we wait for it again next time
+  useEffect(() => {
+    if (!onboardingBlocked) setOnboardingModalReady(false);
+  }, [onboardingBlocked]);
+
   // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
   const ensureFamilyInFlightRef = useRef(false);
   const ensureFamilyAndSet = useCallback(async () => {
@@ -2037,8 +2043,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
 
-  // Single persistent loader: same instance from load until app ready (avoids remount = icon showing twice)
-  const showLoader = !!(user && session && (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady));
+  // Keep loader (avatars) until app is fully ready and onboarding modal (if shown) has finished loading
+  const showLoader = !!(
+    user &&
+    session &&
+    (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady || (onboardingBlocked && !onboardingModalReady))
+  );
 
   // When user+session: one tree so loader never remounts; content is either preload placeholder or full app
   if (user && session) {
@@ -3146,6 +3156,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
         }}
+        onReady={() => setOnboardingModalReady(true)}
         onEnsureFamily={ensureFamilyAndSet}
       />
 

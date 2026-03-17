@@ -19,7 +19,7 @@ const AVATAR_SOURCES = {
 let globalIconSequenceDone = false;
 
 /**
- * Loading screen: icon immediately, fade out, then prof1–10 fast cycle.
+ * Loading screen: show icon, brief hold, fade out, then prof1–10 fast cycle.
  * When app is ready, loader unmounts and we go straight from avatars to app (no icon again).
  */
 export default function AppLoader({ style }) {
@@ -29,6 +29,8 @@ export default function AppLoader({ style }) {
   const avatarContainerOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 1 : 0)).current;
   const cycleRef = useRef(null);
 
+  const holdTimeoutRef = useRef(null);
+
   useEffect(() => {
     if (globalIconSequenceDone) {
       setPhase('avatars');
@@ -36,17 +38,24 @@ export default function AppLoader({ style }) {
       return;
     }
 
-    const fadeOutMs = 200;
+    const holdMs = 500;
+    const fadeOutMs = 250;
 
-    Animated.timing(iconOpacity, {
-      toValue: 0,
-      duration: fadeOutMs,
-      useNativeDriver: true,
-    }).start(() => {
-      globalIconSequenceDone = true;
-      setPhase('avatars');
-      avatarContainerOpacity.setValue(1);
-    });
+    holdTimeoutRef.current = setTimeout(() => {
+      Animated.timing(iconOpacity, {
+        toValue: 0,
+        duration: fadeOutMs,
+        useNativeDriver: true,
+      }).start(() => {
+        globalIconSequenceDone = true;
+        setPhase('avatars');
+        avatarContainerOpacity.setValue(1);
+      });
+    }, holdMs);
+
+    return () => {
+      if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
+    };
   }, [iconOpacity, avatarContainerOpacity]);
 
   useEffect(() => {
