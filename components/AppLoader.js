@@ -16,37 +16,41 @@ const AVATAR_SOURCES = {
 };
 
 /**
- * Loading screen: flash app icon once, then cycle prof1–10 on repeat.
- * Use for initial landing page, app load/refresh, and any full-page loading spinner.
+ * Loading screen: fade in icon, hold 2s, fade out, then cycle prof1–10 on repeat (no icon/fade again).
  */
 export default function AppLoader({ style }) {
   const [phase, setPhase] = useState('icon'); // 'icon' | 'avatars'
   const [avatarIndex, setAvatarIndex] = useState(0);
-  const iconOpacity = useRef(new Animated.Value(1)).current;
+  const iconOpacity = useRef(new Animated.Value(0)).current;
   const avatarContainerOpacity = useRef(new Animated.Value(0)).current;
   const cycleRef = useRef(null);
+  const holdTimeoutRef = useRef(null);
 
   useEffect(() => {
-    const showIconMs = 1350; // show icon ~1.35s then fade out
-    const fadeOutMs = 120;
-    const fadeInMs = 120;
+    const fadeInMs = 280;
+    const holdMs = 2000;
+    const fadeOutMs = 200;
 
-    const t1 = setTimeout(() => {
-      Animated.timing(iconOpacity, {
-        toValue: 0,
-        duration: fadeOutMs,
-        useNativeDriver: true,
-      }).start(() => {
-        setPhase('avatars');
-        Animated.timing(avatarContainerOpacity, {
-          toValue: 1,
-          duration: fadeInMs,
+    Animated.timing(iconOpacity, {
+      toValue: 1,
+      duration: fadeInMs,
+      useNativeDriver: true,
+    }).start(() => {
+      holdTimeoutRef.current = setTimeout(() => {
+        Animated.timing(iconOpacity, {
+          toValue: 0,
+          duration: fadeOutMs,
           useNativeDriver: true,
-        }).start();
-      });
-    }, showIconMs);
+        }).start(() => {
+          setPhase('avatars');
+          avatarContainerOpacity.setValue(1);
+        });
+      }, holdMs);
+    });
 
-    return () => clearTimeout(t1);
+    return () => {
+      if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
+    };
   }, [iconOpacity, avatarContainerOpacity]);
 
   useEffect(() => {

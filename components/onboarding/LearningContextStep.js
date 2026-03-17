@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(15,23,42,0.9)',
     textAlign: 'center',
-    textTransform: 'uppercase',
+    textTransform: 'lowercase',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardLabelSelected: {

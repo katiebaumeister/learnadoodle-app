@@ -768,9 +768,12 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       </View>
       {showMissingHint && (
         <View style={styles.missingHint}>
-          <Text style={styles.missingHintText}>
-            To continue, add: {missingRequired.join(', ')}
-          </Text>
+          <Text style={styles.missingHintText}>To continue:</Text>
+          {missingRequired.map((item) => (
+            <Text key={item} style={styles.missingHintBullet}>
+              • {item}
+            </Text>
+          ))}
         </View>
       )}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -1050,6 +1053,14 @@ const styles = StyleSheet.create({
   missingHintText: {
     fontSize: 14,
     color: '#6B7280',
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  },
+  missingHintBullet: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginLeft: 8,
+    marginTop: 2,
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   errorText: {

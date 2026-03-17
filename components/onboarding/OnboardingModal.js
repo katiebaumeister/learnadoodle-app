@@ -399,8 +399,31 @@ export default function OnboardingModal({
                 </View>
                 <View style={step === 'planning_mode' ? undefined : styles.stepHidden}>
                   <PlanningModeStep
-                    onNext={(who) => {
-                      setOnboardingWho(who || 'parent');
+                    onNext={async (who) => {
+                      const newWho = who || 'parent';
+                      const changedRole = onboardingWho != null && newWho !== onboardingWho;
+                      if (changedRole && createdChildren.length > 0) {
+                        const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
+                        if (fid) {
+                          await Promise.all(
+                            createdChildren.map((c) =>
+                              supabase
+                                .rpc('delete_child_permanently', {
+                                  _family: fid,
+                                  _child: c.id,
+                                  _confirm_name: c.name,
+                                })
+                                .then(({ error }) => {
+                                  if (error) console.warn('Onboarding clear: failed to delete child', c.id, error);
+                                })
+                            )
+                          );
+                        }
+                        setCreatedChildren([]);
+                        setCreatedSubjectsByChild({});
+                        setSubjectStepChildIndex(0);
+                      }
+                      setOnboardingWho(newWho);
                       setStep('learning_context');
                     }}
                     isSaving={isSaving}
