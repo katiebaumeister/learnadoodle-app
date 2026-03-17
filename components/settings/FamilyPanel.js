@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
@@ -110,6 +110,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [confirmDeleteCourseName, setConfirmDeleteCourseName] = useState('');
   const [deletingCourse, setDeletingCourse] = useState(false);
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
+  // Account deletion (Profile Danger Zone)
+  const [showDangerZoneAccount, setShowDangerZoneAccount] = useState(false);
+  const [confirmDeleteAccountPhrase, setConfirmDeleteAccountPhrase] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
   
   // Feedback form state
   const [feedbackSubject, setFeedbackSubject] = useState('');
@@ -1761,6 +1765,93 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 We'll send you an email with a link to reset your password.
               </Text>
             </View>
+
+            {/* Danger Zone - Delete account (parents only) */}
+            {!isChildMode && (
+              <View style={styles.dangerZoneAccount}>
+                <TouchableOpacity
+                  style={styles.dangerZoneToggle}
+                  onPress={() => {
+                    setShowDangerZoneAccount(!showDangerZoneAccount);
+                    if (showDangerZoneAccount) setConfirmDeleteAccountPhrase('');
+                  }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                  <Text style={styles.dangerZoneTitle}>
+                    {showDangerZoneAccount ? 'Hide' : 'Show'} Danger Zone
+                  </Text>
+                </TouchableOpacity>
+                {showDangerZoneAccount && (
+                  <View style={styles.dangerZoneAccountContent}>
+                    <Text style={styles.dangerZoneAccountHeading}>Delete your account</Text>
+                    <Text style={styles.dangerZoneAccountMessage}>
+                      This will permanently delete your account and all data for your family, including:
+                    </Text>
+                    <Text style={styles.dangerZoneAccountBullets}>
+                      • Your profile and sign-in{'\n'}
+                      • Your family and all family members{'\n'}
+                      • All learners (children) and their profiles, courses, and progress{'\n'}
+                      • Any linked child or tutor accounts in this family
+                    </Text>
+                    <Text style={styles.dangerZoneAccountWarning}>
+                      This cannot be undone. You will need to sign up again to use Learnadoodle.
+                    </Text>
+                    <Text style={styles.dangerZoneAccountConfirmLabel}>
+                      Type DELETE to confirm
+                    </Text>
+                    <TextInput
+                      style={styles.dangerZoneAccountInput}
+                      value={confirmDeleteAccountPhrase}
+                      onChangeText={setConfirmDeleteAccountPhrase}
+                      placeholder="DELETE"
+                      placeholderTextColor="#9ca3af"
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      editable={!deletingAccount}
+                    />
+                    <TouchableOpacity
+                      style={[
+                        styles.dangerZoneAccountButton,
+                        (confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount) && styles.dangerZoneAccountButtonDisabled,
+                      ]}
+                      onPress={async () => {
+                        if (confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount) return;
+                        setDeletingAccount(true);
+                        try {
+                          const { data, error } = await deleteAccount(confirmDeleteAccountPhrase.trim());
+                          if (error) {
+                            const msg = error?.message || error?.detail || (typeof error === 'string' ? error : 'Failed to delete account');
+                            toast.push(msg, 'error');
+                            return;
+                          }
+                          if (data?.success) {
+                            toast.push('Account deleted. Signing out.', 'success');
+                            await signOut();
+                          } else {
+                            toast.push(data?.message || 'Account could not be deleted.', 'error');
+                          }
+                        } catch (err) {
+                          toast.push(err?.message || 'Failed to delete account.', 'error');
+                        } finally {
+                          setDeletingAccount(false);
+                        }
+                      }}
+                      disabled={confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount}
+                      {...(Platform.OS === 'web' && {
+                        cursor: confirmDeleteAccountPhrase.trim().toUpperCase() === 'DELETE' && !deletingAccount ? 'pointer' : 'not-allowed',
+                      })}
+                    >
+                      {deletingAccount ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text style={styles.dangerZoneAccountButtonText}>Delete my account</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
             </View>
           </View>
         );
@@ -6582,6 +6673,101 @@ function createStyles(tokens) {
     },
     dangerZoneContent: {
       marginTop: 16,
+    },
+    // Danger Zone - Delete account (Profile)
+    dangerZoneAccount: {
+      marginTop: 24,
+      paddingTop: 24,
+      borderTopWidth: 1,
+      borderTopColor: '#e5e7eb',
+    },
+    dangerZoneAccountContent: {
+      marginTop: 16,
+      backgroundColor: colors.redSoft || '#fef2f2',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#fecaca',
+      padding: 16,
+    },
+    dangerZoneAccountHeading: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: colors.redBold || '#dc2626',
+      marginBottom: 8,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    dangerZoneAccountMessage: {
+      fontSize: 14,
+      color: '#374151',
+      marginBottom: 8,
+      lineHeight: 20,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    dangerZoneAccountBullets: {
+      fontSize: 13,
+      color: '#4b5563',
+      lineHeight: 20,
+      marginBottom: 12,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    dangerZoneAccountWarning: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.redBold || '#dc2626',
+      marginBottom: 16,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    dangerZoneAccountConfirmLabel: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#374151',
+      marginBottom: 6,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    dangerZoneAccountInput: {
+      borderWidth: 1,
+      borderColor: '#d1d5db',
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 14,
+      color: '#111827',
+      marginBottom: 12,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    dangerZoneAccountButton: {
+      backgroundColor: colors.redBold || '#dc2626',
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 44,
+      ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+    },
+    dangerZoneAccountButtonDisabled: {
+      opacity: 0.5,
+      ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
+    },
+    dangerZoneAccountButtonText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: '#ffffff',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
     },
     dangerSection: {
       backgroundColor: colors.redSoft || '#fef2f2',
