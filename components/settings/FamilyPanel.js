@@ -423,24 +423,27 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setDarkMode(ap.dark_mode === 'on' || ap.dark_mode === 'off' || ap.dark_mode === 'system' ? ap.dark_mode : 'off');
         }
         if (!isChildMode) {
-          const { data: notifRow } = await supabase
+          const { data: notifRow, error: notifErr } = await supabase
             .from('notification_preferences')
             .select('notification_types, email_notifications_enabled')
             .eq('user_id', user.id)
             .eq('family_id', familyId)
             .maybeSingle();
           if (cancelled) return;
-          if (notifRow?.notification_types && typeof notifRow.notification_types === 'object') {
-            const nt = notifRow.notification_types;
-            setNotifDailyUpdates(nt.daily_updates !== false);
-            setNotifWeeklyProgress(nt.weekly_progress === true);
-            setNotifPlanningInsights(nt.planning_insights !== false);
-            setNotifMotivation(nt.motivation !== false);
-            setNotifParentGuidance(nt.parent_guidance === true);
-            setNotifProductUpdates(nt.product_updates !== false);
-            setNotifAnnouncements(nt.announcements === true);
+          // If 403/RLS or table missing, notifErr is set; keep defaults and don't log
+          if (!notifErr && notifRow) {
+            if (notifRow.notification_types && typeof notifRow.notification_types === 'object') {
+              const nt = notifRow.notification_types;
+              setNotifDailyUpdates(nt.daily_updates !== false);
+              setNotifWeeklyProgress(nt.weekly_progress === true);
+              setNotifPlanningInsights(nt.planning_insights !== false);
+              setNotifMotivation(nt.motivation !== false);
+              setNotifParentGuidance(nt.parent_guidance === true);
+              setNotifProductUpdates(nt.product_updates !== false);
+              setNotifAnnouncements(nt.announcements === true);
+            }
+            setNotificationsEnabled(notifRow.email_notifications_enabled !== false);
           }
-          setNotificationsEnabled(notifRow?.email_notifications_enabled !== false);
         }
       } catch (_) {
         // Silently fail; defaults remain

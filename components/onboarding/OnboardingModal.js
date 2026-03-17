@@ -240,12 +240,15 @@ export default function OnboardingModal({
           if (startDate) toUpdate.start_date = startDate;
           if (endDate) toUpdate.end_date = endDate;
           await supabase.from('academic_years').update(toUpdate).eq('id', existing.id);
-        } else if (startDate && endDate) {
+        } else {
+          const y = new Date().getFullYear();
+          const fallbackStart = startDate || `${y}-09-01`;
+          const fallbackEnd = endDate || `${y + 1}-06-30`;
           await supabase.from('academic_years').insert({
             family_id: fid,
             year_name: 'School year',
-            start_date: startDate,
-            end_date: endDate,
+            start_date: fallbackStart,
+            end_date: fallbackEnd,
             target_instructional_days: child.targetMode === 'days' && child.targetDays ? child.targetDays : null,
             target_instructional_hours: child.targetMode === 'hours' && child.targetHours ? child.targetHours : null,
           });
@@ -403,12 +406,21 @@ export default function OnboardingModal({
     }
   };
 
-  const onSubjectStepContinue = () => {
+  const onSubjectStepContinue = (pendingSubjectPayload = null) => {
     setError(null);
     if (subjectStepChildIndex < createdChildren.length - 1) {
       setSubjectStepChildIndex(subjectStepChildIndex + 1);
     } else {
       transitionToStep('complete');
+    }
+    if (pendingSubjectPayload && pendingSubjectPayload.child_id && pendingSubjectPayload.name) {
+      (async () => {
+        try {
+          await addOneSubject(pendingSubjectPayload);
+        } catch (e) {
+          setError(e?.message ?? 'Failed to add subject.');
+        }
+      })();
     }
   };
 

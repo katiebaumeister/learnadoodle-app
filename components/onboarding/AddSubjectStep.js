@@ -62,6 +62,9 @@ export default function AddSubjectStep({
 
   const addSubjectByName = async (name) => {
     if (!name?.trim() || !currentChild?.id) return;
+    const nameNorm = name.trim().toLowerCase();
+    const alreadyAdded = (subjectsForCurrentChild || []).some((s) => (s.name || '').trim().toLowerCase() === nameNorm);
+    if (alreadyAdded) return;
     setError(null);
     setAdding(true);
     try {
@@ -109,35 +112,28 @@ export default function AddSubjectStep({
     await addSubjectByName(name);
   };
 
-  const handleContinue = async () => {
+  const handleContinue = () => {
     setError(null);
     if (nameToAdd && currentChild?.id) {
-      setAdding(true);
-      try {
-        const creditsVal = credits.trim() ? parseFloat(credits.trim()) : null;
-        await onAddSubject({
-          name: nameToAdd,
-          child_id: currentChild.id,
-          summary: summary.trim() || null,
-          grade: grade || null,
-          credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
-          notes: notes.trim() || null,
-          material_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : undefined,
-        });
-        setSelectedPreset(null);
-        setCustomName('');
-        setSummary('');
-        setGrade('');
-        setCredits('');
-        setNotes('');
-        setAttachedMaterialIds([]);
-        setShowAdditional(false);
-        onContinue();
-      } catch (e) {
-        setError(e?.message || 'Failed to add subject.');
-      } finally {
-        setAdding(false);
-      }
+      const creditsVal = credits.trim() ? parseFloat(credits.trim()) : null;
+      const payload = {
+        name: nameToAdd,
+        child_id: currentChild.id,
+        summary: summary.trim() || null,
+        grade: grade || null,
+        credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
+        notes: notes.trim() || null,
+        material_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : undefined,
+      };
+      setSelectedPreset(null);
+      setCustomName('');
+      setSummary('');
+      setGrade('');
+      setCredits('');
+      setNotes('');
+      setAttachedMaterialIds([]);
+      setShowAdditional(false);
+      onContinue(payload);
       return;
     }
     if (subjectsForCurrentChild.length >= 1) {

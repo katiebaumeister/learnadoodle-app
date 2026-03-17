@@ -24,6 +24,7 @@ export default function EditChildModal({
   const [deleting, setDeleting] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
   const [fullChildData, setFullChildData] = useState(null);
+  const [supportProfile, setSupportProfile] = useState(null);
   const [academicYear, setAcademicYear] = useState(null);
   const [loadingChildData, setLoadingChildData] = useState(false);
   const [formCanSubmit, setFormCanSubmit] = useState(false);
@@ -42,6 +43,7 @@ export default function EditChildModal({
       setShowDangerZone(false);
       setConfirmName('');
       setFullChildData(null);
+      setSupportProfile(null);
       setFormCanSubmit(false);
       setConnectedEmail(null);
     }
@@ -65,6 +67,13 @@ export default function EditChildModal({
 
       setFullChildData(data);
       setIsArchived(data.archived || false);
+
+      const { data: supportData } = await supabase
+        .from('child_support_profiles')
+        .select('*')
+        .eq('child_id', child.id)
+        .maybeSingle();
+      setSupportProfile(supportData || null);
 
       // If child has a linked account (verified), get the connected email (read-only, one per child)
       const fid = familyId || data.family_id;
@@ -136,9 +145,9 @@ export default function EditChildModal({
     age: fullChildData.age ? String(fullChildData.age) : '',
     grade: fullChildData.grade || fullChildData.grade_label || '',
     standardsState: fullChildData.standards || fullChildData.standards_state || 'None',
-    interests: Array.isArray(fullChildData.interests) 
-      ? fullChildData.interests 
-      : (typeof fullChildData.interests === 'string' && fullChildData.interests 
+    interests: Array.isArray(fullChildData.interests)
+      ? fullChildData.interests
+      : (typeof fullChildData.interests === 'string' && fullChildData.interests
           ? fullChildData.interests.split(',').map(i => i.trim()).filter(Boolean)
           : []),
     learningStyle: Array.isArray(fullChildData.learning_styles) && fullChildData.learning_styles.length > 0
@@ -150,6 +159,11 @@ export default function EditChildModal({
     targetMode: academicYear?.target_instructional_days != null ? 'days' : academicYear?.target_instructional_hours != null ? 'hours' : '',
     targetDays: academicYear?.target_instructional_days != null ? String(academicYear.target_instructional_days) : '',
     targetHours: academicYear?.target_instructional_hours != null ? String(academicYear.target_instructional_hours) : '',
+    diagnoses: supportProfile?.diagnoses ?? [],
+    learning_modalities: supportProfile?.learning_modalities ?? [],
+    support_needs: supportProfile?.support_needs ?? [],
+    executive_function: supportProfile?.executive_function ?? [],
+    support_notes: supportProfile?.notes ?? '',
   } : {};
 
   const handleSubmit = async (formData) => {
@@ -224,6 +238,21 @@ export default function EditChildModal({
 
       if (updateError) {
         throw updateError;
+      }
+
+      const hasSupportProfile = [formData.diagnoses, formData.learningModalities, formData.supportNeeds, formData.executiveFunction, formData.supportNotes].some(
+        (v) => (Array.isArray(v) && v.length > 0) || (typeof v === 'string' && v.trim() !== '')
+      );
+      if (hasSupportProfile) {
+        const supportPayload = {
+          child_id: child.id,
+          diagnoses: Array.isArray(formData.diagnoses) ? formData.diagnoses : null,
+          learning_modalities: Array.isArray(formData.learningModalities) ? formData.learningModalities : null,
+          support_needs: Array.isArray(formData.supportNeeds) ? formData.supportNeeds : null,
+          executive_function: Array.isArray(formData.executiveFunction) ? formData.executiveFunction : null,
+          notes: formData.supportNotes?.trim() || null,
+        };
+        await supabase.from('child_support_profiles').upsert(supportPayload, { onConflict: 'child_id' });
       }
 
       const hasTarget = (formData.targetMode === 'days' && formData.targetDays) || (formData.targetMode === 'hours' && formData.targetHours);
