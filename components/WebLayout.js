@@ -142,22 +142,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
 
-  // Derived: must be declared before any useEffect that depends on them (avoids "Cannot access before initialization")
-  const onboardingBlocked = !!(
-    session &&
-    !onboardingJustCompleted &&
-    (initialOnboardingBlocked || (family && !family.onboarding_completed))
-  );
-  const showLoader = !!(
-    user &&
-    session &&
-    (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady || (onboardingBlocked && !onboardingModalReady))
-  );
-
-  useEffect(() => {
-    if (!onboardingBlocked) setOnboardingModalReady(false);
-  }, [onboardingBlocked]);
-
   const [activeRightTool, setActiveRightTool] = useState(null);
   const prevActiveTabRef = useRef(null);
   // AI Tool Modals
@@ -219,6 +203,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
   const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
   const [initialAppLoadDone, setInitialAppLoadDone] = useState(false);
+
+  // Derived: must come after all state they read (initialAppLoadDone, onboardingCheckDone, etc.) to avoid "Cannot access before initialization"
+  const onboardingBlocked = !!(
+    session &&
+    !onboardingJustCompleted &&
+    (initialOnboardingBlocked || (family && !family.onboarding_completed))
+  );
+  const showLoader = !!(
+    user &&
+    session &&
+    (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady || (onboardingBlocked && !onboardingModalReady))
+  );
+
+  useEffect(() => {
+    if (!onboardingBlocked) setOnboardingModalReady(false);
+  }, [onboardingBlocked]);
+
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const filterButtonRef = useRef(null);
