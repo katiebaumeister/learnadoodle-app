@@ -15,7 +15,6 @@ const AVATAR_SOURCES = {
   prof10: require('../assets/prof10.png'),
 };
 
-/** Left rail + branding: must decode before app shows */
 const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
 const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...AVATAR_KEYS];
 
@@ -32,10 +31,10 @@ const SHELL_SOURCES = {
 };
 
 const TOTAL_PRELOAD = SHELL_IMAGE_IDS.length;
-/** Never open app before this many ms of prof cycle (UX); toolbar gate still waits on images. */
 const GATE_MIN_CYCLE_MS = 1600;
-/** If loads stall (buggy onLoad), eventually proceed so user isn’t stuck — only after this. */
 const STALL_FALLBACK_MS = 60000;
+/** App shell outer background — avoids white flash between landing and loader */
+const LOADER_BG = '#F6F7FB';
 
 function resolveUri(source) {
   try {
@@ -47,16 +46,36 @@ function resolveUri(source) {
 }
 
 /**
- * Prof cycle on first paint + strict preload of every left-rail PNG.
- * WebLayout only dismisses loader after all shell images loaded (or errored) + min cycle — no early dismiss.
+ * Web: preload + decode via HTML Image. Returns Promise per id (decode in browser cache).
+ * RN visible Images then paint from cache immediately.
+ */
+function preloadShellImagesWeb(onEachLoaded) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  SHELL_IMAGE_IDS.forEach((id) => {
+    const uri = resolveUri(SHELL_SOURCES[id]);
+    if (!uri) {
+      onEachLoaded(id);
+      return;
+    }
+    const img = new window.Image();
+    img.onload = () => onEachLoaded(id);
+    img.onerror = () => onEachLoaded(id);
+    img.src = uri;
+  });
+}
+
+/**
+ * Prof cycle only after all 10 prof PNGs decoded. Toolbar gated before app. Loader BG matches shell.
  */
 export default function AppLoader({ style, onShellAssetsReady }) {
   const readyFiredRef = useRef(false);
   const gateMode = typeof onShellAssetsReady === 'function';
-  const mountTimeRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const gateTimerStartRef = useRef(null);
+  const [showProfCycle, setShowProfCycle] = useState(false);
   const [avatarIndex, setAvatarIndex] = useState(0);
   const loadedRef = useRef(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
+  const profDecodedRef = useRef(new Set());
 
   const allShellImagesLoaded = loadedCount >= TOTAL_PRELOAD;
 
@@ -66,46 +85,80 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     setLoadedCount(loadedRef.current.size);
   };
 
+  const markProfDecoded = (id) => {
+    if (!AVATAR_KEYS.includes(id)) return;
+    if (profDecodedRef.current.has(id)) return;
+    profDecodedRef.current.add(id);
+    if (profDecodedRef.current.size >= AVATAR_KEYS.length) setShowProfCycle(true);
+  };
+
   const fireShellReady = () => {
     if (!gateMode || readyFiredRef.current) return;
     readyFiredRef.current = true;
     onShellAssetsReady();
   };
 
-  // Web: decode every asset via HTML Image so toolbar PNGs are in network cache before LeftRail paints
+  // Web: decode every asset; mark shell + prof decode for cycle
   useEffect(() => {
-    if (!gateMode || Platform.OS !== 'web' || typeof window === 'undefined') return;
-    SHELL_IMAGE_IDS.forEach((id) => {
-      const uri = resolveUri(SHELL_SOURCES[id]);
-      if (!uri) {
-        markLoaded(id);
-        return;
-      }
-      const img = new window.Image();
-      img.onload = () => markLoaded(id);
-      img.onerror = () => markLoaded(id);
-      img.src = uri;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    preloadShellImagesWeb((id) => {
+      markLoaded(id);
+      markProfDecoded(id);
     });
-  }, [gateMode]);
+  }, []);
 
-  // Dismiss only when every shell asset reported + min prof cycle — loader persists until then
+  // Native / fallback: RN Image preload
+  const preloadImages = (
+    <View style={styles.preloadWrap} pointerEvents="none">
+      {SHELL_IMAGE_IDS.map((id) => (
+        <Image
+          key={id}
+          source={SHELL_SOURCES[id]}
+          style={styles.preloadDecode}
+          resizeMode="contain"
+          onLoad={() => {
+            markLoaded(id);
+            markProfDecoded(id);
+          }}
+          onLoadEnd={() => {
+            markLoaded(id);
+            markProfDecoded(id);
+          }}
+          onError={() => markLoaded(id)}
+        />
+      ))}
+    </View>
+  );
+
+  // When all shell IDs reported (web HTML + RN), start gate timer for dismiss
+  useEffect(() => {
+    if (!allShellImagesLoaded || gateTimerStartRef.current != null) return;
+    gateTimerStartRef.current =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+  }, [allShellImagesLoaded]);
+
+  // Non-web: prof cycle after RN marked all profs
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (AVATAR_KEYS.every((k) => loadedRef.current.has(k))) setShowProfCycle(true);
+  }, [loadedCount]);
+
   useEffect(() => {
     if (!gateMode || readyFiredRef.current) return;
 
     const tryReady = () => {
       if (readyFiredRef.current) return;
-      if (!allShellImagesLoaded) return;
+      if (!allShellImagesLoaded || gateTimerStartRef.current == null) return;
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      if (now - mountTimeRef.current < GATE_MIN_CYCLE_MS) return;
+      if (now - gateTimerStartRef.current < GATE_MIN_CYCLE_MS) return;
       fireShellReady();
     };
 
-    tryReady();
     const interval = setInterval(tryReady, 80);
     const stallFallback = setTimeout(() => {
       if (readyFiredRef.current) return;
       if (typeof console !== 'undefined' && console.warn) {
-        console.warn('[AppLoader] Stall fallback: opening app after', STALL_FALLBACK_MS, 'ms');
+        console.warn('[AppLoader] Stall fallback after', STALL_FALLBACK_MS, 'ms');
       }
       fireShellReady();
     }, STALL_FALLBACK_MS);
@@ -120,6 +173,7 @@ export default function AppLoader({ style, onShellAssetsReady }) {
   const indexRef = useRef(0);
 
   useEffect(() => {
+    if (!showProfCycle) return;
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -139,39 +193,25 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     return () => {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
-  }, []);
-
-  const preloadImages = (
-    <View style={styles.preloadWrap} pointerEvents="none">
-      {SHELL_IMAGE_IDS.map((id) => (
-        <Image
-          key={id}
-          source={SHELL_SOURCES[id]}
-          style={styles.preloadDecode}
-          resizeMode="contain"
-          onLoad={() => markLoaded(id)}
-          onLoadEnd={() => markLoaded(id)}
-          onError={() => markLoaded(id)}
-        />
-      ))}
-    </View>
-  );
+  }, [showProfCycle]);
 
   return (
     <View style={[styles.overlay, style]}>
-      <View style={styles.inner}>
-        {preloadImages}
-        <View style={styles.avatarWrap} pointerEvents="none">
-          {AVATAR_KEYS.map((key, i) => (
-            <Image
-              key={key}
-              source={SHELL_SOURCES[key]}
-              style={[styles.avatar, styles.avatarStack, { opacity: avatarIndex === i ? 1 : 0 }]}
-              resizeMode="contain"
-            />
-          ))}
+      {preloadImages}
+      {showProfCycle ? (
+        <View style={styles.inner}>
+          <View style={styles.avatarWrap} pointerEvents="none">
+            {AVATAR_KEYS.map((key, i) => (
+              <Image
+                key={key}
+                source={SHELL_SOURCES[key]}
+                style={[styles.avatar, styles.avatarStack, { opacity: avatarIndex === i ? 1 : 0 }]}
+                resizeMode="contain"
+              />
+            ))}
+          </View>
         </View>
-      </View>
+      ) : null}
     </View>
   );
 }
@@ -183,7 +223,7 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: '#ffffff',
+    backgroundColor: LOADER_BG,
     zIndex: 9999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -205,17 +245,15 @@ const styles = StyleSheet.create({
   },
   preloadWrap: {
     position: 'absolute',
-    left: -9999,
-    top: 0,
-    width: 64,
-    height: 64,
+    width: 0,
+    height: 0,
     opacity: 0,
     overflow: 'hidden',
     pointerEvents: 'none',
   },
   preloadDecode: {
-    width: 48,
-    height: 48,
+    width: 1,
+    height: 1,
   },
   avatarWrap: {
     width: 120,
