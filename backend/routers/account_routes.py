@@ -112,7 +112,20 @@ async def delete_account(
         except Exception:
             pass
 
-        # 3b) Delete family (CASCADE removes family_members, children, and dependent data)
+        # 3b) Children reference family; if FK has no ON DELETE CASCADE, family delete fails first.
+        try:
+            supabase.table("children").delete().eq("family_id", family_id).execute()
+        except Exception:
+            for row in (
+                supabase.table("children").select("id").eq("family_id", family_id).execute().data
+                or []
+            ):
+                try:
+                    supabase.table("children").delete().eq("id", row["id"]).execute()
+                except Exception:
+                    pass
+
+        # 3c) Delete family (CASCADE removes family_members, etc.)
         supabase.table("family").delete().eq("id", family_id).execute()
 
         # 4) Delete profiles (after family; may fail if FK—then auth delete still runs)
