@@ -202,18 +202,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [familyDataLoaded, setFamilyDataLoaded] = useState(false); // children, family, subjects from fetchFamilyMembers/fetchFamilyData
   const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
   const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
-  const [initialAppLoadDone, setInitialAppLoadDone] = useState(false);
-
-  // Derived: must come after all state they read (initialAppLoadDone, onboardingCheckDone, etc.) to avoid "Cannot access before initialization"
+  // Derived: must come after session/state used below (avoid TDZ)
   const onboardingBlocked = !!(
     session &&
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
+  // AppLoader only when: (1) resolving onboarding status, (2) onboarding modal not ready yet.
+  // Returning users: skip loader once we know they're onboarded—no wait for home/planner preload.
   const showLoader = !!(
     user &&
     session &&
-    (!initialAppLoadDone || !onboardingCheckDone || !onboardingUiReady || (onboardingBlocked && !onboardingModalReady))
+    ((!onboardingCheckDone) ||
+      (onboardingBlocked &&
+        (!onboardingUiReady || !onboardingModalReady)))
   );
 
   useEffect(() => {
@@ -1328,15 +1330,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => { cancelled = true; };
   }, [user, session]);
 
-  // After onboarding status is known, keep loader visible until app + onboarding modal have mounted (preload modal)
+  // Onboarding path: brief delay so modal can mount under loader. Skipped when not blocked (faster shell).
   useEffect(() => {
     if (!onboardingCheckDone) {
       setOnboardingUiReady(false);
       return;
     }
+    if (!onboardingBlocked) {
+      setOnboardingUiReady(true);
+      return;
+    }
     const id = setTimeout(() => setOnboardingUiReady(true), 50);
     return () => clearTimeout(id);
-  }, [onboardingCheckDone]);
+  }, [onboardingCheckDone, onboardingBlocked]);
 
   // New signup: ensure family exists so onboarding modal has familyId (backend creates family + links profile)
   const ensureFamilyInFlightRef = useRef(false);
@@ -1946,15 +1952,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Show full-screen loading when home tab is loading
   const showFullScreenLoading = activeTab === 'home' && homeLoading;
-
-  // Dismiss initial app load overlay once current tab's data is ready (home or planner)
-  useEffect(() => {
-    const homeReady = activeTab === 'home' && !homeLoading && !plannerLoading && familyDataLoaded && !subjectsLoading && !materialsLoading;
-    const plannerReady = (activeTab === 'planner' || activeTab === 'calendar') && !plannerLoading && (familyId != null);
-    if (homeReady || plannerReady) {
-      setInitialAppLoadDone(true);
-    }
-  }, [activeTab, homeLoading, plannerLoading, familyDataLoaded, subjectsLoading, materialsLoading, familyId]);
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {
