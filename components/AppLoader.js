@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Platform, Image, Animated, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Platform, Image, Animated } from 'react-native';
 
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
 const AVATAR_SOURCES = {
@@ -41,25 +41,30 @@ const SHELL_SOURCES = {
 
 const TOTAL_PRELOAD = SHELL_IMAGE_IDS.length;
 const PRELOAD_DONE_TIMEOUT_MS = 12000;
+/** After prof cycle is visible, wait this long before opening app (WebLayout gate). */
+const GATE_AVATARS_VISIBLE_MS = 1400;
 
 let globalIconSequenceDone = false;
 
 /**
- * Preloads shell + left-rail PNGs. With onShellAssetsReady, parent should keep overlay until callback (WebLayout).
- * Without callback, runs icon → avatar animation after preload (landing / role gate).
+ * Preloads shell + left-rail PNGs. WebLayout: icon hold → prof1–10 flash → then onShellAssetsReady.
+ * Landing/role gate: same animation (no callback).
  */
 export default function AppLoader({ style, onShellAssetsReady }) {
   const readyFiredRef = useRef(false);
   const gateMode = typeof onShellAssetsReady === 'function';
   const [phase, setPhase] = useState(() =>
-    gateMode ? 'gate' : globalIconSequenceDone ? 'avatars' : 'loading'
+    gateMode ? 'loading' : globalIconSequenceDone ? 'avatars' : 'loading'
   );
   const [avatarIndex, setAvatarIndex] = useState(0);
   const loadedRef = useRef(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
-  const iconOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 0 : 1)).current;
-  const avatarContainerOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 1 : 0)).current;
+  const iconOpacity = useRef(new Animated.Value(1)).current;
+  const avatarContainerOpacity = useRef(
+    new Animated.Value(!gateMode && globalIconSequenceDone ? 1 : 0)
+  ).current;
   const holdTimeoutRef = useRef(null);
+  const gateDoneTimeoutRef = useRef(null);
 
   const allShellImagesLoaded = loadedCount >= TOTAL_PRELOAD;
 
@@ -69,31 +74,36 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     setLoadedCount(loadedRef.current.size);
   };
 
+  const fireShellReady = () => {
+    if (!gateMode || readyFiredRef.current) return;
+    readyFiredRef.current = true;
+    onShellAssetsReady();
+  };
+
+  // Preload done → icon phase (gate + legacy)
   useEffect(() => {
     if (!allShellImagesLoaded) return;
     if (gateMode) {
-      if (readyFiredRef.current) return;
-      readyFiredRef.current = true;
-      onShellAssetsReady();
+      setPhase('icon');
+      iconOpacity.setValue(1);
+      avatarContainerOpacity.setValue(0);
       return;
     }
     setPhase(globalIconSequenceDone ? 'avatars' : 'icon');
     if (globalIconSequenceDone) avatarContainerOpacity.setValue(1);
-  }, [allShellImagesLoaded, gateMode, onShellAssetsReady, avatarContainerOpacity]);
+  }, [allShellImagesLoaded, gateMode, avatarContainerOpacity, iconOpacity]);
 
+  // Gate: never block forever
   useEffect(() => {
     if (!gateMode) return;
-    const t = setTimeout(() => {
-      if (readyFiredRef.current) return;
-      readyFiredRef.current = true;
-      onShellAssetsReady();
-    }, PRELOAD_DONE_TIMEOUT_MS);
+    const t = setTimeout(fireShellReady, PRELOAD_DONE_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [gateMode, onShellAssetsReady]);
+  }, [gateMode]);
 
+  // Icon hold → fade → avatars (gate + legacy when !globalIconSequenceDone)
   useEffect(() => {
-    if (gateMode || globalIconSequenceDone) return;
     if (phase !== 'icon') return;
+    if (!gateMode && globalIconSequenceDone) return;
     const holdMs = 1000;
     const fadeOutMs = 250;
     holdTimeoutRef.current = setTimeout(() => {
@@ -102,7 +112,7 @@ export default function AppLoader({ style, onShellAssetsReady }) {
         duration: fadeOutMs,
         useNativeDriver: Platform.OS !== 'web',
       }).start(() => {
-        globalIconSequenceDone = true;
+        if (!gateMode) globalIconSequenceDone = true;
         setPhase('avatars');
         avatarContainerOpacity.setValue(1);
       });
@@ -110,14 +120,24 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     return () => {
       if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
     };
-  }, [gateMode, phase, iconOpacity, avatarContainerOpacity]);
+  }, [phase, gateMode, iconOpacity, avatarContainerOpacity]);
+
+  // Gate: after prof cycle runs briefly, open app
+  useEffect(() => {
+    if (!gateMode || phase !== 'avatars') return;
+    if (gateDoneTimeoutRef.current) clearTimeout(gateDoneTimeoutRef.current);
+    gateDoneTimeoutRef.current = setTimeout(fireShellReady, GATE_AVATARS_VISIBLE_MS);
+    return () => {
+      if (gateDoneTimeoutRef.current) clearTimeout(gateDoneTimeoutRef.current);
+    };
+  }, [gateMode, phase]);
 
   const avatarIntervalMs = 100;
   const lastTickRef = useRef(null);
   const indexRef = useRef(0);
 
   useEffect(() => {
-    if (gateMode || phase !== 'avatars') return;
+    if (phase !== 'avatars') return;
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -137,7 +157,15 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     return () => {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [gateMode, phase]);
+  }, [phase]);
+
+  // Legacy: already ran icon sequence once → avatars only
+  useEffect(() => {
+    if (gateMode || !globalIconSequenceDone || phase !== 'loading') return;
+    if (!allShellImagesLoaded) return;
+    setPhase('avatars');
+    avatarContainerOpacity.setValue(1);
+  }, [gateMode, phase, allShellImagesLoaded, avatarContainerOpacity]);
 
   const preloadImages = (
     <View style={styles.preloadWrap} pointerEvents="none">
@@ -153,17 +181,6 @@ export default function AppLoader({ style, onShellAssetsReady }) {
       ))}
     </View>
   );
-
-  if (gateMode) {
-    return (
-      <View style={[styles.overlay, style]}>
-        <View style={styles.shellGateInner}>
-          {preloadImages}
-          <ActivityIndicator size="large" color="#887DEE" />
-        </View>
-      </View>
-    );
-  }
 
   if (phase === 'loading') {
     return (
@@ -217,11 +234,6 @@ const styles = StyleSheet.create({
       minHeight: '100vh',
       zIndex: 99999,
     }),
-  },
-  shellGateInner: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 120,
   },
   inner: {
     alignItems: 'center',
