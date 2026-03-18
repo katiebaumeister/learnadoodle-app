@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Platform, Image } from 'react-native';
+import { View, StyleSheet, Platform, Image, ActivityIndicator } from 'react-native';
 
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
 const AVATAR_SOURCES = {
@@ -35,6 +35,7 @@ const GATE_MIN_CYCLE_MS = 1600;
 const STALL_FALLBACK_MS = 60000;
 /** App shell outer background — avoids white flash between landing and loader */
 const LOADER_BG = '#F6F7FB';
+const SPINNER_COLOR = '#6BB3E8';
 
 function resolveUri(source) {
   try {
@@ -45,7 +46,7 @@ function resolveUri(source) {
   }
 }
 
-/** Web: preload shell assets (onload = usable for gate). Avatars cycle in parallel — no wait. */
+/** Web: preload shell assets (onload = usable for gate). */
 function preloadShellImagesWeb(onLoaded) {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return;
   SHELL_IMAGE_IDS.forEach((id) => {
@@ -62,9 +63,11 @@ function preloadShellImagesWeb(onLoaded) {
 }
 
 /**
- * Avatar cycle shows immediately. Shell preload runs in background for toolbar/gate.
+ * @param {object} props
+ * @param {boolean} [props.spinnerOnly] - Normal spinner (session restore + shell gate). No avatar cycle.
+ * @param {() => void} [props.onShellAssetsReady] - After preload + min delay; shell-only.
  */
-export default function AppLoader({ style, onShellAssetsReady }) {
+export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = false }) {
   const readyFiredRef = useRef(false);
   const gateMode = typeof onShellAssetsReady === 'function';
   const gateTimerStartRef = useRef(null);
@@ -143,6 +146,7 @@ export default function AppLoader({ style, onShellAssetsReady }) {
   const indexRef = useRef(0);
 
   useEffect(() => {
+    if (spinnerOnly) return;
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -162,19 +166,32 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     return () => {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
-  }, []);
+  }, [spinnerOnly]);
+
+  // Auth gate: no shell preload needed — instant spinner only
+  if (spinnerOnly && !gateMode) {
+    return (
+      <View style={[styles.overlay, style]}>
+        <ActivityIndicator size="large" color={SPINNER_COLOR} />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.overlay, style]}>
       {preloadImages}
       <View style={styles.inner}>
-        <View style={styles.avatarWrap} pointerEvents="none">
-          <Image
-            source={SHELL_SOURCES[AVATAR_KEYS[avatarIndex]]}
-            style={styles.avatar}
-            resizeMode="contain"
-          />
-        </View>
+        {spinnerOnly ? (
+          <ActivityIndicator size="large" color={SPINNER_COLOR} />
+        ) : (
+          <View style={styles.avatarWrap} pointerEvents="none">
+            <Image
+              source={SHELL_SOURCES[AVATAR_KEYS[avatarIndex]]}
+              style={styles.avatar}
+              resizeMode="contain"
+            />
+          </View>
+        )}
       </View>
     </View>
   );

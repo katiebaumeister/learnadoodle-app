@@ -253,7 +253,7 @@ export default function WebRouter() {
 
     // If no user, redirect to login (they need to be authenticated)
     if (!user) {
-      if (authLoading) return <AppLoader />;
+      if (authLoading) return <AppLoader spinnerOnly />;
       return <WebAuthScreen />;
     }
 
@@ -437,7 +437,7 @@ export default function WebRouter() {
   if (!user) {
     // Session still restoring — never paint landing (avoids flash before WebLayout for logged-in users)
     if (authLoading) {
-      return <AppLoader />;
+      return <AppLoader spinnerOnly />;
     }
     if (currentPath === '/reset-password') {
       return <PasswordResetPage />;

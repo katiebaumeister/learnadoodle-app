@@ -2053,7 +2053,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       <>
         {showLoader && (
           <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
-            <AppLoader onShellAssetsReady={onShellGateReady} />
+            <AppLoader spinnerOnly onShellAssetsReady={onShellGateReady} />
           </View>
         )}
         {!onboardingCheckDone ? (
