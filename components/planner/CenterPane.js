@@ -12,6 +12,22 @@ import { startOfToday, startOfWeek } from './utils/date';
 
 const DEFAULT_VIEW = 'Month';
 
+/** Lowercase keys from URL / WebLayout must map to PascalCase mode (render branches use 'Month', 'Week', …). */
+const KNOWN_MODES = {
+  month: 'Month',
+  week: 'Week',
+  day: 'Day',
+  board: 'Board',
+  tasks: 'Tasks',
+  attendance: 'Attendance',
+};
+
+function normalizeViewMode(raw) {
+  if (raw == null || raw === '') return DEFAULT_VIEW;
+  const key = String(raw).toLowerCase().trim();
+  return KNOWN_MODES[key] || DEFAULT_VIEW;
+}
+
 export default function CenterPane({
   date,
   events = [],
@@ -32,17 +48,11 @@ export default function CenterPane({
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
-  const [mode, setMode] = useState(externalViewMode || DEFAULT_VIEW);
+  const [mode, setMode] = useState(() => normalizeViewMode(externalViewMode));
   const prevModeRef = useRef(mode);
-  
-  // Sync mode when external viewMode prop changes
+
   useEffect(() => {
-    if (externalViewMode) {
-      // Capitalize first letter to match internal format (Month, Week, Day, Board, Tasks, Attendance)
-      const lower = (externalViewMode || '').toLowerCase();
-      const capitalized = lower.charAt(0).toUpperCase() + lower.slice(1);
-      setMode(capitalized);
-    }
+    setMode(normalizeViewMode(externalViewMode));
   }, [externalViewMode]);
   const [viewDate, setViewDate] = useState(selectedDate || date || startOfToday());
   

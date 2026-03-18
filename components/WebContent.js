@@ -7219,7 +7219,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
     // Always show planner with current cache (no full-page loading); data updates in place when refetches complete
     return (
-      <View style={{ flex: 1 }}>
+      <View
+        style={{
+          flex: 1,
+          minHeight: 0,
+          ...(Platform.OS === 'web' && {
+            flexGrow: 1,
+            minHeight: 'min(70vh, 560px)',
+            display: 'flex',
+            flexDirection: 'column',
+          }),
+        }}
+      >
         <PlanHealthBanner familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={propPreloadedPlanHealth} />
         <CenterPane
         date={date}
