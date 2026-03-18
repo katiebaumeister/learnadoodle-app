@@ -388,58 +388,106 @@ export default function WebAuthScreen() {
     clearMessages();
   };
 
+  const closeResetToSignIn = () => {
+    setIsResetPassword(false);
+    clearMessages();
+    updateURL('signin');
+  };
+
   if (isResetPassword) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-        <View style={styles.authCard}>
-          <Text style={styles.title}>Reset Password</Text>
-          <Text style={styles.subtitle}>Enter your email to receive a password reset link</Text>
-          
-          {errorMessage ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{errorMessage}</Text>
+      <Animated.View style={[styles.container, { opacity: pageFadeAnim }]}>
+        {Platform.OS === 'web' && <View style={styles.backgroundPattern} />}
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={closeResetToSignIn}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <X size={24} color="#64748b" />
+        </TouchableOpacity>
+        <ScrollView contentContainerStyle={styles.contentContainer}>
+          <View style={styles.authCardWrapper}>
+            <View style={styles.authCard}>
+              <Text style={styles.title}>Reset your password</Text>
+              <Text style={styles.subtitle}>
+                ENTER YOUR EMAIL AND WE&apos;LL SEND YOU A RESET LINK
+              </Text>
+
+              {errorMessage ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+              ) : null}
+
+              {successMessage ? (
+                <View style={styles.successBox}>
+                  <Text style={styles.successText}>{successMessage}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.inputGroup}>
+                <TextInput
+                  style={styles.textInput}
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="Email"
+                  placeholderTextColor="#9ca3af"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onSubmitEditing={handleResetPassword}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.authButton, loading && styles.disabledButton]}
+                onPress={handleResetPassword}
+                disabled={loading}
+                {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
+              >
+                <Text style={styles.authButtonText}>
+                  {loading ? 'Sending link…' : 'Send reset link'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.linkContainer}>
+                <TouchableOpacity style={styles.linkButton} onPress={closeResetToSignIn}>
+                  <Text style={styles.linkText}>Back to Sign In</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          ) : null}
-          
-          {successMessage ? (
-            <View style={styles.successBox}>
-              <Text style={styles.successText}>{successMessage}</Text>
-            </View>
-          ) : null}
-          
-          <View style={styles.inputGroup}>
-            <TextInput
-              style={styles.textInput}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Enter your email"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
           </View>
-          
-          <TouchableOpacity
-            style={[styles.authButton, loading && styles.disabledButton]}
-            onPress={handleResetPassword}
-            disabled={loading}
-          >
-            <Text style={styles.authButtonText}>
-              {loading ? 'Sending...' : 'Send Reset Link'}
+        </ScrollView>
+        <View style={styles.termsNoteContainer}>
+          <Text style={styles.termsNote}>
+            By signing in to Learnadoodle, you agree to our{' '}
+            <Text
+              style={styles.termsLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.href = '/terms';
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              Terms
             </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.linkButton}
-            onPress={() => {
-              setIsResetPassword(false);
-              updateURL('signin');
-            }}
-          >
-            <Text style={styles.linkText}>Back to Sign In</Text>
-          </TouchableOpacity>
+            {' '}and{' '}
+            <Text
+              style={styles.termsLink}
+              onPress={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.href = '/privacy';
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              Privacy Policy
+            </Text>
+            {' .'}
+          </Text>
         </View>
-      </ScrollView>
+      </Animated.View>
     );
   }
 
