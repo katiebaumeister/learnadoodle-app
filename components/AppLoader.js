@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Platform, Image, Animated } from 'react-native';
+import { View, StyleSheet, Platform, Image } from 'react-native';
 
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
 const AVATAR_SOURCES = {
@@ -15,17 +15,9 @@ const AVATAR_SOURCES = {
   prof10: require('../assets/prof10.png'),
 };
 
-const SHELL_IMAGE_IDS = [
-  'icon',
-  'logo',
-  'home',
-  'planner',
-  'family',
-  'library',
-  'subject',
-  'more',
-  ...AVATAR_KEYS,
-];
+/** Left rail + branding: must decode before app shows */
+const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
+const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...AVATAR_KEYS];
 
 const SHELL_SOURCES = {
   icon: require('../assets/icon.png'),
@@ -40,31 +32,31 @@ const SHELL_SOURCES = {
 };
 
 const TOTAL_PRELOAD = SHELL_IMAGE_IDS.length;
-const PRELOAD_DONE_TIMEOUT_MS = 12000;
-/** After prof cycle is visible, wait this long before opening app (WebLayout gate). */
-const GATE_AVATARS_VISIBLE_MS = 1400;
+/** Never open app before this many ms of prof cycle (UX); toolbar gate still waits on images. */
+const GATE_MIN_CYCLE_MS = 1600;
+/** If loads stall (buggy onLoad), eventually proceed so user isn’t stuck — only after this. */
+const STALL_FALLBACK_MS = 60000;
 
-let globalIconSequenceDone = false;
+function resolveUri(source) {
+  try {
+    const r = Image.resolveAssetSource(source);
+    return r && r.uri ? r.uri : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * Preloads shell + left-rail PNGs. WebLayout: icon hold → prof1–10 flash → then onShellAssetsReady.
- * Landing/role gate: same animation (no callback).
+ * Prof cycle on first paint + strict preload of every left-rail PNG.
+ * WebLayout only dismisses loader after all shell images loaded (or errored) + min cycle — no early dismiss.
  */
 export default function AppLoader({ style, onShellAssetsReady }) {
   const readyFiredRef = useRef(false);
   const gateMode = typeof onShellAssetsReady === 'function';
-  const [phase, setPhase] = useState(() =>
-    gateMode ? 'loading' : globalIconSequenceDone ? 'avatars' : 'loading'
-  );
+  const mountTimeRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const [avatarIndex, setAvatarIndex] = useState(0);
   const loadedRef = useRef(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
-  const iconOpacity = useRef(new Animated.Value(1)).current;
-  const avatarContainerOpacity = useRef(
-    new Animated.Value(!gateMode && globalIconSequenceDone ? 1 : 0)
-  ).current;
-  const holdTimeoutRef = useRef(null);
-  const gateDoneTimeoutRef = useRef(null);
 
   const allShellImagesLoaded = loadedCount >= TOTAL_PRELOAD;
 
@@ -80,64 +72,54 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     onShellAssetsReady();
   };
 
-  // Preload done → icon phase (gate + legacy)
+  // Web: decode every asset via HTML Image so toolbar PNGs are in network cache before LeftRail paints
   useEffect(() => {
-    if (!allShellImagesLoaded) return;
-    if (gateMode) {
-      setPhase('icon');
-      iconOpacity.setValue(1);
-      avatarContainerOpacity.setValue(0);
-      return;
-    }
-    setPhase(globalIconSequenceDone ? 'avatars' : 'icon');
-    if (globalIconSequenceDone) avatarContainerOpacity.setValue(1);
-  }, [allShellImagesLoaded, gateMode, avatarContainerOpacity, iconOpacity]);
-
-  // Gate: never block forever
-  useEffect(() => {
-    if (!gateMode) return;
-    const t = setTimeout(fireShellReady, PRELOAD_DONE_TIMEOUT_MS);
-    return () => clearTimeout(t);
+    if (!gateMode || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    SHELL_IMAGE_IDS.forEach((id) => {
+      const uri = resolveUri(SHELL_SOURCES[id]);
+      if (!uri) {
+        markLoaded(id);
+        return;
+      }
+      const img = new window.Image();
+      img.onload = () => markLoaded(id);
+      img.onerror = () => markLoaded(id);
+      img.src = uri;
+    });
   }, [gateMode]);
 
-  // Icon hold → fade → avatars (gate + legacy when !globalIconSequenceDone)
+  // Dismiss only when every shell asset reported + min prof cycle — loader persists until then
   useEffect(() => {
-    if (phase !== 'icon') return;
-    if (!gateMode && globalIconSequenceDone) return;
-    const holdMs = 1000;
-    const fadeOutMs = 250;
-    holdTimeoutRef.current = setTimeout(() => {
-      Animated.timing(iconOpacity, {
-        toValue: 0,
-        duration: fadeOutMs,
-        useNativeDriver: Platform.OS !== 'web',
-      }).start(() => {
-        if (!gateMode) globalIconSequenceDone = true;
-        setPhase('avatars');
-        avatarContainerOpacity.setValue(1);
-      });
-    }, holdMs);
-    return () => {
-      if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
-    };
-  }, [phase, gateMode, iconOpacity, avatarContainerOpacity]);
+    if (!gateMode || readyFiredRef.current) return;
 
-  // Gate: after prof cycle runs briefly, open app
-  useEffect(() => {
-    if (!gateMode || phase !== 'avatars') return;
-    if (gateDoneTimeoutRef.current) clearTimeout(gateDoneTimeoutRef.current);
-    gateDoneTimeoutRef.current = setTimeout(fireShellReady, GATE_AVATARS_VISIBLE_MS);
-    return () => {
-      if (gateDoneTimeoutRef.current) clearTimeout(gateDoneTimeoutRef.current);
+    const tryReady = () => {
+      if (readyFiredRef.current) return;
+      if (!allShellImagesLoaded) return;
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now - mountTimeRef.current < GATE_MIN_CYCLE_MS) return;
+      fireShellReady();
     };
-  }, [gateMode, phase]);
+
+    tryReady();
+    const interval = setInterval(tryReady, 80);
+    const stallFallback = setTimeout(() => {
+      if (readyFiredRef.current) return;
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[AppLoader] Stall fallback: opening app after', STALL_FALLBACK_MS, 'ms');
+      }
+      fireShellReady();
+    }, STALL_FALLBACK_MS);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(stallFallback);
+    };
+  }, [gateMode, allShellImagesLoaded]);
 
   const avatarIntervalMs = 100;
   const lastTickRef = useRef(null);
   const indexRef = useRef(0);
 
   useEffect(() => {
-    if (phase !== 'avatars') return;
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -157,15 +139,7 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     return () => {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [phase]);
-
-  // Legacy: already ran icon sequence once → avatars only
-  useEffect(() => {
-    if (gateMode || !globalIconSequenceDone || phase !== 'loading') return;
-    if (!allShellImagesLoaded) return;
-    setPhase('avatars');
-    avatarContainerOpacity.setValue(1);
-  }, [gateMode, phase, allShellImagesLoaded, avatarContainerOpacity]);
+  }, []);
 
   const preloadImages = (
     <View style={styles.preloadWrap} pointerEvents="none">
@@ -173,34 +147,21 @@ export default function AppLoader({ style, onShellAssetsReady }) {
         <Image
           key={id}
           source={SHELL_SOURCES[id]}
-          style={styles.preloadPixel}
+          style={styles.preloadDecode}
           resizeMode="contain"
           onLoad={() => markLoaded(id)}
           onLoadEnd={() => markLoaded(id)}
+          onError={() => markLoaded(id)}
         />
       ))}
     </View>
   );
 
-  if (phase === 'loading') {
-    return (
-      <View style={[styles.overlay, style]}>
-        <View style={styles.inner}>
-          {preloadImages}
-        </View>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.overlay, style]}>
       <View style={styles.inner}>
-        {phase === 'icon' && (
-          <Animated.View style={[styles.iconWrap, { opacity: iconOpacity }]} pointerEvents="none">
-            <Image source={SHELL_SOURCES.icon} style={styles.icon} resizeMode="contain" />
-          </Animated.View>
-        )}
-        <Animated.View style={[styles.avatarWrap, { opacity: avatarContainerOpacity }]} pointerEvents="none">
+        {preloadImages}
+        <View style={styles.avatarWrap} pointerEvents="none">
           {AVATAR_KEYS.map((key, i) => (
             <Image
               key={key}
@@ -209,7 +170,7 @@ export default function AppLoader({ style, onShellAssetsReady }) {
               resizeMode="contain"
             />
           ))}
-        </Animated.View>
+        </View>
       </View>
     </View>
   );
@@ -244,29 +205,19 @@ const styles = StyleSheet.create({
   },
   preloadWrap: {
     position: 'absolute',
-    width: 1,
-    height: 1,
+    left: -9999,
+    top: 0,
+    width: 64,
+    height: 64,
     opacity: 0,
     overflow: 'hidden',
     pointerEvents: 'none',
   },
-  preloadPixel: {
-    width: 8,
-    height: 8,
-  },
-  iconWrap: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  icon: {
-    width: 96,
-    height: 96,
+  preloadDecode: {
+    width: 48,
+    height: 48,
   },
   avatarWrap: {
-    position: 'absolute',
     width: 120,
     height: 120,
     alignItems: 'center',
