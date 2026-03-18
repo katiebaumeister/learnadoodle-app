@@ -208,14 +208,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  // AppLoader only when: (1) resolving onboarding status, (2) onboarding modal not ready yet.
-  // Returning users: skip loader once we know they're onboarded—no wait for home/planner preload.
+  // AppLoader until: onboarding resolved + modal ready if blocked + shell/rail images preloaded.
+  const [shellAssetsReady, setShellAssetsReady] = useState(false);
+  const onShellGateReady = useCallback(() => setShellAssetsReady(true), []);
   const showLoader = !!(
     user &&
     session &&
     ((!onboardingCheckDone) ||
       (onboardingBlocked &&
-        (!onboardingUiReady || !onboardingModalReady)))
+        (!onboardingUiReady || !onboardingModalReady)) ||
+      !shellAssetsReady)
   );
 
   useEffect(() => {
@@ -2051,7 +2053,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       <>
         {showLoader && (
           <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
-            <AppLoader />
+            <AppLoader onShellAssetsReady={onShellGateReady} />
           </View>
         )}
         {!onboardingCheckDone ? (

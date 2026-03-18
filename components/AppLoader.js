@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Platform, Image, Animated } from 'react-native';
+import { View, StyleSheet, Platform, Image, Animated, ActivityIndicator } from 'react-native';
 
 const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
 const AVATAR_SOURCES = {
@@ -15,51 +15,87 @@ const AVATAR_SOURCES = {
   prof10: require('../assets/prof10.png'),
 };
 
-// Run icon sequence only once per page load (survives Strict Mode remount so we don't flash icon twice)
+const SHELL_IMAGE_IDS = [
+  'icon',
+  'logo',
+  'home',
+  'planner',
+  'family',
+  'library',
+  'subject',
+  'more',
+  ...AVATAR_KEYS,
+];
+
+const SHELL_SOURCES = {
+  icon: require('../assets/icon.png'),
+  logo: require('../assets/learnadoodle-logo.png'),
+  home: require('../assets/home.png'),
+  planner: require('../assets/planner.png'),
+  family: require('../assets/family.png'),
+  library: require('../assets/library.png'),
+  subject: require('../assets/subject.png'),
+  more: require('../assets/more.png'),
+  ...AVATAR_SOURCES,
+};
+
+const TOTAL_PRELOAD = SHELL_IMAGE_IDS.length;
+const PRELOAD_DONE_TIMEOUT_MS = 12000;
+
 let globalIconSequenceDone = false;
 
 /**
- * Loading screen: preload all images, then show icon, brief hold, fade out, then prof1–10 fast cycle.
- * We only show icon/avatars after they have fully loaded so nothing appears half-drawn.
+ * Preloads shell + left-rail PNGs. With onShellAssetsReady, parent should keep overlay until callback (WebLayout).
+ * Without callback, runs icon → avatar animation after preload (landing / role gate).
  */
-export default function AppLoader({ style }) {
-  const [phase, setPhase] = useState(() => (globalIconSequenceDone ? 'avatars' : 'loading'));
+export default function AppLoader({ style, onShellAssetsReady }) {
+  const readyFiredRef = useRef(false);
+  const gateMode = typeof onShellAssetsReady === 'function';
+  const [phase, setPhase] = useState(() =>
+    gateMode ? 'gate' : globalIconSequenceDone ? 'avatars' : 'loading'
+  );
   const [avatarIndex, setAvatarIndex] = useState(0);
-  const [iconLoaded, setIconLoaded] = useState(false);
-  const avatarLoadedRef = useRef(new Set());
-  const [avatarsLoadedCount, setAvatarsLoadedCount] = useState(0);
-
+  const loadedRef = useRef(new Set());
+  const [loadedCount, setLoadedCount] = useState(0);
   const iconOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 0 : 1)).current;
   const avatarContainerOpacity = useRef(new Animated.Value(globalIconSequenceDone ? 1 : 0)).current;
   const holdTimeoutRef = useRef(null);
 
-  const allImagesLoaded = iconLoaded && avatarsLoadedCount >= AVATAR_KEYS.length;
+  const allShellImagesLoaded = loadedCount >= TOTAL_PRELOAD;
 
-  useEffect(() => {
-    if (phase === 'loading' && allImagesLoaded) {
-      setPhase(globalIconSequenceDone ? 'avatars' : 'icon');
-      if (globalIconSequenceDone) {
-        avatarContainerOpacity.setValue(1);
-      }
-    }
-  }, [phase, allImagesLoaded, avatarContainerOpacity]);
-
-  const handleAvatarLoad = (key) => {
-    avatarLoadedRef.current.add(key);
-    setAvatarsLoadedCount((prev) => Math.min(AVATAR_KEYS.length, avatarLoadedRef.current.size));
+  const markLoaded = (id) => {
+    if (loadedRef.current.has(id)) return;
+    loadedRef.current.add(id);
+    setLoadedCount(loadedRef.current.size);
   };
 
   useEffect(() => {
-    if (globalIconSequenceDone) {
-      setPhase('avatars');
-      avatarContainerOpacity.setValue(1);
+    if (!allShellImagesLoaded) return;
+    if (gateMode) {
+      if (readyFiredRef.current) return;
+      readyFiredRef.current = true;
+      onShellAssetsReady();
       return;
     }
-    if (phase !== 'icon') return;
+    setPhase(globalIconSequenceDone ? 'avatars' : 'icon');
+    if (globalIconSequenceDone) avatarContainerOpacity.setValue(1);
+  }, [allShellImagesLoaded, gateMode, onShellAssetsReady, avatarContainerOpacity]);
 
+  useEffect(() => {
+    if (!gateMode) return;
+    const t = setTimeout(() => {
+      if (readyFiredRef.current) return;
+      readyFiredRef.current = true;
+      onShellAssetsReady();
+    }, PRELOAD_DONE_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [gateMode, onShellAssetsReady]);
+
+  useEffect(() => {
+    if (gateMode || globalIconSequenceDone) return;
+    if (phase !== 'icon') return;
     const holdMs = 1000;
     const fadeOutMs = 250;
-
     holdTimeoutRef.current = setTimeout(() => {
       Animated.timing(iconOpacity, {
         toValue: 0,
@@ -71,24 +107,21 @@ export default function AppLoader({ style }) {
         avatarContainerOpacity.setValue(1);
       });
     }, holdMs);
-
     return () => {
       if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
     };
-  }, [phase, iconOpacity, avatarContainerOpacity]);
+  }, [gateMode, phase, iconOpacity, avatarContainerOpacity]);
 
-  // Even, continuous avatar cycle: use elapsed time so timing stays consistent under load
   const avatarIntervalMs = 100;
   const lastTickRef = useRef(null);
   const indexRef = useRef(0);
 
   useEffect(() => {
-    if (phase !== 'avatars') return;
+    if (gateMode || phase !== 'avatars') return;
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
     setAvatarIndex(0);
-
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const elapsed = now - lastTickRef.current;
@@ -104,30 +137,39 @@ export default function AppLoader({ style }) {
     return () => {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [phase]);
+  }, [gateMode, phase]);
 
-  // Preload phase: render all images hidden so they load; only show icon/avatars after all have onLoad
+  const preloadImages = (
+    <View style={styles.preloadWrap} pointerEvents="none">
+      {SHELL_IMAGE_IDS.map((id) => (
+        <Image
+          key={id}
+          source={SHELL_SOURCES[id]}
+          style={styles.preloadPixel}
+          resizeMode="contain"
+          onLoad={() => markLoaded(id)}
+          onLoadEnd={() => markLoaded(id)}
+        />
+      ))}
+    </View>
+  );
+
+  if (gateMode) {
+    return (
+      <View style={[styles.overlay, style]}>
+        <View style={styles.shellGateInner}>
+          {preloadImages}
+          <ActivityIndicator size="large" color="#887DEE" />
+        </View>
+      </View>
+    );
+  }
+
   if (phase === 'loading') {
     return (
       <View style={[styles.overlay, style]}>
         <View style={styles.inner}>
-          <View style={styles.preloadWrap}>
-            <Image
-              source={require('../assets/icon.png')}
-              style={styles.icon}
-              resizeMode="contain"
-              onLoad={() => setIconLoaded(true)}
-            />
-            {AVATAR_KEYS.map((key) => (
-              <Image
-                key={key}
-                source={AVATAR_SOURCES[key]}
-                style={[styles.avatar, styles.avatarStack]}
-                resizeMode="contain"
-                onLoad={() => handleAvatarLoad(key)}
-              />
-            ))}
-          </View>
+          {preloadImages}
         </View>
       </View>
     );
@@ -138,14 +180,14 @@ export default function AppLoader({ style }) {
       <View style={styles.inner}>
         {phase === 'icon' && (
           <Animated.View style={[styles.iconWrap, { opacity: iconOpacity }]} pointerEvents="none">
-            <Image source={require('../assets/icon.png')} style={styles.icon} resizeMode="contain" />
+            <Image source={SHELL_SOURCES.icon} style={styles.icon} resizeMode="contain" />
           </Animated.View>
         )}
         <Animated.View style={[styles.avatarWrap, { opacity: avatarContainerOpacity }]} pointerEvents="none">
           {AVATAR_KEYS.map((key, i) => (
             <Image
               key={key}
-              source={AVATAR_SOURCES[key]}
+              source={SHELL_SOURCES[key]}
               style={[styles.avatar, styles.avatarStack, { opacity: avatarIndex === i ? 1 : 0 }]}
               resizeMode="contain"
             />
@@ -176,6 +218,11 @@ const styles = StyleSheet.create({
       zIndex: 99999,
     }),
   },
+  shellGateInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 120,
+  },
   inner: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -185,11 +232,15 @@ const styles = StyleSheet.create({
   },
   preloadWrap: {
     position: 'absolute',
-    width: 120,
-    height: 120,
+    width: 1,
+    height: 1,
     opacity: 0,
     overflow: 'hidden',
     pointerEvents: 'none',
+  },
+  preloadPixel: {
+    width: 8,
+    height: 8,
   },
   iconWrap: {
     position: 'absolute',
