@@ -24,7 +24,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const { mode } = useSensoryMode();
   const tokens = getModeTokens(mode);
   const toast = useToast();
-  const { signOut } = useAuth();
+  const { signOut, signOutLocal } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [family, setFamily] = useState(propFamily);
@@ -1830,7 +1830,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           }
                           if (data?.success) {
                             toast.push('Account deleted. Signing out.', 'success');
-                            await signOut();
+                            await signOutLocal();
                           } else {
                             toast.push(data?.message || 'Account could not be deleted.', 'error');
                           }

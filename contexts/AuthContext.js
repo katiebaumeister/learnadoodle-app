@@ -133,16 +133,40 @@ export const AuthProvider = ({ children }) => {
   const signOut = async () => {
     try {
       const { error } = await auth.signOut()
-      if (error) throw error
-      
-      // Force clear state immediately
+      if (error) {
+        const msg = (error.message || '').toLowerCase()
+        if (msg.includes('not exist') || error.code === 'user_not_found') {
+          await auth.signOutLocal()
+          setUser(null)
+          setSession(null)
+          return { error: null }
+        }
+        throw error
+      }
       setUser(null)
       setSession(null)
-      
       return { error: null }
     } catch (error) {
+      try {
+        await auth.signOutLocal()
+        setUser(null)
+        setSession(null)
+      } catch (_) {}
       return { error }
     }
+  }
+
+  /** After account deletion the Auth user is gone; server signOut returns 403. Clear storage only. */
+  const signOutLocal = async () => {
+    try {
+      await auth.signOutLocal()
+    } catch (_) {}
+    setUser(null)
+    setSession(null)
+    if (typeof window !== 'undefined') {
+      window.location.href = '/'
+    }
+    return { error: null }
   }
 
   const resetPassword = async (email, options = {}) => {
@@ -162,6 +186,7 @@ export const AuthProvider = ({ children }) => {
     signUp,
     signIn,
     signOut,
+    signOutLocal,
     resetPassword,
   }
 
