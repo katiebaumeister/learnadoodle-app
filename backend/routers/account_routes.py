@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 import os
 import httpx
+import traceback
 
 from auth import get_current_user, rate_limiter
 from logger import log_event
@@ -83,7 +84,25 @@ async def delete_account(
         member_user_ids = [user_id]
 
     try:
-        # 3) Delete family (CASCADE removes family_members, children, and all dependent data)
+        # 3a) Clear marketplace tables (block DELETE family until FK migration runs)
+        try:
+            supabase.table("marketplace_purchases").delete().eq("family_id", family_id).execute()
+        except Exception:
+            pass
+        try:
+            listings_res = (
+                supabase.table("marketplace_listings").select("id").eq("family_id", family_id).execute()
+            )
+            for row in listings_res.data or []:
+                try:
+                    supabase.table("marketplace_reviews").delete().eq("listing_id", row["id"]).execute()
+                except Exception:
+                    pass
+            supabase.table("marketplace_listings").delete().eq("family_id", family_id).execute()
+        except Exception:
+            pass
+
+        # 3b) Delete family (CASCADE removes family_members, children, and all dependent data)
         supabase.table("family").delete().eq("id", family_id).execute()
 
         # 4) Delete profiles for all family members (so no orphan profile rows)
@@ -121,7 +140,9 @@ async def delete_account(
         log_event("account.delete.success", user_id=user_id, family_id=family_id)
         return DeleteAccountOut(success=True, message="Your account and all family data have been permanently deleted.")
     except Exception as e:
-        log_event("account.delete.error", user_id=user_id, error=str(e))
+        tb = traceback.format_exc()
+        log_event("account.delete.error", user_id=user_id, error=str(e), traceback=tb[:2000])
+        print(f"[account.delete] {e}\n{tb}", flush=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete account. Please try again or contact support.",
