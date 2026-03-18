@@ -45,37 +45,32 @@ function resolveUri(source) {
   }
 }
 
-/**
- * Web: preload + decode via HTML Image. Returns Promise per id (decode in browser cache).
- * RN visible Images then paint from cache immediately.
- */
-function preloadShellImagesWeb(onEachLoaded) {
+/** Web: preload shell assets (onload = usable for gate). Avatars cycle in parallel — no wait. */
+function preloadShellImagesWeb(onLoaded) {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return;
   SHELL_IMAGE_IDS.forEach((id) => {
     const uri = resolveUri(SHELL_SOURCES[id]);
     if (!uri) {
-      onEachLoaded(id);
+      onLoaded(id);
       return;
     }
     const img = new window.Image();
-    img.onload = () => onEachLoaded(id);
-    img.onerror = () => onEachLoaded(id);
+    img.onload = () => onLoaded(id);
+    img.onerror = () => onLoaded(id);
     img.src = uri;
   });
 }
 
 /**
- * Prof cycle only after all 10 prof PNGs decoded. Toolbar gated before app. Loader BG matches shell.
+ * Avatar cycle shows immediately. Shell preload runs in background for toolbar/gate.
  */
 export default function AppLoader({ style, onShellAssetsReady }) {
   const readyFiredRef = useRef(false);
   const gateMode = typeof onShellAssetsReady === 'function';
   const gateTimerStartRef = useRef(null);
-  const [showProfCycle, setShowProfCycle] = useState(false);
   const [avatarIndex, setAvatarIndex] = useState(0);
   const loadedRef = useRef(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
-  const profDecodedRef = useRef(new Set());
 
   const allShellImagesLoaded = loadedCount >= TOTAL_PRELOAD;
 
@@ -85,29 +80,17 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     setLoadedCount(loadedRef.current.size);
   };
 
-  const markProfDecoded = (id) => {
-    if (!AVATAR_KEYS.includes(id)) return;
-    if (profDecodedRef.current.has(id)) return;
-    profDecodedRef.current.add(id);
-    if (profDecodedRef.current.size >= AVATAR_KEYS.length) setShowProfCycle(true);
-  };
-
   const fireShellReady = () => {
     if (!gateMode || readyFiredRef.current) return;
     readyFiredRef.current = true;
     onShellAssetsReady();
   };
 
-  // Web: decode every asset; mark shell + prof decode for cycle
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    preloadShellImagesWeb((id) => {
-      markLoaded(id);
-      markProfDecoded(id);
-    });
+    preloadShellImagesWeb(markLoaded);
   }, []);
 
-  // Native / fallback: RN Image preload
   const preloadImages = (
     <View style={styles.preloadWrap} pointerEvents="none">
       {SHELL_IMAGE_IDS.map((id) => (
@@ -116,32 +99,19 @@ export default function AppLoader({ style, onShellAssetsReady }) {
           source={SHELL_SOURCES[id]}
           style={styles.preloadDecode}
           resizeMode="contain"
-          onLoad={() => {
-            markLoaded(id);
-            markProfDecoded(id);
-          }}
-          onLoadEnd={() => {
-            markLoaded(id);
-            markProfDecoded(id);
-          }}
+          onLoad={() => markLoaded(id)}
+          onLoadEnd={() => markLoaded(id)}
           onError={() => markLoaded(id)}
         />
       ))}
     </View>
   );
 
-  // When all shell IDs reported (web HTML + RN), start gate timer for dismiss
   useEffect(() => {
     if (!allShellImagesLoaded || gateTimerStartRef.current != null) return;
     gateTimerStartRef.current =
       typeof performance !== 'undefined' ? performance.now() : Date.now();
   }, [allShellImagesLoaded]);
-
-  // Non-web: prof cycle after RN marked all profs
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    if (AVATAR_KEYS.every((k) => loadedRef.current.has(k))) setShowProfCycle(true);
-  }, [loadedCount]);
 
   useEffect(() => {
     if (!gateMode || readyFiredRef.current) return;
@@ -168,12 +138,11 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     };
   }, [gateMode, allShellImagesLoaded]);
 
-  const avatarIntervalMs = 100;
+  const avatarIntervalMs = 280;
   const lastTickRef = useRef(null);
   const indexRef = useRef(0);
 
   useEffect(() => {
-    if (!showProfCycle) return;
     let rafId;
     lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
     indexRef.current = 0;
@@ -193,25 +162,20 @@ export default function AppLoader({ style, onShellAssetsReady }) {
     return () => {
       if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [showProfCycle]);
+  }, []);
 
   return (
     <View style={[styles.overlay, style]}>
       {preloadImages}
-      {showProfCycle ? (
-        <View style={styles.inner}>
-          <View style={styles.avatarWrap} pointerEvents="none">
-            {AVATAR_KEYS.map((key, i) => (
-              <Image
-                key={key}
-                source={SHELL_SOURCES[key]}
-                style={[styles.avatar, styles.avatarStack, { opacity: avatarIndex === i ? 1 : 0 }]}
-                resizeMode="contain"
-              />
-            ))}
-          </View>
+      <View style={styles.inner}>
+        <View style={styles.avatarWrap} pointerEvents="none">
+          <Image
+            source={SHELL_SOURCES[AVATAR_KEYS[avatarIndex]]}
+            style={styles.avatar}
+            resizeMode="contain"
+          />
         </View>
-      ) : null}
+      </View>
     </View>
   );
 }
@@ -260,12 +224,10 @@ const styles = StyleSheet.create({
     height: 120,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'visible',
   },
   avatar: {
-    width: 88,
-    height: 88,
-  },
-  avatarStack: {
-    position: 'absolute',
+    width: 96,
+    height: 96,
   },
 });

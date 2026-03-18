@@ -7,6 +7,14 @@ import { baseCssLayer, cssVariableMap } from '../theme/designTokens';
 // Wrap everything in try-catch to prevent initialization failures
 if (typeof window !== 'undefined') {
   try {
+    // Match AppLoader so first paint never flashes white then landing
+    try {
+      const shellBg = '#F6F7FB';
+      if (typeof document !== 'undefined') {
+        document.documentElement.style.backgroundColor = shellBg;
+        if (document.body) document.body.style.backgroundColor = shellBg;
+      }
+    } catch (_) {}
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     // Pattern to match UUIDs with optional suffixes like -day-0, -day-1, etc.
     const uuidWithSuffixPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z0-9-]+)?$/i;

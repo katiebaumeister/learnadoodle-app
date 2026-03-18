@@ -21,6 +21,7 @@ import BlogAllPage from './blog/BlogAllPage';
 import { useAuth } from '../contexts/AuthContext';
 import { SessionProvider } from '../contexts/SessionContext';
 import RoleGate from './navigation/RoleGate';
+import AppLoader from './AppLoader';
 
 function getPath() {
   if (typeof window === 'undefined') return '/';
@@ -28,7 +29,7 @@ function getPath() {
 }
 
 export default function WebRouter() {
-  const { user, loading, session } = useAuth();
+  const { user, loading: authLoading, session } = useAuth();
   const [currentPath, setCurrentPath] = useState(getPath);
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
   const [resetFlowStartTime, setResetFlowStartTime] = useState(null);
@@ -252,6 +253,7 @@ export default function WebRouter() {
 
     // If no user, redirect to login (they need to be authenticated)
     if (!user) {
+      if (authLoading) return <AppLoader />;
       return <WebAuthScreen />;
     }
 
@@ -433,6 +435,10 @@ export default function WebRouter() {
 
   // If no user, show appropriate auth screen based on route
   if (!user) {
+    // Session still restoring — never paint landing (avoids flash before WebLayout for logged-in users)
+    if (authLoading) {
+      return <AppLoader />;
+    }
     if (currentPath === '/reset-password') {
       return <PasswordResetPage />;
     }
