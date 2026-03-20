@@ -513,7 +513,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = [] }) {
   const session = useSession();
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
@@ -582,7 +582,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [subjectId, setSubjectId] = useState(null);
   const [countsTowardPlan, setCountsTowardPlan] = useState(true);
   const [academicYearId, setAcademicYearId] = useState(null);
-  const [academicYears, setAcademicYears] = useState([]);
+  const [academicYears, setAcademicYears] = useState(() => (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0 ? preloadedAcademicYears : []));
   const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
   const [unit, setUnit] = useState('');
   const [grade, setGrade] = useState('');
@@ -1176,6 +1176,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
   }, [familyId, event?.id, assigneeIds]);
 
+  // Sync preloaded academic years when provided (avoids "Loading..." in Which plan? dropdown)
+  useEffect(() => {
+    if (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0) {
+      setAcademicYears(preloadedAcademicYears);
+    }
+  }, [preloadedAcademicYears]);
+
   // Load academic years for Instructional accounting (Counts toward year plan → Plan dropdown)
   useEffect(() => {
     if (!familyId) {
@@ -1192,7 +1199,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         .limit(10);
       if (cancelled) return;
       if (error) {
-        setAcademicYears([]);
+        if (!(Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0)) {
+          setAcademicYears([]);
+        }
         return;
       }
       // One chip per plan: dedupe by date range so we show only one row per plan (the most recent, with friendly name)
@@ -1208,7 +1217,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setAcademicYears(list);
     })();
     return () => { cancelled = true; };
-  }, [familyId]);
+  }, [familyId, preloadedAcademicYears]);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes (for editing)
   useEffect(() => {

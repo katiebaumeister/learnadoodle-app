@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock, Download, Bot } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock, ExternalLink, Bot } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
@@ -28,6 +28,9 @@ import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
 import PlanYearWizard from './year/PlanYearWizard';
 import PlanYearModal from './planner/PlanYearModal';
+import GenerateCurriculumModal from './GenerateCurriculumModal';
+import ParsePlainTextModal from './ParsePlainTextModal';
+import ManualCurriculumBuilderModal from './ManualCurriculumBuilderModal';
 import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
@@ -153,11 +156,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearInitialAcademicYearId, setPlanYearInitialAcademicYearId] = useState(null);
   const [planYearInitialPlanSummaryData, setPlanYearInitialPlanSummaryData] = useState(null);
   const [planYearOpenForNewPlan, setPlanYearOpenForNewPlan] = useState(false);
+  const [planYearOpenToEditList, setPlanYearOpenToEditList] = useState(false);
+  const [planYearOpenDirectlyToScope, setPlanYearOpenDirectlyToScope] = useState(false);
   const [planYearFromSubjectDetail, setPlanYearFromSubjectDetail] = useState(false);
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
   const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
+  const [showPlanYearDropdown, setShowPlanYearDropdown] = useState(false);
+  const planYearDropdownButtonRef = useRef(null);
+  const planYearDropdownRef = useRef(null);
+  const [planYearDropdownPosition, setPlanYearDropdownPosition] = useState({ top: 0, left: 0 });
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showPlanWeekModal, setShowPlanWeekModal] = useState(false);
@@ -172,6 +181,26 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [buildCurriculumInitialSourceUrl, setBuildCurriculumInitialSourceUrl] = useState(null);
   const [buildCurriculumInitialTopic, setBuildCurriculumInitialTopic] = useState(null);
   const [buildCurriculumInitialMaterialId, setBuildCurriculumInitialMaterialId] = useState(null);
+  const [showGenerateCurriculumModal, setShowGenerateCurriculumModal] = useState(false);
+  const [generateCurriculumContext, setGenerateCurriculumContext] = useState({
+    subjectId: null,
+    subjectName: null,
+    familyId: null,
+    childIds: [],
+  });
+  const [showParsePlainTextModal, setShowParsePlainTextModal] = useState(false);
+  const [parsePlainTextContext, setParsePlainTextContext] = useState({
+    subjectId: null,
+    subjectName: null,
+    familyId: null,
+    childIds: [],
+  });
+  const [showManualCurriculumBuilderModal, setShowManualCurriculumBuilderModal] = useState(false);
+  const [manualCurriculumBuilderContext, setManualCurriculumBuilderContext] = useState({
+    subjectId: null,
+    subjectName: null,
+    familyId: null,
+  });
   const [showProgressForecastModal, setShowProgressForecastModal] = useState(false);
   const [showSchedulingAssistantModal, setShowSchedulingAssistantModal] = useState(false);
   const [schedulingAssistantChildId, setSchedulingAssistantChildId] = useState(null);
@@ -200,6 +229,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [homeLoading, setHomeLoading] = useState(true); // true so initial load overlay stays until WebContent reports ready
   const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
   const [familyDataLoaded, setFamilyDataLoaded] = useState(false); // children, family, subjects from fetchFamilyMembers/fetchFamilyData
+  const [academicYearsLoaded, setAcademicYearsLoaded] = useState(false);
+  const [preloadedAcademicYears, setPreloadedAcademicYears] = useState([]);
   const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
   const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
   // Derived: must come after session/state used below (avoid TDZ)
@@ -208,16 +239,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  // AppLoader until: onboarding resolved + modal ready if blocked + shell/rail images preloaded.
+  // AppLoader until: onboarding resolved + modal ready if blocked + shell/rail images preloaded + critical data (family + academic years) + home data when on home tab.
   const [shellAssetsReady, setShellAssetsReady] = useState(false);
   const onShellGateReady = useCallback(() => setShellAssetsReady(true), []);
+  const criticalDataReady = familyDataLoaded && (academicYearsLoaded || !session?.family_id);
+  // When on home, keep loader until we have familyId (so we never show inner "Loading...") and home data is ready.
+  // If session is done and has no family_id, allow ready so we don't block forever for users without a family.
+  const homeReady = activeTab !== 'home' ||
+    (familyId && !homeLoading) ||
+    (session && !session.loading && session.family_id == null && !homeLoading);
   const showLoader = !!(
     user &&
     session &&
     ((!onboardingCheckDone) ||
       (onboardingBlocked &&
         (!onboardingUiReady || !onboardingModalReady)) ||
-      !shellAssetsReady)
+      !shellAssetsReady ||
+      !criticalDataReady ||
+      !homeReady)
   );
 
   useEffect(() => {
@@ -502,6 +541,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, [showViewModeDropdown]);
+
+  // Handle click outside Plan Year dropdown
+  useEffect(() => {
+    if (showPlanYearDropdown && Platform.OS === 'web' && typeof document !== 'undefined') {
+      const handleClickOutside = (event) => {
+        const buttonNode = planYearDropdownButtonRef.current?._nativeNode || planYearDropdownButtonRef.current;
+        const dropdownNode = planYearDropdownRef.current?._nativeNode || planYearDropdownRef.current;
+        const target = event.target;
+        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
+        const isInsideDropdown = dropdownNode && (dropdownNode === target || dropdownNode.contains(target));
+        if (!isInsideButton && !isInsideDropdown) {
+          setShowPlanYearDropdown(false);
+        }
+      };
+      document.addEventListener('click', handleClickOutside, true);
+      return () => document.removeEventListener('click', handleClickOutside, true);
+    }
+  }, [showPlanYearDropdown]);
 
   // Search events when query changes
   useEffect(() => {
@@ -1251,7 +1308,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             try {
               const { data: fullSubjectsData } = await supabase
                 .from('subject')
-                .select('id, name, child_id, grade, notes, created_at, updated_at')
+                .select('id, name, child_id, grade, notes, created_at, updated_at, default_target_days, default_target_hours')
                 .eq('family_id', profileData.family_id)
                 .order('name');
               setFullSubjects(fullSubjectsData || []);
@@ -1293,15 +1350,46 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (!user || !session) {
       setFamilyDataLoaded(true);
+      setAcademicYearsLoaded(true);
       return;
     }
     // Skip family/members fetch when user has no family yet (new signup); avoids 404s until ensure_family runs
     if (!session.family_id) {
       setFamilyDataLoaded(true);
+      setAcademicYearsLoaded(true);
       return;
     }
     let mounted = true;
-    Promise.all([fetchFamilyMembers(), fetchFamilyData()])
+    const fetchAcademicYears = async () => {
+      const { data, error } = await supabase
+        .from('academic_years')
+        .select('id, start_date, end_date, year_name')
+        .eq('family_id', session.family_id)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+      if (!mounted) return;
+      if (error) {
+        setPreloadedAcademicYears([]);
+        setAcademicYearsLoaded(true);
+        return;
+      }
+      const seen = new Set();
+      const list = (data || []).filter((ay) => {
+        const start = (ay.start_date && String(ay.start_date).slice(0, 10)) || '';
+        const end = (ay.end_date && String(ay.end_date).slice(0, 10)) || '';
+        const key = `${start}_${end}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setPreloadedAcademicYears(list);
+      setAcademicYearsLoaded(true);
+    };
+    Promise.all([
+      fetchFamilyMembers(),
+      fetchFamilyData(),
+      fetchAcademicYears().catch(() => { if (mounted) setAcademicYearsLoaded(true); }),
+    ])
       .then(() => { if (mounted) setFamilyDataLoaded(true); })
       .catch(() => { if (mounted) setFamilyDataLoaded(true); });
     return () => { mounted = false; };
@@ -1739,6 +1827,56 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openExportPlannerModal', handler);
   }, []);
 
+  // Listen for openGenerateCurriculumModal (from Edit Subject → Course Structure → Generate curriculum)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const detail = e?.detail || {};
+      setGenerateCurriculumContext({
+        subjectId: detail.subjectId || null,
+        subjectName: detail.subjectName || null,
+        familyId: detail.familyId || familyId || null,
+        childIds: Array.isArray(detail.childIds) ? detail.childIds : [],
+      });
+      setShowGenerateCurriculumModal(true);
+    };
+    window.addEventListener('openGenerateCurriculumModal', handler);
+    return () => window.removeEventListener('openGenerateCurriculumModal', handler);
+  }, [familyId]);
+
+  // Listen for openParsePlainTextModal (from Edit Subject → Course Structure → Import & extract)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const detail = e?.detail || {};
+      setParsePlainTextContext({
+        subjectId: detail.subjectId || null,
+        subjectName: detail.subjectName || null,
+        familyId: detail.familyId || familyId || null,
+        childIds: Array.isArray(detail.childIds) ? detail.childIds : [],
+      });
+      setShowParsePlainTextModal(true);
+    };
+    window.addEventListener('openParsePlainTextModal', handler);
+    return () => window.removeEventListener('openParsePlainTextModal', handler);
+  }, [familyId]);
+
+  // Listen for openManualCurriculumBuilderModal (from Edit Subject → Course Structure → Add unit manually)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const detail = e?.detail || {};
+      setManualCurriculumBuilderContext({
+        subjectId: detail.subjectId || null,
+        subjectName: detail.subjectName || null,
+        familyId: detail.familyId || familyId || null,
+      });
+      setShowManualCurriculumBuilderModal(true);
+    };
+    window.addEventListener('openManualCurriculumBuilderModal', handler);
+    return () => window.removeEventListener('openManualCurriculumBuilderModal', handler);
+  }, [familyId]);
+
   // Navigation handler for global search - expose via window for GlobalSearchModal
   const handleSearchNavigate = useCallback((tab, subtab = null, params = {}) => {
     handleTabChange(tab, subtab);
@@ -2052,7 +2190,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return (
       <>
         {showLoader && (
-          <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }]} pointerEvents="auto">
+          <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }, { pointerEvents: 'auto' }]}>
             <AppLoader spinnerOnly onShellAssetsReady={onShellGateReady} />
           </View>
         )}
@@ -2159,7 +2297,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         marginBottom: 2,
                       }}>
-                        {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                        {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                       </Text>
                       <Text style={{
                         fontSize: 13,
@@ -2224,120 +2362,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     justifyContent: 'center',
                   }}
                 >
-                  {/* View Mode Dropdown */}
-                  <View style={{ position: 'relative' }}>
-                    <TouchableOpacity
-                      ref={viewModeButtonRef}
-                      onPress={() => {
-                        if (Platform.OS === 'web' && viewModeButtonRef.current) {
-                          const node = viewModeButtonRef.current._nativeNode || viewModeButtonRef.current;
-                          if (node && typeof node.getBoundingClientRect === 'function') {
-                            const rect = node.getBoundingClientRect();
-                            setViewModeDropdownPosition({
-                              top: rect.bottom + 4,
-                              left: rect.left,
-                            });
-                          }
-                        }
-                        setShowViewModeDropdown(!showViewModeDropdown);
-                      }}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        height: 36,
-                        gap: 4,
-                        paddingHorizontal: 12,
-                        borderRadius: 8,
-                        backgroundColor: '#FFFFFF',
-                        borderWidth: 1,
-                        borderColor: '#E6EBF2',
-                      }}
-                    >
-                      <Text style={{ 
-                        fontSize: 15, 
-                        color: '#1E293B',
-                        fontWeight: '500',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}>
-                        {(() => {
-                          const viewLabels = {
-                            'month': 'Month',
-                            'week': 'Week',
-                            'board': 'Board',
-                            'tasks': 'To-do lists',
-                            'attendance': 'Attendance',
-                          };
-                          return viewLabels[currentView] || 'Month';
-                        })()}
-                      </Text>
-                      <ChevronDown size={13} color="#64748B" />
-                    </TouchableOpacity>
-                    
-                    {showViewModeDropdown && Platform.OS === 'web' && (
-                      <View
-                        ref={viewModeDropdownRef}
-                        style={{
-                          position: 'fixed',
-                          top: viewModeDropdownPosition.top,
-                          left: viewModeDropdownPosition.left,
-                          backgroundColor: '#FFFFFF',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: 'rgba(15,23,42,0.08)',
-                          padding: 4,
-                          minWidth: 160,
-                          zIndex: 1000,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                        }}
-                      >
-                        {[
-                          { key: 'month', label: 'Month' },
-                          // Week view hidden from UI for now; logic kept
-                          { key: 'board', label: 'Board' },
-                          { key: 'tasks', label: 'To-do lists' },
-                          { key: 'attendance', label: 'Attendance' },
-                        ].map((view) => {
-                          const isActive = (currentView === view.key) || (currentView === 'board' && view.key === 'board') || (currentView === 'attendance' && view.key === 'attendance');
-                          return (
-                            <TouchableOpacity
-                              key={view.key}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 8,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                                backgroundColor: isActive ? 'rgba(167, 139, 250, 0.1)' : 'transparent',
-                              }}
-                              onPress={() => {
-                                const viewValue = view.key;
-                                setCurrentView(viewValue);
-                                setDefaultView(viewValue);
-                                setShowViewModeDropdown(false);
-                                if (Platform.OS === 'web') {
-                                  const url = new URL(window.location);
-                                  url.searchParams.set('view', viewValue);
-                                  window.history.pushState({}, '', url);
-                                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
-                                }
-                              }}
-                            >
-                              <Text style={{ 
-                                fontSize: 15, 
-                                color: isActive ? 'rgba(167, 139, 250, 0.9)' : 'rgba(15,23,42,0.9)',
-                                fontWeight: isActive ? '600' : '400',
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }}>
-                                {view.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    )}
-                  </View>
-                  
                   {/* Combined Filters Button */}
                   <View style={{ position: 'relative' }}>
                     <TouchableOpacity
@@ -2373,15 +2397,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         fontWeight: '500',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                       }}>
-                        {(() => {
-                          const childrenText = selectedCalendarChildren && selectedCalendarChildren.length > 0 
-                            ? `${selectedCalendarChildren.length === 1 ? '1' : selectedCalendarChildren.length} Child${selectedCalendarChildren.length > 1 ? 'ren' : ''}`
-                            : 'All Children';
-                          const eventsText = selectedEventTypes && selectedEventTypes.length > 0
-                            ? `${selectedEventTypes.length} Event Type${selectedEventTypes.length > 1 ? 's' : ''}`
-                            : 'All Events';
-                          return `Filters: ${childrenText} · ${eventsText}`;
-                        })()}
+                        Filters
                       </Text>
                       <ChevronDown size={13} color="rgba(15, 23, 42, 0.7)" />
                     </TouchableOpacity>
@@ -2632,7 +2648,112 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     )}
                   </View>
                   
-                  {/* Plan My Year button + Plan health notification icon */}
+                  {/* View Mode Dropdown */}
+                  <View style={{ position: 'relative' }}>
+                    <TouchableOpacity
+                      ref={viewModeButtonRef}
+                      onPress={() => {
+                        if (Platform.OS === 'web' && viewModeButtonRef.current) {
+                          const node = viewModeButtonRef.current._nativeNode || viewModeButtonRef.current;
+                          if (node && typeof node.getBoundingClientRect === 'function') {
+                            const rect = node.getBoundingClientRect();
+                            setViewModeDropdownPosition({
+                              top: rect.bottom + 4,
+                              left: rect.left,
+                            });
+                          }
+                        }
+                        setShowViewModeDropdown(!showViewModeDropdown);
+                      }}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        height: 36,
+                        gap: 4,
+                        paddingHorizontal: 12,
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#E6EBF2',
+                      }}
+                    >
+                      <Text style={{ 
+                        fontSize: 15, 
+                        color: '#1E293B',
+                        fontWeight: '500',
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }}>
+                        Views
+                      </Text>
+                      <ChevronDown size={13} color="#64748B" />
+                    </TouchableOpacity>
+                    
+                    {showViewModeDropdown && Platform.OS === 'web' && (
+                      <View
+                        ref={viewModeDropdownRef}
+                        style={{
+                          position: 'fixed',
+                          top: viewModeDropdownPosition.top,
+                          left: viewModeDropdownPosition.left,
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: 'rgba(15,23,42,0.08)',
+                          padding: 4,
+                          width: 'max-content',
+                          zIndex: 1000,
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                        }}
+                      >
+                        {[
+                          { key: 'month', label: 'Month' },
+                          // Week view hidden from UI for now; logic kept
+                          { key: 'week', label: 'Week' },
+                          { key: 'tasks', label: 'To-do lists' },
+                          { key: 'attendance', label: 'Attendance' },
+                        ].map((view) => {
+                          const isActive = (currentView === view.key) || (currentView === 'week' && view.key === 'week') || (currentView === 'attendance' && view.key === 'attendance');
+                          return (
+                            <TouchableOpacity
+                              key={view.key}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingVertical: 8,
+                                paddingHorizontal: 10,
+                                borderRadius: 4,
+                                backgroundColor: isActive ? 'rgba(167, 139, 250, 0.1)' : 'transparent',
+                              }}
+                              onPress={() => {
+                                const viewValue = view.key;
+                                setCurrentView(viewValue);
+                                setDefaultView(viewValue);
+                                setShowViewModeDropdown(false);
+                                if (Platform.OS === 'web') {
+                                  const url = new URL(window.location);
+                                  url.searchParams.set('view', viewValue);
+                                  window.history.pushState({}, '', url);
+                                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
+                                }
+                              }}
+                            >
+                              <Text style={{ 
+                                fontSize: 15, 
+                                color: isActive ? 'rgba(167, 139, 250, 0.9)' : 'rgba(15,23,42,0.9)',
+                                fontWeight: isActive ? '600' : '400',
+                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                              }}>
+                                {view.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                  
+                  {/* Build plan dropdown (Build plan + Edit plan + Rebalance) + Plan health notification icon */}
                   <View style={{ 
                     flexShrink: 0,
                     position: 'relative',
@@ -2641,74 +2762,154 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     gap: 6,
                   }}>
                     {family?.default_planning_mode !== 'NONE' && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          setPlanYearInitialAcademicYearId(null);
-                          setPlanYearOpenForNewPlan(true);
-                          setShowPlanYearModal(true);
-                        }}
-                        accessibilityLabel={STRINGS.planMyYear.modal.title}
-                        accessibilityRole="button"
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          height: 36,
-                          gap: 8,
-                          paddingHorizontal: 12,
-                          borderRadius: 8,
-                          backgroundColor: '#FFFFFF',
-                          borderWidth: 1,
-                          borderColor: '#E6EBF2',
-                        }}
-                      >
-                        <Target size={16} color="#1E293B" strokeWidth={2} />
-                        <Text style={{
-                          fontSize: 15,
-                          color: '#1E293B',
-                          fontWeight: '500',
-                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        }}>
-                          {STRINGS.planMyYear.modal.title}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                    {(activeTab === 'planner' || activeTab === 'calendar') && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          const m = currentMonth.getMonth();
-                          const y = currentMonth.getFullYear();
-                          const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-                          const lastDay = new Date(y, m + 1, 0);
-                          const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-                          setExportStartDate(firstDay);
-                          setExportEndDate(lastDayStr);
-                          setShowExportModal(true);
-                        }}
-                        accessibilityLabel="Export"
-                        accessibilityRole="button"
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          height: 36,
-                          gap: 8,
-                          paddingHorizontal: 12,
-                          borderRadius: 8,
-                          backgroundColor: '#FFFFFF',
-                          borderWidth: 1,
-                          borderColor: '#E6EBF2',
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Download size={16} color="#1E293B" strokeWidth={2} />
-                        <Text style={{
-                          fontSize: 15,
-                          color: '#1E293B',
-                          fontWeight: '500',
-                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        }}>
-                          Export
-                        </Text>
-                      </TouchableOpacity>
+                      <>
+                        <TouchableOpacity
+                          ref={planYearDropdownButtonRef}
+                          onPress={() => {
+                            if (Platform.OS === 'web' && planYearDropdownButtonRef.current) {
+                              const node = planYearDropdownButtonRef.current._nativeNode || planYearDropdownButtonRef.current;
+                              if (node && typeof node.getBoundingClientRect === 'function') {
+                                const rect = node.getBoundingClientRect();
+                                setPlanYearDropdownPosition({ top: rect.bottom + 4, left: rect.left });
+                              }
+                            }
+                            setShowPlanYearDropdown(!showPlanYearDropdown);
+                          }}
+                          accessibilityLabel="Actions"
+                          accessibilityRole="button"
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            height: 36,
+                            gap: 8,
+                            paddingHorizontal: 12,
+                            borderRadius: 8,
+                            backgroundColor: '#FFFFFF',
+                            borderWidth: 1,
+                            borderColor: '#E6EBF2',
+                          }}
+                        >
+                          <Text style={{
+                            fontSize: 15,
+                            color: '#1E293B',
+                            fontWeight: '500',
+                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }}>
+                            Actions
+                          </Text>
+                          <ChevronDown size={14} color="#64748B" />
+                        </TouchableOpacity>
+                        {showPlanYearDropdown && Platform.OS === 'web' && (
+                          <View
+                            ref={planYearDropdownRef}
+                            style={{
+                              position: 'fixed',
+                              top: planYearDropdownPosition.top,
+                              left: planYearDropdownPosition.left,
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: 'rgba(15,23,42,0.08)',
+                              padding: 4,
+                              width: 'max-content',
+                              zIndex: 1000,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                            }}
+                          >
+                            <TouchableOpacity
+                              onPress={() => {
+                                setPlanYearInitialAcademicYearId(null);
+                                setPlanYearOpenForNewPlan(true);
+                                setPlanYearOpenToEditList(false);
+                                setPlanYearOpenDirectlyToScope(true);
+                                setShowPlanYearModal(true);
+                                setShowPlanYearDropdown(false);
+                              }}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 6,
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                                {STRINGS.planMyYear.modal.title}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setPlanYearInitialAcademicYearId(null);
+                                setPlanYearOpenForNewPlan(true);
+                                setPlanYearOpenToEditList(true);
+                                setPlanYearOpenDirectlyToScope(false);
+                                setShowPlanYearModal(true);
+                                setShowPlanYearDropdown(false);
+                              }}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 6,
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                                Edit plan
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setShowRebalanceModal(true);
+                                setShowPlanYearDropdown(false);
+                              }}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 6,
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                                Rebalance
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => {
+                                const m = currentMonth.getMonth();
+                                const y = currentMonth.getFullYear();
+                                const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+                                const lastDay = new Date(y, m + 1, 0);
+                                const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+                                setExportStartDate(firstDay);
+                                setExportEndDate(lastDayStr);
+                                setShowExportModal(true);
+                                setShowPlanYearDropdown(false);
+                              }}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 6,
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                                Export
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </>
                     )}
                     <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={preloadedPlanHealth} />
                   </View>
@@ -3248,6 +3449,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         schedulingMode={false}
         familyId={familyId}
         children={children}
+        preloadedAcademicYears={preloadedAcademicYears}
         familyMembers={children.map(child => ({
           id: child.id,
           name: child.first_name || child.name || 'Unknown',
@@ -3393,6 +3595,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setPlanYearInitialAcademicYearId(null);
             setPlanYearInitialPlanSummaryData(null);
             setPlanYearOpenForNewPlan(false);
+            setPlanYearOpenToEditList(false);
+            setPlanYearOpenDirectlyToScope(false);
             setPlanYearInitialSubjectId(null);
             setPlanYearInitialMaterialId(null);
           }, 300);
@@ -3404,6 +3608,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         initialAcademicYearId={planYearInitialAcademicYearId}
         initialPlanSummaryData={planYearInitialPlanSummaryData}
         openForNewPlan={planYearOpenForNewPlan}
+        openToEditPlanList={planYearOpenToEditList}
+        openDirectlyToScope={planYearOpenDirectlyToScope}
         fromSubjectDetail={planYearFromSubjectDetail}
         highlightFromPlanHealth={planYearHighlightFromHealth}
         initialSubjectId={planYearInitialSubjectId}
@@ -3417,6 +3623,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
           setShowBuildCurriculumModal(true);
         }}
+        onOpenRebalance={() => {
+          setShowPlanYearModal(false);
+          setShowRebalanceModal(true);
+        }}
         onComplete={() => {
           setShowPlanYearModal(false);
           setPlanYearHighlightFromHealth(false);
@@ -3424,9 +3634,49 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setPlanYearInitialAcademicYearId(null);
           setPlanYearInitialPlanSummaryData(null);
           setPlanYearOpenForNewPlan(false);
+          setPlanYearOpenToEditList(false);
+          setPlanYearOpenDirectlyToScope(false);
           setPlanYearInitialSubjectId(null);
           setPlanYearInitialMaterialId(null);
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
+        }}
+      />
+
+      <GenerateCurriculumModal
+        visible={showGenerateCurriculumModal}
+        onClose={() => setShowGenerateCurriculumModal(false)}
+        subjectId={generateCurriculumContext.subjectId}
+        subjectName={generateCurriculumContext.subjectName}
+        familyId={generateCurriculumContext.familyId}
+        childIds={generateCurriculumContext.childIds}
+        onSaved={() => {
+          setShowGenerateCurriculumModal(false);
+          fetchFamilyData?.();
+        }}
+      />
+
+      <ParsePlainTextModal
+        visible={showParsePlainTextModal}
+        onClose={() => setShowParsePlainTextModal(false)}
+        subjectId={parsePlainTextContext.subjectId}
+        subjectName={parsePlainTextContext.subjectName}
+        familyId={parsePlainTextContext.familyId}
+        childIds={parsePlainTextContext.childIds}
+        onSaved={() => {
+          setShowParsePlainTextModal(false);
+          fetchFamilyData?.();
+        }}
+      />
+
+      <ManualCurriculumBuilderModal
+        visible={showManualCurriculumBuilderModal}
+        onClose={() => setShowManualCurriculumBuilderModal(false)}
+        subjectId={manualCurriculumBuilderContext.subjectId}
+        subjectName={manualCurriculumBuilderContext.subjectName}
+        familyId={manualCurriculumBuilderContext.familyId}
+        onSaved={() => {
+          setShowManualCurriculumBuilderModal(false);
+          fetchFamilyData?.();
         }}
       />
 
@@ -3561,7 +3811,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             <ScrollView style={{ maxHeight: 220, marginBottom: 20 }} nestedScrollEnabled>
               {[
                 { key: 'instructionalTime', label: 'Count as instructional time' },
-                { key: 'plan', label: 'Plan My Year' },
+                { key: 'plan', label: 'Build plan' },
                 { key: 'location', label: 'Location' },
                 { key: 'mode', label: 'Mode' },
                 { key: 'instructor', label: 'Instructor' },
@@ -3639,7 +3889,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   borderColor: '#1E293B',
                 }}
               >
-                <Download size={16} color="#FFFFFF" />
+                <ExternalLink size={16} color="#FFFFFF" />
                 <Text style={{ fontSize: 15, fontWeight: '500', color: '#FFFFFF', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Export</Text>
               </TouchableOpacity>
             </View>
@@ -4065,11 +4315,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         familyId={familyId}
         subject={editingSubject}
         children={children}
-        onSubjectAdded={() => {
-          // Refresh subjects
+        onSubjectAdded={(newSubject) => {
+          const wasNewSubject = !editingSubject;
           setEditingSubject(null);
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+          // After adding (not editing), go to the new subject's detail page
+          if (wasNewSubject && newSubject?.id) {
+            handleTabChange(`subject-${newSubject.id}`);
+            setActiveTopNav('subjects');
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.history.pushState({}, '', `/subjects/${newSubject.id}`);
+            }
           }
         }}
       />

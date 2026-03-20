@@ -2530,7 +2530,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
               <View style={styles.doodleMaxFeatureText}>
                 <Text style={styles.doodleMaxFeatureName}>Advanced Views & Filters</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>Compliance, workload, and child-specific lenses</Text>
+                <Text style={styles.doodleMaxFeatureDesc}>Learning Goals, workload, and child-specific lenses</Text>
               </View>
             </View>
           </View>

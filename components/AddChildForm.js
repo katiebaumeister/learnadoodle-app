@@ -359,10 +359,10 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
         )}
       </View>
 
-      {/* Section: School year (optional) */}
+      {/* Section: School year — family default (one setting for the whole family; used to pre-fill Plan My Year) */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>School year</Text>
-        <Text style={styles.sectionSubtitle}>(Optional — used for attendance and progress tracking)</Text>
+        <Text style={styles.sectionTitle}>School year (family default)</Text>
+        <Text style={styles.sectionSubtitle}>Optional. One setting for the whole family — used for attendance, progress tracking, and to pre-fill new plans in Plan My Year.</Text>
         <View style={styles.field}>
           <Text style={styles.label}>Target</Text>
           <View style={styles.chipsWrap}>

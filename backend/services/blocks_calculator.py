@@ -284,6 +284,11 @@ def compute_schedule_potential(
             "suggested_end_date_for_subject_target": suggested_end_date_for_subject_target,
         }
 
+    # Phase 4: cadence suggestion when target_days set (for "suggest best weekly cadence" UX)
+    cadence_suggestion: Optional[Dict[str, Any]] = None
+    if target_days is not None and target_days > 0:
+        cadence_suggestion = suggest_cadence(start_date, end_date, target_days, exclusion_ranges)
+
     return {
         "projected_days": projected_days,
         "projected_hours": projected_hours,
@@ -292,6 +297,44 @@ def compute_schedule_potential(
         "per_subject": per_subject,
         "per_child": per_child,
         "per_child_subject": per_child_subject,
+        "cadence_suggestion": cadence_suggestion,
+    }
+
+
+def suggest_cadence(
+    start_date: date,
+    end_date: date,
+    target_days: int,
+    exclusion_ranges: List[Tuple[date, date]],
+) -> Dict[str, Any]:
+    """
+    Phase 4: Suggest minimum weekdays per week to reach target_days in the date range.
+    Counts Mon–Fri (weekdays 1–5) in range minus exclusions; returns min_weekdays_per_week
+    and a short message for the UI.
+    """
+    if target_days <= 0 or start_date > end_date:
+        return {}
+    total_days = (end_date - start_date).days + 1
+    num_weeks = max(0.1, total_days / 7.0)
+    # Count eligible weekdays (Mon=1 .. Fri=5) in range
+    eligible = 0
+    current = start_date
+    while current <= end_date:
+        our_day = _python_weekday_to_ours(current)
+        if 1 <= our_day <= 5 and not _is_excluded(current, exclusion_ranges):
+            eligible += 1
+        current += timedelta(days=1)
+    min_weekdays_per_week = min(5, max(1, (target_days + int(num_weeks) - 1) // max(1, int(num_weeks)))) if num_weeks >= 1 else 5
+    if eligible >= target_days:
+        return {
+            "min_weekdays_per_week": min_weekdays_per_week,
+            "eligible_days_in_range": eligible,
+            "message": f"Use at least {min_weekdays_per_week} weekdays per week to reach {target_days} days.",
+        }
+    return {
+        "min_weekdays_per_week": min_weekdays_per_week,
+        "eligible_days_in_range": eligible,
+        "message": f"To reach {target_days} days, use at least {min_weekdays_per_week} weekdays per week, or extend your end date (only {eligible} eligible days in current range).",
     }
 
 

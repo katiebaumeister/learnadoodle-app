@@ -309,7 +309,7 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
       if (!isExpectedError) {
       // Only show toast for unexpected errors, not for missing data
       if (error.message && !error.message.includes('permission') && !error.message.includes('not found')) {
-        toast.push('Failed to load compliance data', 'error');
+        toast.push('Failed to load Learning Goals data', 'error');
       }
       }
       // Set defaults to prevent crashes
@@ -499,7 +499,7 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Shield size={24} color="#3b82f6" />
-        <Text style={styles.title}>Compliance Dashboard</Text>
+        <Text style={styles.title}>Learning Goals Dashboard</Text>
         <Text style={styles.subtitle}>{childName || 'Student'} - {stateCode}</Text>
       </View>
 
@@ -598,10 +598,10 @@ export default function ComplianceDashboard({ childId, childName, familyId }) {
         />
       </View>
 
-      {/* Compliance Checklist */}
+      {/* Learning Goals Checklist */}
       <View style={styles.checklistSection}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Compliance Checklist</Text>
+          <Text style={styles.sectionTitle}>Learning Goals Checklist</Text>
           <TouchableOpacity
             style={styles.exportButton}
             onPress={handleExport}

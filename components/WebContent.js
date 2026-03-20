@@ -2808,7 +2808,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   useEffect(() => {
     const fetchHomeData = async () => {
-      if (!user) return;
+      if (!user) {
+        setHomeLoading(false);
+        if (onHomeLoadingChange) onHomeLoadingChange(false);
+        return;
+      }
       try {
         setHomeLoading(true);
         if (onHomeLoadingChange) onHomeLoadingChange(true);
@@ -3754,7 +3758,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (ev.academic_year_id) return 'Yes';
           return 'No';
         } },
-        { key: 'plan', label: 'Plan My Year', get: (ev) => ev.academic_year_name || ev.plan_name || (ev.academic_year_id ? 'Yes' : '') || '' },
+        { key: 'plan', label: 'Build plan', get: (ev) => ev.academic_year_name || ev.plan_name || (ev.academic_year_id ? 'Yes' : '') || '' },
         { key: 'location', label: 'Location', get: (ev) => ev.location || '' },
         { key: 'mode', label: 'Mode', get: (ev) => ev.mode || '' },
         { key: 'instructor', label: 'Instructor', get: (ev) => ev.instructor || '' },
@@ -7491,13 +7495,27 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         const isChild = roleForHome === 'child' || roleForHome === 'student';
         const isTutor = roleForHome === 'tutor';
         const hasAccessibleChildren = accessibleForHome.length > 0;
-        // When we have user but role still unknown, show loading instead of parent view to avoid flash
-        if (user && roleForHome == null) {
+        // When we have user but role still unknown: show loading only if we have no familyId; otherwise assume parent
+        if (user && roleForHome == null && !familyId) {
           return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
               <ActivityIndicator size="large" color="#887DEE" />
               <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
             </View>
+          );
+        }
+        // Role unknown but have familyId: show parent home (it fetches its own data) so we don't get stuck on loading
+        if (user && roleForHome == null && familyId) {
+          return (
+            <ParentHomeScreen
+              familyId={familyId}
+              onNavigate={onTabChange}
+              onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
+              onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
+              onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
+              onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
+              onAddChild={() => onCloseAddChildModal && Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddChildModal'))}
+            />
           );
         }
         if (isChild && hasAccessibleChildren) {
@@ -7549,15 +7567,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               />
             );
           }
-          // Fallback when session not ready or non-parent: show ParentHomeScreen if we have familyId, else loading
-          if (homeLoading || !homeData) {
-            return (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-                <ActivityIndicator size="large" color="#887DEE" />
-                <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
-              </View>
-            );
-          }
+          // Fallback: if we have familyId show ParentHomeScreen (it handles its own loading); otherwise show loading
           if (familyId) {
             return (
               <ParentHomeScreen
@@ -7569,6 +7579,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
                 onAddChild={() => onCloseAddChildModal && Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddChildModal'))}
               />
+            );
+          }
+          if (homeLoading || !homeData) {
+            return (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+                <ActivityIndicator size="large" color="#887DEE" />
+                <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+              </View>
             );
           }
           return (
@@ -7736,7 +7754,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           </View>
         );
       default:
-        return null;
+        // Unknown tab: show home as fallback so we never render blank
+        if (activeTab === 'home' || !activeTab) {
+          return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+              <ActivityIndicator size="large" color="#887DEE" />
+              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+            </View>
+          );
+        }
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+            <Text style={{ fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+          </View>
+        );
     }
   };
 

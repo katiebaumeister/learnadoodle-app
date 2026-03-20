@@ -4,6 +4,11 @@ Instructional attribution — explicit per-child expansion of events.
 Expands events into per-child rows so plan health and constraints are
 mathematically pure and avoid ambiguity when editing assignees.
 
+Phase 3 (compliance unification): All instructional event types (generic slot,
+subject lesson, curriculum-mapped) flow through the same logic. Event types
+that never count are blocklisted; counting is opt-in via counts_toward_plan
+or instructional_status.
+
 Conceptually: event_instructional_attribution (virtual)
   event_id, child_id, academic_year_id, instructional_minutes,
   instructional_day_credit, is_placeholder, subject_id, start_ts
@@ -18,6 +23,11 @@ from datetime import date, datetime
 # Default cap for all-day events when instructional_minutes is null (avoid 24h = 1440 min)
 DEFAULT_PLANNED_MINUTES_PER_DAY = 6 * 60  # 6 hours
 ALL_DAY_THRESHOLD_MINUTES = 8 * 60  # treat as all-day if derived >= 8h
+
+# Event types that never count toward instructional days/hours (Phase 3: explicit blocklist)
+EVENT_TYPES_NEVER_COUNT = frozenset(
+    {"holiday", "appointment", "trip", "note", "parent_note"}
+)
 
 
 def _event_minutes(ev: Dict[str, Any]) -> int:
@@ -42,7 +52,14 @@ def _event_minutes(ev: Dict[str, Any]) -> int:
 
 
 def _counts_toward_plan(ev: Dict[str, Any]) -> bool:
-    """True if event counts toward plan (authoritative: instructional_status or counts_toward_plan)."""
+    """
+    True if event counts toward plan (Phase 3: unified compliance).
+    - Blocklist: certain event_type values never count (holiday, appointment, trip, note).
+    - Opt-in: instructional_status (MANUAL_COUNTS, PLAN_PLACEHOLDER, PLAN_LOCKED) or counts_toward_plan=True.
+    """
+    event_type = (ev.get("event_type") or "").strip().lower()
+    if event_type and event_type in EVENT_TYPES_NEVER_COUNT:
+        return False
     status = (ev.get("instructional_status") or "").strip().upper()
     if status in ("MANUAL_COUNTS", "PLAN_PLACEHOLDER", "PLAN_LOCKED"):
         return True

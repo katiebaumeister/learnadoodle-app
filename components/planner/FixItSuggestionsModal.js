@@ -224,7 +224,7 @@ export default function FixItSuggestionsModal({ visible, onClose, familyId, heal
             style={{ marginTop: FOOTER_LINK_MARGIN_BELOW }}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.manualLink}>Adjust manually in Plan My Year →</Text>
+            <Text style={styles.manualLink}>Adjust manually in Build plan →</Text>
           </TouchableOpacity>
 
           <View style={[styles.buttonRow, { marginTop: BUTTONS_MARGIN_TOP }]}>

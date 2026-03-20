@@ -4,7 +4,7 @@ Creates structured curriculum units with lessons and pacing
 """
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Query
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, date, timedelta, timezone
 import sys
 from pathlib import Path
@@ -61,6 +61,256 @@ class CurriculumCommitInput(BaseModel):
     prefer_placeholder_slots: Optional[bool] = Field(True, description="When true, fill empty Plan My Year slots first before creating new events")
     add_to_backlog: Optional[bool] = Field(False, description="Add all lessons to backlog")
     lesson_backlog_map: Optional[Dict[str, bool]] = Field(None, description="Map of lesson index to backlog status")
+
+
+class LessonForPacing(BaseModel):
+    """Minimal lesson data for pacing preview."""
+    title: Optional[str] = None
+    sequence_index: Optional[int] = None
+    minutes_est: Optional[int] = 60
+
+
+class PreviewPacingInput(BaseModel):
+    """Input for lesson-to-slot mapping preview (Phase 2: parser output separate from commit)."""
+    family_id: str = Field(..., description="Family ID")
+    subject_id: Optional[str] = Field(None, description="Subject ID; if null, only generic slots may be used")
+    student_ids: List[str] = Field(..., description="Student IDs for slot matching")
+    start_date: str = Field(..., description="Start date YYYY-MM-DD")
+    end_date: str = Field(..., description="End date YYYY-MM-DD")
+    academic_year_id: Optional[str] = Field(None, description="Optional: limit to slots from this plan")
+    lessons: List[LessonForPacing] = Field(..., description="Ordered list of lessons to map onto slots")
+
+
+class RepaceInput(BaseModel):
+    """Phase 4: Re-pace syllabus after trip — same as preview_pacing plus excluded date range."""
+    family_id: str = Field(..., description="Family ID")
+    subject_id: Optional[str] = Field(None, description="Subject ID")
+    student_ids: List[str] = Field(..., description="Student IDs")
+    start_date: str = Field(..., description="Start date YYYY-MM-DD")
+    end_date: str = Field(..., description="End date YYYY-MM-DD")
+    academic_year_id: Optional[str] = Field(None, description="Academic year ID")
+    lessons: List[LessonForPacing] = Field(..., description="Ordered lessons")
+    exclude_start: Optional[str] = Field(None, description="Exclude slots on or after this date (trip start) YYYY-MM-DD")
+    exclude_end: Optional[str] = Field(None, description="Exclude slots on or before this date (trip end) YYYY-MM-DD")
+
+
+# --- Generate Curriculum (from scratch) ---
+
+class GenerateCurriculumDraftRequest(BaseModel):
+    """Request for AI-generated curriculum draft. Generation only; no scheduling."""
+    subject_id: str = Field(..., description="Subject ID")
+    family_id: str = Field(..., description="Family ID")
+    subject_name: str = Field(..., description="Subject name for prompt and subject_tags")
+    child_ids: Optional[List[str]] = Field(None, description="Optional learner child IDs")
+    learner_stage: Optional[str] = Field(None, description="e.g. K-2, 3-5, 6-8, 9-12")
+    age_range: Optional[Dict[str, int]] = Field(None, description="Optional min/max age")
+    generation_scope: str = Field(..., description="Course goal / scope description")
+    duration_mode: Literal["single_unit", "multi_unit_course", "semester", "full_year", "custom_weeks"] = Field(
+        "multi_unit_course", description="Duration type"
+    )
+    custom_weeks: Optional[int] = Field(None, ge=1, le=52)
+    lesson_count_target: Optional[int] = Field(None, ge=1, le=500)
+    typical_lesson_minutes: Optional[int] = Field(None, ge=5, le=240)
+    educational_style: Optional[str] = Field(None, description="e.g. traditional, project-based, Charlotte Mason")
+    rigor_level: Optional[Literal["gentle", "standard", "advanced"]] = None
+    include_assessments: bool = True
+    include_projects: bool = True
+    include_materials: bool = True
+    include_pacing: bool = True
+    special_instructions: Optional[str] = None
+
+
+class DraftLesson(BaseModel):
+    temp_id: str
+    title: str
+    objective: Optional[str] = None
+    notes: Optional[str] = None
+    sequence_index: int
+    minutes_est: Optional[int] = 60
+    modality: Optional[str] = None
+    lesson_type: Optional[str] = None
+    materials: Optional[List[str]] = None
+    assessment_idea: Optional[str] = None
+    pacing_suggestion: Optional[str] = None
+    difficulty: Optional[str] = "standard"
+
+
+class DraftUnit(BaseModel):
+    temp_id: str
+    title: str
+    description: Optional[str] = None
+    sequence_index: int
+    estimated_total_minutes: Optional[int] = None
+    pacing_note: Optional[str] = None
+    lessons: List[DraftLesson]
+
+
+class DraftCurriculum(BaseModel):
+    """Draft curriculum returned from generate-draft and sent to commit-generated-draft."""
+    subject_id: str
+    family_id: str
+    source_mode: Literal["ai_generate"] = "ai_generate"
+    course_title: Optional[str] = None
+    summary: Optional[str] = None
+    estimated_total_minutes: Optional[int] = None
+    units: List[DraftUnit]
+    warnings: Optional[List[str]] = None
+
+
+class CommitGeneratedCurriculumRequest(BaseModel):
+    """Approved draft to persist to curriculum_units and curriculum_lessons."""
+    subject_id: str
+    family_id: str
+    subject_name: str = Field(..., description="Used for curriculum_units.subject_tags")
+    draft: DraftCurriculum
+
+
+class CommitGeneratedCurriculumResponse(BaseModel):
+    units_created: int
+    lessons_created: int
+    unit_ids: List[str]
+    lesson_ids: List[str]
+    subject_id: str
+    source_type: str = "ai_generated"
+
+
+# --- Parse plain text / Import & extract ---
+
+class ParsePlainTextRequest(BaseModel):
+    """Request for plain-text curriculum extraction (extract structure only, do not generate)."""
+    subject_id: str = Field(..., description="Subject ID")
+    family_id: str = Field(..., description="Family ID")
+    subject_name: str = Field(..., description="Subject name")
+    raw_text: str = Field(..., description="Pasted syllabus/outline text")
+    source_title: Optional[str] = None
+    source_type: Optional[Literal["auto_detect", "syllabus", "lesson_list", "pacing_guide", "weekly_plan", "course_outline"]] = None
+    parse_mode: Optional[Literal["auto_detect", "unit_based", "lesson_based", "assignment_based", "week_based", "date_based"]] = None
+    detect_dates: bool = True
+    preserve_source_headings: bool = True
+    ignore_policy_text: bool = True
+    extract_assignments: bool = True
+    extract_assessments: bool = True
+    learner_stage: Optional[str] = None
+    special_instructions: Optional[str] = None
+
+
+class ParsedDraftLesson(BaseModel):
+    temp_id: str
+    title: str
+    objective: Optional[str] = None
+    notes: Optional[str] = None
+    sequence_index: int
+    minutes_est: Optional[int] = None
+    modality: Optional[str] = None
+    lesson_type: Optional[str] = "lesson"
+    date_text: Optional[str] = None
+    suggested_date: Optional[str] = None
+    inferred_from: Optional[List[str]] = None
+    confidence: Optional[float] = None
+
+
+class ParsedDraftUnit(BaseModel):
+    temp_id: str
+    source_label: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    sequence_index: int
+    inferred_from: Optional[List[str]] = None
+    lessons: List[ParsedDraftLesson] = Field(default_factory=list)
+    assignments: Optional[List[Dict[str, Any]]] = None
+    assessments: Optional[List[Dict[str, Any]]] = None
+
+
+class ParsedDraftUnassignedItem(BaseModel):
+    temp_id: str
+    raw_text: str
+    inferred_type: Optional[str] = None
+    confidence: Optional[float] = None
+    reason: Optional[str] = None
+
+
+class ParsedDraftCurriculum(BaseModel):
+    """Parsed draft from parse-text; sent to commit-parsed-draft after review."""
+    subject_id: str
+    family_id: str
+    source_mode: Literal["plain_text_parse"] = "plain_text_parse"
+    source_title: Optional[str] = None
+    source_type: Optional[str] = None
+    raw_text: str
+    summary: Optional[str] = None
+    units: List[ParsedDraftUnit] = Field(default_factory=list)
+    unassigned_items: Optional[List[ParsedDraftUnassignedItem]] = Field(default_factory=list)
+    ignored_items: Optional[List[Dict[str, str]]] = Field(default_factory=list)
+    parser_warnings: Optional[List[str]] = Field(default_factory=list)
+    parser_metadata: Optional[Dict[str, Any]] = None
+
+
+class CommitParsedDraftRequest(BaseModel):
+    """Approved parsed draft to persist (syllabus_imports + curriculum_units + curriculum_lessons)."""
+    subject_id: str
+    family_id: str
+    subject_name: str = Field(..., description="For curriculum_units.subject_tags")
+    draft: ParsedDraftCurriculum
+
+
+class CommitParsedDraftResponse(BaseModel):
+    syllabus_import_id: str
+    units_created: int
+    lessons_created: int
+    unit_ids: List[str]
+    lesson_ids: List[str]
+    subject_id: str
+    source_type: str = "plain_text_parsed"
+
+
+# --- Manual curriculum (Add unit manually) ---
+
+class ManualLessonDraft(BaseModel):
+    temp_id: Optional[str] = None
+    title: str
+    objective: Optional[str] = None
+    notes: Optional[str] = None
+    sequence_index: int
+    minutes_est: Optional[int] = None
+    modality: Optional[str] = None
+    lesson_type: Optional[str] = "lesson"
+    materials: Optional[List[str]] = None
+    is_placeholder: Optional[bool] = False
+    cadence_metadata: Optional[Dict[str, Any]] = None
+
+
+class ManualUnitDraft(BaseModel):
+    temp_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    sequence_index: int
+    inferred: Optional[bool] = False
+    lessons: List[ManualLessonDraft] = Field(default_factory=list)
+
+
+class ManualDraftPayload(BaseModel):
+    title: Optional[str] = None
+    units: List[ManualUnitDraft] = Field(default_factory=list)
+
+
+class CommitManualDraftRequest(BaseModel):
+    """Manual curriculum draft from Add unit manually flow. No AI; validate and persist only."""
+    subject_id: str
+    family_id: str
+    subject_name: str = Field(..., description="For curriculum_units.subject_tags")
+    builder_mode: Literal["rich_units", "class_days"] = "rich_units"
+    draft: ManualDraftPayload
+
+
+class CommitManualDraftResponse(BaseModel):
+    subject_id: str
+    family_id: str
+    source_type: str = "manual"
+    builder_mode: str
+    units_created_count: int
+    lessons_created_count: int
+    unit_ids: List[str]
+    lesson_ids: List[str]
 
 
 # --- Helper Functions ---
@@ -478,6 +728,660 @@ async def build_curriculum(
     except Exception as e:
         log_event("curriculum.build.error", family_id=family_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Error building curriculum: {str(e)}")
+
+
+# --- Generate Curriculum from scratch (draft only; no scheduling) ---
+
+@router.post("/generate-draft", response_model=DraftCurriculum)
+async def generate_curriculum_draft_endpoint(
+    body: GenerateCurriculumDraftRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Generate a curriculum draft using OpenAI. Returns structured units and lessons for review.
+    Does not persist to DB or create events. Use commit-generated-draft after user approves.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        from services.curriculum_generation_service import generate_curriculum_draft as do_generate
+        draft = await do_generate(
+            subject_id=body.subject_id,
+            family_id=body.family_id,
+            subject_name=body.subject_name,
+            generation_scope=body.generation_scope,
+            user_id=user["id"],
+            child_ids=body.child_ids,
+            learner_stage=body.learner_stage,
+            age_range=body.age_range,
+            duration_mode=body.duration_mode,
+            custom_weeks=body.custom_weeks,
+            lesson_count_target=body.lesson_count_target,
+            typical_lesson_minutes=body.typical_lesson_minutes,
+            educational_style=body.educational_style,
+            rigor_level=body.rigor_level,
+            include_assessments=body.include_assessments,
+            include_projects=body.include_projects,
+            include_materials=body.include_materials,
+            include_pacing=body.include_pacing,
+            special_instructions=body.special_instructions,
+        )
+        log_event(
+            "curriculum.generate_draft.ok",
+            family_id=body.family_id,
+            subject_id=body.subject_id,
+            units_count=len(draft.get("units", [])),
+            user_id=user["id"],
+        )
+        return draft
+    except ValueError as e:
+        log_event("curriculum.generate_draft.validation_error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.generate_draft.error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=500, detail="Failed to generate curriculum draft")
+
+
+@router.post("/commit-generated-draft", response_model=CommitGeneratedCurriculumResponse)
+async def commit_generated_draft_endpoint(
+    body: CommitGeneratedCurriculumRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Persist an approved curriculum draft to curriculum_units and curriculum_lessons.
+    Does not create calendar events or fill slots; scheduling integration can hook in later.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        supabase = get_admin_client()
+        draft = body.draft
+        subject_name = (body.subject_name or "").strip() or "Subject"
+        subject_tags = [subject_name]
+        student_ids = []
+        if draft.units and draft.units[0].lessons:
+            pass
+        unit_ids: List[str] = []
+        lesson_ids: List[str] = []
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for u in draft.units:
+            unit_row = {
+                "family_id": body.family_id,
+                "created_by_uid": user["id"],
+                "title": (u.title or "").strip() or "Untitled Unit",
+                "source_type": "ai_generated",
+                "source_ref": None,
+                "grade_band": None,
+                "subject_tags": subject_tags,
+                "student_ids": student_ids,
+                "total_minutes_est": u.estimated_total_minutes or 0,
+                "weeks_est": 1,
+                "metadata": {"course_title": draft.course_title, "summary": draft.summary, "pacing_note": u.pacing_note} if (draft.course_title or draft.summary or u.pacing_note) else {},
+                "updated_at": now_iso,
+            }
+            ins = supabase.table("curriculum_units").insert(unit_row).execute()
+            if not ins.data or len(ins.data) == 0:
+                raise HTTPException(status_code=500, detail="Failed to insert curriculum unit")
+            unit_id = ins.data[0]["id"]
+            unit_ids.append(unit_id)
+            for seq, le in enumerate(u.lessons, start=1):
+                modality = (le.modality or "practice").strip().lower()
+                if modality not in {"reading", "video", "hands_on", "discussion", "practice", "quiz", "project"}:
+                    modality = "practice"
+                difficulty = (le.difficulty or "standard").strip().lower()
+                if difficulty not in {"gentle", "standard", "stretch"}:
+                    difficulty = "standard"
+                lesson_row = {
+                    "unit_id": unit_id,
+                    "sequence_index": seq,
+                    "title": (le.title or "").strip() or "Untitled Lesson",
+                    "objective": (le.objective or "").strip() or None,
+                    "minutes_est": le.minutes_est if le.minutes_est is not None else 60,
+                    "modality": modality,
+                    "difficulty": difficulty,
+                    "materials": le.materials if le.materials else [],
+                    "assessment": {"idea": le.assessment_idea} if le.assessment_idea else {},
+                    "prereqs": [],
+                    "links": [],
+                }
+                les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
+                if les_ins.data and len(les_ins.data) > 0:
+                    lesson_ids.append(les_ins.data[0]["id"])
+        log_event(
+            "curriculum.commit_generated.ok",
+            family_id=body.family_id,
+            subject_id=body.subject_id,
+            units_created=len(unit_ids),
+            lessons_created=len(lesson_ids),
+            user_id=user["id"],
+        )
+        return CommitGeneratedCurriculumResponse(
+            units_created=len(unit_ids),
+            lessons_created=len(lesson_ids),
+            unit_ids=unit_ids,
+            lesson_ids=lesson_ids,
+            subject_id=body.subject_id,
+            source_type="ai_generated",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.commit_generated.error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=500, detail=f"Failed to save curriculum: {str(e)}")
+
+
+# --- Parse plain text / Import & extract ---
+
+@router.post("/parse-text")
+async def parse_plain_text_endpoint(
+    body: ParsePlainTextRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Extract structured curriculum from pasted plain text. Two-stage: deterministic pre-parse
+    then LLM extraction. Returns draft for review; does not persist. Use commit-parsed-draft after approval.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        from services.curriculum_parse_service import extract_curriculum_from_plain_text
+        result = await extract_curriculum_from_plain_text(
+            subject_id=body.subject_id,
+            family_id=body.family_id,
+            subject_name=body.subject_name,
+            raw_text=body.raw_text,
+            source_title=body.source_title,
+            source_type=body.source_type,
+            parse_mode=body.parse_mode,
+            detect_dates=body.detect_dates,
+            preserve_source_headings=body.preserve_source_headings,
+            ignore_policy_text=body.ignore_policy_text,
+            extract_assignments=body.extract_assignments,
+            extract_assessments=body.extract_assessments,
+            learner_stage=body.learner_stage,
+            special_instructions=body.special_instructions,
+        )
+        log_event(
+            "curriculum.parse_text.ok",
+            family_id=body.family_id,
+            subject_id=body.subject_id,
+            units_count=len(result.get("units", [])),
+            user_id=user["id"],
+        )
+        return result
+    except ValueError as e:
+        log_event("curriculum.parse_text.validation_error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.parse_text.error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=500, detail="Failed to extract structure from text")
+
+
+@router.post("/commit-parsed-draft", response_model=CommitParsedDraftResponse)
+async def commit_parsed_draft_endpoint(
+    body: CommitParsedDraftRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Persist approved parsed draft: save raw source to syllabus_imports, then curriculum_units
+    and curriculum_lessons with source_ref to the import. Does not create calendar events.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        supabase = get_admin_client()
+        draft = body.draft
+        subject_name = (body.subject_name or "").strip() or "Subject"
+        subject_tags = [subject_name]
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # 1. Save source to syllabus_imports
+        import_row = {
+            "family_id": body.family_id,
+            "subject_id": body.subject_id,
+            "source_title": draft.source_title,
+            "source_type": draft.source_type,
+            "raw_text": draft.raw_text,
+            "parse_mode": None,
+            "parse_status": "parsed",
+            "parser_metadata_json": draft.parser_metadata,
+            "updated_at": now_iso,
+        }
+        ins_import = supabase.table("syllabus_imports").insert(import_row).execute()
+        if not ins_import.data or len(ins_import.data) == 0:
+            raise HTTPException(status_code=500, detail="Failed to save import source")
+        syllabus_import_id = str(ins_import.data[0]["id"])
+        source_ref = syllabus_import_id
+
+        unit_ids: List[str] = []
+        lesson_ids: List[str] = []
+        for u in draft.units:
+            unit_row = {
+                "family_id": body.family_id,
+                "created_by_uid": user["id"],
+                "title": (u.title or "").strip() or "Untitled Unit",
+                "source_type": "plain_text_parsed",
+                "source_ref": source_ref,
+                "grade_band": None,
+                "subject_tags": subject_tags,
+                "student_ids": [],
+                "total_minutes_est": 0,
+                "weeks_est": 1,
+                "metadata": {"source_label": u.source_label, "syllabus_import_id": syllabus_import_id},
+                "updated_at": now_iso,
+            }
+            ins_u = supabase.table("curriculum_units").insert(unit_row).execute()
+            if not ins_u.data or len(ins_u.data) == 0:
+                raise HTTPException(status_code=500, detail="Failed to insert curriculum unit")
+            unit_id = ins_u.data[0]["id"]
+            unit_ids.append(unit_id)
+            for seq, le in enumerate(u.lessons, start=1):
+                modality = (le.modality or "practice").strip().lower()
+                if modality not in {"reading", "video", "hands_on", "discussion", "practice", "quiz", "project"}:
+                    modality = "practice"
+                lesson_row = {
+                    "unit_id": unit_id,
+                    "sequence_index": seq,
+                    "title": (le.title or "").strip() or "Untitled Lesson",
+                    "objective": (le.objective or "").strip() or None,
+                    "minutes_est": le.minutes_est if le.minutes_est is not None else 60,
+                    "modality": modality,
+                    "difficulty": "standard",
+                    "materials": [],
+                    "assessment": {},
+                    "prereqs": [],
+                    "links": [],
+                }
+                les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
+                if les_ins.data and len(les_ins.data) > 0:
+                    lesson_ids.append(les_ins.data[0]["id"])
+
+        log_event(
+            "curriculum.commit_parsed.ok",
+            family_id=body.family_id,
+            subject_id=body.subject_id,
+            syllabus_import_id=syllabus_import_id,
+            units_created=len(unit_ids),
+            lessons_created=len(lesson_ids),
+            user_id=user["id"],
+        )
+        return CommitParsedDraftResponse(
+            syllabus_import_id=syllabus_import_id,
+            units_created=len(unit_ids),
+            lessons_created=len(lesson_ids),
+            unit_ids=unit_ids,
+            lesson_ids=lesson_ids,
+            subject_id=body.subject_id,
+            source_type="plain_text_parsed",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.commit_parsed.error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=500, detail=f"Failed to save parsed curriculum: {str(e)}")
+
+
+# --- Manual curriculum commit (no AI; validate + persist) ---
+# Manual builder starts in the frontend (ManualCurriculumBuilderModal). Two sub-modes (rich_units / class_days)
+# both produce a shared ManualDraftPayload; only commit is server-side. Validation runs here; units and lessons
+# are persisted to curriculum_units (source_type=manual) and curriculum_lessons. Placeholder/cadence metadata
+# is stored in lesson.assessment JSONB for later scheduling. Future scheduling can list lessons by subject_tags
+# and fill plan slots or set events.curriculum_lesson_id.
+MANUAL_LESSON_TYPES = {"lesson", "assignment", "project", "assessment", "review", "activity", "reading", "lab", "placeholder"}
+MANUAL_MODALITY_MAP = {
+    "reading": "reading",
+    "lesson": "practice",
+    "assignment": "practice",
+    "project": "project",
+    "assessment": "quiz",
+    "quiz": "quiz",
+    "review": "practice",
+    "activity": "hands_on",
+    "lab": "hands_on",
+    "placeholder": "practice",
+}
+
+
+def _validate_manual_draft(draft: ManualDraftPayload) -> None:
+    """Raise ValueError if draft is invalid."""
+    if not draft.units:
+        raise ValueError("At least one unit is required.")
+    for i, u in enumerate(draft.units):
+        if not (u.title or "").strip():
+            raise ValueError(f"Unit {i + 1} must have a title.")
+        if not u.lessons:
+            raise ValueError(f"Unit '{u.title}' must have at least one lesson.")
+        for j, le in enumerate(u.lessons):
+            if not (le.title or "").strip():
+                raise ValueError(f"Lesson {j + 1} in unit '{u.title}' must have a title.")
+
+
+@router.post("/commit-manual-draft", response_model=CommitManualDraftResponse)
+async def commit_manual_draft_endpoint(
+    body: CommitManualDraftRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Persist manually entered curriculum (Add unit manually). No AI or parsing.
+    Validates draft and saves to curriculum_units and curriculum_lessons (source_type=manual).
+    Future scheduling can consume these lessons to fill plan slots or create events.
+    """
+    try:
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id or family_id != body.family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        _validate_manual_draft(body.draft)
+        subject_name = (body.subject_name or "").strip() or "Subject"
+        subject_tags = [subject_name]
+        supabase = get_admin_client()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        unit_ids: List[str] = []
+        lesson_ids: List[str] = []
+        for ui, u in enumerate(body.draft.units):
+            unit_title = (u.title or "").strip() or f"Unit {ui + 1}"
+            unit_meta = {}
+            if getattr(u, "inferred", False):
+                unit_meta["inferred_unit"] = True
+            unit_meta["builder_mode"] = body.builder_mode
+            unit_row = {
+                "family_id": body.family_id,
+                "created_by_uid": user["id"],
+                "title": unit_title,
+                "source_type": "manual",
+                "source_ref": None,
+                "grade_band": None,
+                "subject_tags": subject_tags,
+                "student_ids": [],
+                "total_minutes_est": 0,
+                "weeks_est": 1,
+                "metadata": unit_meta,
+                "updated_at": now_iso,
+            }
+            ins_u = supabase.table("curriculum_units").insert(unit_row).execute()
+            if not ins_u.data or len(ins_u.data) == 0:
+                raise HTTPException(status_code=500, detail="Failed to insert curriculum unit")
+            unit_id = ins_u.data[0]["id"]
+            unit_ids.append(unit_id)
+            for seq, le in enumerate(u.lessons, start=1):
+                lesson_title = (le.title or "").strip() or f"Lesson {seq}"
+                if not lesson_title:
+                    continue
+                lt = (le.lesson_type or "lesson").strip().lower()
+                if lt not in MANUAL_LESSON_TYPES:
+                    lt = "lesson"
+                modality = (le.modality or MANUAL_MODALITY_MAP.get(lt) or "practice").strip().lower()
+                if modality not in {"reading", "video", "hands_on", "discussion", "practice", "quiz", "project"}:
+                    modality = "practice"
+                minutes = le.minutes_est if le.minutes_est is not None else 60
+                if not isinstance(minutes, int):
+                    try:
+                        minutes = int(minutes) if minutes is not None else 60
+                    except (TypeError, ValueError):
+                        minutes = 60
+                minutes = max(1, min(480, minutes))
+                assessment_payload = {}
+                if lt:
+                    assessment_payload["lesson_type"] = lt
+                if getattr(le, "is_placeholder", False):
+                    assessment_payload["is_placeholder"] = True
+                if getattr(le, "cadence_metadata", None):
+                    assessment_payload["cadence_metadata"] = le.cadence_metadata
+                lesson_row = {
+                    "unit_id": unit_id,
+                    "sequence_index": seq,
+                    "title": lesson_title,
+                    "objective": (le.objective or "").strip() or None,
+                    "minutes_est": minutes,
+                    "modality": modality,
+                    "difficulty": "standard",
+                    "materials": le.materials if isinstance(le.materials, list) else [],
+                    "assessment": assessment_payload,
+                    "prereqs": [],
+                    "links": [],
+                }
+                if getattr(le, "notes", None) and (le.notes or "").strip():
+                    lesson_row["assessment"] = {**lesson_row["assessment"], "notes": (le.notes or "").strip()}
+                les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
+                if les_ins.data and len(les_ins.data) > 0:
+                    lesson_ids.append(les_ins.data[0]["id"])
+        log_event(
+            "curriculum.commit_manual.ok",
+            family_id=body.family_id,
+            subject_id=body.subject_id,
+            units_created=len(unit_ids),
+            lessons_created=len(lesson_ids),
+            user_id=user["id"],
+        )
+        return CommitManualDraftResponse(
+            subject_id=body.subject_id,
+            family_id=body.family_id,
+            source_type="manual",
+            builder_mode=body.builder_mode,
+            units_created_count=len(unit_ids),
+            lessons_created_count=len(lesson_ids),
+            unit_ids=unit_ids,
+            lesson_ids=lesson_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.commit_manual.error", error=str(e), family_id=body.family_id)
+        raise HTTPException(status_code=500, detail=f"Failed to save manual curriculum: {str(e)}")
+
+
+def _get_eligible_plan_slots(
+    supabase,
+    family_id: str,
+    student_ids: List[str],
+    start_date_str: str,
+    end_date_str: str,
+    subject_id: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return empty Plan My Year slots in [start_date, end_date] for the given students and optional subject.
+    Used by preview_pacing and by commit (same logic). Order by start_ts ascending.
+    """
+    range_start_d = date.fromisoformat(start_date_str)
+    range_end_d = date.fromisoformat(end_date_str)
+    range_start_ts = datetime.combine(range_start_d, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(range_end_d, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+    query = (
+        supabase.table("events")
+        .select("id, start_ts, end_ts, child_id, subject_id")
+        .eq("family_id", family_id)
+        .eq("generated_by", "plan_year")
+        .is_("curriculum_lesson_id", "null")
+        .is_("deleted_at", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+        .in_("child_id", student_ids)
+        .order("start_ts", desc=False)
+    )
+    if subject_id:
+        query = query.eq("subject_id", subject_id)
+    else:
+        query = query.is_("subject_id", "null")
+    if academic_year_id:
+        query = query.eq("academic_year_id", academic_year_id)
+    res = query.execute()
+    return list(res.data or [])
+
+
+@router.get("/fill_placeholders_suggestion")
+async def fill_placeholders_suggestion(
+    family_id: str = Query(..., description="Family ID"),
+    academic_year_id: str = Query(..., description="Academic year ID"),
+    start_date: str = Query(..., description="Start date YYYY-MM-DD"),
+    end_date: str = Query(..., description="End date YYYY-MM-DD"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Phase 4: Return count of empty placeholder slots (generated_by=plan_year, no curriculum) in range.
+    UI can use this to prompt "Fill open placeholders with lessons" (e.g. from Build from material).
+    """
+    fid = get_family_id_for_user(user["id"])
+    if not fid or fid != family_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    supabase = get_admin_client()
+    try:
+        range_start_d = date.fromisoformat(start_date[:10])
+        range_end_d = date.fromisoformat(end_date[:10])
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid start_date or end_date")
+    range_start_ts = datetime.combine(range_start_d, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(range_end_d, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+    res = (
+        supabase.table("events")
+        .select("id", count="exact")
+        .eq("family_id", family_id)
+        .eq("academic_year_id", academic_year_id)
+        .eq("generated_by", "plan_year")
+        .is_("curriculum_lesson_id", "null")
+        .is_("deleted_at", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+    )
+    try:
+        data = res.execute()
+        count = data.count if getattr(data, "count", None) is not None else len(data.data or [])
+    except Exception:
+        count = 0
+    return {"empty_slot_count": max(0, count or 0), "message": f"You have {max(0, count or 0)} open placeholder slot(s). Add curriculum (Build from material) to fill them with lessons."}
+
+
+@router.post("/preview_pacing")
+async def preview_pacing(
+    body: PreviewPacingInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Phase 2: Map curriculum sequence onto eligible Plan My Year slots (no commit).
+    Returns lesson_index -> slot mapping so the UI can show "Lesson 1 → Mar 18 9am" before commit.
+    """
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    supabase = get_admin_client()
+    student_ids = [s for s in body.student_ids if s]
+    if not student_ids:
+        raise HTTPException(status_code=400, detail="At least one student_id required")
+    slots = _get_eligible_plan_slots(
+        supabase,
+        body.family_id,
+        student_ids,
+        body.start_date,
+        body.end_date,
+        subject_id=body.subject_id,
+        academic_year_id=body.academic_year_id,
+    )
+    lessons = body.lessons or []
+    mapping = []
+    for i, lesson in enumerate(lessons):
+        if i >= len(slots):
+            break
+        slot = slots[i]
+        start_ts = slot.get("start_ts") or ""
+        end_ts = slot.get("end_ts") or ""
+        date_ymd = start_ts[:10] if len(start_ts) >= 10 else ""
+        title = getattr(lesson, "title", None) if hasattr(lesson, "title") else (lesson.get("title") if isinstance(lesson, dict) else None)
+        mapping.append({
+            "lesson_index": i,
+            "lesson_title": title or f"Lesson {i + 1}",
+            "slot_id": slot.get("id"),
+            "date_ymd": date_ymd,
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "child_id": slot.get("child_id"),
+        })
+    unmapped_lesson_count = max(0, len(lessons) - len(slots))
+    return {
+        "mapping": mapping,
+        "slots_used": len(mapping),
+        "total_slots_available": len(slots),
+        "total_lessons": len(lessons),
+        "unmapped_lesson_count": unmapped_lesson_count,
+    }
+
+
+@router.post("/repace")
+async def repace(
+    body: RepaceInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Phase 4: Re-pace syllabus after a trip — exclude a date range (e.g. trip week) and map lessons
+    onto remaining slots. Returns same shape as preview_pacing so UI can show updated placement.
+    """
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    supabase = get_admin_client()
+    student_ids = [s for s in body.student_ids if s]
+    if not student_ids:
+        raise HTTPException(status_code=400, detail="At least one student_id required")
+    slots = _get_eligible_plan_slots(
+        supabase,
+        body.family_id,
+        student_ids,
+        body.start_date,
+        body.end_date,
+        subject_id=body.subject_id,
+        academic_year_id=body.academic_year_id,
+    )
+    # Exclude slots whose date falls in [exclude_start, exclude_end]
+    if body.exclude_start and body.exclude_end:
+        try:
+            ex_start = body.exclude_start[:10]
+            ex_end = body.exclude_end[:10]
+            slots = [s for s in slots if s.get("start_ts") and (s["start_ts"][:10] < ex_start or s["start_ts"][:10] > ex_end)]
+        except (TypeError, IndexError):
+            pass
+    lessons = body.lessons or []
+    mapping = []
+    for i, lesson in enumerate(lessons):
+        if i >= len(slots):
+            break
+        slot = slots[i]
+        start_ts = slot.get("start_ts") or ""
+        end_ts = slot.get("end_ts") or ""
+        date_ymd = start_ts[:10] if len(start_ts) >= 10 else ""
+        title = getattr(lesson, "title", None) if hasattr(lesson, "title") else (lesson.get("title") if isinstance(lesson, dict) else None)
+        mapping.append({
+            "lesson_index": i,
+            "lesson_title": title or f"Lesson {i + 1}",
+            "slot_id": slot.get("id"),
+            "date_ymd": date_ymd,
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "child_id": slot.get("child_id"),
+        })
+    unmapped_lesson_count = max(0, len(lessons) - len(slots))
+    return {
+        "mapping": mapping,
+        "slots_used": len(mapping),
+        "total_slots_available": len(slots),
+        "total_lessons": len(lessons),
+        "unmapped_lesson_count": unmapped_lesson_count,
+    }
 
 
 @router.post("/commit")

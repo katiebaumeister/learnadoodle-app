@@ -139,7 +139,7 @@ export default function MagicExtract({ uploadId, onExtracted }) {
                   <BookOpen size={18} color="#fff" />
                   <Text style={styles.attachToCourseButtonText}>{STRINGS.magicExtract.actions.attachToCourse}</Text>
                 </TouchableOpacity>
-                <Text style={[styles.modalText, { marginBottom: 16 }]}>Add these drafts to a unit or backlog via Plan My Year.</Text>
+                <Text style={[styles.modalText, { marginBottom: 16 }]}>Add these drafts to a unit or backlog via Build plan.</Text>
 
                 {results.assignments && results.assignments.length > 0 && (
                   <View style={styles.section}>

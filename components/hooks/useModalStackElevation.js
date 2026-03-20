@@ -13,6 +13,7 @@ const ELEVATED_MODAL_Z = 10001;
  */
 export function useModalStackElevation(overlayRef, visible, zIndex = ELEVATED_MODAL_Z) {
   const appliedRef = useRef(null);
+  const portalRef = useRef(null);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -21,18 +22,26 @@ export function useModalStackElevation(overlayRef, visible, zIndex = ELEVATED_MO
         appliedRef.current.style.zIndex = String(DEFAULT_MODAL_Z);
         appliedRef.current = null;
       }
+      if (portalRef.current) {
+        portalRef.current.style.zIndex = '';
+        portalRef.current = null;
+      }
       return;
     }
     const apply = () => {
       const node = overlayRef?.current;
       if (!node) return;
-      const el = node.nodeType === 1 ? node : (node.getNativeNode?.() ?? node);
+      const el = node.nodeType === 1 ? node : (node.getNativeNode?.() ?? node._nativeNode ?? node);
       if (!el || !el.parentElement) return;
       let portal = el;
       while (portal.parentElement && portal.parentElement !== document.body) {
         portal = portal.parentElement;
       }
       if (portal.parentElement !== document.body) return;
+      portalRef.current = portal;
+      if (typeof portal.style !== 'undefined') {
+        portal.style.zIndex = String(zIndex);
+      }
       const animationDiv = portal.firstElementChild;
       if (animationDiv && typeof animationDiv.style !== 'undefined') {
         animationDiv.style.zIndex = String(zIndex);
@@ -45,6 +54,10 @@ export function useModalStackElevation(overlayRef, visible, zIndex = ELEVATED_MO
       if (appliedRef.current) {
         appliedRef.current.style.zIndex = String(DEFAULT_MODAL_Z);
         appliedRef.current = null;
+      }
+      if (portalRef.current) {
+        portalRef.current.style.zIndex = '';
+        portalRef.current = null;
       }
     };
   }, [visible, zIndex, overlayRef]);

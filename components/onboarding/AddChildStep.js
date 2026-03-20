@@ -544,7 +544,8 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
             ))}
           </View>
 
-          <Text style={styles.subsectionTitle}>School year (optional)</Text>
+          <Text style={styles.subsectionTitle}>School year (family default)</Text>
+          <Text style={[styles.label, { marginBottom: 4 }]}>Optional. One setting for the whole family — pre-fills new plans in Plan My Year.</Text>
           <Text style={styles.label}>Target</Text>
           <View style={styles.row}>
             <TouchableOpacity

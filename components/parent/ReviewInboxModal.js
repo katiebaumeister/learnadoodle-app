@@ -235,7 +235,7 @@ export default function ReviewInboxModal({ visible, onClose, familyId, initialSe
       >
         <View style={styles.overlayContainer}>
           <Pressable style={styles.overlay} onPress={onClose} />
-          <View style={styles.modalWrapper} pointerEvents="box-none">
+          <View style={[styles.modalWrapper, { pointerEvents: 'box-none' }]}>
             <View style={styles.modal}>
             {/* Header: rounded chips + count + close */}
             <View style={styles.header}>

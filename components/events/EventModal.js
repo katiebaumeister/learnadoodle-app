@@ -4,7 +4,7 @@ import { colors, shadows } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
 
-export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched, familyId, children = [], schedulingMode = false }) {
+export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched, familyId, children = [], schedulingMode = false, preloadedAcademicYears = [] }) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
   const [loading, setLoading] = useState(!initialEvent);
@@ -310,6 +310,7 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
                   onClose={onClose}
                   initialSchedulingMode={schedulingMode}
                   readOnly={isHolidayEvent(eventId, event)}
+                  preloadedAcademicYears={preloadedAcademicYears}
                 />
               ) : (
                 <View style={styles.loadingContainer}>

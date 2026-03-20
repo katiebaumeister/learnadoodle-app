@@ -71,7 +71,6 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
   const readyFiredRef = useRef(false);
   const gateMode = typeof onShellAssetsReady === 'function';
   const gateTimerStartRef = useRef(null);
-  const [avatarIndex, setAvatarIndex] = useState(0);
   const loadedRef = useRef(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
 
@@ -95,7 +94,7 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
   }, []);
 
   const preloadImages = (
-    <View style={styles.preloadWrap} pointerEvents="none">
+    <View style={[styles.preloadWrap, { pointerEvents: 'none' }]}>
       {SHELL_IMAGE_IDS.map((id) => (
         <Image
           key={id}
@@ -141,33 +140,6 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
     };
   }, [gateMode, allShellImagesLoaded]);
 
-  const avatarIntervalMs = 280;
-  const lastTickRef = useRef(null);
-  const indexRef = useRef(0);
-
-  useEffect(() => {
-    if (spinnerOnly) return;
-    let rafId;
-    lastTickRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    indexRef.current = 0;
-    setAvatarIndex(0);
-    const tick = () => {
-      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      const elapsed = now - lastTickRef.current;
-      const advance = Math.floor(elapsed / avatarIntervalMs);
-      if (advance > 0) {
-        lastTickRef.current = lastTickRef.current + advance * avatarIntervalMs;
-        indexRef.current = (indexRef.current + advance) % AVATAR_KEYS.length;
-        setAvatarIndex(indexRef.current);
-      }
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => {
-      if (typeof cancelAnimationFrame !== 'undefined' && rafId != null) cancelAnimationFrame(rafId);
-    };
-  }, [spinnerOnly]);
-
   // Auth gate: no shell preload needed — instant spinner only
   if (spinnerOnly && !gateMode) {
     return (
@@ -181,17 +153,7 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
     <View style={[styles.overlay, style]}>
       {preloadImages}
       <View style={styles.inner}>
-        {spinnerOnly ? (
-          <ActivityIndicator size="large" color={SPINNER_COLOR} />
-        ) : (
-          <View style={styles.avatarWrap} pointerEvents="none">
-            <Image
-              source={SHELL_SOURCES[AVATAR_KEYS[avatarIndex]]}
-              style={styles.avatar}
-              resizeMode="contain"
-            />
-          </View>
-        )}
+        <ActivityIndicator size="large" color={SPINNER_COLOR} />
       </View>
     </View>
   );
@@ -235,16 +197,5 @@ const styles = StyleSheet.create({
   preloadDecode: {
     width: 1,
     height: 1,
-  },
-  avatarWrap: {
-    width: 120,
-    height: 120,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'visible',
-  },
-  avatar: {
-    width: 96,
-    height: 96,
   },
 });

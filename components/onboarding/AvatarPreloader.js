@@ -34,7 +34,7 @@ export default function AvatarPreloader() {
   }, []);
 
   return (
-    <View style={styles.hidden} pointerEvents="none" accessibilityElementsHidden>
+    <View style={[styles.hidden, { pointerEvents: 'none' }]} accessibilityElementsHidden>
       {Object.entries(AVATAR_SOURCES).map(([key, source]) => (
         <Image key={key} source={source} style={styles.hiddenImage} />
       ))}

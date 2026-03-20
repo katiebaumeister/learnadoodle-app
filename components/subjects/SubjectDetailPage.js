@@ -493,13 +493,13 @@ export default function SubjectDetailPage({
             <Text style={styles.summaryTileValue}>Coming soon</Text>
           </TouchableOpacity>
 
-          {/* Compliance Tile */}
+          {/* Learning Goals Tile */}
           <TouchableOpacity
             style={styles.summaryTile}
-            onPress={() => {}}
+            onPress={() => scrollToSection('learning-goals-section')}
             activeOpacity={0.8}
           >
-            <Text style={styles.summaryTileLabel}>Compliance</Text>
+            <Text style={styles.summaryTileLabel}>Learning Goals</Text>
             <Text style={styles.summaryTileValue}>Coming soon</Text>
           </TouchableOpacity>
         </View>
@@ -842,12 +842,12 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section: Compliance */}
-        <View id="compliance-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Compliance</Text>
+        {/* Section: Learning Goals */}
+        <View id="learning-goals-section" style={styles.section}>
+          <Text style={styles.sectionTitle}>Learning Goals</Text>
           <View style={styles.emptyStateBox}>
             <Text style={styles.emptyStateText}>
-              Compliance logic is still being built to provide you with typical state learning requirements. Check back soon...
+              Learning Goals logic is still being built to provide you with typical state learning requirements. Check back soon...
             </Text>
           </View>
         </View>

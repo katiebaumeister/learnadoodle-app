@@ -213,8 +213,9 @@ def regenerate_block(
                         "counts_toward_plan": True,
                     })
 
+    # Only delete events that fall within the regeneration window (>= start_date) and are no longer desired
     for (d, cid), e in existing_by_key.items():
-        if (d, cid) not in desired_keys:
+        if d >= start_date and (d, cid) not in desired_keys:
             to_delete_ids.append(e["id"])
 
     # Execute: updates, then inserts, then deletes (soft-delete if schema has deleted_at)

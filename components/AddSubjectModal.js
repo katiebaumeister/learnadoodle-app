@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { X, ChevronDown, Plus, Trash2, CheckCircle, BookOpen } from 'lucide-react';
+import { X, ChevronDown, Plus, Trash2, CheckCircle, BookOpen, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -51,6 +51,8 @@ export default function AddSubjectModal({
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [credits, setCredits] = useState('');
   const [notes, setNotes] = useState('');
+  const [defaultTargetDays, setDefaultTargetDays] = useState('');
+  const [defaultTargetHours, setDefaultTargetHours] = useState('');
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -80,6 +82,11 @@ export default function AddSubjectModal({
   const [deleteEventsConfirm, setDeleteEventsConfirm] = useState({ visible: false });
   const [markingAttended, setMarkingAttended] = useState(false);
 
+  // Danger zone (edit mode only)
+  const [showDangerZone, setShowDangerZone] = useState(false);
+  const [confirmDeleteSubjectName, setConfirmDeleteSubjectName] = useState('');
+  const [deletingSubject, setDeletingSubject] = useState(false);
+
   // Update children when prop changes
   useEffect(() => {
     if (propChildren && propChildren.length > 0) {
@@ -107,6 +114,10 @@ export default function AddSubjectModal({
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setCredits(subject.credits ? String(subject.credits) : '');
         setNotes(subject.notes || '');
+        setDefaultTargetDays(subject.default_target_days != null ? String(subject.default_target_days) : '');
+        setDefaultTargetHours(subject.default_target_hours != null ? String(subject.default_target_hours) : '');
+        setShowDangerZone(false);
+        setConfirmDeleteSubjectName('');
         // Child IDs will be set in the next useEffect after children load
         // Load events for this subject
         loadSubjectEvents(subject.id);
@@ -130,6 +141,8 @@ export default function AddSubjectModal({
       setShowSchoolYearDropdown(false);
       setCredits('');
       setNotes('');
+      setDefaultTargetDays('');
+      setDefaultTargetHours('');
       setError(null);
       setSelectedMaterialId(null);
       setAttachedMaterialIds([]);
@@ -278,6 +291,34 @@ export default function AddSubjectModal({
       toast.show('Failed to mark events as attended', 'error');
     } finally {
       setMarkingAttended(false);
+    }
+  };
+
+  // Delete subject permanently (Danger Zone)
+  const performDeleteSubject = async () => {
+    if (!subject || !subject.id || !familyId) return;
+    setDeletingSubject(true);
+    try {
+      await supabase.from('events').delete().eq('subject_id', subject.id);
+      await supabase.from('materials').delete().eq('subject_id', subject.id);
+      const { data: syllabi } = await supabase.from('syllabi').select('id').eq('subject_id', subject.id);
+      if (syllabi && syllabi.length > 0) {
+        const syllabusIds = syllabi.map(s => s.id);
+        await supabase.from('syllabus_sections').delete().in('syllabus_id', syllabusIds);
+        await supabase.from('syllabi').delete().eq('subject_id', subject.id);
+      }
+      const { error } = await supabase.from('subject').delete().eq('id', subject.id).eq('family_id', familyId);
+      if (error) throw error;
+      const name = subject.name || subjectName || 'Subject';
+      if (toast?.push) toast.push(`"${name}" has been deleted.`, 'success');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+      onClose();
+    } catch (err) {
+      if (toast?.push) toast.push('Failed to delete subject: ' + (err.message || 'Unknown error'), 'error');
+    } finally {
+      setDeletingSubject(false);
     }
   };
 
@@ -465,6 +506,8 @@ export default function AddSubjectModal({
         school_year: schoolYear || getDefaultSchoolYear(),
         credits: credits ? parseFloat(credits) : null,
         notes: notes.trim() || null,
+        default_target_days: defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
+        default_target_hours: defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
       };
 
       let newSubjects;
@@ -745,6 +788,38 @@ export default function AddSubjectModal({
               )}
             </View>
 
+            {/* Default target for Plan My Year (optional) */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Default target for Plan My Year (optional)</Text>
+              <Text style={[styles.label, { fontSize: 12, color: '#6b7280', marginBottom: 8, fontWeight: 'normal' }]}>
+                Pre-fills this subject's target when building a year plan. Leave blank to set per plan.
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <View style={{ flex: 1, minWidth: 100 }}>
+                  <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={defaultTargetDays}
+                    onChangeText={setDefaultTargetDays}
+                    placeholder="e.g. 36"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="number-pad"
+                  />
+                </View>
+                <View style={{ flex: 1, minWidth: 100 }}>
+                  <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={defaultTargetHours}
+                    onChangeText={setDefaultTargetHours}
+                    placeholder="e.g. 72"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+            </View>
+
             {/* Credits (Optional) */}
             <View style={styles.formGroup}>
               <Text style={styles.label}>Credits (Optional)</Text>
@@ -937,36 +1012,65 @@ export default function AddSubjectModal({
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f5f3ff', borderRadius: 8, borderWidth: 1, borderColor: '#e9e7ed' }}
                     onPress={() => {
                       if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openPlanYearModal', {
-                          detail: { subjectId: subject.id, subjectName: subjectName || subject.name || '', from: 'generate_curriculum' },
+                        window.dispatchEvent(new CustomEvent('openGenerateCurriculumModal', {
+                          detail: {
+                            subjectId: subject.id,
+                            subjectName: subjectName || subject.name || '',
+                            familyId: familyId || null,
+                            childIds: subject?.child_id ? [subject.child_id] : [],
+                          },
                         }));
                       }
-                      onClose();
                     }}
                     activeOpacity={0.8}
                   >
                     <BookOpen size={18} color="#5b21b6" style={{ marginRight: 10 }} />
                     <Text style={{ fontSize: 14, fontWeight: '500', color: '#5b21b6' }}>{STRINGS.courseStructure.actions.generateCurriculum}</Text>
                   </TouchableOpacity>
+                  {STRINGS.courseStructure.actions.generateCurriculumHelper ? (
+                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 4 }}>{STRINGS.courseStructure.actions.generateCurriculumHelper}</Text>
+                  ) : null}
                   <TouchableOpacity
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}
                     onPress={() => {
                       if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openMagicExtractModal', { detail: { subjectId: subject.id, subjectName: subjectName || subject.name || '' } }));
+                        window.dispatchEvent(new CustomEvent('openParsePlainTextModal', {
+                          detail: {
+                            subjectId: subject.id,
+                            subjectName: subjectName || subject.name || '',
+                            familyId: familyId || null,
+                            childIds: subject?.child_id ? [subject.child_id] : [],
+                          },
+                        }));
                       }
-                      onClose();
                     }}
                     activeOpacity={0.8}
                   >
                     <Text style={{ fontSize: 14, color: '#475569' }}>{STRINGS.courseStructure.actions.importAndExtract}</Text>
                   </TouchableOpacity>
+                  {STRINGS.courseStructure?.importExtract?.helper ? (
+                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 4 }}>{STRINGS.courseStructure.importExtract.helper}</Text>
+                  ) : null}
                   <TouchableOpacity
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}
-                    onPress={() => toast.push('Add unit manually: coming soon. Use Generate curriculum or Import & extract for now.', 'info')}
+                    onPress={() => {
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', {
+                          detail: {
+                            subjectId: subject.id,
+                            subjectName: subjectName || subject.name || '',
+                            familyId: familyId || null,
+                          },
+                        }));
+                      }
+                    }}
                     activeOpacity={0.8}
                   >
                     <Text style={{ fontSize: 14, color: '#475569' }}>{STRINGS.courseStructure.actions.addUnitManually}</Text>
                   </TouchableOpacity>
+                  {STRINGS.courseStructure?.manualBuilder?.helper ? (
+                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 4 }}>{STRINGS.courseStructure.manualBuilder.helper}</Text>
+                  ) : null}
                 </View>
               </View>
             )}
@@ -1016,6 +1120,55 @@ export default function AddSubjectModal({
                         {deletingEvents ? 'Deleting...' : 'Delete All Events'}
                       </Text>
                     </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Danger Zone (edit mode only) */}
+            {subject && subject.id && (
+              <View style={styles.dangerZone}>
+                <TouchableOpacity
+                  style={styles.dangerZoneToggle}
+                  onPress={() => setShowDangerZone(!showDangerZone)}
+                >
+                  <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                  <Text style={styles.dangerZoneTitle}>
+                    {showDangerZone ? 'Hide' : 'Show'} Danger Zone
+                  </Text>
+                </TouchableOpacity>
+                {showDangerZone && (
+                  <View style={styles.dangerZoneContent}>
+                    <View style={styles.dangerSection}>
+                      <Text style={styles.dangerSectionTitle}>Delete permanently</Text>
+                      <Text style={styles.dangerSectionDescription}>
+                        This removes the subject and all its events, materials, and syllabus data for{' '}
+                        <Text style={styles.dangerSectionBold}>{subjectName || subject.name || 'this subject'}</Text>. This cannot be undone.
+                      </Text>
+                      <Text style={styles.dangerInputLabel}>Type the subject name to confirm</Text>
+                      <TextInput
+                        style={styles.dangerInput}
+                        value={confirmDeleteSubjectName}
+                        onChangeText={setConfirmDeleteSubjectName}
+                        placeholder={subjectName || subject.name || ''}
+                        placeholderTextColor="#9ca3af"
+                        autoCapitalize="words"
+                      />
+                      <TouchableOpacity
+                        style={[
+                          styles.dangerDeleteButton,
+                          (confirmDeleteSubjectName.trim().toLowerCase() !== (subjectName || subject.name || '').trim().toLowerCase() || deletingSubject) && styles.dangerDeleteButtonDisabled,
+                        ]}
+                        onPress={performDeleteSubject}
+                        disabled={
+                          confirmDeleteSubjectName.trim().toLowerCase() !== (subjectName || subject.name || '').trim().toLowerCase() || deletingSubject
+                        }
+                      >
+                        <Text style={styles.dangerDeleteButtonText}>
+                          {deletingSubject ? 'Deleting...' : `Delete ${subjectName || subject.name || 'subject'}`}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 )}
               </View>
@@ -1470,6 +1623,82 @@ const styles = StyleSheet.create({
   },
   deleteEventsButtonText: {
     color: '#EF4444',
+  },
+  // Danger Zone
+  dangerZone: {
+    marginTop: 24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  dangerZoneToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  dangerZoneTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.redBold || '#dc2626',
+  },
+  dangerZoneContent: {
+    marginTop: 16,
+  },
+  dangerSection: {
+    backgroundColor: colors.redSoft || '#fef2f2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: (colors.redBold || '#dc2626') + '40',
+    padding: 16,
+  },
+  dangerSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  dangerSectionDescription: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  dangerSectionBold: {
+    fontWeight: '600',
+  },
+  dangerInputLabel: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  dangerInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    color: '#111827',
+    backgroundColor: '#ffffff',
+    marginBottom: 12,
+  },
+  dangerDeleteButton: {
+    backgroundColor: colors.redBold || '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  dangerDeleteButtonDisabled: {
+    backgroundColor: colors.redSoft || '#fef2f2',
+    opacity: 0.5,
+  },
+  dangerDeleteButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });
 

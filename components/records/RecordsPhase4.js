@@ -1205,7 +1205,7 @@ function CompliancePanel({
           className="flex items-center justify-between"
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
         >
-          <h2 style={{ fontSize: '14px', fontWeight: '600', color: '#0f172a', margin: 0 }}>Compliance</h2>
+          <h2 style={{ fontSize: '14px', fontWeight: '600', color: '#0f172a', margin: 0 }}>Learning Goals</h2>
           <span 
             className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600"
             style={{
@@ -2606,7 +2606,7 @@ export default function RecordsPhase4({ familyId }) {
                 }}
               >
                 <Download size={16} />
-                <span>Export Compliance Packet</span>
+                <span>Export Learning Goals Packet</span>
               </button>
             </div>
             <p className="text-xs text-slate-500 text-center" style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', margin: 0 }}>
@@ -2642,7 +2642,7 @@ export default function RecordsPhase4({ familyId }) {
                 className="text-2xl font-semibold text-slate-900"
                 style={{ fontSize: '24px', fontWeight: '600', color: '#0f172a', margin: 0 }}
               >
-                Compliance & Records
+                Learning Goals & Records
               </h1>
               <p 
                 className="mt-1 text-sm text-slate-500"

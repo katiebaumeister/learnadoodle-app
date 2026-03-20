@@ -94,9 +94,10 @@ class CustomBreakEntry(BaseModel):
 
 
 class BlockEntry(BaseModel):
-    """Block schema: subject + weekdays + time range + children. block_id optional for new blocks."""
+    """Block schema: subject + weekdays + time range + children. block_id optional. subject_id optional for generic/placeholder blocks."""
     block_id: Optional[str] = None
-    subject_id: str
+    subject_id: Optional[str] = None  # null = generic "Learning block" slot
+    placeholder_label: Optional[str] = None  # display title when subject_id is null
     child_ids: List[str] = []
     weekdays: List[int] = [1, 2, 3, 4, 5]  # 0=Sun, 1=Mon, ..., 6=Sat
     start_time: str = "09:00"
@@ -128,6 +129,7 @@ class ApplyToCalendarInput(BaseModel):
     year_name: Optional[str] = None  # Display name e.g. "Lilly · Math · Feb 26 – Mar 26, 2026"
     timezone: Optional[str] = None  # IANA timezone from client (e.g. America/New_York) when family timezone not set
     force_new_plan: bool = False  # When True, always create a new academic year (do not reuse same start/end)
+    apply_from_date: Optional[str] = None  # YYYY-MM-DD: when set, only regenerate block events from this date forward (edit-plan behavior)
 
 
 class BlockRegenResult(BaseModel):
@@ -173,6 +175,7 @@ class SchedulePotentialOutput(BaseModel):
     per_child: Optional[Dict[str, Dict[str, Any]]] = None  # child_id -> { projected_days, suggested_end_date } (child-aware)
     per_child_subject: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None  # child_id -> subject_id -> { projected_days, occurrence_dates_sorted }
     days_excluded_holidays: Optional[int] = None  # when follow_public_holidays: count of eligible days excluded due to (global) holidays
+    cadence_suggestion: Optional[Dict[str, Any]] = None  # Phase 4: { min_weekdays_per_week, eligible_days_in_range, message }
 
 
 class PlanHealthOutput(BaseModel):
@@ -809,21 +812,38 @@ async def get_plan_health(
         target_hours = float(plan["target_hours"]) if plan.get("target_hours") is not None else None
 
         end_next = (end_date_obj + timedelta(days=1)).isoformat()
-        # Use minimal projection so DBs without instructional_status/instructional_day_credit don't 500
-        ev_resp = (
-            supabase.table("events")
-            .select(
-                "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, "
-                "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder, generated_by"
+        # Phase 3: include instructional_status, instructional_day_credit for unified compliance (fallback if columns missing)
+        try:
+            ev_resp = (
+                supabase.table("events")
+                .select(
+                    "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, "
+                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, instructional_day_credit, "
+                    "instructional_status, is_placeholder, generated_by"
+                )
+                .eq("family_id", family_id)
+                .eq("academic_year_id", academic_year_id)
+                .is_("deleted_at", None)
+                .gte("start_ts", plan["start_date"] + "T00:00:00")
+                .lt("start_ts", end_next + "T00:00:00")
+                .execute()
             )
-            .eq("family_id", family_id)
-            .eq("academic_year_id", academic_year_id)
-            .is_("deleted_at", None)
-            .gte("start_ts", plan["start_date"] + "T00:00:00")
-            .lt("start_ts", end_next + "T00:00:00")
-            .execute()
-        )
-        events = ev_resp.data or []
+            events = ev_resp.data or []
+        except Exception:
+            ev_resp = (
+                supabase.table("events")
+                .select(
+                    "id, start_ts, end_ts, event_type, status, deleted_at, counts_toward_plan, "
+                    "academic_year_id, child_id, child_ids, subject_id, instructional_minutes, is_placeholder, generated_by"
+                )
+                .eq("family_id", family_id)
+                .eq("academic_year_id", academic_year_id)
+                .is_("deleted_at", None)
+                .gte("start_ts", plan["start_date"] + "T00:00:00")
+                .lt("start_ts", end_next + "T00:00:00")
+                .execute()
+            )
+            events = ev_resp.data or []
         attributions = get_instructional_attributions(events)
 
         # No-requirement mode: compute current placeholder days and deleted dates for "You deleted a lesson on [date]..." message
@@ -1538,6 +1558,7 @@ async def schedule_potential(
             per_child=result.get("per_child"),
             per_child_subject=result.get("per_child_subject"),
             days_excluded_holidays=days_excluded_holidays,
+            cadence_suggestion=result.get("cadence_suggestion"),
         )
     except HTTPException:
         raise
@@ -2118,7 +2139,7 @@ async def apply_to_calendar(
     log_event("academic_year.apply_to_calendar.start", user_id=user["id"], family_id=body.family_id)
     print(
         f"[BACKEND] apply_to_calendar start: family_id={body.family_id} academic_year_id={body.academic_year_id or 'new'} "
-        f"start_date={body.start_date} end_date={body.end_date} replace_placeholders={getattr(body, 'replace_placeholders', None)}",
+        f"start_date={body.start_date} end_date={body.end_date} replace_placeholders={getattr(body, 'replace_placeholders', None)} apply_from_date={getattr(body, 'apply_from_date', None)}",
         flush=True,
     )
     try:
@@ -2134,6 +2155,22 @@ async def apply_to_calendar(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="start_date must be <= end_date",
             )
+        # When editing a plan: only regenerate events from this date forward (inclusive)
+        regen_start_date = start_date_obj
+        if body.apply_from_date:
+            try:
+                apply_from = date.fromisoformat(body.apply_from_date)
+                if apply_from < start_date_obj or apply_from > end_date_obj:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="apply_from_date must be within the plan's start and end date",
+                    )
+                regen_start_date = apply_from
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="apply_from_date must be a valid date (YYYY-MM-DD)",
+                )
 
         custom_holidays_dict = [{"date": h.date, "name": h.name, "type": getattr(h, "type", "CUSTOM_HOLIDAY")} for h in body.custom_holidays]
         custom_breaks_dict = [{"start": b.start, "end": b.end, "name": b.name} for b in body.custom_breaks]
@@ -2163,6 +2200,7 @@ async def apply_to_calendar(
                 blocks_to_use.append({
                     "block_id": block_id,
                     "subject_id": b.subject_id,
+                    "placeholder_label": getattr(b, "placeholder_label", None),
                     "child_ids": list(b.child_ids) if b.child_ids else [],
                     "weekdays": list(b.weekdays) if b.weekdays else [1, 2, 3, 4, 5],
                     "start_time": b.start_time or "09:00",
@@ -2325,14 +2363,18 @@ async def apply_to_calendar(
         if use_blocks:
             # Block-aware regeneration: only touch placeholders for each block (no global delete)
             for block in blocks_to_use:
-                subject_id = block["subject_id"]
-                subject_name = subject_rows.get(str(subject_id), "Lesson")
+                subject_id = block.get("subject_id")
+                subject_name = (
+                    subject_rows.get(str(subject_id), "Learning block")
+                    if subject_id
+                    else (block.get("placeholder_label") or "Learning block")
+                )
                 result = regen_block(
                     supabase,
                     body.family_id,
                     academic_year_id,
                     block,
-                    start_date_obj,
+                    regen_start_date,
                     end_date_obj,
                     exclusion_ranges,
                     generation_batch_id,

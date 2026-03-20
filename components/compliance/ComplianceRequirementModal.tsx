@@ -239,7 +239,7 @@ export default function ComplianceRequirementModal({
 
   if (!open) return null;
 
-  const title = requirement?.label ?? 'Compliance';
+  const title = requirement?.label ?? 'Learning Goals';
   const typeLabel = requirement?.type ? BADGE_LABELS[requirement.type] ?? requirement.type : null;
   const stateCode = requirement?.stateCode ?? '';
   const isAttendance = requirement?.id === 'attendance';

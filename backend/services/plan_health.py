@@ -118,20 +118,25 @@ def compute_plan_health_from_attributions(
         if not child_id:
             continue
         child_id = str(child_id)
+        # Phase 3: instructional_day_credit: 0 = count minutes only, not as a day; null or > 0 = count as day
+        day_credit = row.get("instructional_day_credit")
+        counts_as_day = day_credit is None or (isinstance(day_credit, (int, float)) and float(day_credit) != 0)
         # Attribution row's is_placeholder is set from event generated_by=='plan_year' (see instructional_attribution)
         is_plan_event = row.get("is_placeholder") is True
 
-        all_dates.add(d)
-        per_child_dates[child_id].add(d)
+        if counts_as_day:
+            all_dates.add(d)
+            per_child_dates[child_id].add(d)
         per_child_minutes[child_id] += minutes
-        if not is_plan_event:
+        if not is_plan_event and counts_as_day:
             manual_days.add(d)
             manual_minutes += minutes
         subject_id = row.get("subject_id")
         if subject_id:
             sid = str(subject_id)
             key = (child_id, sid)
-            per_child_subject_dates[key].add(d)
+            if counts_as_day:
+                per_child_subject_dates[key].add(d)
             per_child_subject_minutes[key] += minutes
 
     total_minutes = sum(per_child_minutes.values())
