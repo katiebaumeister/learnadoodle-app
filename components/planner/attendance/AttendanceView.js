@@ -130,11 +130,8 @@ export default function AttendanceView({
       setRangeReady(false);
       return;
     }
-    if (
-      plannerInitialSnapshot &&
-      plannerInitialSnapshot.familyId === familyIdResolved &&
-      plannerInitialSnapshot.childCount === children.length
-    ) {
+    // Apply prefetch whenever family matches (childCount can differ if children loaded after prefetch — refetch below corrects).
+    if (plannerInitialSnapshot && plannerInitialSnapshot.familyId === familyIdResolved) {
       const snap = plannerInitialSnapshot;
       setAcademicYear(snap.academicYear ?? null);
       setYearRange({
@@ -181,7 +178,7 @@ export default function AttendanceView({
       }
     })();
     return () => { cancelled = true; };
-  }, [familyIdResolved, children.length, plannerInitialSnapshot]);
+  }, [familyIdResolved, plannerInitialSnapshot]);
 
   // Fetch attendance and events when year range (or family/children/refresh) changes.
   const yearStartKey = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';

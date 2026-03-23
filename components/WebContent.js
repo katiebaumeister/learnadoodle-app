@@ -3483,6 +3483,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
   }, [propFamilyId, propSession?.family_id]);
 
+  /** Home greeting: family display name (Parents row) first, then profile name. */
+  const parentHomeGreetingName = useMemo(() => {
+    const familyName = typeof propFamily?.family_name === 'string' ? propFamily.family_name.trim() : '';
+    if (familyName) return familyName;
+    const profileName = typeof propProfile?.name === 'string' ? propProfile.name.trim() : '';
+    if (profileName) return profileName;
+    const first = typeof propProfile?.first_name === 'string' ? propProfile.first_name.trim() : '';
+    if (first) return first;
+    return '';
+  }, [propFamily?.family_name, propProfile?.name, propProfile?.first_name]);
+
   // Sync children from props
   useEffect(() => {
     if (propChildren && propChildren.length > 0) {
@@ -7390,7 +7401,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     </View>
   );
 
-  const renderContent = () => {
+  const renderContent = (plannerTabsReturnNull = false) => {
     // Check if it's a subject detail tab (from routing)
     if (activeTab && activeTab.startsWith('subject-')) {
       const subjectId = activeTab.replace('subject-', '');
@@ -7508,13 +7519,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       return renderNotesContent()
     }
     
-    // Check if it's a calendar tab
-    if (activeTab === 'calendar') {
-      return renderCalendarContent()
-    }
-    // Planner tab - show CenterPane with view switcher
-    if (activeTab === 'planner') {
-      return renderPlannerContent()
+    // Planner shell tabs: when web keeps planner mounted behind other tabs, return null here
+    // and let the outer wrapper render a single persistent renderPlannerContent() instance.
+    if (activeTab === 'calendar' || activeTab === 'planner' || activeTab === 'ai-planner') {
+      if (plannerTabsReturnNull) return null;
+      return renderCalendarContent();
     }
     // NOTE: schedule_overrides removed - Schedule Rules feature disabled
     // Schedule Rules and AI Planner are now modals, not separate tabs
@@ -7522,9 +7531,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     // if (activeTab === 'schedule-rules') {
     //   return renderPlannerContent()
     // }
-    if (activeTab === 'ai-planner') {
-      return renderPlannerContent()
-    }
     if (activeTab === 'notifications') {
       return (
         <View style={styles.content}>
@@ -7555,6 +7561,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           return (
             <ParentHomeScreen
               familyId={familyId}
+              greetingName={parentHomeGreetingName}
               onNavigate={onTabChange}
               onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
               onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
@@ -7580,6 +7587,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           return (
               <ParentHomeScreen
                 familyId={familyId}
+                greetingName={parentHomeGreetingName}
                 onNavigate={onTabChange}
                 onAddEvent={() => {
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -7618,6 +7626,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             return (
               <ParentHomeScreen
                 familyId={familyId}
+                greetingName={parentHomeGreetingName}
                 onNavigate={onTabChange}
                 onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
                 onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
@@ -7832,9 +7841,58 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     flex: 1,
     ...(Platform.OS === 'web' ? { minHeight: 360 } : { minHeight: 0 }),
   };
+  const persistPlannerWeb = Platform.OS === 'web' && !!familyId;
+  const isPlannerShellTab =
+    activeTab === 'planner' || activeTab === 'calendar' || activeTab === 'ai-planner';
+  const innerContent = renderContent(persistPlannerWeb);
+  const hiddenPlannerLayerStyle =
+    Platform.OS === 'web'
+      ? {
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          opacity: 0,
+          zIndex: 0,
+          overflow: 'hidden',
+          width: '100%',
+          height: '100%',
+        }
+      : {};
+
   return (
     <>
-      <View style={contentWrapStyle}>{renderContent()}</View>
+      <View style={contentWrapStyle}>
+        {persistPlannerWeb ? (
+          <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+            <View
+              style={
+                isPlannerShellTab
+                  ? { flex: 1, minHeight: 0, zIndex: 1 }
+                  : hiddenPlannerLayerStyle
+              }
+              pointerEvents={isPlannerShellTab ? 'auto' : 'none'}
+            >
+              {renderPlannerContent()}
+            </View>
+            {!isPlannerShellTab && innerContent != null ? (
+              <View
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  zIndex: 1,
+                  backgroundColor: '#fff',
+                }}
+              >
+                {innerContent}
+              </View>
+            ) : null}
+          </View>
+        ) : (
+          innerContent
+        )}
+      </View>
       <AddMaterialModal
         visible={showAddMaterialModal}
         onClose={() => setShowAddMaterialModal(false)}

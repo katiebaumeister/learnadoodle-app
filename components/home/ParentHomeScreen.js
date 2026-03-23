@@ -26,6 +26,8 @@ import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 export default function ParentHomeScreen({
   familyId: propFamilyId,
+  /** Family name (Parents row) or profile name — shown after time-based greeting */
+  greetingName = '',
   onNavigate,
   onAddEvent,
   onAddGrade,
@@ -351,6 +353,10 @@ export default function ParentHomeScreen({
     }
   };
 
+  const greetingWho = (typeof greetingName === 'string' && greetingName.trim())
+    ? greetingName.trim()
+    : 'Doodle Family';
+
   const formatDate = (date) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -384,7 +390,7 @@ export default function ParentHomeScreen({
       {/* Header Row */}
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <Text style={styles.greetingText}>{getTimeBasedGreeting()}, Doodle Family!</Text>
+          <Text style={styles.greetingText}>{getTimeBasedGreeting()}, {greetingWho}!</Text>
           <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
         </View>
         <TouchableOpacity

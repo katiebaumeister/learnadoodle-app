@@ -194,20 +194,45 @@ export default function CenterPane({
         />
       ) : (
         <>
-          {mode === 'Month' && (
-            <MonthGrid
-              date={viewDate}
-              events={filtered}
-              selectedDate={selectedDate}
-              onSelectDate={onSelectDate}
-              onEventPress={onEventSelect}
-              onEventRightClick={onEventRightClick}
-              onEventComplete={onEventComplete}
-              blackoutDates={blackoutDates}
-              children={children}
-              onSwitchToBoardView={() => setMode('Board')}
-              onSwitchToBoardViewForDay={switchToBoardViewForDay}
-            />
+          {/* Web: keep month grid mounted so switching from Week/Tasks/etc. shows data immediately (no blank flash). */}
+          {Platform.OS === 'web' && !isMobile ? (
+            <View
+              style={{
+                flex: 1,
+                minHeight: 0,
+                ...(mode !== 'Month' ? { display: 'none' } : {}),
+              }}
+            >
+              <MonthGrid
+                date={viewDate}
+                events={filtered}
+                selectedDate={selectedDate}
+                onSelectDate={onSelectDate}
+                onEventPress={onEventSelect}
+                onEventRightClick={onEventRightClick}
+                onEventComplete={onEventComplete}
+                blackoutDates={blackoutDates}
+                children={children}
+                onSwitchToBoardView={() => setMode('Board')}
+                onSwitchToBoardViewForDay={switchToBoardViewForDay}
+              />
+            </View>
+          ) : (
+            mode === 'Month' && (
+              <MonthGrid
+                date={viewDate}
+                events={filtered}
+                selectedDate={selectedDate}
+                onSelectDate={onSelectDate}
+                onEventPress={onEventSelect}
+                onEventRightClick={onEventRightClick}
+                onEventComplete={onEventComplete}
+                blackoutDates={blackoutDates}
+                children={children}
+                onSwitchToBoardView={() => setMode('Board')}
+                onSwitchToBoardViewForDay={switchToBoardViewForDay}
+              />
+            )
           )}
           {mode === 'Week' && (
             <PlannerWeek
@@ -262,15 +287,35 @@ export default function CenterPane({
               preloadedTrashEvents={preloadedTrashEvents}
             />
           )}
-          {mode === 'Attendance' && (
-            <AttendanceView
-              familyId={familyId}
-              children={children}
-              events={filtered}
-              onEventPress={onEventSelect}
-              onEditChild={onEditChild}
-              plannerInitialSnapshot={plannerAttendanceSnapshot}
-            />
+          {/* Web: keep mounted while on other planner modes so prefetch hydrates before first open (no blank flash). */}
+          {Platform.OS === 'web' && !isMobile ? (
+            <View
+              style={{
+                flex: 1,
+                minHeight: 0,
+                ...(mode !== 'Attendance' ? { display: 'none' } : {}),
+              }}
+            >
+              <AttendanceView
+                familyId={familyId}
+                children={children}
+                events={mode === 'Attendance' ? filtered : []}
+                onEventPress={onEventSelect}
+                onEditChild={onEditChild}
+                plannerInitialSnapshot={plannerAttendanceSnapshot}
+              />
+            </View>
+          ) : (
+            mode === 'Attendance' && (
+              <AttendanceView
+                familyId={familyId}
+                children={children}
+                events={filtered}
+                onEventPress={onEventSelect}
+                onEditChild={onEditChild}
+                plannerInitialSnapshot={plannerAttendanceSnapshot}
+              />
+            )
           )}
         </>
       )}

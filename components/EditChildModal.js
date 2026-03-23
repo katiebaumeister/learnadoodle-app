@@ -6,6 +6,16 @@ import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 
+/** Normalize DB row for client lists (name + avatar for color chips). */
+function mapChildRowForClient(row) {
+  if (!row?.id) return row;
+  return {
+    ...row,
+    name: row.first_name ?? row.name,
+    avatar: row.avatar ?? null,
+  };
+}
+
 export default function EditChildModal({ 
   visible, 
   onClose, 
@@ -262,8 +272,12 @@ export default function EditChildModal({
         alert(`${formData.name} has been updated successfully!`);
       }
 
+      const clientRow = mapChildRowForClient(data);
       if (onChildUpdated) {
-        onChildUpdated(data);
+        onChildUpdated(clientRow);
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && clientRow?.id) {
+        window.dispatchEvent(new CustomEvent('childProfileUpdated', { detail: { child: clientRow } }));
       }
 
       setTimeout(() => {

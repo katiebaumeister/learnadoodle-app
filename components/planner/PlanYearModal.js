@@ -7,7 +7,7 @@
  * 2. Homeschool constraint solver: Pick 3 vars, compute 4th
  */
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -145,6 +145,20 @@ const SECTION_GAP = 28;
 const OPTION_GAP = 16;
 const LABEL_INPUT_GAP = 6;
 const INPUT_GAP = 12;
+
+/** Edit plan list: survives modal unmount so reopening shows rows immediately while refresh runs in background. */
+let academicYearsPickerCache = { familyId: null, rows: null };
+
+function getAcademicYearsPickerCache(familyId) {
+  if (!familyId || academicYearsPickerCache.familyId !== familyId) return null;
+  if (!Array.isArray(academicYearsPickerCache.rows)) return null;
+  return academicYearsPickerCache.rows;
+}
+
+function setAcademicYearsPickerCache(familyId, rows) {
+  academicYearsPickerCache.familyId = familyId;
+  academicYearsPickerCache.rows = Array.isArray(rows) ? rows : [];
+}
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAY_NUMBERS = [0, 1, 2, 3, 4, 5, 6];
@@ -322,6 +336,39 @@ function toLocalYYYYMMDD(d) {
   return `${y}-${m}-${day}`;
 }
 
+/** Build plan logistics date range: survives unmount; avoids empty dates while prefilling from Supabase. */
+let planBuildLogisticsDatesCache = { familyId: null, startDate: '', endDate: '' };
+
+function getPlanBuildLogisticsDatesCache(familyId) {
+  if (!familyId || planBuildLogisticsDatesCache.familyId !== familyId) return null;
+  const { startDate, endDate } = planBuildLogisticsDatesCache;
+  if (!startDate || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return null;
+  }
+  return { startDate, endDate };
+}
+
+function setPlanBuildLogisticsDatesCache(familyId, startDate, endDate) {
+  if (!familyId || !startDate || !endDate) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return;
+  planBuildLogisticsDatesCache = { familyId, startDate, endDate };
+}
+
+function defaultBuildPlanLogisticsDates() {
+  const start = new Date();
+  start.setHours(12, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 23);
+  return { startDate: toLocalYYYYMMDD(start), endDate: toLocalYYYYMMDD(end) };
+}
+
+function initialBuildPlanLogisticsDates(familyId, initialAcademicYearId) {
+  if (initialAcademicYearId) return { startDate: '', endDate: '' };
+  const c = familyId ? getPlanBuildLogisticsDatesCache(familyId) : null;
+  if (c) return c;
+  return defaultBuildPlanLogisticsDates();
+}
+
 /** Client-side parse of pasted plain text: one topic per line, optional unit/section headers. No backend call. */
 function parsePastedListToCurriculum(pastedText, studentIds, startDateISO) {
   const lines = pastedText
@@ -474,7 +521,6 @@ export default function PlanYearModal({
   const [planCreatedAt, setPlanCreatedAt] = useState(null);
   const [planUpdatedAt, setPlanUpdatedAt] = useState(null);
   const [isHomeschool, setIsHomeschool] = useState(false);
-  const [checkingHomeschool, setCheckingHomeschool] = useState(true);
   
   // Fast path state
   const [fastPathYearId, setFastPathYearId] = useState(null);
@@ -484,8 +530,12 @@ export default function PlanYearModal({
   
   // Constraint solver state
   const [mode, setMode] = useState('FIXED_END'); // FIXED_END | TARGET_DAYS | TARGET_HOURS
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState(() =>
+    initialBuildPlanLogisticsDates(familyId, initialAcademicYearId).startDate
+  );
+  const [endDate, setEndDate] = useState(() =>
+    initialBuildPlanLogisticsDates(familyId, initialAcademicYearId).endDate
+  );
   const [targetDays, setTargetDays] = useState('');
   const [targetHours, setTargetHours] = useState('');
   const [hoursPerDay, setHoursPerDay] = useState('');
@@ -508,6 +558,23 @@ export default function PlanYearModal({
   const [newHolidayDateCalendarMonth, setNewHolidayDateCalendarMonth] = useState(() => new Date());
   const [newBreakStartCalendarMonth, setNewBreakStartCalendarMonth] = useState(() => new Date());
   const [newBreakEndCalendarMonth, setNewBreakEndCalendarMonth] = useState(() => new Date());
+
+  // Modal can stay mounted with visible=false; reset clears dates — restore cache or a local default before paint (no empty date range).
+  useLayoutEffect(() => {
+    if (!visible) return;
+    if (initialAcademicYearId) return;
+    if (academicYearId) return;
+    if (startDate && endDate) return;
+    const c = familyId ? getPlanBuildLogisticsDatesCache(familyId) : null;
+    if (c?.startDate && c?.endDate) {
+      setStartDate(c.startDate);
+      setEndDate(c.endDate);
+      return;
+    }
+    const d = defaultBuildPlanLogisticsDates();
+    setStartDate(d.startDate);
+    setEndDate(d.endDate);
+  }, [visible, familyId, initialAcademicYearId, academicYearId, startDate, endDate]);
   
   // Calculated results
   const [calculatedResult, setCalculatedResult] = useState(null);
@@ -1090,13 +1157,23 @@ export default function PlanYearModal({
   const [startCreatingNew, setStartCreatingNew] = useState(() => !!(openForNewPlan && !initialAcademicYearId && !openToEditPlanList));
 
   // Fetch all academic years for this family for "Edit plan" picker (show every plan/year ever created, not only those with a plan row)
-  const [previousPlans, setPreviousPlans] = useState([]);
-  const [previousPlansLoading, setPreviousPlansLoading] = useState(true); // true so we don't skip to "create new" before fetch completes
+  const [previousPlans, setPreviousPlans] = useState(() => {
+    const c = familyId ? getAcademicYearsPickerCache(familyId) : null;
+    return c !== null ? c : [];
+  });
+  const [previousPlansLoading, setPreviousPlansLoading] = useState(() => {
+    if (!familyId) return true;
+    return getAcademicYearsPickerCache(familyId) === null;
+  });
   const [planListRowTimesById, setPlanListRowTimesById] = useState({});
   useEffect(() => {
     if (!visible || !openForNewPlan || !familyId) return;
     let cancelled = false;
-    setPreviousPlansLoading(true);
+    const hadCache = getAcademicYearsPickerCache(familyId) !== null;
+    if (!hadCache) {
+      setPreviousPlansLoading(true);
+      setPreviousPlans([]);
+    }
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('academic_years')
@@ -1105,8 +1182,14 @@ export default function PlanYearModal({
         .order('start_date', { ascending: false });
       if (!cancelled) {
         setPreviousPlansLoading(false);
-        if (err) setPreviousPlans([]);
-        else setPreviousPlans(Array.isArray(rows) ? rows : []);
+        if (err) {
+          setPreviousPlans([]);
+          setAcademicYearsPickerCache(familyId, []);
+        } else {
+          const next = Array.isArray(rows) ? rows : [];
+          setAcademicYearsPickerCache(familyId, next);
+          setPreviousPlans(next);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1423,7 +1506,6 @@ export default function PlanYearModal({
       // Defer so we don't flash "Create new plan" first screen during close animation
       const t = setTimeout(() => {
         setStartCreatingNew(false);
-        setPreviousPlansLoading(true);
       }, 350);
       return () => clearTimeout(t);
     }
@@ -1547,6 +1629,7 @@ export default function PlanYearModal({
         savedTargetsAppliedRef.current = true;
         if (ay.start_date) setStartDate(ay.start_date);
         if (ay.end_date) setEndDate(ay.end_date);
+        if (ay.start_date && ay.end_date) setPlanBuildLogisticsDatesCache(familyId, ay.start_date, ay.end_date);
         if (hasTargetDays) {
           setPlanConstraintMode('days');
           setPlanTargetDays(String(ay.target_instructional_days));
@@ -1565,6 +1648,7 @@ export default function PlanYearModal({
         if (!cancelled && ay && (ay.start_date || ay.end_date)) {
           if (ay.start_date) setStartDate(ay.start_date);
           if (ay.end_date) setEndDate(ay.end_date);
+          if (ay.start_date && ay.end_date) setPlanBuildLogisticsDatesCache(familyId, ay.start_date, ay.end_date);
         }
       }
     })();
@@ -2174,25 +2258,10 @@ export default function PlanYearModal({
     return () => { cancelled = true; };
   }, [visible, academicYearId, familyId]);
 
-  // Check if family has homeschooled students
+  // Plan My Year is the homeschool planning flow; always use full planning UI (no async gate).
   useEffect(() => {
-    if (visible && familyId) {
-      checkHomeschoolStatus();
-    }
+    if (visible && familyId) setIsHomeschool(true);
   }, [visible, familyId]);
-
-  const checkHomeschoolStatus = async () => {
-    setCheckingHomeschool(true);
-    try {
-      // Plan My Year is the homeschool planning flow; always show full planning UI.
-      // (No dependency on children.homeschooled column, which may not exist.)
-      setIsHomeschool(true);
-    } catch (err) {
-      setIsHomeschool(true);
-    } finally {
-      setCheckingHomeschool(false);
-    }
-  };
 
   const createDefaultYear = async () => {
     setLoading(true);
@@ -2862,25 +2931,6 @@ export default function PlanYearModal({
       setError(null);
     }
   }, [error, startDate, endDate, mode, targetDays, targetHours, hoursPerDay]);
-
-  if (checkingHomeschool) {
-    const loadingContent = (
-      <TouchableOpacity style={[styles.modal, { flex: 1 }]} activeOpacity={1} onPress={() => {}}>
-        <ActivityIndicator size="large" color={ACCENT} />
-        <Text style={styles.loadingText}>Checking setup...</Text>
-      </TouchableOpacity>
-    );
-    if (renderInline) {
-      return <View style={{ flex: 1, minHeight: 0 }}>{loadingContent}</View>;
-    }
-    return (
-      <Modal visible={visible} transparent animationType="fade">
-        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-          {loadingContent}
-        </TouchableOpacity>
-      </Modal>
-    );
-  }
 
   const editPlanLoading = isHomeschool && (initialAcademicYearId || academicYearId) && loadedYearIdRef.current !== (initialAcademicYearId || academicYearId);
   const headerMetaRaw = editPlanLoading
@@ -6918,7 +6968,11 @@ export default function PlanYearModal({
             if (data?.plan_deleted) {
               planSummaryCacheRef.current.delete(planSummaryYearId);
               preloadedSummaryIdsRef.current.delete(planSummaryYearId);
-              setPreviousPlans((prev) => prev.filter((p) => String(p.id) !== String(planSummaryYearId)));
+              setPreviousPlans((prev) => {
+                const next = prev.filter((p) => String(p.id) !== String(planSummaryYearId));
+                if (familyId) setAcademicYearsPickerCache(familyId, next);
+                return next;
+              });
               setPlanSummaryYearId(null);
               setPlanSummaryData(null);
               setPlanSummaryError(null);
@@ -6965,7 +7019,11 @@ export default function PlanYearModal({
             if (data?.plan_deleted) {
               planSummaryCacheRef.current.delete(planSummaryYearId);
               preloadedSummaryIdsRef.current.delete(planSummaryYearId);
-              setPreviousPlans((prev) => prev.filter((p) => String(p.id) !== String(planSummaryYearId)));
+              setPreviousPlans((prev) => {
+                const next = prev.filter((p) => String(p.id) !== String(planSummaryYearId));
+                if (familyId) setAcademicYearsPickerCache(familyId, next);
+                return next;
+              });
               setPlanSummaryYearId(null);
               setPlanSummaryData(null);
               setPlanSummaryError(null);

@@ -10,6 +10,7 @@ import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import ChildDotCluster from '../ui/ChildDotCluster';
 import EditChildModal from '../EditChildModal';
 import AddChildModal from '../AddChildModal';
 import AddSubjectModal from '../AddSubjectModal';
@@ -754,12 +755,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     await performDeleteSubject(subject);
   };
 
+  const familyChildrenForSubjectDots = childrenWithAvatars.length > 0 ? childrenWithAvatars : (family?.children || []);
+
   // Helper to get child names for a subject (child_id can be single UUID or semicolon-separated)
   const getSubjectChildNames = (subject) => {
     if (subject.child_id == null || String(subject.child_id).trim() === '') {
       return 'All children';
     }
-    const availableChildren = childrenWithAvatars.length > 0 ? childrenWithAvatars : (family?.children || []);
+    const availableChildren = familyChildrenForSubjectDots;
     const childIds = String(subject.child_id).split(';').map(id => id.trim()).filter(Boolean);
     if (childIds.length === 0) return 'All children';
     const childNames = childIds.map(id => {
@@ -768,6 +771,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }).filter(Boolean);
     if (childNames.length > 0) return childNames.join(', ');
     return childIds.length === 1 ? '1 student' : `${childIds.length} students`;
+  };
+
+  /** Child IDs for prof-color chips (whole family when subject applies to all). */
+  const getSubjectChildIdsForDots = (subject) => {
+    if (subject.child_id == null || String(subject.child_id).trim() === '') {
+      return (familyChildrenForSubjectDots || []).map((c) => c.id).filter(Boolean);
+    }
+    return String(subject.child_id).split(';').map((id) => id.trim()).filter(Boolean);
   };
 
   // Helper to get last activity text for a subject
@@ -2317,7 +2328,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   const isHovered = hoveredSubjectId === subject.id;
                   const lastActivity = getSubjectLastActivity(subject);
                   const childNames = getSubjectChildNames(subject);
-                  
+                  const studentChildIds = getSubjectChildIdsForDots(subject);
+
                   return (
                     <React.Fragment key={subject.id}>
                       {index > 0 && <View style={styles.subjectDivider} />}
@@ -2380,9 +2392,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           <View style={styles.subjectCardHeader}>
                             <View style={styles.subjectCardInfo}>
                               <Text style={styles.subjectCardName}>{subject.name}</Text>
-                              <View style={styles.subjectCardMeta}>
-                                <Text style={styles.subjectCardChildren}>
-                                  {childNames !== 'All children' && childNames !== 'No children' ? `Students: ${childNames}` : childNames}
+                              <View style={[styles.subjectCardMeta, styles.subjectCardChildrenRow]}>
+                                <Text style={styles.subjectCardChildren}>Students: </Text>
+                                {studentChildIds.length > 0 ? (
+                                  <ChildDotCluster
+                                    childIds={studentChildIds}
+                                    familyChildren={familyChildrenForSubjectDots}
+                                    dotSize={8}
+                                    overlap={-3}
+                                    style={{ marginRight: 6 }}
+                                  />
+                                ) : null}
+                                <Text style={[styles.subjectCardChildren, { flexShrink: 1 }]} numberOfLines={2}>
+                                  {childNames}
                                 </Text>
                                 <Text style={styles.subjectCardActivity}> · {lastActivity}</Text>
                               </View>
@@ -3907,18 +3929,41 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         familyId={family?.id || familyId}
         onChildUpdated={(updatedChild) => {
           if (updatedChild && family) {
-            setFamily(prevFamily => {
+            setFamily((prevFamily) => {
               if (!prevFamily) return prevFamily;
-              const updatedChildren = (prevFamily.children || []).map(child => 
-                child.id === updatedChild.id ? { ...child, first_name: updatedChild.first_name || updatedChild.name, name: updatedChild.first_name || updatedChild.name, nickname: updatedChild.nickname, age: updatedChild.age, grade: updatedChild.grade, avatar: updatedChild.avatar, archived: updatedChild.archived } : child
+              const updatedChildren = (prevFamily.children || []).map((child) =>
+                child.id === updatedChild.id
+                  ? {
+                      ...child,
+                      ...updatedChild,
+                      first_name: updatedChild.first_name ?? child.first_name,
+                      name: updatedChild.first_name || updatedChild.name || child.name,
+                      nickname: updatedChild.nickname ?? child.nickname,
+                      age: updatedChild.age ?? child.age,
+                      grade: updatedChild.grade ?? child.grade,
+                      avatar: updatedChild.avatar ?? child.avatar,
+                      archived: updatedChild.archived ?? child.archived,
+                    }
+                  : child
               );
               return { ...prevFamily, children: updatedChildren };
             });
           }
-          setChildrenFetchKey(k => k + 1);
-          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshChildren'));
-          const loadFamily = async () => { try { const { data, error: err } = await getFamilyMembers(); if (!err && data) { setFamily(data); if (onFamilyUpdate) onFamilyUpdate(data); } } catch (err) {} };
-          loadFamily();
+          setChildrenFetchKey((k) => k + 1);
+          if (typeof window !== 'undefined') {
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('refreshChildren'));
+              (async () => {
+                try {
+                  const { data, error: err } = await getFamilyMembers();
+                  if (!err && data) {
+                    setFamily(data);
+                    if (onFamilyUpdate) onFamilyUpdate(data);
+                  }
+                } catch (_e) {}
+              })();
+            }, 650);
+          }
         }}
         onChildDeleted={() => {
           setChildrenFetchKey(k => k + 1);

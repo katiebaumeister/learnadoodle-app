@@ -71,6 +71,41 @@ function toLocalYYYYMMDD(d) {
   return `${y}-${m}-${day}`;
 }
 
+/** Avatar column may be prof1–10 or a real URL — same rules as children fetch. */
+function validateChildAvatarUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidPattern.test(trimmed)) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  const knownAvatarKeys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
+  if (knownAvatarKeys.includes(trimmed.toLowerCase())) {
+    return trimmed;
+  }
+  return null;
+}
+
+/** Merge Supabase row into existing child so avatar chips update immediately (avoids stale refetch replacing the row). */
+function mergeUpdatedChildIntoList(prev, row) {
+  if (!row?.id || !Array.isArray(prev)) return prev;
+  return prev.map((c) => {
+    if (c.id !== row.id) return c;
+    const av = validateChildAvatarUrl(row.avatar) ?? row.avatar ?? c.avatar;
+    const avUrl = validateChildAvatarUrl(row.avatar_url || row.avatar) ?? c.avatar_url;
+    return {
+      ...c,
+      ...row,
+      avatar: av,
+      avatar_url: avUrl,
+      first_name: row.first_name ?? c.first_name,
+      name: row.first_name ?? row.name ?? c.name,
+    };
+  });
+}
+
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
   // Try to get session from context if not provided as prop
@@ -169,6 +204,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const planYearDropdownRef = useRef(null);
   const [planYearDropdownPosition, setPlanYearDropdownPosition] = useState({ top: 0, left: 0 });
   const planYearReturnViewRef = useRef('month');
+  const resetInlinePlanYearOpenState = useCallback(() => {
+    setPlanYearHighlightFromHealth(false);
+    setPlanYearFromSubjectDetail(false);
+    setPlanYearInitialAcademicYearId(null);
+    setPlanYearInitialPlanSummaryData(null);
+    setPlanYearOpenForNewPlan(false);
+    setPlanYearOpenToEditList(false);
+    setPlanYearOpenDirectlyToScope(false);
+    setPlanYearInitialSubjectId(null);
+    setPlanYearInitialMaterialId(null);
+  }, []);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showPlanWeekModal, setShowPlanWeekModal] = useState(false);
@@ -1246,33 +1292,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [user]);
 
-  // Helper function to validate and clean avatar URLs
-  const validateAvatarUrl = (url) => {
-    if (!url || typeof url !== 'string') return null;
-    const trimmed = url.trim();
-    if (!trimmed) return null;
-    
-    // Check if it's just a UUID (invalid URL format)
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (uuidPattern.test(trimmed)) {
-      return null; // It's just a UUID, not a valid URL
-    }
-    
-    // Valid URLs must start with http://, https://, or data:
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
-      return trimmed;
-    }
-    
-    // If it's a known avatar key (like "prof1"), it's valid
-    const knownAvatarKeys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
-    if (knownAvatarKeys.includes(trimmed.toLowerCase())) {
-      return trimmed;
-    }
-    
-    // Otherwise, it's not a valid URL
-    return null;
-  };
-
   const fetchFamilyMembers = useCallback(async () => {
     if (!user || !session) return;
     try {
@@ -1300,8 +1319,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               // Validate and clean avatar URLs
               const cleaned = (allData || []).map(child => ({
                 ...child,
-                avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
-                avatar: validateAvatarUrl(child.avatar) ?? null
+                avatar_url: validateChildAvatarUrl(child.avatar_url || child.avatar),
+                avatar: validateChildAvatarUrl(child.avatar) ?? null
               }));
               setChildren(cleaned);
             } else {
@@ -1312,8 +1331,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             // Validate and clean avatar URLs
             const cleaned = (childrenData || []).map(child => ({
               ...child,
-              avatar_url: validateAvatarUrl(child.avatar_url || child.avatar),
-              avatar: validateAvatarUrl(child.avatar) ?? null
+              avatar_url: validateChildAvatarUrl(child.avatar_url || child.avatar),
+              avatar: validateChildAvatarUrl(child.avatar) ?? null
             }));
             setChildren(cleaned);
           }
@@ -1520,6 +1539,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.removeEventListener('refreshChildren', handleRefreshChildren);
     };
   }, [fetchFamilyData, fetchFamilyMembers]);
+
+  // After edit-child save: apply authoritative row immediately so planner/home chips match new avatar (before refetch can return stale).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onProfile = (e) => {
+      const row = e?.detail?.child;
+      if (!row?.id) return;
+      setChildren((prev) => mergeUpdatedChildIntoList(prev, row));
+    };
+    window.addEventListener('childProfileUpdated', onProfile);
+    return () => window.removeEventListener('childProfileUpdated', onProfile);
+  }, []);
 
   // Listen for subjects refresh (e.g. after onboarding, adding from Plan Year)
   const refetchSubjects = useCallback(async () => {
@@ -2144,6 +2175,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Determine if we're on a calendar screen
   const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';
+
+  /** Build / Edit plan replaces the main pane in URL state but must not unmount WebContent (month grid stays warm). */
+  const isPlanYearInline =
+    isCalendarScreen && (currentView === 'plan-year' || currentView === 'edit-year');
+  const plannerViewForWebContent = isPlanYearInline
+    ? (() => {
+        const r = planYearReturnViewRef.current || defaultView || 'month';
+        return ['plan-year', 'edit-year'].includes(r) ? defaultView || 'month' : r;
+      })()
+    : currentView;
 
   /** Icon keys on RightToolbar — highlight purple; tasks/backlog are legacy and have no icon. */
   const rightToolbarActiveKeyForIcons =
@@ -2795,6 +2836,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           }}
                           onPress={() => {
                             const viewValue = view.key;
+                            if (currentView === 'plan-year' || currentView === 'edit-year') {
+                              resetInlinePlanYearOpenState();
+                            }
                             if (Platform.OS !== 'web') {
                               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                             }
@@ -3179,81 +3223,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           
           {/* Main Content + Right Toolbar */}
           <View style={{ flex: 1, flexDirection: isCalendarScreen ? 'row' : 'column', minWidth: 0 }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {(currentView === 'plan-year' || currentView === 'edit-year') && isCalendarScreen ? (
-              <PlanYearModal
-                renderInline
-                visible
-                onClose={() => {
-                  const returnView = planYearReturnViewRef.current || defaultView || 'month';
-                  setCurrentView(returnView);
-                  if (Platform.OS === 'web') {
-                    const url = new URL(window.location);
-                    url.searchParams.set('view', returnView);
-                    window.history.pushState({}, '', url);
-                    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
-                  }
-                  setPlanYearHighlightFromHealth(false);
-                  setPlanYearFromSubjectDetail(false);
-                  setPlanYearInitialAcademicYearId(null);
-                  setPlanYearInitialPlanSummaryData(null);
-                  setPlanYearOpenForNewPlan(false);
-                  setPlanYearOpenToEditList(false);
-                  setPlanYearOpenDirectlyToScope(false);
-                  setPlanYearInitialSubjectId(null);
-                  setPlanYearInitialMaterialId(null);
+            <View style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+              <View
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  zIndex: 0,
+                  ...(isPlanYearInline
+                    ? { pointerEvents: 'none' }
+                    : { pointerEvents: 'auto' }),
                 }}
-                familyId={familyId}
-                children={children}
-                subjects={subjects}
-                fullSubjects={fullSubjects}
-                initialAcademicYearId={planYearInitialAcademicYearId}
-                initialPlanSummaryData={planYearInitialPlanSummaryData}
-                openForNewPlan={planYearOpenForNewPlan}
-                openToEditPlanList={currentView === 'edit-year' || planYearOpenToEditList}
-                openDirectlyToScope={planYearOpenDirectlyToScope}
-                fromSubjectDetail={planYearFromSubjectDetail}
-                highlightFromPlanHealth={planYearHighlightFromHealth}
-                initialSubjectId={planYearInitialSubjectId}
-                initialMaterialId={planYearInitialMaterialId}
-                onOpenBuildCurriculum={(params) => {
-                  setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
-                  setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
-                  setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
-                  setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
-                  setBuildCurriculumInitialTopic(params.initialTopic ?? null);
-                  setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
-                  setShowBuildCurriculumModal(true);
-                }}
-                onOpenRebalance={() => setShowRebalanceModal(true)}
-                onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
-                onComplete={() => {
-                  const returnView = planYearReturnViewRef.current || defaultView || 'month';
-                  setCurrentView(returnView);
-                  if (Platform.OS === 'web') {
-                    const url = new URL(window.location);
-                    url.searchParams.set('view', returnView);
-                    window.history.pushState({}, '', url);
-                    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
-                    window.dispatchEvent(new CustomEvent('refreshCalendar'));
-                  }
-                  setPlanYearHighlightFromHealth(false);
-                  setPlanYearFromSubjectDetail(false);
-                  setPlanYearInitialAcademicYearId(null);
-                  setPlanYearInitialPlanSummaryData(null);
-                  setPlanYearOpenForNewPlan(false);
-                  setPlanYearOpenToEditList(false);
-                  setPlanYearOpenDirectlyToScope(false);
-                  setPlanYearInitialSubjectId(null);
-                  setPlanYearInitialMaterialId(null);
-                }}
-              />
-              ) : (
+              >
               <WebContent
                 activeTab={activeTab}
                 activeSubtab={activeSubtab}
                 activeChildId={activeChildId}
-                plannerView={currentView}
+                plannerView={plannerViewForWebContent}
                 activeChildSection={activeChildSection}
                 user={user}
                 onChildAdded={handleChildAdded}
@@ -3307,7 +3293,75 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 profile={profile}
                 preloadedPlanHealth={preloadedPlanHealth}
               />
-              )}
+              </View>
+              {isPlanYearInline ? (
+                <View
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: 1,
+                    flex: 1,
+                    minHeight: 0,
+                    minWidth: 0,
+                    backgroundColor: '#FFFFFF',
+                  }}
+                >
+                  <PlanYearModal
+                    renderInline
+                    visible
+                    onClose={() => {
+                      const returnView = planYearReturnViewRef.current || defaultView || 'month';
+                      setCurrentView(returnView);
+                      if (Platform.OS === 'web') {
+                        const url = new URL(window.location);
+                        url.searchParams.set('view', returnView);
+                        window.history.pushState({}, '', url);
+                        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
+                      }
+                      resetInlinePlanYearOpenState();
+                    }}
+                    familyId={familyId}
+                    children={children}
+                    subjects={subjects}
+                    fullSubjects={fullSubjects}
+                    initialAcademicYearId={planYearInitialAcademicYearId}
+                    initialPlanSummaryData={planYearInitialPlanSummaryData}
+                    openForNewPlan={planYearOpenForNewPlan}
+                    openToEditPlanList={currentView === 'edit-year' || planYearOpenToEditList}
+                    openDirectlyToScope={planYearOpenDirectlyToScope}
+                    fromSubjectDetail={planYearFromSubjectDetail}
+                    highlightFromPlanHealth={planYearHighlightFromHealth}
+                    initialSubjectId={planYearInitialSubjectId}
+                    initialMaterialId={planYearInitialMaterialId}
+                    onOpenBuildCurriculum={(params) => {
+                      setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
+                      setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
+                      setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
+                      setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
+                      setBuildCurriculumInitialTopic(params.initialTopic ?? null);
+                      setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
+                      setShowBuildCurriculumModal(true);
+                    }}
+                    onOpenRebalance={() => setShowRebalanceModal(true)}
+                    onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
+                    onComplete={() => {
+                      const returnView = planYearReturnViewRef.current || defaultView || 'month';
+                      setCurrentView(returnView);
+                      if (Platform.OS === 'web') {
+                        const url = new URL(window.location);
+                        url.searchParams.set('view', returnView);
+                        window.history.pushState({}, '', url);
+                        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
+                        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                      }
+                      resetInlinePlanYearOpenState();
+                    }}
+                  />
+                </View>
+              ) : null}
             </View>
             {isCalendarScreen && (
               <View style={{
@@ -3322,6 +3376,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 <RightToolbar
                   activeTool={rightToolbarActiveKeyForIcons}
                   onTasks={() => {
+                    if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();
                     setActiveRightTool('tasks');
                     setCurrentView('tasks');
                     if (typeof window !== 'undefined') {
@@ -3330,6 +3385,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }
                   }}
                   onBacklog={() => {
+                    if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();
                     setActiveRightTool('backlog');
                     setCurrentView('tasks');
                     if (typeof window !== 'undefined') {
@@ -3371,6 +3427,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }
                   }}
                   onAttendance={() => {
+                    if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();
                     setActiveRightTool('attendance');
                     setCurrentView('attendance');
                     setDefaultView('attendance');
@@ -4420,11 +4477,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
         child={editingChild}
         onChildUpdated={(updatedChild) => {
-          // Refresh children list
-          const updatedChildren = children.map(c => 
-            c.id === updatedChild.id ? updatedChild : c
-          );
-          setChildren(updatedChildren);
+          if (!updatedChild?.id) return;
+          setChildren((prev) => mergeUpdatedChildIntoList(prev, updatedChild));
         }}
       />
 
