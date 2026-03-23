@@ -493,6 +493,7 @@ import {
   prefetchWeekViewIntoOffline,
   prefetchBacklogAndTrash,
   prefetchPlannerAttendanceSnapshot,
+  prefetchPlanEditListForFamily,
 } from '../lib/services/plannerPrefetch'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
@@ -3543,6 +3544,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     const now = new Date();
     const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    prefetchPlanEditListForFamily(familyId).catch(() => {});
     refreshCalendarData(now)
       .then(() => {
         onPlannerLoadingChange?.(false);

@@ -80,6 +80,15 @@ import {
   getPreviewBackStep,
   showMultiSubjectCadenceHint,
 } from './planYearFlowConfig';
+import {
+  getAcademicYearsPickerCache,
+  setAcademicYearsPickerCache,
+  getPlanEditListTimesForPlans,
+  mergePlanEditListTimesCache,
+  dropPlanEditListTimesCacheEntry,
+  formatTimeRange,
+  getPlanBlocksTimesSummary,
+} from '../../lib/planEditListCache';
 
 // Constants for curriculum building
 const SOURCE_TYPES = [
@@ -146,20 +155,6 @@ const OPTION_GAP = 16;
 const LABEL_INPUT_GAP = 6;
 const INPUT_GAP = 12;
 
-/** Edit plan list: survives modal unmount so reopening shows rows immediately while refresh runs in background. */
-let academicYearsPickerCache = { familyId: null, rows: null };
-
-function getAcademicYearsPickerCache(familyId) {
-  if (!familyId || academicYearsPickerCache.familyId !== familyId) return null;
-  if (!Array.isArray(academicYearsPickerCache.rows)) return null;
-  return academicYearsPickerCache.rows;
-}
-
-function setAcademicYearsPickerCache(familyId, rows) {
-  academicYearsPickerCache.familyId = familyId;
-  academicYearsPickerCache.rows = Array.isArray(rows) ? rows : [];
-}
-
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAY_NUMBERS = [0, 1, 2, 3, 4, 5, 6];
 
@@ -184,21 +179,6 @@ function parsePlanCardLines(ay) {
   if (parts.length >= 3) return { line1: parts[0], line2: parts[1], line3: parts[2] };
   if (parts.length === 2) return { line1: parts[0], line2: null, line3: parts[1] };
   return { line1: name, line2: null, line3: dateRange };
-}
-
-/** One-line summary of instructional block times for Edit plan list (under date range). */
-function getPlanBlocksTimesSummary(academicYearData) {
-  const blocks = academicYearData?.plan?.blocks;
-  if (!Array.isArray(blocks) || blocks.length === 0) return '';
-  const labels = blocks.map((b) => {
-    if (b?.all_day) return 'All day';
-    return formatTimeRange(b?.start_time, b?.end_time);
-  });
-  const unique = [...new Set(labels.filter(Boolean))];
-  if (unique.length === 0) return '';
-  if (unique.length === 1) return unique[0];
-  if (unique.length === 2) return unique.join(' · ');
-  return `${unique.length} time windows`;
 }
 
 /** Dedupe and stable-sort children for Edit plan / subject-style dot clusters */
@@ -442,24 +422,6 @@ function getBlockOccurrenceDates(block, startDateYmd, endDateYmd, exclusionRange
     cur.setDate(cur.getDate() + 1);
   }
   return out;
-}
-
-/** "09:00" / "10:00" -> "9–10am" */
-function formatTimeRange(startTime, endTime) {
-  const parse = (s) => {
-    if (!s || typeof s !== 'string') return { h: 9, m: 0 };
-    const parts = s.trim().split(':');
-    const h = parseInt(parts[0], 10);
-    const m = parts[1] ? parseInt(parts[1].replace(/\D/g, ''), 10) : 0;
-    return { h: Number.isNaN(h) ? 9 : Math.max(0, Math.min(23, h)), m: Number.isNaN(m) ? 0 : Math.max(0, Math.min(59, m)) };
-  };
-  const start = parse(startTime || '09:00');
-  const end = parse(endTime || '10:00');
-  const fmt = (t) => {
-    if (t.m === 0) return t.h === 12 ? '12pm' : t.h === 0 ? '12am' : t.h < 12 ? `${t.h}am` : `${t.h - 12}pm`;
-    return t.h === 12 ? `12:${String(t.m).padStart(2, '0')}pm` : t.h === 0 ? `12:${String(t.m).padStart(2, '0')}am` : t.h < 12 ? `${t.h}:${String(t.m).padStart(2, '0')}am` : `${t.h - 12}:${String(t.m).padStart(2, '0')}pm`;
-  };
-  return `${fmt(start)}–${fmt(end)}`;
 }
 
 function expandBreaksToHolidayDates(breaks) {
@@ -897,7 +859,7 @@ export default function PlanYearModal({
   const datesSectionYRef = useRef(0);
   const schedulePotentialFetchedRef = useRef(false);
   const planSummaryCacheRef = useRef(new Map()); // yearId -> full academic year data for instant summary display
-  const preloadedSummaryIdsRef = useRef(new Set());
+  const summaryFetchInFlightRef = useRef(new Set());
   const subjectPlanResolvedRef = useRef(false); // when from subject details, avoid re-running plan-for-subject search
 
   const baseSubjectList = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
@@ -1165,10 +1127,35 @@ export default function PlanYearModal({
     if (!familyId) return true;
     return getAcademicYearsPickerCache(familyId) === null;
   });
-  const [planListRowTimesById, setPlanListRowTimesById] = useState({});
+  const [planListRowTimesById, setPlanListRowTimesById] = useState(() => {
+    const rows = familyId ? getAcademicYearsPickerCache(familyId) : null;
+    return getPlanEditListTimesForPlans(familyId, rows !== null ? rows : []);
+  });
+
+  const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
+    if (!familyId || !yearId) return;
+    if (planSummaryCacheRef.current.has(yearId) || summaryFetchInFlightRef.current.has(yearId)) return;
+    summaryFetchInFlightRef.current.add(yearId);
+    getAcademicYear(yearId)
+      .then(({ data }) => {
+        summaryFetchInFlightRef.current.delete(yearId);
+        if (cancelledRef?.current) return;
+        if (data) planSummaryCacheRef.current.set(yearId, data);
+        const s = getPlanBlocksTimesSummary(data);
+        if (s) {
+          mergePlanEditListTimesCache(familyId, { [yearId]: s });
+          setPlanListRowTimesById((prev) => ({ ...prev, [yearId]: s }));
+        }
+      })
+      .catch(() => {
+        summaryFetchInFlightRef.current.delete(yearId);
+      });
+  }, [familyId]);
+
   useEffect(() => {
     if (!visible || !openForNewPlan || !familyId) return;
     let cancelled = false;
+    const cancelledRef = { get current() { return cancelled; } };
     const hadCache = getAcademicYearsPickerCache(familyId) !== null;
     if (!hadCache) {
       setPreviousPlansLoading(true);
@@ -1180,52 +1167,41 @@ export default function PlanYearModal({
         .select('id, year_name, start_date, end_date, updated_at')
         .eq('family_id', familyId)
         .order('start_date', { ascending: false });
-      if (!cancelled) {
-        setPreviousPlansLoading(false);
-        if (err) {
-          setPreviousPlans([]);
-          setAcademicYearsPickerCache(familyId, []);
-        } else {
-          const next = Array.isArray(rows) ? rows : [];
-          setAcademicYearsPickerCache(familyId, next);
-          setPreviousPlans(next);
-        }
+      if (cancelled) return;
+      setPreviousPlansLoading(false);
+      if (err) {
+        setPreviousPlans([]);
+        setAcademicYearsPickerCache(familyId, []);
+        return;
       }
+      const next = Array.isArray(rows) ? rows : [];
+      setAcademicYearsPickerCache(familyId, next);
+      setPreviousPlans(next);
+      next
+        .map((r) => r.id)
+        .filter(Boolean)
+        .forEach((id) => prefetchYearSummaryForEditList(id, cancelledRef));
     })();
     return () => { cancelled = true; };
-  }, [visible, openForNewPlan, familyId]);
+  }, [visible, openForNewPlan, familyId, prefetchYearSummaryForEditList]);
 
-  // Preload plan summary data for each plan in the list so switching to summary doesn't flash loading; derive times for Edit plan list (under date)
+  // Fill time sublines from module cache when plans appear; fetch any missing summaries (deduped with list prefetch).
   useEffect(() => {
     if (!familyId || !previousPlans.length || previousPlansLoading) return;
-    const ids = previousPlans.map((ay) => ay.id).filter(Boolean);
-    const pending = ids.filter((id) => !preloadedSummaryIdsRef.current.has(id));
-
-    const mergeTimesFromCache = () => {
-      const next = {};
-      ids.forEach((id) => {
-        const cached = planSummaryCacheRef.current.get(id);
-        const s = getPlanBlocksTimesSummary(cached);
-        if (s) next[id] = s;
-      });
-      setPlanListRowTimesById(next);
-    };
-
-    if (pending.length === 0) {
-      mergeTimesFromCache();
-      return;
+    let stale = false;
+    const cancelledRef = { get current() { return stale; } };
+    const fromModule = getPlanEditListTimesForPlans(familyId, previousPlans);
+    if (Object.keys(fromModule).length > 0) {
+      setPlanListRowTimesById((prev) => ({ ...fromModule, ...prev }));
     }
-    pending.forEach((id) => preloadedSummaryIdsRef.current.add(id));
-    Promise.all(
-      pending.map((id) =>
-        getAcademicYear(id).then(({ data }) => {
-          if (data) planSummaryCacheRef.current.set(id, data);
-        })
-      )
-    ).then(() => {
-      mergeTimesFromCache();
-    });
-  }, [familyId, previousPlans, previousPlansLoading]);
+    previousPlans
+      .map((ay) => ay.id)
+      .filter(Boolean)
+      .forEach((id) => prefetchYearSummaryForEditList(id, cancelledRef));
+    return () => {
+      stale = true;
+    };
+  }, [familyId, previousPlans, previousPlansLoading, prefetchYearSummaryForEditList]);
 
   // When modal closes, defer clearing plan summary state until after close animation so we don't flash YOUR PLANS list
   useEffect(() => {
@@ -6967,7 +6943,13 @@ export default function PlanYearModal({
             }
             if (data?.plan_deleted) {
               planSummaryCacheRef.current.delete(planSummaryYearId);
-              preloadedSummaryIdsRef.current.delete(planSummaryYearId);
+              summaryFetchInFlightRef.current.delete(planSummaryYearId);
+              dropPlanEditListTimesCacheEntry(familyId, planSummaryYearId);
+              setPlanListRowTimesById((prev) => {
+                const next = { ...prev };
+                delete next[planSummaryYearId];
+                return next;
+              });
               setPreviousPlans((prev) => {
                 const next = prev.filter((p) => String(p.id) !== String(planSummaryYearId));
                 if (familyId) setAcademicYearsPickerCache(familyId, next);
@@ -7018,7 +7000,13 @@ export default function PlanYearModal({
             }
             if (data?.plan_deleted) {
               planSummaryCacheRef.current.delete(planSummaryYearId);
-              preloadedSummaryIdsRef.current.delete(planSummaryYearId);
+              summaryFetchInFlightRef.current.delete(planSummaryYearId);
+              dropPlanEditListTimesCacheEntry(familyId, planSummaryYearId);
+              setPlanListRowTimesById((prev) => {
+                const next = { ...prev };
+                delete next[planSummaryYearId];
+                return next;
+              });
               setPreviousPlans((prev) => {
                 const next = prev.filter((p) => String(p.id) !== String(planSummaryYearId));
                 if (familyId) setAcademicYearsPickerCache(familyId, next);
