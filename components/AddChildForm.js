@@ -636,7 +636,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarCellSelected: {
-    borderColor: '#B8D7F9',
+    borderWidth: 3,
+    borderColor: '#6BB3E8',
   },
   avatarImg: {
     width: 48,

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { Plus, ChevronRight, FileText } from 'lucide-react';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { Plus, FileText } from 'lucide-react';
 import { colors } from '../../theme/colors';
+import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
+import ChildDotCluster from '../ui/ChildDotCluster';
 
 export default function TodayScheduleCard({
   events = [],
@@ -36,10 +37,9 @@ export default function TodayScheduleCard({
     return child?.first_name || child?.name || 'Unknown';
   };
 
-  const getChildColor = (childId) => {
-    const child = children.find(c => String(c.id) === String(childId));
-    if (!child) return '#94A3B8';
-    return getChildColorFromAvatar(child.avatar);
+  const formatChildNamesLine = (childIds) => {
+    if (childIds.length === 0) return '';
+    return childIds.map((id) => getChildName(id)).join(', ');
   };
 
   const getSubjectName = (subjectId) => {
@@ -121,6 +121,7 @@ export default function TodayScheduleCard({
           showsVerticalScrollIndicator={false}
         >
           {events.map((event) => {
+            const eventChildIds = getEventChildIdsForDisplay(event, children);
             const startTime = formatTime(event.start_local || event.start_ts);
             const endTime = event.end_ts || event.end_local ? formatTime(event.end_ts || event.end_local) : null;
             const timeRange = endTime ? `${startTime} - ${endTime}` : startTime;
@@ -157,10 +158,17 @@ export default function TodayScheduleCard({
                   </View>
                   <Text style={styles.eventTitle}>{event.title}</Text>
                   <View style={styles.pillsRow}>
-                    {event.child_id && (
+                    {eventChildIds.length > 0 && (
                       <View style={styles.childLabel}>
-                        <View style={[styles.childDot, { backgroundColor: getChildColor(event.child_id) }]} />
-                        <Text style={styles.childLabelText}>{getChildName(event.child_id)}</Text>
+                        <ChildDotCluster
+                          childIds={eventChildIds}
+                          familyChildren={children}
+                          dotSize={12}
+                          overlap={-4}
+                        />
+                        <Text style={styles.childLabelText}>
+                          {formatChildNamesLine(eventChildIds)}
+                        </Text>
                       </View>
                     )}
                     {event.subject_id && (
@@ -322,18 +330,17 @@ const styles = StyleSheet.create({
   },
   childLabel: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  childDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    alignItems: 'flex-start',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
   },
   childLabelText: {
     fontSize: 13,
     color: '#374151',
     fontWeight: '500',
+    flex: 1,
+    minWidth: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

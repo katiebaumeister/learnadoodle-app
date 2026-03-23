@@ -1,12 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Platform, ScrollView } from 'react-native';
 import { X, ChevronDown, ExternalLink } from 'lucide-react';
-
-const PLANNER_FAQ = [
-  { id: 'pl-1', q: 'How does the planner work?', a: 'You can view lessons and activities in daily, weekly, or monthly calendar formats. Add tasks, field trips, enrichment activities, and checkpoints directly into the calendar.' },
-  { id: 'pl-2', q: 'What if plans change?', a: 'You can reschedule, skip, or drag events, and Learnadoodle\'s adaptive structure helps keep pacing and records aligned with real life.' },
-  { id: 'pl-3', q: 'Does Learnadoodle integrate with my device calendars?', a: 'Calendar integration is part of the planning workflow; connections to external calendars help keep family schedules synchronized.' },
-];
+import { PLANNER_FAQ } from './plannerFaqContent';
 
 export default function HelpPopover({ visible, onClose, position, helpForumHref = '/help/faqs' }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -20,7 +15,7 @@ export default function HelpPopover({ visible, onClose, position, helpForumHref 
         top: position?.top ?? 0,
         left: position?.left ?? 0,
         width: 320,
-        maxHeight: 400,
+        maxHeight: 480,
         backgroundColor: '#FFFFFF',
         borderRadius: 12,
         borderWidth: 1,
@@ -57,8 +52,12 @@ export default function HelpPopover({ visible, onClose, position, helpForumHref 
       </View>
 
       {/* FAQ list */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
-        {PLANNER_FAQ.map((item, index) => {
+      <ScrollView
+        style={{ maxHeight: 340 }}
+        showsVerticalScrollIndicator
+      >
+        <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
+          {PLANNER_FAQ.map((item, index) => {
             const isExpanded = expandedId === item.id;
             return (
               <View
@@ -107,7 +106,8 @@ export default function HelpPopover({ visible, onClose, position, helpForumHref 
               </View>
             );
           })}
-      </View>
+        </View>
+      </ScrollView>
 
       {/* Visit help forum link */}
       <View style={{

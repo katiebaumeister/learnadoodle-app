@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Platform, Animated } from 'react-native';
 import { Check, BookOpen, Calculator, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Pencil, Sparkles, AlertTriangle } from 'lucide-react';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import CompletionRing from './CompletionRing';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
+import ChildDotCluster from '../ui/ChildDotCluster';
+import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
   // Holidays should not be clickable, movable, or show time
@@ -32,28 +33,19 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   };
   
   const color = getEventTypeColor();
-  
-  // Get participating child IDs - memoized to prevent infinite loops
-  const participatingChildIds = useMemo(() => {
-    const childIds = [];
-    if (ev?.child_id) {
-      childIds.push(ev.child_id);
-    }
-    if (ev?.child_ids && Array.isArray(ev.child_ids)) {
-      childIds.push(...ev.child_ids);
-    }
-    // Remove duplicates
-    return [...new Set(childIds)];
-  }, [ev?.child_id, ev?.child_ids]);
-  
-  // Get child colors for dots
-  const getChildDotColor = (childId) => {
-    const child = children.find(c => c.id === childId);
-    if (!child || !child.avatar) {
-      return '#9CA3AF'; // Default gray
-    }
-    return getChildColorFromAvatar(child.avatar);
-  };
+
+  const isPlaceholder = Boolean(
+    ev?.is_placeholder ||
+    ev?.isPlaceholder ||
+    ev?.status === 'placeholder' ||
+    ev?.placeholder === true
+  );
+
+  // Get participating child IDs (whole-family when none set) — memoized to prevent infinite loops
+  const participatingChildIds = useMemo(
+    () => getEventChildIdsForDisplay(ev, children),
+    [ev?.id, ev?.child_id, ev?.child_ids, children]
+  );
 
   // Get background color based on event type (soft contrast fill)
   const getBackgroundColor = () => {
@@ -279,6 +271,28 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const [showConflictTooltip, setShowConflictTooltip] = React.useState(false);
   const [conflictTooltipPosition, setConflictTooltipPosition] = React.useState({ x: 0, y: 0 });
 
+  /** Survives brief stale `ev.status` after refetch (common cause of checkmark flash). */
+  const [completionOverride, setCompletionOverride] = useState(null);
+  useEffect(() => {
+    setCompletionOverride(null);
+  }, [ev?.id]);
+  useEffect(() => {
+    if (completionOverride === null) return;
+    const serverDone = ev?.status === 'done';
+    if (serverDone === completionOverride) {
+      setCompletionOverride(null);
+    }
+  }, [ev?.status, completionOverride]);
+
+  const handleCompletionToggle = useCallback(() => {
+    if (!onComplete || !ev) return;
+    const serverDone = ev.status === 'done';
+    setCompletionOverride(!serverDone);
+    Promise.resolve(onComplete(ev)).catch(() => {
+      setCompletionOverride(null);
+    });
+  }, [onComplete, ev]);
+
   // Conflict detection
   const [conflictInfo, setConflictInfo] = React.useState(null);
   const [dismissedConflicts, setDismissedConflicts] = React.useState(new Set());
@@ -329,17 +343,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     }
 
     // Filter allDayEvents to only include events for the same child(ren)
-    const sameChildEvents = allDayEvents.filter(otherEvent => {
+    const sameChildEvents = allDayEvents.filter((otherEvent) => {
       if (!otherEvent || otherEvent.id === ev.id) return false; // Don't count self
-      
-      const otherChildIds = [];
-      if (otherEvent.child_id) otherChildIds.push(otherEvent.child_id);
-      if (otherEvent.child_ids && Array.isArray(otherEvent.child_ids)) {
-        otherChildIds.push(...otherEvent.child_ids);
-      }
-      
-      // Check if there's any overlap in child IDs
-      return eventChildIds.some(cid => otherChildIds.includes(cid));
+
+      const otherChildIds = getEventChildIdsForDisplay(otherEvent, children);
+
+      const setA = new Set(eventChildIds.map(String));
+      return otherChildIds.some((cid) => setA.has(String(cid)));
     });
 
     // Detect conflicts using the utility function
@@ -492,7 +502,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     );
   };
 
-  const isDone = ev.status === 'done';
+  const isDone = completionOverride !== null ? completionOverride : ev.status === 'done';
   const shouldShowDoneStyling = isDone && !hideDoneStyling;
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
@@ -593,7 +603,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               onClick: (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                onComplete(ev);
+                handleCompletionToggle();
               },
               onMouseDown: (e) => {
                 e.stopPropagation();
@@ -601,6 +611,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             })}
             style={{ 
               flexShrink: 0,
+              width: 20,
+              height: 20,
               alignItems: 'center',
               justifyContent: 'center',
               ...(Platform.OS === 'web' && {
@@ -616,7 +628,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 if (e && e.preventDefault) {
                   e.preventDefault();
                 }
-                onComplete(ev);
+                handleCompletionToggle();
               }}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={{ 
@@ -679,36 +691,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               </View>
               {/* Child participation dots - right after time */}
               {participatingChildIds.length > 0 && (
-                <View style={{ 
-                  flexDirection: 'row', 
-                  gap: 3,
-                  alignItems: 'center', 
-                  flexShrink: 0,
-                  marginLeft: 6,
-                }}>
-                  {participatingChildIds.slice(0, 3).map((childId) => (
-                    <View
-                      key={childId}
-                      style={{
-                        width: 7,
-                        height: 7,
-                        borderRadius: 3.5,
-                        backgroundColor: getChildDotColor(childId),
-                        opacity: 1,
-                      }}
-                    />
-                  ))}
-                  {participatingChildIds.length > 3 && (
-                    <View
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: 3,
-                        backgroundColor: 'rgba(156, 163, 175, 0.4)',
-                      }}
-                    />
-                  )}
-                </View>
+                <ChildDotCluster
+                  childIds={participatingChildIds}
+                  familyChildren={children}
+                  dotSize={7}
+                  overlap={-3}
+                  style={{ marginLeft: 6, flexShrink: 0 }}
+                />
               )}
             </View>
             {/* Date display underneath */}
@@ -775,36 +764,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               </View>
               {/* Child participation dots - Right-aligned */}
               {participatingChildIds.length > 0 && (
-                <View style={{ 
-                  flexDirection: 'row', 
-                  gap: 3, // Reduced gap
-                  alignItems: 'center', 
-                  flexShrink: 0,
-                  marginLeft: 'auto', // Right-align the cluster
-                }}>
-                  {participatingChildIds.slice(0, 3).map((childId) => (
-                    <View
-                      key={childId}
-                      style={{
-                        width: 7,
-                        height: 7,
-                        borderRadius: 3.5,
-                        backgroundColor: getChildDotColor(childId),
-                        opacity: 1,
-                      }}
-                    />
-                  ))}
-                  {participatingChildIds.length > 3 && (
-                    <View
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: 3,
-                        backgroundColor: 'rgba(156, 163, 175, 0.4)', // Soft grey continuation dot
-                      }}
-                    />
-                  )}
-                </View>
+                <ChildDotCluster
+                  childIds={participatingChildIds}
+                  familyChildren={children}
+                  dotSize={7}
+                  overlap={-3}
+                  style={{ marginLeft: 'auto', flexShrink: 0 }}
+                />
               )}
             </View>
             {/* Date display underneath */}
@@ -899,7 +865,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               onClick: (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                onComplete(ev);
+                handleCompletionToggle();
               },
               onMouseDown: (e) => {
                 e.stopPropagation();
@@ -907,6 +873,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             })}
             style={{ 
               flexShrink: 0,
+              width: 20,
+              height: 20,
               alignItems: 'center',
               justifyContent: 'center',
               ...(Platform.OS === 'web' && {
@@ -922,7 +890,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 if (e && e.preventDefault) {
                   e.preventDefault();
                 }
-                onComplete(ev);
+                handleCompletionToggle();
               }}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={{ 
@@ -980,38 +948,15 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             }}>· {displayTime}</Text>
           )}
         </View>
-        {/* Child participation dots - Cluster Glyph */}
+        {/* Child participation dots - Cluster Glyph (month compact) */}
         {participatingChildIds.length > 0 && (
-          <View style={{ 
-            flexDirection: 'row', 
-            gap: 3, // Reduced gap
-            alignItems: 'center', 
-            flexShrink: 0,
-            marginLeft: alignDotsNearTime ? 4 : 'auto', // Position near time or right-align
-          }}>
-            {participatingChildIds.slice(0, 3).map((childId) => (
-              <View
-                key={childId}
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3, // Smaller dots
-                  backgroundColor: getChildDotColor(childId),
-                  opacity: 0.8,
-                }}
-              />
-            ))}
-            {participatingChildIds.length > 3 && (
-              <View
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: 'rgba(156, 163, 175, 0.4)', // Soft grey continuation dot
-                }}
-              />
-            )}
-          </View>
+          <ChildDotCluster
+            childIds={participatingChildIds}
+            familyChildren={children}
+            dotSize={6}
+            overlap={-2}
+            style={{ marginLeft: alignDotsNearTime ? 4 : 'auto', flexShrink: 0 }}
+          />
         )}
       </View>
     );
@@ -1138,7 +1083,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             onClick: (e) => {
               e.stopPropagation();
               e.preventDefault();
-              onComplete(ev);
+              handleCompletionToggle();
             },
             onMouseDown: (e) => {
               e.stopPropagation();
@@ -1146,6 +1091,8 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           })}
           style={{ 
             flexShrink: 0,
+            width: 20,
+            height: 20,
             alignItems: 'center',
             justifyContent: 'center',
             ...(Platform.OS === 'web' && {
@@ -1161,7 +1108,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               if (e && e.preventDefault) {
                 e.preventDefault();
               }
-              onComplete(ev);
+              handleCompletionToggle();
             }}
             hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
             style={{ 
@@ -1171,13 +1118,12 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             }}
           >
             {isDone ? (
-              // Filled pastel pill/circle when present
               <View
                 style={{
                   width: 10,
                   height: 10,
                   borderRadius: 5,
-                  backgroundColor: 'rgba(16, 185, 129, 0.15)', // Pastel green
+                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -1185,14 +1131,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 <Check size={6} color="#10B981" strokeWidth={2.5} />
               </View>
             ) : (
-              // Soft outline circle when absent
               <View
                 style={{
                   width: 10,
                   height: 10,
                   borderRadius: 5,
                   borderWidth: 1.5,
-                  borderColor: 'rgba(156, 163, 175, 0.4)', // Soft gray outline
+                  borderColor: 'rgba(156, 163, 175, 0.4)',
                   backgroundColor: 'transparent',
                 }}
               />
@@ -1247,51 +1192,13 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       </View>
       {/* Child participation dots - Cluster Glyph */}
       {participatingChildIds.length > 0 && (
-        <View style={{ 
-          flexDirection: 'row', 
-          gap: 4, 
-          alignItems: 'center', 
-          flexShrink: 0,
-          marginLeft: alignDotsNearTime ? 4 : 'auto', // Position near time or right-align
-        }}>
-          {participatingChildIds.slice(0, 3).map((childId) => (
-            <View
-              key={childId}
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 2.5, // Minimal dots
-                backgroundColor: '#9CA3AF', // Monochrome until hover
-                opacity: 0.6,
-              }}
-              {...(Platform.OS === 'web' && {
-                onMouseEnter: (e) => {
-                  if (e.currentTarget && e.currentTarget.style) {
-                    e.currentTarget.style.backgroundColor = getChildDotColor(childId);
-                    e.currentTarget.style.opacity = '1';
-                  }
-                },
-                onMouseLeave: (e) => {
-                  if (e.currentTarget && e.currentTarget.style) {
-                    e.currentTarget.style.backgroundColor = '#9CA3AF';
-                    e.currentTarget.style.opacity = '0.6';
-                  }
-                },
-              })}
-            />
-          ))}
-          {participatingChildIds.length > 3 && (
-            <View
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 2.5,
-                backgroundColor: '#9CA3AF', // Monochrome continuation dot
-                opacity: 0.6,
-              }}
-            />
-          )}
-        </View>
+        <ChildDotCluster
+          childIds={participatingChildIds}
+          familyChildren={children}
+          dotSize={7}
+          overlap={-3}
+          style={{ marginLeft: alignDotsNearTime ? 4 : 'auto', flexShrink: 0 }}
+        />
       )}
     </View>
   );

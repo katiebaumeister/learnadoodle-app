@@ -22,6 +22,7 @@ import EmbeddedNotificationCenter from '../parent/EmbeddedNotificationCenter';
 import ParentDigestModal from './ParentDigestModal';
 import NextRecommendedActionRow from './NextRecommendedActionRow';
 import { colors } from '../../theme/colors';
+import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 export default function ParentHomeScreen({
   familyId: propFamilyId,
@@ -279,9 +280,9 @@ export default function ParentHomeScreen({
 
   // Calculate which students have activity today
   const studentsWithActivity = children.map(child => {
-    const childEvents = filteredLearning.filter(event => {
-      const eventChildIds = event.child_ids || (event.child_id ? [event.child_id] : []);
-      return eventChildIds.includes(child.id) || event.child_id === child.id;
+    const childEvents = filteredLearning.filter((event) => {
+      const eventChildIds = getEventChildIdsForDisplay(event, children);
+      return eventChildIds.some((id) => String(id) === String(child.id));
     });
     return {
       ...child,

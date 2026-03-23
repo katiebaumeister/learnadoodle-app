@@ -489,6 +489,11 @@ import { Clock, ArrowRight, UserCircle, Link, MapPin, Eye, Plus, Upload, Copy, S
 import { supabase } from '../lib/supabase'
 import { proposeReschedule, getWeekStart, apiRequest } from '../lib/apiClient'
 import { createEventViaSupabaseRpc, deleteEvent as deletePlannerEvent, restoreEventFromTrash, permanentlyDeleteTrashEvent } from '../lib/services/plannerClientWithOffline'
+import {
+  prefetchWeekViewIntoOffline,
+  prefetchBacklogAndTrash,
+  prefetchPlannerAttendanceSnapshot,
+} from '../lib/services/plannerPrefetch'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import SyllabusUpload from './SyllabusUpload'
@@ -3499,6 +3504,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   useEffect(() => { plannerHolidaysCacheRef.current = plannerHolidaysCache; }, [plannerHolidaysCache])
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   const [calendarDataLoading, setCalendarDataLoading] = useState(false)
+  // Pre-fetched planner tasks + attendance (null = not yet loaded for this family)
+  const [plannerPreloadedBacklog, setPlannerPreloadedBacklog] = useState(null)
+  const [plannerPreloadedTrash, setPlannerPreloadedTrash] = useState(null)
+  const [plannerAttendanceSnapshot, setPlannerAttendanceSnapshot] = useState(null)
   // Planner view date (synced from WebLayout via plannerMonthChange)
   const [plannerDate, setPlannerDate] = useState(() => new Date())
   useEffect(() => { plannerDateRef.current = plannerDate; }, [plannerDate]);
@@ -3508,18 +3517,52 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   useEffect(() => {
     if (!familyId) {
       onPlannerLoadingChange?.(false);
+      setPlannerPreloadedBacklog(null);
+      setPlannerPreloadedTrash(null);
+      setPlannerAttendanceSnapshot(null);
+      plannerPreloadedForFamilyRef.current = null;
       return;
     }
     if (plannerPreloadedForFamilyRef.current === familyId) return;
     plannerPreloadedForFamilyRef.current = familyId;
+    setPlannerPreloadedBacklog(null);
+    setPlannerPreloadedTrash(null);
+    setPlannerAttendanceSnapshot(null);
     onPlannerLoadingChange?.(true);
-    refreshCalendarData(new Date())
-      .then(() => { onPlannerLoadingChange?.(false); })
+    const now = new Date();
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    refreshCalendarData(now)
+      .then(() => {
+        onPlannerLoadingChange?.(false);
+        Promise.all([
+          refreshCalendarData(prevMonth, { background: true }),
+          refreshCalendarData(nextMonth, { background: true }),
+          prefetchWeekViewIntoOffline(familyId, now),
+          prefetchBacklogAndTrash(familyId).then(({ backlog, trash }) => {
+            setPlannerPreloadedBacklog(backlog);
+            setPlannerPreloadedTrash(trash);
+          }),
+        ]).catch(() => {});
+      })
       .catch((err) => {
         console.error('[WebContent] Planner preload failed:', err);
         onPlannerLoadingChange?.(false);
       });
   }, [familyId, refreshCalendarData, onPlannerLoadingChange]);
+
+  const plannerChildrenKey = useMemo(
+    () => (Array.isArray(children) ? children.map((c) => c?.id).filter(Boolean).sort().join(',') : ''),
+    [children],
+  );
+  useEffect(() => {
+    if (!familyId) return;
+    let cancelled = false;
+    prefetchPlannerAttendanceSnapshot(familyId, children || []).then((snap) => {
+      if (!cancelled && snap) setPlannerAttendanceSnapshot(snap);
+    });
+    return () => { cancelled = true; };
+  }, [familyId, plannerChildrenKey]);
 
   // Add child form state
   const [addChildName, setAddChildName] = useState('')
@@ -7311,6 +7354,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         familyId={familyId}
         viewMode={propPlannerView}
         onEditChild={onEditChild}
+        preloadedBacklogEvents={plannerPreloadedBacklog}
+        preloadedTrashEvents={plannerPreloadedTrash}
+        plannerAttendanceSnapshot={plannerAttendanceSnapshot}
       />
       </View>
     );

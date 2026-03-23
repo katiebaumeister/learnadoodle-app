@@ -1,5 +1,5 @@
 /**
- * Planning Preferences - Family default targets and holidays
+ * Planning Preferences - Family default targets, public holidays, custom days, and ranges.
  * Not tied to any plan. These defaults are used when creating/editing a plan year.
  * Flat layout: static sections, no accordions, Profile-style rhythm.
  */
@@ -20,15 +20,15 @@ import {
   getFamilyPlannerSettings,
   saveFamilyPlannerSettings,
   getPlanDefaultsFromSettings,
-  getFamilyExclusions,
-  addExclusion,
+  syncFamilyHolidayBreakExclusions,
   deleteExclusion,
-  updateExclusion,
   saveExcludedPublicHolidayDates,
 } from '../../lib/services/plannerSettingsClient';
 import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
+import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
+import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 
 const MUTED = 'rgba(15,23,42,0.6)';
 const FG = 'rgba(15,23,42,0.9)';
@@ -63,7 +63,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   const countryCode = 'US';
   const regionCode = null;
 
-  // Custom holidays & breaks
+  // Custom days & ranges (stored as holiday / break exclusions in API)
   const [customHolidays, setCustomHolidays] = useState([]);
   const [customBreaks, setCustomBreaks] = useState([]);
   const [addingHoliday, setAddingHoliday] = useState(false);
@@ -214,47 +214,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
         };
         const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload);
         if (settingsErr) throw settingsErr;
-        const { data: existingExclusions } = await getFamilyExclusions(familyId, 'family_default');
-        const existingIds = new Set((existingExclusions || []).map((e) => e.id));
-        const currentHolidayIds = new Set((s.customHolidays || []).filter((h) => h.id).map((h) => h.id));
-        const currentBreakIds = new Set((s.customBreaks || []).filter((b) => b.id).map((b) => b.id));
-        for (const id of existingIds) {
-          const ex = (existingExclusions || []).find((e) => e.id === id);
-          if (ex?.exclusion_type === 'excluded_date') continue; // managed by U.S. public holidays picker
-          const isHoliday = ex?.exclusion_type === 'holiday';
-          const keep = isHoliday ? currentHolidayIds.has(id) : currentBreakIds.has(id);
-          if (!keep) await deleteExclusion(id);
-        }
-        for (const h of s.customHolidays || []) {
-          if (h.id) {
-            await updateExclusion(h.id, { start_date: h.date, end_date: h.date, label: h.name });
-          } else {
-            await addExclusion({
-              family_id: familyId,
-              scope_type: 'family_default',
-              exclusion_type: 'holiday',
-              start_date: h.date,
-              end_date: h.date,
-              label: h.name,
-              source: 'settings',
-            });
-          }
-        }
-        for (const b of s.customBreaks || []) {
-          if (b.id) {
-            await updateExclusion(b.id, { start_date: b.start, end_date: b.end, label: b.name });
-          } else {
-            await addExclusion({
-              family_id: familyId,
-              scope_type: 'family_default',
-              exclusion_type: 'break',
-              start_date: b.start,
-              end_date: b.end,
-              label: b.name,
-              source: 'settings',
-            });
-          }
-        }
+        const { error: exErr } = await syncFamilyHolidayBreakExclusions(familyId, s.customHolidays, s.customBreaks);
+        if (exErr) throw exErr;
         showSaved();
         loadDefaults(); // refresh to get new exclusion ids
         onSave?.();
@@ -735,7 +696,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                       );
                     })}
                     {publicHolidaysList.length === 0 && !publicHolidaysLoading && (
-                      <Text style={{ fontSize: 13, color: MUTED, padding: 16 }}>No holidays in this date range. Extend range or add custom holiday.</Text>
+                      <Text style={{ fontSize: 13, color: MUTED, padding: 16 }}>No holidays in this date range. Extend range or add a custom day.</Text>
                     )}
                   </ScrollView>
                 )}
@@ -764,20 +725,23 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
           </Modal>
         )}
 
-        {/* Custom holidays */}
+        {/* Custom days (single-date exclusions) */}
         <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>Custom holidays</Text>
+          <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.customDaysSectionTitle}</Text>
           <View style={{ marginTop: 8 }}>
               {customHolidays.map((h, i) => (
                 <View key={h.id || i} style={{ marginBottom: 8 }}>
                   {editingHolidayIndex === i ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <TextInput
+                      <PlannerPreferenceDateField
                         value={editingHolidayDraft.date}
-                        onChangeText={(v) => setEditingHolidayDraft((d) => ({ ...d, date: v }))}
-                        placeholder="YYYY-MM-DD"
-                        style={[inputStyle, { width: 120 }]}
-                        placeholderTextColor="rgba(15,23,42,0.4)"
+                        onChange={(v) => setEditingHolidayDraft((d) => ({ ...d, date: v }))}
+                        placeholder="Select date"
+                        borderColor={BORDER}
+                        textColor={FG}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={inputStyle}
+                        width={120}
                       />
                       <TextInput
                         value={editingHolidayDraft.name}
@@ -816,17 +780,20 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
               ))}
               {addingHoliday ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                  <TextInput
+                  <PlannerPreferenceDateField
                     value={newHolidayDate}
-                    onChangeText={setNewHolidayDate}
-                    placeholder="YYYY-MM-DD"
-                    style={[inputStyle, { width: 120 }]}
-                    placeholderTextColor="rgba(15,23,42,0.4)"
+                    onChange={setNewHolidayDate}
+                    placeholder="Select date"
+                    borderColor={BORDER}
+                    textColor={FG}
+                    mutedColor="rgba(15,23,42,0.4)"
+                    style={inputStyle}
+                    width={120}
                   />
                   <TextInput
                     value={newHolidayName}
                     onChangeText={setNewHolidayName}
-                    placeholder="Holiday name"
+                    placeholder={PLANNING_PREFERENCES_UI.dayNamePlaceholder}
                     style={[inputStyle, { flex: 1, minWidth: 120 }]}
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
@@ -844,33 +811,39 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Plus size={16} color={ACCENT} />
-                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>Add holiday</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>{PLANNING_PREFERENCES_UI.addDay}</Text>
                 </TouchableOpacity>
               )}
           </View>
         </View>
 
-        {/* Breaks */}
+        {/* Ranges (date-span exclusions) */}
         <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>Breaks</Text>
+          <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.rangesSectionTitle}</Text>
           <View style={{ marginTop: 8 }}>
               {customBreaks.map((b, i) => (
                 <View key={b.id || i} style={{ marginBottom: 8 }}>
                   {editingBreakIndex === i ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <TextInput
+                      <PlannerPreferenceDateField
                         value={editingBreakDraft.start}
-                        onChangeText={(v) => setEditingBreakDraft((d) => ({ ...d, start: v }))}
+                        onChange={(v) => setEditingBreakDraft((d) => ({ ...d, start: v }))}
                         placeholder="Start"
-                        style={[inputStyle, { width: 100 }]}
-                        placeholderTextColor="rgba(15,23,42,0.4)"
+                        borderColor={BORDER}
+                        textColor={FG}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={inputStyle}
+                        width={100}
                       />
-                      <TextInput
+                      <PlannerPreferenceDateField
                         value={editingBreakDraft.end}
-                        onChangeText={(v) => setEditingBreakDraft((d) => ({ ...d, end: v }))}
+                        onChange={(v) => setEditingBreakDraft((d) => ({ ...d, end: v }))}
                         placeholder="End"
-                        style={[inputStyle, { width: 100 }]}
-                        placeholderTextColor="rgba(15,23,42,0.4)"
+                        borderColor={BORDER}
+                        textColor={FG}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={inputStyle}
+                        width={100}
                       />
                       <TextInput
                         value={editingBreakDraft.name}
@@ -909,24 +882,30 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
               ))}
               {addingBreak ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                  <TextInput
+                  <PlannerPreferenceDateField
                     value={newBreakStart}
-                    onChangeText={setNewBreakStart}
+                    onChange={setNewBreakStart}
                     placeholder="Start"
-                    style={[inputStyle, { width: 100 }]}
-                    placeholderTextColor="rgba(15,23,42,0.4)"
+                    borderColor={BORDER}
+                    textColor={FG}
+                    mutedColor="rgba(15,23,42,0.4)"
+                    style={inputStyle}
+                    width={100}
                   />
-                  <TextInput
+                  <PlannerPreferenceDateField
                     value={newBreakEnd}
-                    onChangeText={setNewBreakEnd}
+                    onChange={setNewBreakEnd}
                     placeholder="End"
-                    style={[inputStyle, { width: 100 }]}
-                    placeholderTextColor="rgba(15,23,42,0.4)"
+                    borderColor={BORDER}
+                    textColor={FG}
+                    mutedColor="rgba(15,23,42,0.4)"
+                    style={inputStyle}
+                    width={100}
                   />
                   <TextInput
                     value={newBreakName}
                     onChangeText={setNewBreakName}
-                    placeholder="Break name"
+                    placeholder={PLANNING_PREFERENCES_UI.rangeNamePlaceholder}
                     style={[inputStyle, { flex: 1, minWidth: 80 }]}
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
@@ -953,7 +932,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Plus size={16} color={ACCENT} />
-                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>Add break</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>{PLANNING_PREFERENCES_UI.addRange}</Text>
                 </TouchableOpacity>
               )}
           </View>

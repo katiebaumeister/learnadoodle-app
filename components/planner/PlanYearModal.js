@@ -50,6 +50,7 @@ import {
   MoreVertical,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
+import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import ConfirmDialog from '../ConfirmDialog';
 import { useToast } from '../Toast';
 import {
@@ -169,6 +170,105 @@ function parsePlanCardLines(ay) {
   if (parts.length >= 3) return { line1: parts[0], line2: parts[1], line3: parts[2] };
   if (parts.length === 2) return { line1: parts[0], line2: null, line3: parts[1] };
   return { line1: name, line2: null, line3: dateRange };
+}
+
+/** One-line summary of instructional block times for Edit plan list (under date range). */
+function getPlanBlocksTimesSummary(academicYearData) {
+  const blocks = academicYearData?.plan?.blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return '';
+  const labels = blocks.map((b) => {
+    if (b?.all_day) return 'All day';
+    return formatTimeRange(b?.start_time, b?.end_time);
+  });
+  const unique = [...new Set(labels.filter(Boolean))];
+  if (unique.length === 0) return '';
+  if (unique.length === 1) return unique[0];
+  if (unique.length === 2) return unique.join(' · ');
+  return `${unique.length} time windows`;
+}
+
+/** Dedupe and stable-sort children for Edit plan / subject-style dot clusters */
+function uniqueChildrenForPlanDots(childList) {
+  const list = Array.isArray(childList) ? childList : [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((c) => {
+    if (!c || c.id == null) return;
+    const k = String(c.id);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(c);
+  });
+  out.sort((a, b) =>
+    String(a.first_name || a.name || '').localeCompare(String(b.first_name || b.name || ''), undefined, {
+      sensitivity: 'base',
+    })
+  );
+  return out;
+}
+
+/**
+ * Child rows for Edit plan list dots — same prof1–10 colors as subject cards (via getChildColorFromAvatar).
+ * - Multiple block child_ids → one dot per child (overlapping).
+ * - Whole family (label or blocks with no child_ids) → dot for every family child.
+ * - Otherwise matches line1 ("Enzo", "Enzo, Max") to children.
+ */
+function getPlanListRowChildrenForDots(cachedYearData, familyChildren, line1Label) {
+  const childList = Array.isArray(familyChildren) ? familyChildren : [];
+  const blocks = cachedYearData?.plan?.blocks;
+  const idSet = new Set();
+  if (Array.isArray(blocks)) {
+    blocks.forEach((b) => {
+      (b.child_ids || []).forEach((cid) => {
+        if (cid) idSet.add(String(cid));
+      });
+    });
+  }
+
+  // Same rule as buildPlanYearName: blocks exist but none pin child_ids → whole family
+  if (Array.isArray(blocks) && blocks.length > 0 && idSet.size === 0) {
+    return uniqueChildrenForPlanDots(childList);
+  }
+
+  const byId = Array.from(idSet)
+    .map((id) => childList.find((c) => c && String(c.id) === String(id)))
+    .filter(Boolean);
+  const deduped = [];
+  const seen = new Set();
+  byId.forEach((c) => {
+    const k = String(c.id);
+    if (seen.has(k)) return;
+    seen.add(k);
+    deduped.push(c);
+  });
+  if (deduped.length > 0) {
+    deduped.sort((a, b) =>
+      String(a.first_name || a.name || '').localeCompare(String(b.first_name || b.name || ''), undefined, {
+        sensitivity: 'base',
+      })
+    );
+    return deduped;
+  }
+
+  const label = (line1Label || '').trim();
+  if (!label) return [];
+
+  if (/^whole family$/i.test(label)) {
+    return uniqueChildrenForPlanDots(childList);
+  }
+
+  const lower = (s) => String(s || '').toLowerCase();
+  const parts = label.split(',').map((s) => s.trim()).filter(Boolean);
+  const matched = [];
+  parts.forEach((namePart) => {
+    const c = childList.find(
+      (ch) =>
+        lower(ch?.first_name) === lower(namePart) ||
+        lower(ch?.name) === lower(namePart)
+    );
+    if (c && !matched.some((m) => String(m.id) === String(c.id))) matched.push(c);
+  });
+  return matched;
 }
 
 /** Build display name for plan: "Student Name · Subject Name · Date range" */
@@ -992,6 +1092,7 @@ export default function PlanYearModal({
   // Fetch all academic years for this family for "Edit plan" picker (show every plan/year ever created, not only those with a plan row)
   const [previousPlans, setPreviousPlans] = useState([]);
   const [previousPlansLoading, setPreviousPlansLoading] = useState(true); // true so we don't skip to "create new" before fetch completes
+  const [planListRowTimesById, setPlanListRowTimesById] = useState({});
   useEffect(() => {
     if (!visible || !openForNewPlan || !familyId) return;
     let cancelled = false;
@@ -1011,16 +1112,35 @@ export default function PlanYearModal({
     return () => { cancelled = true; };
   }, [visible, openForNewPlan, familyId]);
 
-  // Preload plan summary data for each plan in the list so switching to summary doesn't flash loading
+  // Preload plan summary data for each plan in the list so switching to summary doesn't flash loading; derive times for Edit plan list (under date)
   useEffect(() => {
     if (!familyId || !previousPlans.length || previousPlansLoading) return;
-    previousPlans.forEach((ay) => {
-      const id = ay.id;
-      if (!id || preloadedSummaryIdsRef.current.has(id)) return;
-      preloadedSummaryIdsRef.current.add(id);
-      getAcademicYear(id).then(({ data }) => {
-        if (data) planSummaryCacheRef.current.set(id, data);
+    const ids = previousPlans.map((ay) => ay.id).filter(Boolean);
+    const pending = ids.filter((id) => !preloadedSummaryIdsRef.current.has(id));
+
+    const mergeTimesFromCache = () => {
+      const next = {};
+      ids.forEach((id) => {
+        const cached = planSummaryCacheRef.current.get(id);
+        const s = getPlanBlocksTimesSummary(cached);
+        if (s) next[id] = s;
       });
+      setPlanListRowTimesById(next);
+    };
+
+    if (pending.length === 0) {
+      mergeTimesFromCache();
+      return;
+    }
+    pending.forEach((id) => preloadedSummaryIdsRef.current.add(id));
+    Promise.all(
+      pending.map((id) =>
+        getAcademicYear(id).then(({ data }) => {
+          if (data) planSummaryCacheRef.current.set(id, data);
+        })
+      )
+    ).then(() => {
+      mergeTimesFromCache();
     });
   }, [familyId, previousPlans, previousPlansLoading]);
 
@@ -1033,6 +1153,7 @@ export default function PlanYearModal({
         setPlanSummaryYearId(null);
         setPlanSummaryData(null);
         setPlanSummaryError(null);
+        setPlanListRowTimesById({});
       }, 320);
       return () => clearTimeout(t);
     }
@@ -4470,6 +4591,9 @@ export default function PlanYearModal({
                       {previousPlans.map((ay) => {
                         const lines = parsePlanCardLines(ay);
                         const isSelected = planSummaryYearId === ay.id;
+                        const timesLine = planListRowTimesById[ay.id] || '';
+                        const cachedPlan = planSummaryCacheRef.current.get(ay.id);
+                        const dotChildren = getPlanListRowChildrenForDots(cachedPlan, children, lines.line1);
                         return (
                           <TouchableOpacity
                             key={ay.id}
@@ -4478,16 +4602,50 @@ export default function PlanYearModal({
                             activeOpacity={0.85}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <View style={styles.planCardTitleRow}>
-                              {lines.line2 ? <Text style={styles.planCardTitle} numberOfLines={1}>{lines.line2}</Text> : null}
-                              {lines.line3 ? <Text style={styles.planCardDateInline} numberOfLines={1}>{lines.line3}</Text> : null}
-                            </View>
-                            {lines.line1 ? (
-                              <View style={styles.planCardChildRow}>
-                                <View style={styles.planCardChildDot} />
-                                <Text style={styles.planCardOwner} numberOfLines={1}>{lines.line1}</Text>
+                            <View style={styles.planListItemMainRow}>
+                              <View style={styles.planListItemLeft}>
+                                {lines.line2 ? <Text style={styles.planCardTitle} numberOfLines={1}>{lines.line2}</Text> : null}
+                                {lines.line1 ? (
+                                  <View style={[styles.planCardChildRow, lines.line2 ? { marginTop: 6 } : null]}>
+                                    {dotChildren.length > 0 ? (
+                                      <View style={styles.planCardChildrenDotsCluster}>
+                                        {dotChildren.map((child, index) => (
+                                          <View
+                                            key={String(child.id)}
+                                            style={[
+                                              styles.planCardChildDot,
+                                              {
+                                                backgroundColor: getChildColorFromAvatar(child.avatar),
+                                                marginLeft: index > 0 ? -4 : 0,
+                                                zIndex: dotChildren.length - index,
+                                              },
+                                            ]}
+                                          />
+                                        ))}
+                                      </View>
+                                    ) : (
+                                      <View
+                                        style={[
+                                          styles.planCardChildDot,
+                                          { backgroundColor: getChildColorFromAvatar(null) },
+                                        ]}
+                                      />
+                                    )}
+                                    <Text style={styles.planCardOwner} numberOfLines={1}>{lines.line1}</Text>
+                                  </View>
+                                ) : null}
                               </View>
-                            ) : null}
+                              {(lines.line3 || timesLine) ? (
+                                <View style={styles.planListItemRight}>
+                                  {lines.line3 ? (
+                                    <Text style={styles.planCardDateRight} numberOfLines={2}>{lines.line3}</Text>
+                                  ) : null}
+                                  {timesLine ? (
+                                    <Text style={styles.planCardTimesSubline} numberOfLines={2}>{timesLine}</Text>
+                                  ) : null}
+                                </View>
+                              ) : null}
+                            </View>
                           </TouchableOpacity>
                         );
                       })}
@@ -4831,6 +4989,13 @@ export default function PlanYearModal({
                       <View style={[styles.childChips, styles.subjectsChipsRow, { marginTop: 8 }]}>
                         {subjectsForCurrentSelection.map((s) => {
                           const isSelected = selectedSubjectIds.includes(s.id);
+                          const childIdsForDots =
+                            Array.isArray(s.assignedChildren) && s.assignedChildren.length > 0
+                              ? s.assignedChildren
+                              : getChildIdsForSubject(s, children);
+                          const childDots = childIdsForDots
+                            .map((id) => children.find((c) => c && String(c.id) === String(id)))
+                            .filter(Boolean);
                           return (
                             <TouchableOpacity
                               key={s.id}
@@ -4843,9 +5008,34 @@ export default function PlanYearModal({
                                 }
                               }}
                             >
-                              <Text style={[styles.childChipText, isSelected && styles.childChipTextActive]}>
-                                {s.name}
-                              </Text>
+                              <View style={styles.subjectChipInnerRow}>
+                                {childDots.length > 0 ? (
+                                  <View style={styles.subjectChipDotsCluster} accessibilityLabel="Assigned students">
+                                    {childDots.map((child, index) => {
+                                      const childColor = getChildColorFromAvatar(child.avatar);
+                                      return (
+                                        <View
+                                          key={String(child.id)}
+                                          style={[
+                                            styles.subjectChipChildDot,
+                                            {
+                                              backgroundColor: childColor,
+                                              marginLeft: index > 0 ? -4 : 0,
+                                              zIndex: childDots.length - index,
+                                            },
+                                          ]}
+                                        />
+                                      );
+                                    })}
+                                  </View>
+                                ) : null}
+                                <Text
+                                  style={[styles.childChipText, isSelected && styles.childChipTextActive, styles.subjectChipLabelText]}
+                                  numberOfLines={1}
+                                >
+                                  {s.name}
+                                </Text>
+                              </View>
                             </TouchableOpacity>
                           );
                         })}
@@ -6975,6 +7165,36 @@ const styles = StyleSheet.create({
   planListItemSelected: {
     backgroundColor: 'rgba(79,140,255,0.06)',
   },
+  planListItemMainRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    minWidth: 0,
+  },
+  planListItemLeft: {
+    flex: 1,
+    minWidth: 0,
+  },
+  planListItemRight: {
+    alignItems: 'flex-end',
+    flexShrink: 0,
+    maxWidth: '46%',
+  },
+  planCardDateRight: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: MUTED,
+    textAlign: 'right',
+  },
+  planCardTimesSubline: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: MUTED,
+    textAlign: 'right',
+    marginTop: 4,
+    lineHeight: 16,
+  },
   planCardTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6983,7 +7203,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   planCardTitle: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '700',
     color: FG,
     flex: 1,
@@ -7001,11 +7221,17 @@ const styles = StyleSheet.create({
     gap: 6,
     minWidth: 0,
   },
+  planCardChildrenDotsCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+  },
   planCardChildDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#14b8a6',
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
     flexShrink: 0,
   },
   planCardOwner: {
@@ -8380,6 +8606,29 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#fff',
     justifyContent: 'center',
+    maxWidth: '100%',
+  },
+  subjectChipInnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '100%',
+    flexShrink: 1,
+  },
+  subjectChipDotsCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  subjectChipChildDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  subjectChipLabelText: {
+    flexShrink: 1,
+    minWidth: 0,
   },
   childChipActive: {
     backgroundColor: CHIP_SELECTED_BG,

@@ -18,6 +18,7 @@ import TaskCreateModal from '../TaskCreateModal';
 import ConfirmDialog from '../ConfirmDialog';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
+import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
@@ -300,6 +301,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           first_name: c.first_name || c.name || 'Child',
           grade: c.grade ?? c.grade_level ?? c.grade_label,
           grade_level: c.grade_level ?? c.grade,
+          grade_label: c.grade_label,
+          age: c.age,
+          avatar: c.avatar || c.avatar_url || null,
           archived: c.archived === true,
         }));
         setChildrenFromDb(list);
@@ -1850,9 +1854,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </TouchableOpacity>
                 {showDangerZoneAccount && (
                   <View style={styles.dangerZoneAccountContent}>
-                    <Text style={styles.dangerZoneAccountHeading}>Delete your account</Text>
+                    <Text style={styles.dangerZoneAccountHeading}>Delete your account & all linked accounts</Text>
                     <Text style={styles.dangerZoneAccountMessage}>
-                      This will permanently delete your account and all data for your family, including:
+                      This will permanently delete your account & all linked accounts, along with all data for your family, including:
                     </Text>
                     <Text style={styles.dangerZoneAccountBullets}>
                       • Your profile and sign-in{'\n'}
@@ -1861,7 +1865,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       • Any linked child or tutor accounts in this family
                     </Text>
                     <Text style={styles.dangerZoneAccountWarning}>
-                      This cannot be undone. You will need to sign up again to use Learnadoodle.
+                      This cannot be undone. You (and all linked accounts - both children and tutors) will need to sign up again and re-add all plans.
                     </Text>
                     <Text style={styles.dangerZoneAccountConfirmLabel}>
                       Type DELETE to confirm
@@ -2154,6 +2158,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             ) : children.map((child) => {
               const childName = child.name || child.first_name || 'Child';
               const isHovered = hoveredChildId === child.id;
+              const gradeLabel =
+                child.grade ?? child.grade_level ?? child.grade_label ?? null;
+              const gradePart =
+                gradeLabel != null && String(gradeLabel).trim() !== ''
+                  ? `Grade: ${String(gradeLabel).trim()}`
+                  : null;
+              const agePart =
+                child.age != null && String(child.age).trim() !== ''
+                  ? `Age: ${child.age}`
+                  : null;
+              const ageGradeLine = [agePart, gradePart].filter(Boolean).join(' - ');
+              const dotColor = getChildColorFromAvatar(child.avatar);
               return (
                 <View 
                   key={child.id} 
@@ -2163,7 +2179,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     onMouseLeave: () => setHoveredChildId(null),
                   })}
                 >
-                  <Text style={styles.memberRowName}>{childName}{child.archived && ' (Archived)'}</Text>
+                  <View style={styles.memberRowChildMain}>
+                    <View
+                      style={[
+                        styles.memberRowChildDot,
+                        { backgroundColor: dotColor },
+                      ]}
+                    />
+                    <View style={styles.memberRowChildTextCol}>
+                      <Text style={styles.memberRowName}>
+                        {childName}
+                        {child.archived ? ' (Archived)' : ''}
+                      </Text>
+                      {ageGradeLine ? (
+                        <Text
+                          style={styles.memberRowChildMeta}
+                          numberOfLines={1}
+                        >
+                          {ageGradeLine}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
                   {!isChildMode && (
                     <View style={styles.memberRowActions}>
                       <TouchableOpacity 
@@ -2622,11 +2659,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           {
             id: 'planner',
             title: 'Planner & Calendar',
-            questions: [
-              { id: 'pl-1', q: 'How does the planner work?', a: 'You can view lessons and activities in daily, weekly, or monthly calendar formats. Add tasks, field trips, enrichment activities, and checkpoints directly into the calendar.' },
-              { id: 'pl-2', q: 'What if plans change?', a: 'You can reschedule, skip, or drag events, and Learnadoodle\'s adaptive structure helps keep pacing and records aligned with real life.' },
-              { id: 'pl-3', q: 'Does Learnadoodle integrate with my device calendars?', a: 'Calendar integration is part of the planning workflow; connections to external calendars help keep family schedules synchronized.' },
-            ]
+            questions: PLANNER_FAQ,
           },
           {
             id: 'subjects',
@@ -4532,6 +4565,33 @@ function createStyles(tokens) {
       color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowChildMain: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      minWidth: 0,
+      marginRight: 12,
+    },
+    memberRowChildDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      flexShrink: 0,
+    },
+    memberRowChildTextCol: {
+      flex: 1,
+      minWidth: 0,
+    },
+    memberRowChildMeta: {
+      marginTop: 2,
+      fontSize: 13,
+      fontWeight: '400',
+      color: '#6B7280',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     familyNameEditInput: {

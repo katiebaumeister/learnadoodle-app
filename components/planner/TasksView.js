@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
 import { Calendar, CalendarDays, List, Archive, Trash2, Plus, CheckCircle2, Circle } from 'lucide-react';
 import { format, addDays, isToday, isSameDay, startOfToday } from './utils/date';
@@ -15,12 +15,28 @@ export default function TasksView({
   onCreateTask,
   children = [],
   familyId: familyIdProp = null,
+  preloadedBacklogEvents = null,
+  preloadedTrashEvents = null,
 }) {
   const [activeSection, setActiveSection] = useState('backlog');
   const [userLists, setUserLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
-  const [backlogEvents, setBacklogEvents] = useState([]);
-  const [trashEvents, setTrashEvents] = useState([]);
+  const [backlogEvents, setBacklogEvents] = useState(() =>
+    preloadedBacklogEvents != null ? preloadedBacklogEvents : [],
+  );
+  const [trashEvents, setTrashEvents] = useState(() =>
+    preloadedTrashEvents != null ? preloadedTrashEvents : [],
+  );
+
+  const prevFamilyIdRef = useRef(undefined);
+  useEffect(() => {
+    if (!familyIdProp) return;
+    if (prevFamilyIdRef.current !== undefined && prevFamilyIdRef.current !== familyIdProp) {
+      setBacklogEvents([]);
+      setTrashEvents([]);
+    }
+    prevFamilyIdRef.current = familyIdProp;
+  }, [familyIdProp]);
 
   // Filter out deleted events from the events array (both client-side deleted flag and database deleted_at)
   // Also expand Project events to show on all days they span
@@ -91,23 +107,20 @@ export default function TasksView({
   // Fetch deleted events for trash view
   const fetchTrashItems = useCallback(async () => {
     try {
-      // Get familyId from events if available, otherwise RLS will handle it
-      const familyIdFromEvents = events.find(e => e.family_id || e.familyId)?.family_id || events.find(e => e.family_id || e.familyId)?.familyId;
-      
-      // Build query to fetch soft-deleted events
+      const familyIdFromEvents =
+        familyIdProp ||
+        events.find((e) => e.family_id || e.familyId)?.family_id ||
+        events.find((e) => e.family_id || e.familyId)?.familyId;
+      if (!familyIdFromEvents) return;
+
       let queryBuilder = supabase
         .from('events')
         .select('*')
-        .not('deleted_at', 'is', null) // Events where deleted_at IS NOT NULL
+        .not('deleted_at', 'is', null)
+        .eq('family_id', familyIdFromEvents)
         .order('deleted_at', { ascending: false })
-        .limit(100); // Limit to prevent slow queries
+        .limit(100);
 
-      // Add family_id filter if we have it
-      if (familyIdFromEvents) {
-        queryBuilder = queryBuilder.eq('family_id', familyIdFromEvents);
-      }
-
-      // Execute query
       const { data, error } = await queryBuilder;
 
       if (error) {
@@ -122,35 +135,28 @@ export default function TasksView({
       console.error('Error fetching trash items:', error);
       // Don't clear existing trashEvents on error - keep what we have
     }
-  }, [events]);
+  }, [familyIdProp, events]);
 
-  // Fetch backlog items when backlog section is active
   const fetchBacklogItems = useCallback(async () => {
     try {
-      // Get familyId from events if available, otherwise RLS will handle it
-      const familyIdFromEvents = events.find(e => e.family_id || e.familyId)?.family_id || events.find(e => e.family_id || e.familyId)?.familyId;
-      
-      // Build query - use is_backlog field instead of date checking
-      // Note: 'deleted' is not a database column, it's a client-side property
-      // Use a more efficient query - only select needed fields
-      // Exclude canceled events and soft-deleted events - these should not appear in backlog
+      const familyIdFromEvents =
+        familyIdProp ||
+        events.find((e) => e.family_id || e.familyId)?.family_id ||
+        events.find((e) => e.family_id || e.familyId)?.familyId;
+      if (!familyIdFromEvents) return;
+
       let queryBuilder = supabase
         .from('events')
         .select('*')
         .eq('is_backlog', true)
         .neq('status', 'done')
-        .neq('status', 'canceled')  // Exclude canceled events
-        .is('canceled_at', null)  // Also exclude events with canceled_at timestamp
-        .is('deleted_at', null)  // Exclude soft-deleted events
+        .neq('status', 'canceled')
+        .is('canceled_at', null)
+        .is('deleted_at', null)
+        .eq('family_id', familyIdFromEvents)
         .order('created_at', { ascending: false })
-        .limit(100); // Limit to prevent slow queries
+        .limit(100);
 
-      // Add family_id filter if we have it
-      if (familyIdFromEvents) {
-        queryBuilder = queryBuilder.eq('family_id', familyIdFromEvents);
-      }
-
-      // Execute query
       const { data, error } = await queryBuilder;
 
       if (error) {
@@ -165,7 +171,19 @@ export default function TasksView({
       console.error('Error fetching backlog items:', error);
       // Don't clear existing backlogEvents on error - keep what we have
     }
-  }, [events]);
+  }, [familyIdProp, events]);
+
+  useEffect(() => {
+    if (preloadedBacklogEvents != null) {
+      setBacklogEvents(preloadedBacklogEvents);
+    }
+  }, [preloadedBacklogEvents]);
+
+  useEffect(() => {
+    if (preloadedTrashEvents != null) {
+      setTrashEvents(preloadedTrashEvents);
+    }
+  }, [preloadedTrashEvents]);
 
   // Fetch backlog items when backlog section is active
   // Also preload when component mounts to make switching faster
@@ -180,18 +198,10 @@ export default function TasksView({
     // Don't clear backlogEvents/trashEvents when switching away - keep them cached for faster switching back
   }, [activeSection, fetchBacklogItems, fetchTrashItems]);
 
-  // Preload backlog items when component mounts (for faster initial load)
   useEffect(() => {
-    // Preload backlog items in the background when component first mounts
-    // This makes switching to backlog view faster
-    const preloadTimer = setTimeout(() => {
-      fetchBacklogItems();
-      // Also preload trash items
-      fetchTrashItems();
-    }, 100); // Small delay to not block initial render
-
-    return () => clearTimeout(preloadTimer);
-  }, [fetchBacklogItems, fetchTrashItems]); // Only run once on mount
+    fetchBacklogItems();
+    fetchTrashItems();
+  }, [fetchBacklogItems, fetchTrashItems]);
 
   // Listen for calendar refresh events to refetch backlog items
   useEffect(() => {

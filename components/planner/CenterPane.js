@@ -45,6 +45,9 @@ export default function CenterPane({
   viewMode: externalViewMode,
   familyId = null,
   onEditChild = null,
+  preloadedBacklogEvents = null,
+  preloadedTrashEvents = null,
+  plannerAttendanceSnapshot = null,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -255,6 +258,8 @@ export default function CenterPane({
               onCreateTask={onCreateTask}
               children={children}
               familyId={familyId}
+              preloadedBacklogEvents={preloadedBacklogEvents}
+              preloadedTrashEvents={preloadedTrashEvents}
             />
           )}
           {mode === 'Attendance' && (
@@ -264,6 +269,7 @@ export default function CenterPane({
               events={filtered}
               onEventPress={onEventSelect}
               onEditChild={onEditChild}
+              plannerInitialSnapshot={plannerAttendanceSnapshot}
             />
           )}
         </>
