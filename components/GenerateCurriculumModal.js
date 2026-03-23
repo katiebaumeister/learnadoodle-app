@@ -266,7 +266,7 @@ export default function GenerateCurriculumModal({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent
       onRequestClose={handleClose}
     >
@@ -579,6 +579,35 @@ export default function GenerateCurriculumModal({
                                   keyboardType="number-pad"
                                   editable={step === 'draft'}
                                 />
+                              </View>
+                              <View style={styles.lessonMeta}>
+                                <Text style={styles.smallLabel}>Reference date (optional)</Text>
+                                {Platform.OS === 'web' ? (
+                                  <input
+                                    type="date"
+                                    value={lesson.reference_date || ''}
+                                    onChange={(e) => updateDraftLesson(uIdx, lIdx, 'reference_date', e.target.value || null)}
+                                    disabled={step !== 'draft'}
+                                    style={{
+                                      width: 120,
+                                      padding: '8px',
+                                      borderRadius: '8px',
+                                      border: '1px solid #d1d5db',
+                                      fontSize: '14px',
+                                      backgroundColor: step === 'draft' ? '#fff' : '#f3f4f6',
+                                    }}
+                                  />
+                                ) : (
+                                  <TextInput
+                                    style={[styles.input, { width: 120 }]}
+                                    value={lesson.reference_date || ''}
+                                    onChangeText={(v) => updateDraftLesson(uIdx, lIdx, 'reference_date', v || null)}
+                                    placeholder="YYYY-MM-DD"
+                                    placeholderTextColor="#9ca3af"
+                                    editable={step === 'draft'}
+                                  />
+                                )}
+                                <Text style={[styles.smallLabel, { fontSize: 10, color: '#9ca3af', marginTop: 2 }]}>From syllabus; connects to planner</Text>
                               </View>
                               <View style={styles.lessonMeta}>
                                 <Text style={styles.smallLabel}>{s('courseStructure.generateCurriculum.modality')}</Text>

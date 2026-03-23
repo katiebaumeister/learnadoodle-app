@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { View, TouchableOpacity, StyleSheet, Platform, Text } from 'react-native';
 import { 
-  CheckSquare, 
-  ListTodo, 
   Calendar, 
   Target, 
   Search, 
-  CheckCircle2, 
   RefreshCw, 
   HelpCircle,
   SlidersHorizontal,
@@ -18,11 +15,14 @@ import {
   FileText,
   BarChart3,
   Activity,
-  Link
+  CalendarPlus,
+  Pencil,
+  ClipboardList,
+  Download,
+  Filter
 } from 'lucide-react';
 import { TOOL_META } from '../lib/toolTypes';
 import { checkFeatureFlags } from '../lib/services/yearClient';
-import AddFromLinkModal from './planner/AddFromLinkModal';
 
 export default function RightToolbar({
   onTasks,
@@ -30,8 +30,13 @@ export default function RightToolbar({
   onCalendarIntegration,
   onWeeklyObjectives,
   onSearch,
-  onCompleted,
   onRebalance,
+  onBuildPlan,
+  onEditPlan,
+  onAttendance,
+  onExport,
+  onFilters,
+  filtersButtonRef,
   onWhatIfAnalysis,
   onScheduleRules,
   onBlackouts,
@@ -51,9 +56,9 @@ export default function RightToolbar({
   familyId,
 }) {
   const [hoveredTool, setHoveredTool] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
-  const [showAddFromLinkModal, setShowAddFromLinkModal] = useState(false);
   
   useEffect(() => {
     checkFeatureFlags().then(flags => {
@@ -68,27 +73,9 @@ export default function RightToolbar({
 
   // Group A: Core, Everyday Planner Actions (always visible)
   const coreTools = [
-    { 
-      key: 'tasks', 
-      icon: CheckSquare, 
-      label: 'Tasks',
-      onPress: onTasks,
-      color: '#6366f1'
-    },
-    { 
-      key: 'backlog', 
-      icon: ListTodo, 
-      label: 'Backlog',
-      onPress: onBacklog,
-      color: '#8b5cf6'
-    },
-    { 
-      key: 'completed', 
-      icon: CheckCircle2, 
-      label: 'Completed',
-      onPress: onCompleted,
-      color: '#14b8a6'
-    },
+    ...(onBuildPlan ? [{ key: 'build-plan', icon: CalendarPlus, label: 'Build plan', onPress: onBuildPlan, color: '#0d9488' }] : []),
+    ...(onEditPlan ? [{ key: 'edit-plan', icon: Pencil, label: 'Edit plan', onPress: onEditPlan, color: '#6366f1' }] : []),
+    ...(onAttendance ? [{ key: 'attendance', icon: ClipboardList, label: 'Attendance', onPress: onAttendance, color: '#059669' }] : []),
     { 
       key: 'rebalance', 
       icon: RefreshCw, 
@@ -96,13 +83,8 @@ export default function RightToolbar({
       onPress: onRebalance,
       color: '#f59e0b'
     },
-    { 
-      key: 'add-from-link', 
-      icon: Link, 
-      label: 'Add from Link',
-      onPress: () => setShowAddFromLinkModal(true),
-      color: '#3b82f6'
-    },
+    ...(onFilters ? [{ key: 'filters', icon: Filter, label: 'Filters', onPress: onFilters, color: '#64748b', _ref: filtersButtonRef }] : []),
+    ...(onExport ? [{ key: 'export', icon: Download, label: 'Export', onPress: onExport, color: '#64748b' }] : []),
   ];
 
   // Group B: Settings
@@ -120,6 +102,23 @@ export default function RightToolbar({
   const hasAITools = onPackWeek || onCatchUp;
   const aiToolsTool = null; // No longer showing collapsed AI Tools menu
 
+  const handleToolHover = (tool, isEnter, event) => {
+    if (Platform.OS !== 'web') return;
+    if (isEnter) {
+      setHoveredTool(tool.key);
+      const node = event?.currentTarget || event?.target;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        setTooltipPos({
+          x: rect.left + rect.width / 2,
+          y: rect.bottom,
+        });
+      }
+    } else {
+      setHoveredTool(null);
+    }
+  };
+
   const renderToolButton = (tool, index, isLastInGroup = false) => {
     const Icon = tool.icon;
     const isActive = activeTool === tool.key;
@@ -127,6 +126,7 @@ export default function RightToolbar({
     return (
       <TouchableOpacity
         key={tool.key}
+        ref={tool._ref}
         style={[
           styles.toolButton,
           isActive && styles.toolButtonActive,
@@ -135,17 +135,20 @@ export default function RightToolbar({
         activeOpacity={0.7}
         accessibilityRole="button"
         accessibilityLabel={tool.label}
+        {...(Platform.OS === 'web' && {
+          onMouseEnter: (e) => handleToolHover(tool, true, e),
+          onMouseLeave: (e) => handleToolHover(tool, false, e),
+        })}
       >
-        <Icon 
-          size={18} 
-          color={isActive ? '#475569' : 'rgba(15,23,42,0.6)'} 
+        <Icon
+          size={20}
+          color={isActive ? 'rgba(99, 102, 241, 1)' : 'rgba(15,23,42,0.6)'}
         />
-        <Text style={[styles.toolLabel, isActive && styles.toolLabelActive]}>
-          {tool.label}
-        </Text>
       </TouchableOpacity>
     );
   };
+
+  const hoveredToolLabel = coreTools.find(t => t.key === hoveredTool)?.label || (aiToolsTool?.key === hoveredTool ? aiToolsTool?.label : '');
 
   return (
     <View style={styles.toolbar}>
@@ -154,27 +157,33 @@ export default function RightToolbar({
         renderToolButton(tool, index, index === coreTools.length - 1)
       )}
       
-      {/* Divider after Group A */}
-      <View style={styles.divider} />
-      
-      
       {/* Group C: AI Tools (only if available) */}
       {aiToolsTool && renderToolButton(aiToolsTool, coreTools.length + 1, true)}
 
-      {/* Add from Link Modal */}
-      <AddFromLinkModal
-        visible={showAddFromLinkModal}
-        onClose={() => setShowAddFromLinkModal(false)}
-        familyId={familyId}
-        children={children}
-        onCreated={() => {
-          setShowAddFromLinkModal(false);
-          // Optionally refresh planner data
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('refreshCalendar'));
-          }
-        }}
-      />
+      {/* Tooltip on hover (web only) - render via portal to avoid clipping */}
+      {Platform.OS === 'web' && hoveredTool && hoveredToolLabel && (() => {
+        let ReactDOM;
+        try { ReactDOM = require('react-dom'); } catch (e) { return null; }
+        const tooltipEl = (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.tooltip,
+              {
+                position: 'fixed',
+                left: tooltipPos.x,
+                top: tooltipPos.y,
+                transform: [{ translateX: '-50%' }],
+                marginTop: -4,
+              },
+            ]}
+          >
+            <Text style={styles.tooltipText}>{hoveredToolLabel}</Text>
+          </View>
+        );
+        return ReactDOM.createPortal ? ReactDOM.createPortal(tooltipEl, document.body) : tooltipEl;
+      })()}
+
     </View>
   );
 }
@@ -182,21 +191,23 @@ export default function RightToolbar({
 const styles = StyleSheet.create({
   toolbar: {
     flexDirection: 'column',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    gap: 4,
     width: '100%',
+    alignItems: 'center',
   },
   toolButton: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 8,
-    borderRadius: 10,
+    paddingHorizontal: 6,
+    borderRadius: 8,
   },
   toolButtonActive: {
-    backgroundColor: 'rgba(71, 85, 105, 0.12)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.5)',
   },
   toolLabel: {
     fontSize: 13,
@@ -206,12 +217,6 @@ const styles = StyleSheet.create({
   toolLabelActive: {
     color: '#475569',
     fontWeight: '600',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(148, 163, 184, 0.24)',
-    alignSelf: 'stretch',
-    marginVertical: 8,
   },
   childFilterList: {
     marginLeft: 34, // Align with text (icon width + gap)
@@ -247,6 +252,20 @@ const styles = StyleSheet.create({
   childFilterLabelActive: {
     color: 'rgba(15,23,42,0.9)',
     fontWeight: '500',
+  },
+  tooltip: {
+    backgroundColor: '#1F2937',
+    borderRadius: 9999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    zIndex: 10000,
+    ...(Platform.OS === 'web' && { boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }),
+  },
+  tooltipText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
 });
 

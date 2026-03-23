@@ -95,7 +95,11 @@
             "description": "e.g. Khan Academy unit — we'll import and create structured events."
           },
           "paste": {
-            "label": "Paste list",
+            "label": "Manual input",
+            "description": "Add units, lessons, projects, exams and their dates by hand."
+          },
+          "pastePlain": {
+            "label": "Paste plain text",
             "description": "Paste plain text like Unit 1: Foundations of Algebra & Linear Relationships covers:\n• Evaluating algebraic expressions\n• Combining like terms\n• Understanding variables as representations of unknowns and changing quantities\n• Writing linear equations in slope-intercept and standard form\nUnit 2: Systems of..."
           }
         }
@@ -114,7 +118,8 @@
         "labels": {
           "allSubjects": "All subjects",
           "selectedSubjects": "Selected subjects"
-        }
+        },
+        "multiSelectHint": "Choose one or more subjects. Each subject gets its own cadence row below."
       },
       "blocks": {
         "title": "Weekly blocks",
@@ -175,6 +180,39 @@
           "computePotential": "Update preview"
         }
       }
+    },
+
+    "multiSubjectUnits": {
+      "subjectPickerTitle": "Subject for units & lessons",
+      "subjectPickerHint": "You have multiple subjects in this plan. Choose which one you’re adding structure for, or go back to Logistics → Cadence and use Manual, Paste, Upload, or Generate under that subject’s row.",
+      "chooseSubjectEmptyTitle": "Choose a subject",
+      "chooseSubjectEmptyBody": "Pick which subject you’re adding units for using the chips below, or go back to Logistics → Cadence and choose Manual, Paste plain text, Upload, or Generate under that subject’s row.",
+      "backToMethod": "Back to method",
+      "backToLogistics": "Back to logistics",
+      "subjectBannerPrefix": "Subject:",
+      "subjectBannerHint": "Units and lessons you add here apply to this subject only.",
+      "cadenceAddUnitsLink": "Add units & lessons for {subjectName}",
+      "previewMultiSubjectLead": "Multiple subjects:",
+      "previewMultiSubjectHint": "To add units for another subject, go back to Logistics → Cadence and choose Manual, Paste, Upload, or Generate under that subject’s row (or use Back and pick a subject below).",
+      "reviewLastSavedUnits": "Last saved units & lessons: {subjectName}",
+      "headerUnitsFor": "Units: {subjectName}",
+      "toastPickSubjectFirst": "Choose which subject you’re adding units for—pick a chip below, or go back to Cadence and tap Manual, Paste, Upload, or Generate under that subject’s row.",
+      "cadenceRowHint": "Each subject has its own row—set weekdays and class times per subject.",
+      "cadenceAddUnitsInlinePrompt": "Add units:",
+      "cadenceGenerateLabel": "Generate curriculum",
+      "unitInputModalTitle": "Units & lessons",
+      "a11yCadenceAddUnitsMethod": "{methodLabel} for {subjectName}",
+      "footerSaveDraftLogisticsFirst": "Save & continue to review",
+      "footerSaveDraftClassic": "Save & Continue → Schedule",
+      "footerSkipLogisticsFirst": "Continue to review",
+      "footerSkipClassic": "Continue → Schedule",
+      "nextChooseMethod": "Next: Choose method",
+      "nextContinueToReview": "Next: Review",
+      "loadingCurriculum": "Loading existing curriculum…",
+      "breadcrumbStep3UnitStructure": "3. Unit structure",
+      "breadcrumbUnitStructureForSubject": "3. Unit structure · {subjectName}",
+      "a11ySelectSubjectChip": "Select {subjectName} for units and lessons",
+      "a11yCadenceAddUnits": "Add units and lessons for {subjectName}"
     },
 
     "primaryActions": {

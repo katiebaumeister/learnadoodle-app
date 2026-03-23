@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, Alert, TextInput, ActivityIndicator } from 'react-native';
-import { X, AlertTriangle, UserCircle } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
@@ -26,17 +26,17 @@ export default function EditChildModal({
   const [fullChildData, setFullChildData] = useState(null);
   const [supportProfile, setSupportProfile] = useState(null);
   const [academicYear, setAcademicYear] = useState(null);
-  const [loadingChildData, setLoadingChildData] = useState(false);
   const [formCanSubmit, setFormCanSubmit] = useState(false);
   const [connectedEmail, setConnectedEmail] = useState(null);
 
   const toast = useToast();
 
-  // Fetch full child data when modal opens
+  // Use cached child immediately; fetch full data in background (support profile, academic year, connected email)
   useEffect(() => {
     if (visible && child?.id) {
-      setFormCanSubmit(false); // Reset validation state
-      fetchFullChildData();
+      setFormCanSubmit(false);
+      setIsArchived(child.archived || false);
+      fetchFullChildDataInBackground();
     } else if (!visible) {
       setError(null);
       setIsSubmitting(false);
@@ -49,10 +49,8 @@ export default function EditChildModal({
     }
   }, [visible, child?.id]);
 
-  const fetchFullChildData = async () => {
+  const fetchFullChildDataInBackground = async () => {
     if (!child?.id) return;
-    
-    setLoadingChildData(true);
     try {
       const { data, error: fetchError } = await supabase
         .from('children')
@@ -60,10 +58,7 @@ export default function EditChildModal({
         .eq('id', child.id)
         .single();
 
-      if (fetchError) {
-        setError('Failed to load child information');
-        return;
-      }
+      if (fetchError) return;
 
       setFullChildData(data);
       setIsArchived(data.archived || false);
@@ -75,7 +70,6 @@ export default function EditChildModal({
         .maybeSingle();
       setSupportProfile(supportData || null);
 
-      // If child has a linked account (verified), get the connected email (read-only, one per child)
       const fid = familyId || data.family_id;
       if (fid) {
         const { data: fmRows } = await supabase
@@ -96,11 +90,7 @@ export default function EditChildModal({
         } else {
           setConnectedEmail(null);
         }
-      } else {
-        setConnectedEmail(null);
-      }
 
-      if (fid) {
         const { data: ay } = await supabase
           .from('academic_years')
           .select('id, start_date, end_date, target_instructional_days, target_instructional_hours')
@@ -110,50 +100,31 @@ export default function EditChildModal({
           .maybeSingle();
         setAcademicYear(ay || null);
       } else {
+        setConnectedEmail(null);
         setAcademicYear(null);
       }
-      
-      // If familyId wasn't provided, get it from the child data or user profile
-      if (!familyId && data.family_id) {
-        // We'll use the child's family_id in handleSubmit
-      } else if (!familyId) {
-        // Try to get from user profile
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('family_id')
-            .eq('id', user.id)
-            .maybeSingle();
-          if (profile?.family_id) {
-            // Store it for use in handleSubmit
-            // We'll need to handle this differently
-          }
-        }
-      }
     } catch (err) {
-      setError('Failed to load child information');
-    } finally {
-      setLoadingChildData(false);
+      // Silent: form already shows cached data
     }
   };
 
-  // Prepare initial data for form
-  const initialData = fullChildData ? {
-    name: fullChildData.first_name || fullChildData.name || '',
-    nickname: fullChildData.nickname || '',
-    age: fullChildData.age ? String(fullChildData.age) : '',
-    grade: fullChildData.grade || fullChildData.grade_label || '',
-    standardsState: fullChildData.standards || fullChildData.standards_state || 'None',
-    interests: Array.isArray(fullChildData.interests)
-      ? fullChildData.interests
-      : (typeof fullChildData.interests === 'string' && fullChildData.interests
-          ? fullChildData.interests.split(',').map(i => i.trim()).filter(Boolean)
+  // Build initial data from fullChildData when available, else from cached child prop
+  const baseData = fullChildData || child;
+  const initialData = baseData ? {
+    name: baseData.first_name || baseData.name || '',
+    nickname: baseData.nickname || '',
+    age: baseData.age != null ? String(baseData.age) : '',
+    grade: baseData.grade || baseData.grade_level || baseData.grade_label || '',
+    standardsState: baseData.standards || baseData.standards_state || 'None',
+    interests: Array.isArray(baseData.interests)
+      ? baseData.interests
+      : (typeof baseData.interests === 'string' && baseData.interests
+          ? baseData.interests.split(',').map(i => i.trim()).filter(Boolean)
           : []),
-    learningStyle: Array.isArray(fullChildData.learning_styles) && fullChildData.learning_styles.length > 0
-      ? fullChildData.learning_styles[0]
-      : fullChildData.learning_style || '',
-    avatar: fullChildData.avatar || fullChildData.avatar_url || 'prof1',
+    learningStyle: Array.isArray(baseData.learning_styles) && baseData.learning_styles.length > 0
+      ? baseData.learning_styles[0]
+      : baseData.learning_style || '',
+    avatar: baseData.avatar || baseData.avatar_url || 'prof1',
     schoolYearStart: academicYear?.start_date || '',
     schoolYearEnd: academicYear?.end_date || '',
     targetMode: academicYear?.target_instructional_days != null ? 'days' : academicYear?.target_instructional_hours != null ? 'hours' : '',
@@ -167,8 +138,7 @@ export default function EditChildModal({
   } : {};
 
   const handleSubmit = async (formData) => {
-    // Get family_id from child data if not provided as prop
-    const effectiveFamilyId = familyId || fullChildData?.family_id;
+    const effectiveFamilyId = familyId || fullChildData?.family_id || child?.family_id;
     
     if (!effectiveFamilyId || !child?.id) {
       // Try to get family_id from user profile as fallback
@@ -455,25 +425,6 @@ export default function EditChildModal({
     >
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         <TouchableOpacity activeOpacity={1} onPress={(e) => e?.stopPropagation?.()} style={styles.modal}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.headerTitleRow}>
-                <View style={styles.headerIconWrap}>
-                  <UserCircle size={20} color="#6b7280" />
-                </View>
-                <View>
-                  <Text style={styles.title}>Edit Child</Text>
-                  <Text style={styles.subtitle}>Update {childName}'s information</Text>
-                </View>
-              </View>
-            </View>
-            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-              <X size={20} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.headerDivider} />
-
           {error && (
             <View style={styles.errorContainer}>
               <Text style={styles.errorText}>{error}</Text>
@@ -486,12 +437,7 @@ export default function EditChildModal({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={true}
           >
-            {loadingChildData ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="#3b82f6" />
-                <Text style={styles.loadingText}>Loading child information...</Text>
-              </View>
-            ) : fullChildData ? (
+            {baseData ? (
               <>
                 {connectedEmail != null && connectedEmail !== '' && (
                   <View style={styles.connectedEmailRow}>
@@ -507,19 +453,20 @@ export default function EditChildModal({
                   onValidationChange={setFormCanSubmit}
                 />
                 
-                {/* Danger Zone */}
-                <View style={styles.dangerZone}>
-              <TouchableOpacity
-                style={styles.dangerZoneToggle}
-                onPress={() => setShowDangerZone(!showDangerZone)}
-              >
-                <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                <Text style={styles.dangerZoneTitle}>
-                  {showDangerZone ? 'Hide' : 'Show'} Danger Zone
-                </Text>
-              </TouchableOpacity>
-
-              {showDangerZone && (
+                {/* Accordion — Danger zone */}
+                <View style={styles.dangerZoneAccordion}>
+                  <TouchableOpacity
+                    onPress={() => setShowDangerZone(!showDangerZone)}
+                    style={styles.dangerZoneHeader}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.dangerZoneHeaderLeft}>
+                      <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                      <Text style={styles.dangerZoneTitle}>Danger zone</Text>
+                    </View>
+                    {showDangerZone ? <ChevronUp size={20} color={colors.redBold || '#dc2626'} /> : <ChevronDown size={20} color={colors.redBold || '#dc2626'} />}
+                  </TouchableOpacity>
+                  {showDangerZone && (
                 <View style={styles.dangerZoneContent}>
                   {/* Archive Section */}
                   <View style={styles.dangerSection}>
@@ -585,13 +532,9 @@ export default function EditChildModal({
                   </View>
                 </View>
               )}
-            </View>
+                </View>
               </>
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>Failed to load child data</Text>
-              </View>
-            )}
+            ) : null}
           </ScrollView>
 
           <View style={styles.footerDivider} />
@@ -605,13 +548,13 @@ export default function EditChildModal({
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.saveButton, (isSubmitting || loadingChildData || !fullChildData || !formCanSubmit) && styles.saveButtonDisabled]}
+              style={[styles.saveButton, (isSubmitting || !formCanSubmit) && styles.saveButtonDisabled]}
               onPress={() => {
                 if (formRef.current?.submit) {
                   formRef.current.submit();
                 }
               }}
-              disabled={isSubmitting || loadingChildData || !fullChildData || !formCanSubmit}
+              disabled={isSubmitting || !formCanSubmit}
             >
               <Text style={styles.saveButtonText}>
                 {isSubmitting ? 'Saving...' : 'Save Changes'}
@@ -635,7 +578,7 @@ const styles = StyleSheet.create({
   modal: {
     backgroundColor: '#ffffff',
     borderRadius: 24,
-    width: 720,
+    width: 810,
     maxWidth: '100%',
     maxHeight: '85vh',
     overflow: 'hidden',
@@ -732,17 +675,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#0f172a',
   },
-  dangerZone: {
-    marginTop: 24,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+  dangerZoneAccordion: {
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(220, 38, 38, 0.25)',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: 'rgba(254, 242, 242, 0.5)',
   },
-  dangerZoneToggle: {
+  dangerZoneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  dangerZoneHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 8,
   },
   dangerZoneTitle: {
     fontSize: 14,

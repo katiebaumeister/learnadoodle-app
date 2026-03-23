@@ -206,7 +206,7 @@ export default function ParsePlainTextModal({
   const ignored = draft?.ignored_items || [];
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
       <View ref={overlayRef} style={styles.overlay} collapsable={false}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.overlayInner}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleClose} />
@@ -421,12 +421,44 @@ export default function ParsePlainTextModal({
                         {(unit.lessons || []).map((lesson, lIdx) => (
                           <View key={lesson.temp_id || lIdx} style={styles.lessonRow}>
                             <Text style={styles.lessonIndex}>{lIdx + 1}.</Text>
-                            <TextInput
-                              style={[styles.input, styles.lessonTitleInput]}
-                              value={lesson.title}
-                              onChangeText={(v) => updateDraftLesson(uIdx, lIdx, 'title', v)}
-                              editable={step === 'draft'}
-                            />
+                            <View style={{ flex: 1 }}>
+                              <TextInput
+                                style={[styles.input, styles.lessonTitleInput, { marginBottom: 6 }]}
+                                value={lesson.title}
+                                onChangeText={(v) => updateDraftLesson(uIdx, lIdx, 'title', v)}
+                                editable={step === 'draft'}
+                              />
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <Text style={[styles.smallLabel, { fontSize: 11, color: '#6b7280' }]}>Reference date:</Text>
+                                {Platform.OS === 'web' ? (
+                                  <input
+                                    type="date"
+                                    value={lesson.reference_date || lesson.suggested_date || lesson.date_text || ''}
+                                    onChange={(e) => updateDraftLesson(uIdx, lIdx, 'reference_date', e.target.value || null)}
+                                    disabled={step !== 'draft'}
+                                    style={{
+                                      flex: 1,
+                                      maxWidth: 140,
+                                      padding: '6px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #d1d5db',
+                                      fontSize: '12px',
+                                      backgroundColor: step === 'draft' ? '#fff' : '#f3f4f6',
+                                    }}
+                                  />
+                                ) : (
+                                  <TextInput
+                                    style={[styles.input, { flex: 1, maxWidth: 140, paddingVertical: 6, fontSize: 12 }]}
+                                    value={lesson.reference_date || lesson.suggested_date || lesson.date_text || ''}
+                                    onChangeText={(v) => updateDraftLesson(uIdx, lIdx, 'reference_date', v || null)}
+                                    placeholder="YYYY-MM-DD"
+                                    placeholderTextColor="#9ca3af"
+                                    editable={step === 'draft'}
+                                  />
+                                )}
+                                <Text style={[styles.smallLabel, { fontSize: 10, color: '#9ca3af' }]}>Connects to planner</Text>
+                              </View>
+                            </View>
                           </View>
                         ))}
                       </View>

@@ -361,9 +361,18 @@ export default function ParentHomeScreen({
   };
 
   const handleViewTodaysTodo = () => {
-    // Navigate to planner focused on today, or scroll to today's schedule section
+    // Navigate to planner → To-do lists → Today (client-side, no reload)
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.href = '/planner?date=' + new Date().toISOString().split('T')[0];
+      const todayStr = new Date().toISOString().split('T')[0];
+      const url = new URL(window.location.href);
+      url.pathname = '/planner';
+      url.searchParams.set('view', 'tasks');
+      url.searchParams.set('section', 'today');
+      url.searchParams.set('date', todayStr);
+      window.history.pushState({}, '', url.toString());
+      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
+      window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
+      if (onNavigate) onNavigate('planner');
     } else if (onNavigate) {
       onNavigate('planner');
     }
@@ -408,6 +417,7 @@ export default function ParentHomeScreen({
           children={homeData.children || []}
           subjects={homeData.subjects || []}
           onOpenPlanner={() => onNavigate?.('planner')}
+          onTabChange={onNavigate}
           onAddBlock={onAddEvent}
           suggestedRhythms={[]}
           onAddSuggestedRhythm={() => {}}

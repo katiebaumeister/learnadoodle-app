@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator, Image } from 'react-native';
+import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator, Image, LayoutAnimation } from 'react-native';
 
 // For web portal rendering
 let ReactDOM;
@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, Calendar, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, Lock, ExternalLink, Bot } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Settings } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
@@ -54,10 +54,11 @@ import QuickRescheduleModal from './planner/modals/QuickRescheduleModal';
 import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
-import RebalanceModal from './planner/modals/RebalanceModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerWalkthrough from './planner/PlannerWalkthrough';
 import PlanHealthIcon from './planner/PlanHealthIcon';
+import HelpPopover from './planner/HelpPopover';
+import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
 import AvatarPreloader from './onboarding/AvatarPreloader';
 import AppLoader from './AppLoader';
@@ -91,6 +92,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
   const [showDoodleSearchModal, setShowDoodleSearchModal] = useState(false);
+  const [showPlanningModal, setShowPlanningModal] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
@@ -152,7 +154,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showCatchUpModal, setShowCatchUpModal] = useState(false);
   const [showSummarizeProgressModal, setShowSummarizeProgressModal] = useState(false);
   const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
-  const [showPlanYearModal, setShowPlanYearModal] = useState(false);
   const [planYearInitialAcademicYearId, setPlanYearInitialAcademicYearId] = useState(null);
   const [planYearInitialPlanSummaryData, setPlanYearInitialPlanSummaryData] = useState(null);
   const [planYearOpenForNewPlan, setPlanYearOpenForNewPlan] = useState(false);
@@ -167,6 +168,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const planYearDropdownButtonRef = useRef(null);
   const planYearDropdownRef = useRef(null);
   const [planYearDropdownPosition, setPlanYearDropdownPosition] = useState({ top: 0, left: 0 });
+  const planYearReturnViewRef = useRef('month');
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showPlanWeekModal, setShowPlanWeekModal] = useState(false);
@@ -268,13 +270,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const filterButtonRef = useRef(null);
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
-  const filtersButtonRef = useRef(null);
+  const topToolbarFiltersButtonRef = useRef(null);
+  const helpButtonRef = useRef(null);
+  const [showHelpPopover, setShowHelpPopover] = useState(false);
+  const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
+  const helpPopoverRef = useRef(null);
+  const [showPlannerSettingsPopover, setShowPlannerSettingsPopover] = useState(false);
+  const [plannerSettingsPopoverPosition, setPlannerSettingsPopoverPosition] = useState({ top: 0, left: 0 });
+  const settingsButtonRef = useRef(null);
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
   const filtersDropdownRef = useRef(null);
-  const [showViewModeDropdown, setShowViewModeDropdown] = useState(false);
-  const viewModeButtonRef = useRef(null);
-  const viewModeDropdownRef = useRef(null);
-  const [viewModeDropdownPosition, setViewModeDropdownPosition] = useState({ top: 0, left: 0 });
   const [selectedEventTypes, setSelectedEventTypes] = useState(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showViewDropdown, setShowViewDropdown] = useState(false);
@@ -292,10 +297,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const quickRescheduleButtonRef = useRef(null);
   const progressForecastButtonRef = useRef(null);
   const buildCurriculumButtonRef = useRef(null);
-  const [showFreezeWeekTooltip, setShowFreezeWeekTooltip] = useState(false);
-  const [freezeWeekTooltipPosition, setFreezeWeekTooltipPosition] = useState({ x: 0, y: 0 });
-  const freezeWeekButtonRef = useRef(null);
   const planWeekButtonRef = useRef(null);
+  const viewChipLayouts = useRef({});
+  const [viewChipSlider, setViewChipSlider] = useState({ left: 0, width: 0 });
 
   // Planner export date-range modal
   const [showExportModal, setShowExportModal] = useState(false);
@@ -494,11 +498,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [showViewDropdown]);
 
+  // Update view chip slider position when currentView changes (Month / Week / To-do only)
+  useEffect(() => {
+    const chipKeys = ['month', 'board', 'tasks'];
+    if (!chipKeys.includes(currentView)) {
+      setViewChipSlider({ left: 0, width: 0 });
+      return;
+    }
+    const layout = viewChipLayouts.current[currentView];
+    if (layout) {
+      setViewChipSlider({ left: layout.x, width: layout.width });
+    }
+  }, [currentView]);
+
   // Handle click outside Filters dropdown
   useEffect(() => {
     if (showFiltersDropdown && Platform.OS === 'web' && typeof document !== 'undefined') {
       const handleClickOutside = (event) => {
-        const buttonNode = filtersButtonRef.current?._nativeNode || filtersButtonRef.current;
+        const buttonNode = topToolbarFiltersButtonRef.current?._nativeNode || topToolbarFiltersButtonRef.current;
         const dropdownNode = filtersDropdownRef.current?._nativeNode || filtersDropdownRef.current;
         
         const target = event.target;
@@ -518,29 +535,42 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [showFiltersDropdown]);
 
-  // Handle click outside View Mode dropdown
+  // Handle click outside Help popover
   useEffect(() => {
-    if (showViewModeDropdown && Platform.OS === 'web' && typeof document !== 'undefined') {
+    if (showHelpPopover && Platform.OS === 'web' && typeof document !== 'undefined') {
       const handleClickOutside = (event) => {
-        const buttonNode = viewModeButtonRef.current?._nativeNode || viewModeButtonRef.current;
-        const dropdownNode = viewModeDropdownRef.current?._nativeNode || viewModeDropdownRef.current;
-        
+        const buttonNode = helpButtonRef.current?._nativeNode || helpButtonRef.current;
+        const popoverNode = helpPopoverRef.current?._nativeNode || helpPopoverRef.current;
         const target = event.target;
         const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
-        const isInsideDropdown = dropdownNode && (dropdownNode === target || dropdownNode.contains(target));
-        
-        if (!isInsideButton && !isInsideDropdown) {
-          setShowViewModeDropdown(false);
+        const isInsidePopover = popoverNode && (popoverNode === target || popoverNode.contains(target));
+        if (!isInsideButton && !isInsidePopover) {
+          setShowHelpPopover(false);
         }
       };
-      
       document.addEventListener('click', handleClickOutside, true);
-      
-      return () => {
-        document.removeEventListener('click', handleClickOutside, true);
-      };
+      return () => document.removeEventListener('click', handleClickOutside, true);
     }
-  }, [showViewModeDropdown]);
+  }, [showHelpPopover]);
+
+  // Handle click outside Planner Settings popover
+  const plannerSettingsPopoverRef = useRef(null);
+  useEffect(() => {
+    if (showPlannerSettingsPopover && Platform.OS === 'web' && typeof document !== 'undefined') {
+      const handleClickOutside = (event) => {
+        const buttonNode = settingsButtonRef.current?._nativeNode || settingsButtonRef.current;
+        const popoverNode = plannerSettingsPopoverRef.current?._nativeNode || plannerSettingsPopoverRef.current;
+        const target = event.target;
+        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
+        const isInsidePopover = popoverNode && (popoverNode === target || popoverNode.contains(target));
+        if (!isInsideButton && !isInsidePopover) {
+          setShowPlannerSettingsPopover(false);
+        }
+      };
+      document.addEventListener('click', handleClickOutside, true);
+      return () => document.removeEventListener('click', handleClickOutside, true);
+    }
+  }, [showPlannerSettingsPopover]);
 
   // Handle click outside Plan Year dropdown
   useEffect(() => {
@@ -1036,6 +1066,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const handleViewChange = (event) => {
         const newView = event.detail;
         setCurrentView(newView);
+        // Clear right-toolbar focus when returning to main planner segments
+        if (['month', 'board', 'tasks'].includes(newView)) {
+          setActiveRightTool(null);
+        }
         const url = new URL(window.location.href);
         if (newView === 'month' || newView === 'Month') {
           url.searchParams.delete('view');
@@ -1766,7 +1800,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const yearIdFromEvent = detail.academicYearId;
       const subjectId = detail.subjectId ?? null;
       const materialId = detail.materialId ?? null;
-      console.log('[WebLayout] openPlanYearModal event', { from, yearIdFromEvent, subjectId, materialId });
+      const openToEditList = detail.openToEditList === true;
+      console.log('[WebLayout] openPlanYearModal event', { from, yearIdFromEvent, subjectId, materialId, openToEditList });
       setPlanYearHighlightFromHealth(from === 'plan_health_over');
       setPlanYearFromSubjectDetail(from === 'subject_detail');
       setPlanYearInitialSubjectId(subjectId);
@@ -1778,9 +1813,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       } else {
         setPlanYearInitialAcademicYearId(null);
         setPlanYearInitialPlanSummaryData(null);
-        setPlanYearOpenForNewPlan(materialId != null || subjectId != null || from === 'library' || from === 'generate_curriculum' || from === 'magic_extract');
+        setPlanYearOpenForNewPlan(openToEditList || materialId != null || subjectId != null || from === 'library' || from === 'generate_curriculum' || from === 'magic_extract');
       }
-      setShowPlanYearModal(true);
+      setPlanYearOpenToEditList(openToEditList || !!yearIdFromEvent);
+      setPlanYearOpenDirectlyToScope(!!detail.openDirectlyToScope && !openToEditList);
+      planYearReturnViewRef.current = currentView;
+      handleTabChange('planner');
+      const viewToShow = yearIdFromEvent || openToEditList ? 'edit-year' : 'plan-year';
+      setCurrentView(viewToShow);
+      if (Platform.OS === 'web') {
+        const url = new URL(window.location);
+        url.pathname = '/planner';
+        url.searchParams.set('view', viewToShow);
+        window.history.pushState({}, '', url);
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewToShow }));
+      }
     };
     window.addEventListener('openPlanYearModal', handler);
     return () => window.removeEventListener('openPlanYearModal', handler);
@@ -1798,7 +1845,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setPlanYearInitialMaterialId(materialId);
       setPlanYearInitialAcademicYearId(null);
       setPlanYearOpenForNewPlan(true);
-      setShowPlanYearModal(true);
+      planYearReturnViewRef.current = currentView;
+      handleTabChange('planner');
+      setCurrentView('plan-year');
+      if (Platform.OS === 'web') {
+        const url = new URL(window.location);
+        url.searchParams.set('view', 'plan-year');
+        window.history.pushState({}, '', url);
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
+      }
     };
     window.addEventListener('openBuildCurriculumModal', handler);
     return () => window.removeEventListener('openBuildCurriculumModal', handler);
@@ -2090,6 +2145,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Determine if we're on a calendar screen
   const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';
 
+  /** Icon keys on RightToolbar — highlight purple; tasks/backlog are legacy and have no icon. */
+  const rightToolbarActiveKeyForIcons =
+    activeRightTool === 'tasks' || activeRightTool === 'backlog'
+      ? null
+      : (activeRightTool ??
+        (currentView === 'plan-year' ? 'build-plan' :
+          currentView === 'edit-year' ? 'edit-plan' :
+            currentView === 'attendance' ? 'attendance' :
+              null));
+  /** When true, Month/Week/To-do should not use purple (right bar or full-screen plan view is primary). */
+  const rightToolbarClaimsPlannerSegmentFocus =
+    (activeRightTool != null && !['tasks', 'backlog'].includes(activeRightTool)) ||
+    ['plan-year', 'edit-year', 'attendance'].includes(currentView);
+  /** Purple Month/Week/To-do segment only when that row is the active context. */
+  const showTopPlannerSegmentHighlight =
+    ['month', 'board', 'tasks'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
+
   // Show full-screen loading when home tab is loading
   const showFullScreenLoading = activeTab === 'home' && homeLoading;
 
@@ -2231,7 +2303,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               paddingTop: 12,
               paddingBottom: 12,
               borderBottomWidth: 1,
-              borderBottomColor: 'rgba(15, 23, 42, 0.04)',
+              borderBottomColor: '#E5E7EB',
               position: 'relative',
               zIndex: 1,
               ...(Platform.OS === 'web' ? { 
@@ -2351,7 +2423,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   </TouchableOpacity>
                 </View>
                 
-                {/* Center: View State Controls (View Mode + Filters + Plan & Optimize) */}
+                {/* Center: View State Controls (View Mode chips) */}
                 <View 
                   ref={middleButtonsRef}
                   style={{ 
@@ -2362,47 +2434,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     justifyContent: 'center',
                   }}
                 >
-                  {/* Combined Filters Button */}
-                  <View style={{ position: 'relative' }}>
-                    <TouchableOpacity
-                      ref={filtersButtonRef}
-                      onPress={() => {
-                        if (Platform.OS === 'web' && filtersButtonRef.current) {
-                          const node = filtersButtonRef.current._nativeNode || filtersButtonRef.current;
-                          if (node && typeof node.getBoundingClientRect === 'function') {
-                            const rect = node.getBoundingClientRect();
-                            setFiltersDropdownPosition({
-                              top: rect.bottom + 4,
-                              left: rect.left,
-                            });
-                          }
-                        }
-                        setShowFiltersDropdown(!showFiltersDropdown);
-                      }}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        height: 36,
-                        gap: 4,
-                        paddingHorizontal: 12,
-                        borderRadius: 8,
-                        backgroundColor: '#FFFFFF',
-                        borderWidth: 1,
-                        borderColor: '#E6EBF2',
-                      }}
-                    >
-                      <Text style={{ 
-                        fontSize: 15, 
-                        color: '#1E293B',
-                        fontWeight: '500',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}>
-                        Filters
-                      </Text>
-                      <ChevronDown size={13} color="rgba(15, 23, 42, 0.7)" />
-                    </TouchableOpacity>
-                    
-                    {showFiltersDropdown && Platform.OS === 'web' && (
+                  {/* Help popover - Planner & Calendar FAQs */}
+                  {showHelpPopover && Platform.OS === 'web' && (
+                    <View ref={helpPopoverRef}>
+                      <HelpPopover
+                        visible={showHelpPopover}
+                        onClose={() => setShowHelpPopover(false)}
+                        position={helpPopoverPosition}
+                        helpForumHref="/help/faqs"
+                      />
+                    </View>
+                  )}
+                  {/* Planner Settings popover - mini Planning Preferences */}
+                  {showPlannerSettingsPopover && Platform.OS === 'web' && (
+                    <View ref={plannerSettingsPopoverRef}>
+                      <PlannerSettingsPopover
+                        visible={showPlannerSettingsPopover}
+                        onClose={() => setShowPlannerSettingsPopover(false)}
+                        position={plannerSettingsPopoverPosition}
+                        familyId={familyId}
+                        onOpenFullSettings={() => handleTabChange('settings', 'planner-settings')}
+                      />
+                    </View>
+                  )}
+                  {/* Filters dropdown - opened from right toolbar */}
+                  {showFiltersDropdown && Platform.OS === 'web' && (
                       <View
                         ref={filtersDropdownRef}
                         style={{
@@ -2646,356 +2702,195 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         })}
                       </View>
                     )}
+                  
+                  {/* Filters chip - left of view control, matches views control height */}
+                  <TouchableOpacity
+                    ref={topToolbarFiltersButtonRef}
+                    onPress={() => {
+                      if (showFiltersDropdown) {
+                        setShowFiltersDropdown(false);
+                        return;
+                      }
+                      if (Platform.OS === 'web' && topToolbarFiltersButtonRef.current) {
+                        const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
+                        if (node && typeof node.getBoundingClientRect === 'function') {
+                          const rect = node.getBoundingClientRect();
+                          setFiltersDropdownPosition({
+                            top: rect.bottom + 4,
+                            left: rect.left,
+                          });
+                        }
+                      }
+                      setShowFiltersDropdown(true);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                      paddingVertical: 13,
+                      paddingHorizontal: 14,
+                      borderRadius: 9999,
+                      borderWidth: 1,
+                      borderColor: '#E6EBF2',
+                      backgroundColor: '#FFFFFF',
+                      flexShrink: 0,
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={{
+                      fontSize: 15,
+                      color: 'rgba(15,23,42,0.85)',
+                      fontWeight: '500',
+                      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }}>
+                      Filters
+                    </Text>
+                    <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                  </TouchableOpacity>
+                  
+                  {/* View Mode - Segmented control with sliding highlight */}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      borderRadius: 9999,
+                      borderWidth: 1,
+                      borderColor: '#E6EBF2',
+                      backgroundColor: '#FFFFFF',
+                      padding: 6,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {/* Sliding purple highlight — only when Month/Week/To-do is the active context (not plan/attendance from right bar) */}
+                    {showTopPlannerSegmentHighlight && viewChipSlider.width > 0 && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          left: viewChipSlider.left,
+                          top: 6,
+                          bottom: 6,
+                          width: viewChipSlider.width,
+                          borderRadius: 9999,
+                          backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(139, 92, 246, 0.5)',
+                        }}
+                      />
+                    )}
+                    {[
+                      { key: 'month', label: 'Month' },
+                      { key: 'board', label: 'Week' },
+                      { key: 'tasks', label: 'To-do lists' },
+                    ].map((view) => {
+                      const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
+                      return (
+                        <TouchableOpacity
+                          key={view.key}
+                          onLayout={(e) => {
+                            const { x, width } = e.nativeEvent.layout;
+                            viewChipLayouts.current[view.key] = { x, width };
+                            if (currentView === view.key) {
+                              setViewChipSlider({ left: x, width });
+                            }
+                          }}
+                          onPress={() => {
+                            const viewValue = view.key;
+                            if (Platform.OS !== 'web') {
+                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                            }
+                            setActiveRightTool(null);
+                            setCurrentView(viewValue);
+                            setDefaultView(viewValue);
+                            if (Platform.OS === 'web') {
+                              const url = new URL(window.location);
+                              url.searchParams.set('view', viewValue);
+                              window.history.pushState({}, '', url);
+                              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
+                            }
+                          }}
+                          style={{
+                            paddingVertical: 8,
+                            paddingHorizontal: 14,
+                            borderRadius: 9999,
+                            zIndex: 10,
+                          }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={{
+                            fontSize: 15,
+                            color: isActive ? 'rgba(99, 102, 241, 1)' : 'rgba(15,23,42,0.85)',
+                            fontWeight: isActive ? '600' : '500',
+                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }}>
+                            {view.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                   
-                  {/* View Mode Dropdown */}
-                  <View style={{ position: 'relative' }}>
+                  {/* Help and Planning Preferences icons - right of Filters */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                     <TouchableOpacity
-                      ref={viewModeButtonRef}
+                      ref={helpButtonRef}
                       onPress={() => {
-                        if (Platform.OS === 'web' && viewModeButtonRef.current) {
-                          const node = viewModeButtonRef.current._nativeNode || viewModeButtonRef.current;
+                        if (showHelpPopover) {
+                          setShowHelpPopover(false);
+                          return;
+                        }
+                        if (Platform.OS === 'web' && helpButtonRef.current) {
+                          const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
                           if (node && typeof node.getBoundingClientRect === 'function') {
                             const rect = node.getBoundingClientRect();
-                            setViewModeDropdownPosition({
+                            setHelpPopoverPosition({
                               top: rect.bottom + 4,
                               left: rect.left,
                             });
                           }
                         }
-                        setShowViewModeDropdown(!showViewModeDropdown);
+                        setShowPlannerSettingsPopover(false);
+                        setShowHelpPopover(true);
                       }}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        height: 36,
-                        gap: 4,
-                        paddingHorizontal: 12,
-                        borderRadius: 8,
-                        backgroundColor: '#FFFFFF',
-                        borderWidth: 1,
-                        borderColor: '#E6EBF2',
-                      }}
+                      style={{ padding: 4 }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Text style={{ 
-                        fontSize: 15, 
-                        color: '#1E293B',
-                        fontWeight: '500',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}>
-                        Views
-                      </Text>
-                      <ChevronDown size={13} color="#64748B" />
+                      <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
                     </TouchableOpacity>
-                    
-                    {showViewModeDropdown && Platform.OS === 'web' && (
-                      <View
-                        ref={viewModeDropdownRef}
-                        style={{
-                          position: 'fixed',
-                          top: viewModeDropdownPosition.top,
-                          left: viewModeDropdownPosition.left,
-                          backgroundColor: '#FFFFFF',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: 'rgba(15,23,42,0.08)',
-                          padding: 4,
-                          width: 'max-content',
-                          zIndex: 1000,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                        }}
-                      >
-                        {[
-                          { key: 'month', label: 'Month' },
-                          // Week view hidden from UI for now; logic kept
-                          { key: 'week', label: 'Week' },
-                          { key: 'tasks', label: 'To-do lists' },
-                          { key: 'attendance', label: 'Attendance' },
-                        ].map((view) => {
-                          const isActive = (currentView === view.key) || (currentView === 'week' && view.key === 'week') || (currentView === 'attendance' && view.key === 'attendance');
-                          return (
-                            <TouchableOpacity
-                              key={view.key}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 8,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                                backgroundColor: isActive ? 'rgba(167, 139, 250, 0.1)' : 'transparent',
-                              }}
-                              onPress={() => {
-                                const viewValue = view.key;
-                                setCurrentView(viewValue);
-                                setDefaultView(viewValue);
-                                setShowViewModeDropdown(false);
-                                if (Platform.OS === 'web') {
-                                  const url = new URL(window.location);
-                                  url.searchParams.set('view', viewValue);
-                                  window.history.pushState({}, '', url);
-                                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
-                                }
-                              }}
-                            >
-                              <Text style={{ 
-                                fontSize: 15, 
-                                color: isActive ? 'rgba(167, 139, 250, 0.9)' : 'rgba(15,23,42,0.9)',
-                                fontWeight: isActive ? '600' : '400',
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }}>
-                                {view.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    )}
+                    <TouchableOpacity
+                      ref={settingsButtonRef}
+                      onPress={() => {
+                        if (showPlannerSettingsPopover) {
+                          setShowPlannerSettingsPopover(false);
+                          return;
+                        }
+                        setShowHelpPopover(false);
+                        if (Platform.OS === 'web' && settingsButtonRef.current) {
+                          const node = settingsButtonRef.current._nativeNode || settingsButtonRef.current;
+                          if (node && typeof node.getBoundingClientRect === 'function') {
+                            const rect = node.getBoundingClientRect();
+                            setPlannerSettingsPopoverPosition({
+                              top: rect.bottom + 4,
+                              left: rect.left,
+                            });
+                          }
+                        }
+                        setShowPlannerSettingsPopover(true);
+                      }}
+                      style={{ padding: 4 }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Settings size={22} color="rgba(15,23,42,0.7)" />
+                    </TouchableOpacity>
                   </View>
                   
-                  {/* Build plan dropdown (Build plan + Edit plan + Rebalance) + Plan health notification icon */}
+                  {/* Plan health notification icon */}
                   <View style={{ 
                     flexShrink: 0,
-                    position: 'relative',
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 6,
                   }}>
-                    {family?.default_planning_mode !== 'NONE' && (
-                      <>
-                        <TouchableOpacity
-                          ref={planYearDropdownButtonRef}
-                          onPress={() => {
-                            if (Platform.OS === 'web' && planYearDropdownButtonRef.current) {
-                              const node = planYearDropdownButtonRef.current._nativeNode || planYearDropdownButtonRef.current;
-                              if (node && typeof node.getBoundingClientRect === 'function') {
-                                const rect = node.getBoundingClientRect();
-                                setPlanYearDropdownPosition({ top: rect.bottom + 4, left: rect.left });
-                              }
-                            }
-                            setShowPlanYearDropdown(!showPlanYearDropdown);
-                          }}
-                          accessibilityLabel="Actions"
-                          accessibilityRole="button"
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            height: 36,
-                            gap: 8,
-                            paddingHorizontal: 12,
-                            borderRadius: 8,
-                            backgroundColor: '#FFFFFF',
-                            borderWidth: 1,
-                            borderColor: '#E6EBF2',
-                          }}
-                        >
-                          <Text style={{
-                            fontSize: 15,
-                            color: '#1E293B',
-                            fontWeight: '500',
-                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }}>
-                            Actions
-                          </Text>
-                          <ChevronDown size={14} color="#64748B" />
-                        </TouchableOpacity>
-                        {showPlanYearDropdown && Platform.OS === 'web' && (
-                          <View
-                            ref={planYearDropdownRef}
-                            style={{
-                              position: 'fixed',
-                              top: planYearDropdownPosition.top,
-                              left: planYearDropdownPosition.left,
-                              backgroundColor: '#FFFFFF',
-                              borderRadius: 8,
-                              borderWidth: 1,
-                              borderColor: 'rgba(15,23,42,0.08)',
-                              padding: 4,
-                              width: 'max-content',
-                              zIndex: 1000,
-                              boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                            }}
-                          >
-                            <TouchableOpacity
-                              onPress={() => {
-                                setPlanYearInitialAcademicYearId(null);
-                                setPlanYearOpenForNewPlan(true);
-                                setPlanYearOpenToEditList(false);
-                                setPlanYearOpenDirectlyToScope(true);
-                                setShowPlanYearModal(true);
-                                setShowPlanYearDropdown(false);
-                              }}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 10,
-                                paddingHorizontal: 12,
-                                borderRadius: 6,
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                {STRINGS.planMyYear.modal.title}
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setPlanYearInitialAcademicYearId(null);
-                                setPlanYearOpenForNewPlan(true);
-                                setPlanYearOpenToEditList(true);
-                                setPlanYearOpenDirectlyToScope(false);
-                                setShowPlanYearModal(true);
-                                setShowPlanYearDropdown(false);
-                              }}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 10,
-                                paddingHorizontal: 12,
-                                borderRadius: 6,
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                Edit plan
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setShowRebalanceModal(true);
-                                setShowPlanYearDropdown(false);
-                              }}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 10,
-                                paddingHorizontal: 12,
-                                borderRadius: 6,
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                Rebalance
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => {
-                                const m = currentMonth.getMonth();
-                                const y = currentMonth.getFullYear();
-                                const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-                                const lastDay = new Date(y, m + 1, 0);
-                                const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-                                setExportStartDate(firstDay);
-                                setExportEndDate(lastDayStr);
-                                setShowExportModal(true);
-                                setShowPlanYearDropdown(false);
-                              }}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 10,
-                                paddingHorizontal: 12,
-                                borderRadius: 6,
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 15, color: '#1E293B', fontWeight: '400', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                Export
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        )}
-                      </>
-                    )}
                     <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={preloadedPlanHealth} />
                   </View>
-                  
-                  {/* Freeze Week toggle - icon only, shown only in Week view */}
-                  {currentView === 'week' && (
-                    <>
-                      <TouchableOpacity
-                        ref={freezeWeekButtonRef}
-                        onPress={() => {
-                          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                            window.dispatchEvent(new CustomEvent('plannerToggleFreezeWeek'));
-                          }
-                        }}
-                        activeOpacity={0.7}
-                        style={{
-                          paddingHorizontal: 10,
-                          paddingVertical: 6,
-                          borderRadius: 12,
-                          backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                          borderWidth: 1,
-                          borderColor: 'rgba(209, 213, 219, 0.8)',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                        {...(Platform.OS === 'web' && {
-                          onMouseEnter: (e) => {
-                            const node = freezeWeekButtonRef.current?._nativeNode || freezeWeekButtonRef.current;
-                            if (node && typeof node.getBoundingClientRect === 'function') {
-                              const rect = node.getBoundingClientRect();
-                              setFreezeWeekTooltipPosition({
-                                x: rect.left + rect.width / 2,
-                                y: rect.bottom,
-                              });
-                              setShowFreezeWeekTooltip(true);
-                            }
-                          },
-                          onMouseLeave: () => {
-                            setShowFreezeWeekTooltip(false);
-                          },
-                        })}
-                      >
-                        <Lock size={14} color="rgba(15, 23, 42, 0.75)" />
-                      </TouchableOpacity>
-                      
-                      {/* Freeze Week Tooltip */}
-                      {Platform.OS === 'web' && showFreezeWeekTooltip && (() => {
-                        let ReactDOM;
-                        try {
-                          ReactDOM = require('react-dom');
-                        } catch (e) {
-                          return null;
-                        }
-                        
-                        const tooltipContent = (
-                          <View
-                            style={{
-                              position: 'fixed',
-                              left: freezeWeekTooltipPosition.x,
-                              top: freezeWeekTooltipPosition.y,
-                              transform: 'translate(-50%, 0)',
-                              backgroundColor: '#1F2937',
-                              borderRadius: 6,
-                              paddingHorizontal: 12,
-                              paddingVertical: 8,
-                              marginTop: 4,
-                              zIndex: 10001,
-                              maxWidth: 280,
-                              ...(Platform.OS === 'web' && {
-                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-                              }),
-                            }}
-                          >
-                            <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '500', lineHeight: 16 }}>
-                              Freeze Week - this will exempt week from changes both manual and scheduling assistant changes
-                            </Text>
-                          </View>
-                        );
-                        
-                        if (ReactDOM && typeof document !== 'undefined' && document.body) {
-                          return ReactDOM.createPortal(tooltipContent, document.body);
-                        }
-                        return tooltipContent;
-                      })()}
-                    </>
-                  )}
                 </View>
 
                 {/* Search Bar and New Event Button */}
@@ -3282,65 +3177,234 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             </View>
           )}
           
-          {/* Main Content */}
-          <WebContent
-            activeTab={activeTab}
-            activeSubtab={activeSubtab}
-            activeChildId={activeChildId}
-            plannerView={currentView}
-            activeChildSection={activeChildSection}
-            user={user}
-            onChildAdded={handleChildAdded}
-            navigation={navigation}
-            showSyllabusUpload={showSyllabusUpload}
-            onSyllabusProcessed={(data) => {
-              console.log('Syllabus processed:', data);
-              setShowSyllabusUpload(false);
-            }}
-            onCloseSyllabusUpload={() => setShowSyllabusUpload(false)}
-            onTabChange={handleTabChange}
-            onSubtabChange={setActiveSubtab}
-            pendingDoodlePrompt={null}
-            onHomeLoadingChange={setHomeLoading}
-            onPlannerLoadingChange={setPlannerLoading}
-            onSubjectsLoadingChange={setSubjectsLoading}
-            onMaterialsLoadingChange={setMaterialsLoading}
-            onConsumeDoodlePrompt={() => {}}
-            onCalendarViewChange={(view) => {
-              // View change handled by WebContent
-            }}
-            showAddChildModal={showAddChildModal}
-            onCloseAddChildModal={() => setShowAddChildModal(false)}
-            showAddSubjectModal={showAddSubjectModal}
-            onCloseAddSubjectModal={() => {
-              setShowAddSubjectModal(false);
-              setEditingSubject(null);
-            }}
-            onOpenSettings={(section = 'profile') => {
-              handleTabChange('settings', section);
-            }}
-            onEditChild={(child) => {
-              setEditingChild(child);
-              setShowEditChildModal(true);
-            }}
-            onAddSyllabus={() => setShowSyllabusUpload(true)}
-            selectedCalendarChildren={selectedCalendarChildren}
-            onSelectedCalendarChildrenChange={setSelectedCalendarChildren}
-            selectedEventTypes={selectedEventTypes}
-            onSelectedEventTypesChange={setSelectedEventTypes}
-            onCurrentMonthChange={setCurrentMonth}
-            subjects={subjects}
-            fullSubjects={fullSubjects}
-            familyId={familyId}
-            children={children}
-            family={family}
-            onFamilyUpdate={(updatedFamily) => {
-              setFamily(updatedFamily);
-            }}
-            session={session}
-            profile={profile}
-            preloadedPlanHealth={preloadedPlanHealth}
-          />
+          {/* Main Content + Right Toolbar */}
+          <View style={{ flex: 1, flexDirection: isCalendarScreen ? 'row' : 'column', minWidth: 0 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              {(currentView === 'plan-year' || currentView === 'edit-year') && isCalendarScreen ? (
+              <PlanYearModal
+                renderInline
+                visible
+                onClose={() => {
+                  const returnView = planYearReturnViewRef.current || defaultView || 'month';
+                  setCurrentView(returnView);
+                  if (Platform.OS === 'web') {
+                    const url = new URL(window.location);
+                    url.searchParams.set('view', returnView);
+                    window.history.pushState({}, '', url);
+                    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
+                  }
+                  setPlanYearHighlightFromHealth(false);
+                  setPlanYearFromSubjectDetail(false);
+                  setPlanYearInitialAcademicYearId(null);
+                  setPlanYearInitialPlanSummaryData(null);
+                  setPlanYearOpenForNewPlan(false);
+                  setPlanYearOpenToEditList(false);
+                  setPlanYearOpenDirectlyToScope(false);
+                  setPlanYearInitialSubjectId(null);
+                  setPlanYearInitialMaterialId(null);
+                }}
+                familyId={familyId}
+                children={children}
+                subjects={subjects}
+                fullSubjects={fullSubjects}
+                initialAcademicYearId={planYearInitialAcademicYearId}
+                initialPlanSummaryData={planYearInitialPlanSummaryData}
+                openForNewPlan={planYearOpenForNewPlan}
+                openToEditPlanList={currentView === 'edit-year' || planYearOpenToEditList}
+                openDirectlyToScope={planYearOpenDirectlyToScope}
+                fromSubjectDetail={planYearFromSubjectDetail}
+                highlightFromPlanHealth={planYearHighlightFromHealth}
+                initialSubjectId={planYearInitialSubjectId}
+                initialMaterialId={planYearInitialMaterialId}
+                onOpenBuildCurriculum={(params) => {
+                  setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
+                  setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
+                  setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
+                  setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
+                  setBuildCurriculumInitialTopic(params.initialTopic ?? null);
+                  setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
+                  setShowBuildCurriculumModal(true);
+                }}
+                onOpenRebalance={() => setShowRebalanceModal(true)}
+                onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
+                onComplete={() => {
+                  const returnView = planYearReturnViewRef.current || defaultView || 'month';
+                  setCurrentView(returnView);
+                  if (Platform.OS === 'web') {
+                    const url = new URL(window.location);
+                    url.searchParams.set('view', returnView);
+                    window.history.pushState({}, '', url);
+                    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
+                    window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                  }
+                  setPlanYearHighlightFromHealth(false);
+                  setPlanYearFromSubjectDetail(false);
+                  setPlanYearInitialAcademicYearId(null);
+                  setPlanYearInitialPlanSummaryData(null);
+                  setPlanYearOpenForNewPlan(false);
+                  setPlanYearOpenToEditList(false);
+                  setPlanYearOpenDirectlyToScope(false);
+                  setPlanYearInitialSubjectId(null);
+                  setPlanYearInitialMaterialId(null);
+                }}
+              />
+              ) : (
+              <WebContent
+                activeTab={activeTab}
+                activeSubtab={activeSubtab}
+                activeChildId={activeChildId}
+                plannerView={currentView}
+                activeChildSection={activeChildSection}
+                user={user}
+                onChildAdded={handleChildAdded}
+                navigation={navigation}
+                showSyllabusUpload={showSyllabusUpload}
+                onSyllabusProcessed={(data) => {
+                  console.log('Syllabus processed:', data);
+                  setShowSyllabusUpload(false);
+                }}
+                onCloseSyllabusUpload={() => setShowSyllabusUpload(false)}
+                onTabChange={handleTabChange}
+                onSubtabChange={setActiveSubtab}
+                pendingDoodlePrompt={null}
+                onHomeLoadingChange={setHomeLoading}
+                onPlannerLoadingChange={setPlannerLoading}
+                onSubjectsLoadingChange={setSubjectsLoading}
+                onMaterialsLoadingChange={setMaterialsLoading}
+                onConsumeDoodlePrompt={() => {}}
+                onCalendarViewChange={(view) => {
+                  // View change handled by WebContent
+                }}
+                showAddChildModal={showAddChildModal}
+                onCloseAddChildModal={() => setShowAddChildModal(false)}
+                showAddSubjectModal={showAddSubjectModal}
+                onCloseAddSubjectModal={() => {
+                  setShowAddSubjectModal(false);
+                  setEditingSubject(null);
+                }}
+                onOpenSettings={(section = 'profile') => {
+                  handleTabChange('settings', section);
+                }}
+                onEditChild={(child) => {
+                  setEditingChild(child);
+                  setShowEditChildModal(true);
+                }}
+                onAddSyllabus={() => setShowSyllabusUpload(true)}
+                selectedCalendarChildren={selectedCalendarChildren}
+                onSelectedCalendarChildrenChange={setSelectedCalendarChildren}
+                selectedEventTypes={selectedEventTypes}
+                onSelectedEventTypesChange={setSelectedEventTypes}
+                onCurrentMonthChange={setCurrentMonth}
+                subjects={subjects}
+                fullSubjects={fullSubjects}
+                familyId={familyId}
+                children={children}
+                family={family}
+                onFamilyUpdate={(updatedFamily) => {
+                  setFamily(updatedFamily);
+                }}
+                session={session}
+                profile={profile}
+                preloadedPlanHealth={preloadedPlanHealth}
+              />
+              )}
+            </View>
+            {isCalendarScreen && (
+              <View style={{
+                width: 64,
+                flexShrink: 0,
+                borderLeftWidth: 1,
+                borderLeftColor: 'rgba(15,23,42,0.08)',
+                backgroundColor: '#FFFFFF',
+                flexDirection: 'column',
+                ...(Platform.OS === 'web' && { minHeight: 360 }),
+              }}>
+                <RightToolbar
+                  activeTool={rightToolbarActiveKeyForIcons}
+                  onTasks={() => {
+                    setActiveRightTool('tasks');
+                    setCurrentView('tasks');
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
+                      window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
+                    }
+                  }}
+                  onBacklog={() => {
+                    setActiveRightTool('backlog');
+                    setCurrentView('tasks');
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
+                      window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
+                    }
+                  }}
+                  onRebalance={() => {
+                    setActiveRightTool('rebalance');
+                    setShowRebalanceModal(true);
+                  }}
+                  onBuildPlan={() => {
+                    setActiveRightTool('build-plan');
+                    planYearReturnViewRef.current = currentView;
+                    setPlanYearInitialAcademicYearId(null);
+                    setPlanYearOpenForNewPlan(true);
+                    setPlanYearOpenToEditList(false);
+                    setPlanYearOpenDirectlyToScope(true);
+                    setCurrentView('plan-year');
+                    if (Platform.OS === 'web') {
+                      const url = new URL(window.location);
+                      url.searchParams.set('view', 'plan-year');
+                      window.history.pushState({}, '', url);
+                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
+                    }
+                  }}
+                  onEditPlan={() => {
+                    setActiveRightTool('edit-plan');
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'toolbar', academicYearId: null, openToEditList: true } }));
+                    } else {
+                      planYearReturnViewRef.current = currentView;
+                      setPlanYearInitialAcademicYearId(null);
+                      setPlanYearOpenForNewPlan(true);
+                      setPlanYearOpenToEditList(true);
+                      setPlanYearOpenDirectlyToScope(false);
+                      handleTabChange('planner');
+                      setCurrentView('edit-year');
+                    }
+                  }}
+                  onAttendance={() => {
+                    setActiveRightTool('attendance');
+                    setCurrentView('attendance');
+                    setDefaultView('attendance');
+                    if (typeof window !== 'undefined') {
+                      const url = new URL(window.location);
+                      url.searchParams.set('view', 'attendance');
+                      window.history.pushState({}, '', url);
+                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+                    }
+                  }}
+                  onExport={() => {
+                    const m = currentMonth.getMonth();
+                    const y = currentMonth.getFullYear();
+                    const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+                    const lastDay = new Date(y, m + 1, 0);
+                    const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+                    setExportStartDate(firstDay);
+                    setExportEndDate(lastDayStr);
+                    setExportModalSubjectId(null);
+                    setExportModalSubjectName(null);
+                    setShowExportModal(true);
+                  }}
+                  onSettings={() => handleTabChange('settings', 'profile')}
+                  onPackWeek={() => setShowPackWeekModal(true)}
+                  onCatchUp={() => setShowCatchUpModal(true)}
+                  onHealth={() => setShowAIToolsModal(true)}
+                  children={children}
+                  selectedChildren={selectedCalendarChildren}
+                  onChildFilterChange={setSelectedCalendarChildren}
+                  familyId={familyId}
+                />
+              </View>
+            )}
+          </View>
         </AppShell>
 
       <OnboardingModal
@@ -3375,6 +3439,61 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
         </TouchableOpacity>
       )}
+
+      {/* Planning Modal - mostly full screen - unified Plan my year + Edit subject structure */}
+      <PlanYearModal
+        key={planYearInitialAcademicYearId || 'unified-planning-modal'}
+        visible={showPlanningModal}
+        onClose={() => {
+          setShowPlanningModal(false);
+          setTimeout(() => {
+            setPlanYearHighlightFromHealth(false);
+            setPlanYearFromSubjectDetail(false);
+            setPlanYearInitialAcademicYearId(null);
+            setPlanYearInitialPlanSummaryData(null);
+            setPlanYearOpenForNewPlan(false);
+            setPlanYearOpenToEditList(false);
+            setPlanYearOpenDirectlyToScope(false);
+            setPlanYearInitialSubjectId(null);
+            setPlanYearInitialMaterialId(null);
+          }, 300);
+        }}
+        familyId={familyId}
+        children={children}
+        subjects={subjects}
+        fullSubjects={fullSubjects}
+        initialAcademicYearId={planYearInitialAcademicYearId}
+        initialPlanSummaryData={planYearInitialPlanSummaryData}
+        openForNewPlan={planYearOpenForNewPlan}
+        openToEditPlanList={planYearOpenToEditList}
+        openDirectlyToScope={planYearOpenDirectlyToScope}
+        fromSubjectDetail={planYearFromSubjectDetail}
+        highlightFromPlanHealth={planYearHighlightFromHealth}
+        initialSubjectId={planYearInitialSubjectId}
+        initialMaterialId={planYearInitialMaterialId}
+        onOpenBuildCurriculum={(params) => {
+          setBuildCurriculumInitialSubjectId(params.subjectId || null);
+          setBuildCurriculumInitialSubjectName(params.subjectName || null);
+          setBuildCurriculumInitialMaterialId(params.materialId || null);
+          setBuildCurriculumInitialInputMode(params.inputMode || null);
+          setBuildCurriculumInitialSourceUrl(params.sourceUrl || null);
+          setBuildCurriculumInitialTopic(params.topic || null);
+          setShowBuildCurriculumModal(true);
+        }}
+        onOpenRebalance={(params) => {
+          setRebalanceEventId(params.eventId || null);
+          setRebalanceYearPlanId(params.yearPlanId || null);
+          setShowRebalanceModal(true);
+        }}
+        onComplete={async () => {
+          setShowPlanningModal(false);
+          await fetchFamilyData();
+          if (Platform.OS === 'web') {
+            window.dispatchEvent(new CustomEvent('refreshChildren'));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }}
+      />
 
       <GlobalNewMenu
         visible={showNewMenu}
@@ -3582,66 +3701,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         familyId={familyId}
       />
 
-      <PlanYearModal
-        key={planYearInitialAcademicYearId || 'plan-year-modal'}
-        visible={showPlanYearModal}
-        onClose={() => {
-          setShowPlanYearModal(false);
-          // Defer resetting plan-year state until after modal close animation so we don't
-          // flash the "Create new plan" first screen when closing from "Edit plan".
-          setTimeout(() => {
-            setPlanYearHighlightFromHealth(false);
-            setPlanYearFromSubjectDetail(false);
-            setPlanYearInitialAcademicYearId(null);
-            setPlanYearInitialPlanSummaryData(null);
-            setPlanYearOpenForNewPlan(false);
-            setPlanYearOpenToEditList(false);
-            setPlanYearOpenDirectlyToScope(false);
-            setPlanYearInitialSubjectId(null);
-            setPlanYearInitialMaterialId(null);
-          }, 300);
-        }}
-        familyId={familyId}
-        children={children}
-        subjects={subjects}
-        fullSubjects={fullSubjects}
-        initialAcademicYearId={planYearInitialAcademicYearId}
-        initialPlanSummaryData={planYearInitialPlanSummaryData}
-        openForNewPlan={planYearOpenForNewPlan}
-        openToEditPlanList={planYearOpenToEditList}
-        openDirectlyToScope={planYearOpenDirectlyToScope}
-        fromSubjectDetail={planYearFromSubjectDetail}
-        highlightFromPlanHealth={planYearHighlightFromHealth}
-        initialSubjectId={planYearInitialSubjectId}
-        initialMaterialId={planYearInitialMaterialId}
-        onOpenBuildCurriculum={(params) => {
-          setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
-          setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
-          setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
-          setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
-          setBuildCurriculumInitialTopic(params.initialTopic ?? null);
-          setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
-          setShowBuildCurriculumModal(true);
-        }}
-        onOpenRebalance={() => {
-          setShowPlanYearModal(false);
-          setShowRebalanceModal(true);
-        }}
-        onComplete={() => {
-          setShowPlanYearModal(false);
-          setPlanYearHighlightFromHealth(false);
-          setPlanYearFromSubjectDetail(false);
-          setPlanYearInitialAcademicYearId(null);
-          setPlanYearInitialPlanSummaryData(null);
-          setPlanYearOpenForNewPlan(false);
-          setPlanYearOpenToEditList(false);
-          setPlanYearOpenDirectlyToScope(false);
-          setPlanYearInitialSubjectId(null);
-          setPlanYearInitialMaterialId(null);
-          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshCalendar'));
-        }}
-      />
-
       <GenerateCurriculumModal
         visible={showGenerateCurriculumModal}
         onClose={() => setShowGenerateCurriculumModal(false)}
@@ -3691,21 +3750,85 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
       />
 
-      {/* Rebalance Modal */}
-      <RebalanceModal
+      {/* Rebalance — coming soon */}
+      <Modal
         visible={showRebalanceModal}
-        onClose={() => setShowRebalanceModal(false)}
-        familyId={familyId}
-        children={children}
-        selectedChildIds={selectedCalendarChildren}
-        onComplete={(result) => {
-          console.log('Rebalance completed:', result);
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
           setShowRebalanceModal(false);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('refreshCalendar'));
-          }
+          setActiveRightTool(null);
         }}
-      />
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+          onPress={() => {
+            setShowRebalanceModal(false);
+            setActiveRightTool(null);
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 16,
+              padding: 24,
+              paddingTop: 48,
+              width: '90%',
+              maxWidth: 400,
+              alignItems: 'center',
+              position: 'relative',
+              borderWidth: 1,
+              borderColor: '#E6EBF2',
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => {
+                setShowRebalanceModal(false);
+                setActiveRightTool(null);
+              }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{ position: 'absolute', top: 16, right: 16 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={24} color="#64748B" />
+            </TouchableOpacity>
+            <Text style={{
+              fontSize: 22,
+              fontWeight: '700',
+              color: '#1E293B',
+              marginBottom: 12,
+              textAlign: 'center',
+              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>Coming soon</Text>
+            <Text style={{
+              fontSize: 15,
+              color: '#64748B',
+              textAlign: 'center',
+              lineHeight: 22,
+              marginBottom: 24,
+              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>This feature is in development. Stay tuned for updates!</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setShowRebalanceModal(false);
+                setActiveRightTool(null);
+              }}
+              style={{ paddingVertical: 12, paddingHorizontal: 24, backgroundColor: '#3b82f6', borderRadius: 10, minWidth: 100, alignItems: 'center' }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '600',
+                color: '#FFFFFF',
+                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }}>Got it</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Export planner date range modal */}
       <Modal
@@ -4344,13 +4467,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         />
       )}
 
-      {/* Right Toolbar */}
-      {activeRightTool && (
-        <RightToolbar
-          tool={activeRightTool}
-          onClose={() => setActiveRightTool(null)}
-        />
-      )}
         </PlannerDiffProvider>
       </FiltersProvider>
     </ToastProvider>
@@ -4376,9 +4492,9 @@ const styles = StyleSheet.create({
     position: Platform.OS === 'web' ? 'fixed' : 'absolute',
     bottom: 24,
     right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: '#9ECFFB',
     alignItems: 'center',
     justifyContent: 'center',
@@ -4395,7 +4511,51 @@ const styles = StyleSheet.create({
     }),
   },
   fabAskAIIcon: {
-    width: 44,
-    height: 44,
+    width: 58,
+    height: 58,
+  },
+  planningModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 10000,
+    }),
+  },
+  planningModalContent: {
+    width: '95%',
+    height: '90%',
+    maxWidth: 1400,
+    maxHeight: 900,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+    }),
+  },
+  planningModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  planningModalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  planningModalBody: {
+    flex: 1,
+    padding: 24,
   },
 });

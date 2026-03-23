@@ -460,6 +460,7 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
         </View>
       )}
 
+      <Text style={styles.profileSectionTitle}>Profile</Text>
       <View style={styles.formGroup}>
         <Text style={styles.label}>
           Name<Text style={styles.requiredAsterisk}> *</Text>
@@ -490,6 +491,21 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
       </View>
 
       <View style={styles.formGroup}>
+        <Text style={styles.label}>Grade (Optional)</Text>
+        <View style={styles.chipsWrap}>
+          {GRADES.map(g => (
+            <TouchableOpacity
+              key={g}
+              style={[styles.chip, childGrade === g && styles.chipSelected]}
+              onPress={() => setChildGrade(g)}
+            >
+              <Text style={[styles.chipText, childGrade === g && styles.chipTextSelected]}>{g}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.formGroup}>
         <Text style={styles.label}>
           Choose Avatar<Text style={styles.requiredAsterisk}> *</Text>
         </Text>
@@ -501,6 +517,21 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
               style={[styles.avatarCell, childAvatar === key && styles.avatarCellSelected]}
             >
               <Image source={avatarSources[key]} style={styles.avatarImg} resizeMode="contain" />
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.formGroup}>
+        <Text style={styles.label}>Follow State Standards?</Text>
+        <View style={styles.chipsWrap}>
+          {STATES.map(s => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.chip, childStandardsState === s && styles.chipSelected]}
+              onPress={() => setChildStandardsState(s)}
+            >
+              <Text style={[styles.chipText, childStandardsState === s && styles.chipTextSelected]}>{s}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -525,36 +556,6 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
 
         {showOptionalFields && (
           <View style={styles.accordionContent}>
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Follow State Standards? (Optional)</Text>
-              <View style={styles.chipsWrap}>
-                {STATES.map(s => (
-                  <TouchableOpacity
-                    key={s}
-                    style={[styles.chip, childStandardsState === s && styles.chipSelected]}
-                    onPress={() => setChildStandardsState(s)}
-                  >
-                    <Text style={[styles.chipText, childStandardsState === s && styles.chipTextSelected]}>{s}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Grade (Optional)</Text>
-              <View style={styles.chipsWrap}>
-                {GRADES.map(g => (
-                  <TouchableOpacity
-                    key={g}
-                    style={[styles.chip, childGrade === g && styles.chipSelected]}
-                    onPress={() => setChildGrade(g)}
-                  >
-                    <Text style={[styles.chipText, childGrade === g && styles.chipTextSelected]}>{g}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
             <View style={styles.formGroup}>
               <Text style={styles.label}>Interests (Optional)</Text>
               <View style={styles.chipsWrap}>
@@ -1040,6 +1041,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#6b7280',
     marginBottom: 32,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+    }),
+  },
+  profileSectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif',
     }),

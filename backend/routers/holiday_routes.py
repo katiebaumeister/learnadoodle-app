@@ -17,6 +17,7 @@ if str(backend_dir) not in sys.path:
 
 from auth import get_current_user, rate_limiter
 from services.holiday_providers import fetch_global_holidays
+from supabase_client import get_admin_client
 
 router = APIRouter(prefix="/api/holidays", tags=["holidays"])
 
@@ -238,6 +239,36 @@ async def get_subdivisions(
     return {"subdivisions": subdivisions}
 
 
+def _fallback_holidays_from_db(start_date: date, end_date: date) -> List[Dict]:
+    """Fallback: fetch US holidays from global_official_holidays when Nager.Date returns empty."""
+    try:
+        supabase = get_admin_client()
+        resp = (
+            supabase.table("global_official_holidays")
+            .select("holiday_date, name, holiday_name")
+            .gte("holiday_date", start_date.isoformat())
+            .lte("holiday_date", end_date.isoformat())
+            .execute()
+        )
+        rows = resp.data or []
+        result = []
+        seen = set()
+        for r in rows:
+            d = r.get("holiday_date")
+            name = r.get("name") or r.get("holiday_name") or "Holiday"
+            if d:
+                date_str = d[:10] if isinstance(d, str) else str(d)
+                key = (date_str, name)
+                if key not in seen:
+                    seen.add(key)
+                    result.append({"date": date_str, "name": name, "type": "GLOBAL_HOLIDAY"})
+        result.sort(key=lambda x: (x["date"], x["name"]))
+        return result
+    except Exception as e:
+        print(f"Fallback holidays from DB failed: {e}")
+        return []
+
+
 @router.get("/public")
 async def get_public_holidays_for_range(
     country: str = Query(..., description="Country code (e.g., 'US', 'CA')"),
@@ -248,7 +279,7 @@ async def get_public_holidays_for_range(
 ):
     """
     Get public holidays for a date range (for Plan My Year holiday picker).
-    Does not require an academic year; returns raw holidays from Nager.Date.
+    Uses Nager.Date API; falls back to global_official_holidays for US when API returns empty.
     """
     try:
         start_date = date.fromisoformat(start[:10])
@@ -258,12 +289,22 @@ async def get_public_holidays_for_range(
         country_code = country.upper()
         years = set([start_date.year, end_date.year])
         result = []
-        for year in years:
-            entries = fetch_global_holidays(country_code, year, "NAGER_DATE", None, None)
-            for e in entries:
-                if start_date <= e.date <= end_date:
-                    result.append({"date": e.date.isoformat(), "name": e.name, "type": "GLOBAL_HOLIDAY"})
-        result.sort(key=lambda x: (x["date"], x["name"]))
+        seen = set()
+        try:
+            for year in years:
+                entries = fetch_global_holidays(country_code, year, "NAGER_DATE", None, None)
+                for e in entries:
+                    if start_date <= e.date <= end_date:
+                        key = (e.date.isoformat(), e.name)
+                        if key not in seen:
+                            seen.add(key)
+                            result.append({"date": e.date.isoformat(), "name": e.name, "type": "GLOBAL_HOLIDAY"})
+            result.sort(key=lambda x: (x["date"], x["name"]))
+        except Exception:
+            result = []
+        # Fallback: if empty and US, use global_official_holidays
+        if not result and country_code == "US":
+            result = _fallback_holidays_from_db(start_date, end_date)
         return {"holidays": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")

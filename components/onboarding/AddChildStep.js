@@ -284,8 +284,9 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
       )}
 
-      {/* Section 1 — Identity */}
+      {/* Section: Profile — matches AddChildForm order: Name, Age, Grade, Avatar, Follow State Standards */}
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Profile</Text>
         {/* Live preview — when name + avatar, show profile preview */}
         {name.trim() && (
           <View style={styles.previewWrap}>
@@ -311,34 +312,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
             autoCapitalize="words"
           />
         </View>
-        <Text style={styles.label}>Choose avatar <Text style={styles.requiredAsterisk}>*</Text></Text>
-        <View style={styles.avatarsWrap}>
-          {AVATAR_KEYS.map((key) => {
-            const selected = avatar === key;
-            const hovered = hoveredAvatar === key;
-            return (
-              <TouchableOpacity
-                key={key}
-                onPress={() => { setAvatar(key); setError(null); }}
-                onMouseEnter={Platform.OS === 'web' ? () => setHoveredAvatar(key) : undefined}
-                onMouseLeave={Platform.OS === 'web' ? () => setHoveredAvatar(null) : undefined}
-                style={[
-                  styles.avatarCell,
-                  selected && styles.avatarCellSelected,
-                  Platform.OS === 'web' && !selected && hovered && styles.avatarCellHovered,
-                ]}
-                disabled={isSaving || adding}
-              >
-                <Image source={avatarSources[key]} style={styles.avatarImg} resizeMode="contain" />
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-
-      {/* Section 2 — Age & grade */}
-      <View style={styles.section}>
-        <Text style={[styles.label, styles.labelFirstInSection]}>Age <Text style={styles.requiredAsterisk}>*</Text></Text>
+        <Text style={styles.label}>Age <Text style={styles.requiredAsterisk}>*</Text></Text>
         <View style={styles.row}>
           {(isStudentOnboarding ? Array.from({ length: 6 }, (_, i) => i + 13) : Array.from({ length: 16 }, (_, i) => i + 3)).map((n) => {
             const val = String(n);
@@ -368,6 +342,41 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               </TouchableOpacity>
             );
           })}
+        </View>
+        <Text style={styles.label}>Choose avatar <Text style={styles.requiredAsterisk}>*</Text></Text>
+        <View style={styles.avatarsWrap}>
+          {AVATAR_KEYS.map((key) => {
+            const selected = avatar === key;
+            const hovered = hoveredAvatar === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                onPress={() => { setAvatar(key); setError(null); }}
+                onMouseEnter={Platform.OS === 'web' ? () => setHoveredAvatar(key) : undefined}
+                onMouseLeave={Platform.OS === 'web' ? () => setHoveredAvatar(null) : undefined}
+                style={[
+                  styles.avatarCell,
+                  selected && styles.avatarCellSelected,
+                  Platform.OS === 'web' && !selected && hovered && styles.avatarCellHovered,
+                ]}
+                disabled={isSaving || adding}
+              >
+                <Image source={avatarSources[key]} style={styles.avatarImg} resizeMode="contain" />
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.label}>Follow State Standards?</Text>
+        <View style={styles.row}>
+          {STATES.map((s) => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.chip, standardsState === s && styles.chipSelected]}
+              onPress={() => { setStandardsState(s); setError(null); }}
+            >
+              <Text style={[styles.chipText, standardsState === s && styles.chipTextSelected]}>{s}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       </View>
 
@@ -439,19 +448,6 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               </TouchableOpacity>
             </View>
           )}
-
-          <Text style={styles.label}>Follow State Standards?</Text>
-          <View style={styles.row}>
-            {STATES.map((s) => (
-              <TouchableOpacity
-                key={s}
-                style={[styles.chip, standardsState === s && styles.chipSelected]}
-                onPress={() => { setStandardsState(s); setError(null); }}
-              >
-                <Text style={[styles.chipText, standardsState === s && styles.chipTextSelected]}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
 
           <Text style={styles.label}>Learning & processing needs</Text>
           <View style={styles.row}>
@@ -1192,6 +1188,13 @@ const styles = StyleSheet.create({
   additionalSectionInner: {
     marginTop: 16,
     paddingTop: 8,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   subsectionTitle: {
     fontSize: 15,

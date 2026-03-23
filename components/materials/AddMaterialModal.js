@@ -829,22 +829,6 @@ export default function AddMaterialModal({
           onPress={onClose}
         />
         <View style={[styles.modal, { pointerEvents: 'box-none' }]}>
-          {/* Header */}
-          <View style={[styles.header, material && styles.headerEdit]}>
-            <View style={styles.headerTitleRow}>
-              {material ? (
-                <View style={styles.headerIconWrap}>
-                  <FileText size={20} color={MUTED} />
-                </View>
-              ) : null}
-              <Text style={styles.title}>{material ? 'Edit Material' : 'Add Material'}</Text>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <X size={20} color={MUTED} />
-            </TouchableOpacity>
-          </View>
-          {material ? <View style={styles.headerDivider} /> : null}
-
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
             {/* Document Upload */}
             <View style={styles.fieldRow}>

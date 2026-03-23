@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
+import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
@@ -16,8 +17,9 @@ import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
 import ConfirmDialog from '../ConfirmDialog';
 import IDCardView from '../profile/IDCardView';
+import PlannerSettingsContent from './PlannerSettingsContent';
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
   const viewingAsChildId = propViewingAsChildId ?? null;
@@ -85,7 +87,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
   // Active section for sidebar navigation
-  const [activeSection, setActiveSection] = useState('members');
+  const [activeSection, setActiveSection] = useState(propInitialSection || 'profile');
+
+  // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
+  useEffect(() => {
+    if (propInitialSection && propInitialSection !== activeSection) {
+      setActiveSection(propInitialSection);
+    }
+  }, [propInitialSection]);
   
   // Modal state
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
@@ -584,10 +593,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     fetchChildren();
   }, [familyId]);
 
-  // Load subjects for courses page
-  const loadSubjects = async () => {
+  // Load subjects for courses page (silent: true = no loading indicator, for background refresh)
+  const loadSubjects = async (silent = false) => {
     if (!familyId) return;
-    setLoadingSubjects(true);
+    if (!silent) setLoadingSubjects(true);
     try {
       const { data, error } = await supabase
         .from('subject')
@@ -601,16 +610,56 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     } catch (err) {
       console.error('[FamilyPanel] Error loading subjects:', err);
     } finally {
-      setLoadingSubjects(false);
+      if (!silent) setLoadingSubjects(false);
     }
   };
 
-  // When switching to Courses section, always refetch so the list matches DB (stays in sync with "top" list / adds from elsewhere)
+  // Preload subjects when familyId is available so Courses section shows instantly when navigating
   useEffect(() => {
-    if (familyId && activeSection === 'courses') {
+    if (familyId) {
       loadSubjects();
     }
-  }, [familyId, activeSection]);
+  }, [familyId]);
+
+  // When switching to Courses, silently refetch to stay in sync (e.g. subject added from Add Subject modal)
+  const prevActiveSectionRef = useRef(activeSection);
+  useEffect(() => {
+    if (activeSection === 'courses' && prevActiveSectionRef.current !== 'courses' && subjects.length > 0) {
+      loadSubjects(true);
+    }
+    prevActiveSectionRef.current = activeSection;
+  }, [activeSection, subjects.length]);
+
+  // Preload planner settings and exclusions so Planning Preferences section shows instantly when navigating
+  const [preloadedPlannerData, setPreloadedPlannerData] = useState(null);
+  const loadPlannerDataRef = useRef(null);
+  loadPlannerDataRef.current = async () => {
+    if (!familyId) return;
+    try {
+      const { settings, exclusions, excluded_holiday_dates } = await getPlanDefaultsFromSettings(familyId);
+      const { data: subjectsData } = await supabase
+        .from('subject')
+        .select('id, name, default_constraint_mode, default_target_days, default_target_hours')
+        .eq('family_id', familyId)
+        .order('name');
+      setPreloadedPlannerData({
+        settings: settings || {},
+        exclusions: exclusions || [],
+        excluded_holiday_dates: excluded_holiday_dates || [],
+        subjects: subjectsData || [],
+      });
+    } catch (_) {}
+  };
+  useEffect(() => {
+    if (!familyId) return;
+    loadPlannerDataRef.current?.();
+  }, [familyId]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = () => loadPlannerDataRef.current?.();
+    window.addEventListener('refreshPlanDefaults', handler);
+    return () => window.removeEventListener('refreshPlanDefaults', handler);
+  }, []);
 
   // Handle browser back button for About page
   useEffect(() => {
@@ -1424,6 +1473,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Render content based on active section
   const renderMainContent = () => {
     switch (activeSection) {
+      case 'planner-settings':
+        return (
+          <View style={[styles.mainContentInner, { flex: 1, minHeight: 0 }]}>
+            <PlannerSettingsContent
+              familyId={familyId || family?.id}
+              initialData={preloadedPlannerData}
+              onSave={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                }
+              }}
+            />
+          </View>
+        );
       case 'connections':
         return (
           <View style={styles.mainContentInner}>
@@ -3659,23 +3722,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           {/* Account Card */}
           <View style={styles.sidebarCard}>
             <Text style={styles.sidebarCardTitle}>Account</Text>
+            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'planner-settings' && styles.sidebarButtonActive]} onPress={() => setActiveSection('planner-settings')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+              <Text style={[styles.sidebarButtonText, activeSection === 'planner-settings' && styles.sidebarButtonTextActive]}>Planning Preferences</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={styles.sidebarButtonText}>Connected accounts</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.sidebarButtonText}>Preferences</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={styles.sidebarButtonText}>Notifications</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
             </TouchableOpacity>
           </View>
 
@@ -6720,21 +6783,21 @@ function createStyles(tokens) {
       }),
     },
     dangerZoneAccountWarning: {
-      fontSize: 13,
-      fontWeight: '600',
+      fontSize: 14,
+      lineHeight: 20,
       color: colors.redBold || '#dc2626',
       marginBottom: 16,
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dangerZoneAccountConfirmLabel: {
-      fontSize: 13,
-      fontWeight: '600',
+      fontSize: 14,
+      lineHeight: 20,
       color: '#374151',
       marginBottom: 6,
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dangerZoneAccountInput: {
@@ -6766,10 +6829,10 @@ function createStyles(tokens) {
     },
     dangerZoneAccountButtonText: {
       fontSize: 14,
-      fontWeight: '700',
+      lineHeight: 20,
       color: '#ffffff',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dangerSection: {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { X, ChevronDown, Plus, Trash2, CheckCircle, BookOpen, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -8,9 +8,9 @@ import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
+import { getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
-import { STRINGS } from '../lib/i18n/strings';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -44,15 +44,19 @@ export default function AddSubjectModal({
   children: propChildren = [] // Pre-loaded children from parent
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
+  const [subjectNameInputFocused, setSubjectNameInputFocused] = useState(false);
   const [summary, setSummary] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
   const [schoolYear, setSchoolYear] = useState(getDefaultSchoolYear());
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [credits, setCredits] = useState('');
-  const [notes, setNotes] = useState('');
   const [defaultTargetDays, setDefaultTargetDays] = useState('');
   const [defaultTargetHours, setDefaultTargetHours] = useState('');
+  const [goalModeForSubject, setGoalModeForSubject] = useState('overall'); // 'overall' | 'per_subject'
+  const [targetMode, setTargetMode] = useState('none'); // 'none' | 'days' | 'hours'
+  const [familyPlannerContext, setFamilyPlannerContext] = useState(null); // { targetScope, mode, days, hours } for prefill/display
+  const [planningPrefilledFromFamily, setPlanningPrefilledFromFamily] = useState(false);
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -74,6 +78,7 @@ export default function AddSubjectModal({
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
+  const hasPrefilledFromFamilyRef = useRef(false);
   
   // Event management state
   const [subjectEvents, setSubjectEvents] = useState([]);
@@ -82,7 +87,10 @@ export default function AddSubjectModal({
   const [deleteEventsConfirm, setDeleteEventsConfirm] = useState({ visible: false });
   const [markingAttended, setMarkingAttended] = useState(false);
 
-  // Danger zone (edit mode only)
+  // Accordion state (all collapsed by default)
+  const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
+  const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
+  const [showEventMgmtAccordion, setShowEventMgmtAccordion] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [confirmDeleteSubjectName, setConfirmDeleteSubjectName] = useState('');
   const [deletingSubject, setDeletingSubject] = useState(false);
@@ -113,9 +121,13 @@ export default function AddSubjectModal({
         setGrade(subject.grade || GRADE_OPTIONS[0] || '');
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setCredits(subject.credits ? String(subject.credits) : '');
-        setNotes(subject.notes || '');
         setDefaultTargetDays(subject.default_target_days != null ? String(subject.default_target_days) : '');
         setDefaultTargetHours(subject.default_target_hours != null ? String(subject.default_target_hours) : '');
+        const hasSubjectValues = subject.default_constraint_mode != null || subject.default_target_days != null || subject.default_target_hours != null;
+        setGoalModeForSubject(hasSubjectValues ? 'per_subject' : 'overall');
+        const mode = subject.default_constraint_mode || (subject.default_target_days != null ? 'days' : subject.default_target_hours != null ? 'hours' : 'none');
+        setTargetMode(mode);
+        setPlanningPrefilledFromFamily(!hasSubjectValues);
         setShowDangerZone(false);
         setConfirmDeleteSubjectName('');
         // Child IDs will be set in the next useEffect after children load
@@ -140,9 +152,12 @@ export default function AddSubjectModal({
       setSchoolYear(getDefaultSchoolYear());
       setShowSchoolYearDropdown(false);
       setCredits('');
-      setNotes('');
       setDefaultTargetDays('');
       setDefaultTargetHours('');
+      setGoalModeForSubject('overall');
+      setTargetMode('none');
+      setFamilyPlannerContext(null);
+      setPlanningPrefilledFromFamily(false);
       setError(null);
       setSelectedMaterialId(null);
       setAttachedMaterialIds([]);
@@ -151,9 +166,50 @@ export default function AddSubjectModal({
       setLoadingEvents(false);
       setDeletingEvents(false);
       setMarkingAttended(false);
+      setShowMaterialsAccordion(false);
+      setShowPlanningAccordion(false);
+      setShowEventMgmtAccordion(false);
+      hasPrefilledFromFamilyRef.current = false;
     }
   }, [visible, defaultChildId, defaultSubjectName, subject]);
-  
+
+  // Load family planner settings for prefill when modal opens (used when subject has no custom values)
+  useEffect(() => {
+    if (!visible || !familyId) return;
+    let cancelled = false;
+    getFamilyPlannerSettings(familyId).then(({ data: s }) => {
+      if (cancelled) return;
+      if (!s) {
+        setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
+        return;
+      }
+      const scope = s.target_scope || 'overall';
+      const mode = s.default_constraint_mode || (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
+      const days = s.default_target_days != null ? String(s.default_target_days) : '';
+      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
+    });
+    return () => { cancelled = true; };
+  }, [visible, familyId]);
+
+  // When family planner context loads and we're in add mode, set goal mode from family scope
+  useEffect(() => {
+    if (!familyPlannerContext || subject) return;
+    setGoalModeForSubject(familyPlannerContext.targetScope === 'per_subject' ? 'per_subject' : 'overall');
+    setPlanningPrefilledFromFamily(true);
+  }, [familyPlannerContext, subject]);
+
+  // Prefill target fields from family when subject has no values and user is in per_subject mode
+  useEffect(() => {
+    if (!familyPlannerContext || goalModeForSubject !== 'per_subject') return;
+    if (defaultTargetDays !== '' || defaultTargetHours !== '') return; // User has values
+    if (hasPrefilledFromFamilyRef.current) return;
+    hasPrefilledFromFamilyRef.current = true;
+    setTargetMode(familyPlannerContext.mode);
+    setDefaultTargetDays(familyPlannerContext.days);
+    setDefaultTargetHours(familyPlannerContext.hours);
+  }, [familyPlannerContext, goalModeForSubject, defaultTargetDays, defaultTargetHours]);
+
   // Load events for the subject
   const loadSubjectEvents = async (subjectId) => {
     if (!subjectId || !familyId) return;
@@ -505,9 +561,10 @@ export default function AddSubjectModal({
         grade: grade || null,
         school_year: schoolYear || getDefaultSchoolYear(),
         credits: credits ? parseFloat(credits) : null,
-        notes: notes.trim() || null,
-        default_target_days: defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
-        default_target_hours: defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
+        notes: null,
+        default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
+        default_target_days: goalModeForSubject === 'per_subject' && targetMode === 'days' && defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
+        default_target_hours: goalModeForSubject === 'per_subject' && targetMode === 'hours' && defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
       };
 
       let newSubjects;
@@ -581,10 +638,11 @@ export default function AddSubjectModal({
         onSubjectAdded(newSubjects[0]);
       }
       
-      // Dispatch event to refresh subjects in other components (e.g., IntelligenceHub, SubjectDetailPage)
+      // Dispatch events to refresh subjects and planner-related data
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        // Also dispatch a specific event for subject detail page if we're editing
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
         if (subject && subject.id) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
             detail: { subjectId: subject.id }
@@ -623,27 +681,6 @@ export default function AddSubjectModal({
           onPress={(e) => e.stopPropagation()}
           style={styles.modal}
         >
-          {/* Header */}
-          <View style={[styles.header, subject && styles.headerEdit]}>
-            <View style={styles.headerTitleRow}>
-              {subject ? (
-                <View style={styles.headerIconWrap}>
-                  <BookOpen size={20} color="#6b7280" />
-                </View>
-              ) : null}
-              <Text style={styles.title}>{subject ? 'Edit Subject' : 'Add Subject'}</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              accessibilityLabel="Close modal"
-              accessibilityRole="button"
-            >
-              <X size={20} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
-          {subject ? <View style={styles.headerDivider} /> : null}
-
           {/* Content - Scrollable */}
           <ScrollView 
             style={styles.scrollContainer}
@@ -658,28 +695,16 @@ export default function AddSubjectModal({
 
             {/* Subject Name */}
             <View style={styles.formGroup}>
-              <Text style={styles.label}>
-                Subject Name <Text style={{ color: '#dc2626' }}>*</Text>
-              </Text>
+              <Text style={styles.subjectNameLabel}>Subject Name <Text style={{ color: '#dc2626' }}>*</Text></Text>
               <TextInput
-                style={styles.input}
+                style={[styles.subjectNameInput, subjectNameInputFocused && styles.subjectNameInputFocused]}
                 value={subjectName}
                 onChangeText={setSubjectName}
                 placeholder="e.g., Algebra I, World History, Spanish"
                 placeholderTextColor="#9ca3af"
                 autoFocus={!defaultSubjectName}
-              />
-            </View>
-
-            {/* Summary (Optional) */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Summary (Optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={summary}
-                onChangeText={setSummary}
-                placeholder="E.g., Building foundational knowledge on fractions."
-                placeholderTextColor="#9ca3af"
+                onFocus={() => setSubjectNameInputFocused(true)}
+                onBlur={() => setSubjectNameInputFocused(false)}
               />
             </View>
 
@@ -727,125 +752,87 @@ export default function AddSubjectModal({
               </View>
             ) : null}
 
-            {/* Grade (Optional) */}
+            {/* Grade Level & Credits side by side */}
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Grade Level (Optional)</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.gradeScroll}
-              >
-                {GRADE_OPTIONS.map((g) => (
-                  <TouchableOpacity
-                    key={g}
-                    style={[
-                      styles.gradeChip,
-                      grade === g && styles.gradeChipSelected
-                    ]}
-                    onPress={() => setGrade(g)}
+              <View style={{ flexDirection: 'row', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <View style={{ flex: 1, minWidth: 200 }}>
+                  <Text style={styles.label}>Grade Level (Optional)</Text>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.gradeScroll}
                   >
-                    <Text style={[
-                      styles.gradeChipText,
-                      grade === g && styles.gradeChipTextSelected
-                    ]}>
-                      {g}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-
-            {/* School year */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>School year</Text>
-              <TouchableOpacity
-                style={styles.dropdownButton}
-                onPress={() => setShowSchoolYearDropdown(!showSchoolYearDropdown)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
-                <ChevronDown size={18} color="#6b7280" />
-              </TouchableOpacity>
-              {showSchoolYearDropdown && (
-                <View style={styles.dropdownList}>
-                  <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                    {SCHOOL_YEAR_OPTIONS.map((opt) => (
+                    {GRADE_OPTIONS.map((g) => (
                       <TouchableOpacity
-                        key={opt}
-                        style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
-                        onPress={() => {
-                          setSchoolYear(opt);
-                          setShowSchoolYearDropdown(false);
-                        }}
-                        activeOpacity={0.7}
+                        key={g}
+                        style={[
+                          styles.gradeChip,
+                          grade === g && styles.gradeChipSelected
+                        ]}
+                        onPress={() => setGrade(g)}
                       >
-                        <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>{opt}</Text>
-                        {opt === schoolYear && <CheckCircle size={16} color={colors.accent || '#4F46E5'} />}
+                        <Text style={[
+                          styles.gradeChipText,
+                          grade === g && styles.gradeChipTextSelected
+                        ]}>
+                          {g}
+                        </Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
                 </View>
-              )}
-            </View>
-
-            {/* Default target for Plan My Year (optional) */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Default target for Plan My Year (optional)</Text>
-              <Text style={[styles.label, { fontSize: 12, color: '#6b7280', marginBottom: 8, fontWeight: 'normal' }]}>
-                Pre-fills this subject's target when building a year plan. Leave blank to set per plan.
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                <View style={{ flex: 1, minWidth: 100 }}>
-                  <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
+                <View style={{ width: 160, minWidth: 120 }}>
+                  <Text style={styles.label}>Credits (Optional)</Text>
                   <TextInput
                     style={styles.input}
-                    value={defaultTargetDays}
-                    onChangeText={setDefaultTargetDays}
-                    placeholder="e.g. 36"
+                    value={credits}
+                    onChangeText={(text) => {
+                      // Allow only numbers and decimal point
+                      const numericValue = text.replace(/[^0-9.]/g, '');
+                      // Prevent multiple decimal points
+                      const parts = numericValue.split('.');
+                      const filteredValue = parts.length > 2 
+                        ? parts[0] + '.' + parts.slice(1).join('')
+                        : numericValue;
+                      setCredits(filteredValue);
+                    }}
+                    placeholder="e.g., 0.5, 1.0, 1.5"
                     placeholderTextColor="#9ca3af"
-                    keyboardType="number-pad"
-                  />
-                </View>
-                <View style={{ flex: 1, minWidth: 100 }}>
-                  <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={defaultTargetHours}
-                    onChangeText={setDefaultTargetHours}
-                    placeholder="e.g. 72"
-                    placeholderTextColor="#9ca3af"
-                    keyboardType="decimal-pad"
+                    keyboardType="numeric"
                   />
                 </View>
               </View>
             </View>
 
-            {/* Credits (Optional) */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Credits (Optional)</Text>
+            {/* Summary (Optional) */}
+            <View style={[styles.formGroup, { marginBottom: 16 }]}>
+              <Text style={styles.label}>Summary (Optional)</Text>
               <TextInput
-                style={styles.input}
-                value={credits}
-                onChangeText={(text) => {
-                  // Allow only numbers and decimal point
-                  const numericValue = text.replace(/[^0-9.]/g, '');
-                  // Prevent multiple decimal points
-                  const parts = numericValue.split('.');
-                  const filteredValue = parts.length > 2 
-                    ? parts[0] + '.' + parts.slice(1).join('')
-                    : numericValue;
-                  setCredits(filteredValue);
-                }}
-                placeholder="e.g., 0.5, 1.0, 1.5"
+                style={[styles.input, styles.textArea]}
+                value={summary}
+                onChangeText={setSummary}
+                placeholder="E.g., Building foundational knowledge on fractions."
                 placeholderTextColor="#9ca3af"
-                keyboardType="numeric"
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
               />
             </View>
 
-            {/* Attachments (Optional) */}
+            {/* Accordion B: Materials & attachments */}
             {familyId && (
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Attachments (optional)</Text>
+              <View style={styles.accordionSection}>
+                <TouchableOpacity onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
+                  <Text style={styles.accordionSectionLabel}>
+                    Materials & attachments
+                    {attachedMaterialIds?.length ? ` · ${attachedMaterialIds.length} selected` : ' · No attachment'}
+                  </Text>
+                  {showMaterialsAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
+                </TouchableOpacity>
+                {showMaterialsAccordion && (
+                  <View style={styles.accordionContent}>
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Attachments (optional)</Text>
                 <View style={styles.materialSelectorContainer}>
                   <TouchableOpacity
                     ref={materialButtonRef}
@@ -984,100 +971,186 @@ export default function AddSubjectModal({
                   
                   return dropdownContent;
                 })()}
+                </View>
+                </View>
+              )}
               </View>
             )}
 
-            {/* Notes (Optional) */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Notes (Optional)</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="Add any additional notes about this subject"
-                placeholderTextColor="#9ca3af"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
+            {/* Accordion C: Planning defaults */}
+            <View style={styles.accordionSection}>
+              <TouchableOpacity onPress={() => setShowPlanningAccordion(!showPlanningAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
+                <Text style={styles.accordionSectionLabel}>
+                  Planning defaults
+                  {goalModeForSubject === 'per_subject' ? ` · ${targetMode === 'days' ? (defaultTargetDays || '—') + ' days' : targetMode === 'hours' ? (defaultTargetHours || '—') + ' hrs' : 'None'}` : ''}
+                </Text>
+                {showPlanningAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
+              </TouchableOpacity>
+              {showPlanningAccordion && (
+                <View style={styles.accordionContent}>
+                  <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>These values are used when planning this subject.</Text>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>School year</Text>
+                    <TouchableOpacity
+                      style={styles.dropdownButton}
+                      onPress={() => setShowSchoolYearDropdown(!showSchoolYearDropdown)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
+                      <ChevronDown size={18} color="#6b7280" />
+                    </TouchableOpacity>
+                    {showSchoolYearDropdown && (
+                      <View style={styles.dropdownList}>
+                        <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
+                          {SCHOOL_YEAR_OPTIONS.map((opt) => (
+                            <TouchableOpacity
+                              key={opt}
+                              style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
+                              onPress={() => {
+                                setSchoolYear(opt);
+                                setShowSchoolYearDropdown(false);
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>{opt}</Text>
+                              {opt === schoolYear && <CheckCircle size={16} color="#3b82f6" />}
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={[styles.formGroup, { marginTop: 16 }]}>
+                    <Text style={[styles.label, { marginBottom: 8 }]}>Learning goals</Text>
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <TouchableOpacity
+                        style={[
+                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
+                          goalModeForSubject === 'overall' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                        ]}
+                        onPress={() => { setGoalModeForSubject('overall'); setPlanningPrefilledFromFamily(false); }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '500', color: goalModeForSubject === 'overall' ? '#3b82f6' : '#9ca3af' }}>Overall</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
+                          goalModeForSubject === 'per_subject' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                        ]}
+                        onPress={() => { setGoalModeForSubject('per_subject'); setPlanningPrefilledFromFamily(false); }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '500', color: goalModeForSubject === 'per_subject' ? '#3b82f6' : '#9ca3af' }}>Per subject</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {goalModeForSubject === 'overall' && (
+                      <View style={{ marginTop: 12, padding: 10, backgroundColor: '#f9fafb', borderRadius: 8 }}>
+                        {familyPlannerContext ? (
+                          <>
+                            <Text style={{ fontSize: 13, color: '#374151' }}>
+                              {familyPlannerContext.mode === 'days' && familyPlannerContext.days
+                                ? `Target: ${familyPlannerContext.days} days per year`
+                                : familyPlannerContext.mode === 'hours' && familyPlannerContext.hours
+                                  ? `Target: ${familyPlannerContext.hours} hours per year`
+                                  : 'No target set'}
+                            </Text>
+                            {planningPrefilledFromFamily && (
+                              <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: 6 }}>Prefilled from family planning settings.</Text>
+                            )}
+                          </>
+                        ) : (
+                          <Text style={{ fontSize: 13, color: '#6b7280' }}>Loading…</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+
+                  {goalModeForSubject === 'per_subject' && (
+                    <View style={[styles.formGroup, { marginTop: 16 }]}>
+                      <Text style={[styles.label, { marginBottom: 8 }]}>Target</Text>
+                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                        <TouchableOpacity
+                          style={[
+                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
+                            targetMode === 'none' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                          ]}
+                          onPress={() => { setTargetMode('none'); setPlanningPrefilledFromFamily(false); }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '500', color: targetMode === 'none' ? '#3b82f6' : '#6b7280' }}>None</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
+                            targetMode === 'days' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                          ]}
+                          onPress={() => { setTargetMode('days'); setPlanningPrefilledFromFamily(false); }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '500', color: targetMode === 'days' ? '#3b82f6' : '#6b7280' }}>Days</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
+                            targetMode === 'hours' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                          ]}
+                          onPress={() => { setTargetMode('hours'); setPlanningPrefilledFromFamily(false); }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '500', color: targetMode === 'hours' ? '#3b82f6' : '#6b7280' }}>Hours</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {targetMode === 'days' && (
+                        <View style={{ marginTop: 0 }}>
+                          <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={defaultTargetDays}
+                            onChangeText={(v) => { setDefaultTargetDays(v); setPlanningPrefilledFromFamily(false); }}
+                            placeholder="e.g. 36"
+                            placeholderTextColor="#9ca3af"
+                            keyboardType="number-pad"
+                          />
+                        </View>
+                      )}
+                      {targetMode === 'hours' && (
+                        <View style={{ marginTop: 0 }}>
+                          <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={defaultTargetHours}
+                            onChangeText={(v) => { setDefaultTargetHours(v); setPlanningPrefilledFromFamily(false); }}
+                            placeholder="e.g. 72"
+                            placeholderTextColor="#9ca3af"
+                            keyboardType="decimal-pad"
+                          />
+                        </View>
+                      )}
+                      {planningPrefilledFromFamily && familyPlannerContext && (familyPlannerContext.days || familyPlannerContext.hours) && (
+                        <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: 10 }}>Prefilled from family planning settings.</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
 
-            {/* Course structure (edit mode only) */}
+            {/* Accordion D: Event management (edit mode only) */}
             {subject && subject.id && (
-              <View style={styles.formGroup}>
-                <Text style={[styles.label, { marginBottom: 4 }]}>{STRINGS.courseStructure.section.title}</Text>
-                <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>{STRINGS.courseStructure.section.subtitle}</Text>
-                <View style={{ gap: 8 }}>
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f5f3ff', borderRadius: 8, borderWidth: 1, borderColor: '#e9e7ed' }}
-                    onPress={() => {
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openGenerateCurriculumModal', {
-                          detail: {
-                            subjectId: subject.id,
-                            subjectName: subjectName || subject.name || '',
-                            familyId: familyId || null,
-                            childIds: subject?.child_id ? [subject.child_id] : [],
-                          },
-                        }));
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <BookOpen size={18} color="#5b21b6" style={{ marginRight: 10 }} />
-                    <Text style={{ fontSize: 14, fontWeight: '500', color: '#5b21b6' }}>{STRINGS.courseStructure.actions.generateCurriculum}</Text>
-                  </TouchableOpacity>
-                  {STRINGS.courseStructure.actions.generateCurriculumHelper ? (
-                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 4 }}>{STRINGS.courseStructure.actions.generateCurriculumHelper}</Text>
-                  ) : null}
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}
-                    onPress={() => {
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openParsePlainTextModal', {
-                          detail: {
-                            subjectId: subject.id,
-                            subjectName: subjectName || subject.name || '',
-                            familyId: familyId || null,
-                            childIds: subject?.child_id ? [subject.child_id] : [],
-                          },
-                        }));
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{ fontSize: 14, color: '#475569' }}>{STRINGS.courseStructure.actions.importAndExtract}</Text>
-                  </TouchableOpacity>
-                  {STRINGS.courseStructure?.importExtract?.helper ? (
-                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 4 }}>{STRINGS.courseStructure.importExtract.helper}</Text>
-                  ) : null}
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}
-                    onPress={() => {
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', {
-                          detail: {
-                            subjectId: subject.id,
-                            subjectName: subjectName || subject.name || '',
-                            familyId: familyId || null,
-                          },
-                        }));
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{ fontSize: 14, color: '#475569' }}>{STRINGS.courseStructure.actions.addUnitManually}</Text>
-                  </TouchableOpacity>
-                  {STRINGS.courseStructure?.manualBuilder?.helper ? (
-                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 4 }}>{STRINGS.courseStructure.manualBuilder.helper}</Text>
-                  ) : null}
-                </View>
-              </View>
-            )}
-            
-            {/* Event Management Section (only in edit mode) */}
-            {subject && subject.id && (
-              <View style={styles.eventManagementSection}>
+              <View style={styles.accordionSection}>
+                <TouchableOpacity onPress={() => setShowEventMgmtAccordion(!showEventMgmtAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
+                  <Text style={styles.accordionSectionLabel}>
+                    Event management
+                    {!loadingEvents && ` · ${subjectEvents.length} linked event${subjectEvents.length === 1 ? '' : 's'}`}
+                  </Text>
+                  {showEventMgmtAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
+                </TouchableOpacity>
+                {showEventMgmtAccordion && (
+                  <View style={styles.accordionContent}>
+              <View style={[styles.eventManagementSection, { marginTop: 0, paddingTop: 0, borderTopWidth: 0 }]}>
                 <View style={styles.eventManagementHeader}>
                   <Text style={styles.eventManagementTitle}>Event Management</Text>
                   {loadingEvents ? (
@@ -1123,19 +1196,24 @@ export default function AddSubjectModal({
                   </View>
                 )}
               </View>
+                </View>
+              )}
+              </View>
             )}
 
-            {/* Danger Zone (edit mode only) */}
+            {/* Accordion E: Danger zone (edit mode only) */}
             {subject && subject.id && (
-              <View style={styles.dangerZone}>
+              <View style={styles.dangerZoneAccordion}>
                 <TouchableOpacity
-                  style={styles.dangerZoneToggle}
                   onPress={() => setShowDangerZone(!showDangerZone)}
+                  style={styles.dangerZoneHeader}
+                  activeOpacity={0.8}
                 >
-                  <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                  <Text style={styles.dangerZoneTitle}>
-                    {showDangerZone ? 'Hide' : 'Show'} Danger Zone
-                  </Text>
+                  <View style={styles.dangerZoneHeaderLeft}>
+                    <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                    <Text style={styles.dangerZoneTitle}>Danger zone</Text>
+                  </View>
+                  {showDangerZone ? <ChevronUp size={20} color={colors.redBold || '#dc2626'} /> : <ChevronDown size={20} color={colors.redBold || '#dc2626'} />}
                 </TouchableOpacity>
                 {showDangerZone && (
                   <View style={styles.dangerZoneContent}>
@@ -1239,7 +1317,7 @@ const styles = StyleSheet.create({
   modal: {
     backgroundColor: '#ffffff',
     borderRadius: 24,
-    width: 720,
+    width: 800,
     maxWidth: '100%',
     maxHeight: '85vh',
     ...Platform.select({
@@ -1329,40 +1407,103 @@ const styles = StyleSheet.create({
   formGroup: {
     marginBottom: 20,
   },
+  accordionSection: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: '#f9fafb',
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  accordionContent: {
+    marginTop: 12,
+    paddingTop: 8,
+  },
+  accordionSectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+  },
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.text || '#0f172a',
+    marginBottom: 4,
+  },
+  subjectNameLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectNameInput: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+      transition: 'border-color 0.15s ease',
+    }),
+  },
+  subjectNameInputFocused: {
+    borderColor: '#6BB3E8',
+    borderWidth: 1.5,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    padding: 12,
+    borderColor: colors.border || 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    padding: 10,
     fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#fafbfc',
+    color: colors.text || '#0f172a',
+    backgroundColor: colors.card || '#ffffff',
   },
   dropdownButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: '#fafbfc',
+    borderColor: colors.border || 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: colors.card || '#ffffff',
   },
   dropdownButtonText: {
     fontSize: 14,
-    color: '#111827',
+    color: colors.text || '#0f172a',
   },
   dropdownList: {
     marginTop: 4,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    borderRadius: 12,
+    borderRadius: 8,
     backgroundColor: '#ffffff',
     maxHeight: 200,
   },
@@ -1373,7 +1514,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 12,
   },
   dropdownOptionSelected: {
@@ -1397,54 +1538,66 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   childrenScroll: {
-    marginTop: 8,
+    marginTop: 6,
   },
   childChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 6,
     borderRadius: 20,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    marginRight: 8,
   },
   childChipSelected: {
     borderColor: '#6BB3E8',
     backgroundColor: 'rgba(133,196,242,0.2)',
   },
   childChipText: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#6b7280',
     fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childChipTextSelected: {
     color: '#6BB3E8',
     fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   gradeScroll: {
-    marginTop: 8,
+    marginTop: 6,
   },
   gradeChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: 'transparent',
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-    marginRight: 8,
+    borderColor: '#e5e7eb',
+    marginRight: 6,
   },
   gradeChipSelected: {
-    backgroundColor: '#e8f0fe',
-    borderColor: '#4285f4',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   gradeChipText: {
-    fontSize: 14,
-    color: '#374151',
+    fontSize: 12,
+    color: '#6b7280',
     fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   gradeChipTextSelected: {
-    color: '#4285f4',
-    fontWeight: '500',
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   footer: {
     flexDirection: 'row',
@@ -1512,10 +1665,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: '#fafbfc',
+    borderColor: colors.border || 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: colors.card || '#ffffff',
   },
   materialSelectorText: {
     fontSize: 14,
@@ -1553,8 +1706,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   eventManagementSection: {
-    marginTop: 24,
-    paddingTop: 24,
+    marginTop: 12,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: 'rgba(148, 163, 184, 0.12)',
   },
@@ -1624,18 +1777,27 @@ const styles = StyleSheet.create({
   deleteEventsButtonText: {
     color: '#EF4444',
   },
-  // Danger Zone
-  dangerZone: {
-    marginTop: 24,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+  // Danger zone accordion
+  dangerZoneAccordion: {
+    marginTop: 0,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(220, 38, 38, 0.25)',
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: 'rgba(254, 242, 242, 0.5)',
   },
-  dangerZoneToggle: {
+  dangerZoneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  dangerZoneHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 8,
   },
   dangerZoneTitle: {
     fontSize: 14,
@@ -1643,7 +1805,7 @@ const styles = StyleSheet.create({
     color: colors.redBold || '#dc2626',
   },
   dangerZoneContent: {
-    marginTop: 16,
+    marginTop: 12,
   },
   dangerSection: {
     backgroundColor: colors.redSoft || '#fef2f2',

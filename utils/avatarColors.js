@@ -27,6 +27,13 @@ function hexToRgb(hex) {
   } : null;
 }
 
+/** Convert hex color to rgba string with given opacity (0–1) */
+export function hexToRgba(hex, alpha = 1) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
 // Helper function to lighten a color (for light variant)
 function lightenColor(hex, percent = 40) {
   const rgb = hexToRgb(hex);

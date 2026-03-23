@@ -88,6 +88,9 @@ class NagerDateProvider:
                 
                 # Use localName if available, otherwise name
                 holiday_name = holiday.get("localName") or holiday.get("name", "Holiday")
+                # Shorten display names (e.g. "Juneteenth National Independence Day" -> "Juneteenth")
+                if holiday_name == "Juneteenth National Independence Day":
+                    holiday_name = "Juneteenth"
                 
                 # Create stable source_id from API response
                 source_id = f"nager_{country_code}_{year}_{holiday['date']}"

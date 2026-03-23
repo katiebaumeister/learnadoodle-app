@@ -1076,8 +1076,8 @@ async def commit_manual_draft_endpoint(
 ):
     """
     Persist manually entered curriculum (Add unit manually). No AI or parsing.
-    Validates draft and saves to curriculum_units and curriculum_lessons (source_type=manual).
-    Future scheduling can consume these lessons to fill plan slots or create events.
+    Saves to events table with is_curriculum_related=True. Reference dates are marked with is_reference_date=True.
+    All curriculum structure is stored in events table for unified data model.
     """
     try:
         family_id = get_family_id_for_user(user["id"])
@@ -1085,40 +1085,22 @@ async def commit_manual_draft_endpoint(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
         _validate_manual_draft(body.draft)
         subject_name = (body.subject_name or "").strip() or "Subject"
-        subject_tags = [subject_name]
         supabase = get_admin_client()
         now_iso = datetime.now(timezone.utc).isoformat()
-        unit_ids: List[str] = []
-        lesson_ids: List[str] = []
+        event_ids: List[str] = []
+        unit_count = 0
+        lesson_count = 0
+        
         for ui, u in enumerate(body.draft.units):
             unit_title = (u.title or "").strip() or f"Unit {ui + 1}"
-            unit_meta = {}
-            if getattr(u, "inferred", False):
-                unit_meta["inferred_unit"] = True
-            unit_meta["builder_mode"] = body.builder_mode
-            unit_row = {
-                "family_id": body.family_id,
-                "created_by_uid": user["id"],
-                "title": unit_title,
-                "source_type": "manual",
-                "source_ref": None,
-                "grade_band": None,
-                "subject_tags": subject_tags,
-                "student_ids": [],
-                "total_minutes_est": 0,
-                "weeks_est": 1,
-                "metadata": unit_meta,
-                "updated_at": now_iso,
-            }
-            ins_u = supabase.table("curriculum_units").insert(unit_row).execute()
-            if not ins_u.data or len(ins_u.data) == 0:
-                raise HTTPException(status_code=500, detail="Failed to insert curriculum unit")
-            unit_id = ins_u.data[0]["id"]
-            unit_ids.append(unit_id)
+            unit_count += 1
+            
             for seq, le in enumerate(u.lessons, start=1):
                 lesson_title = (le.title or "").strip() or f"Lesson {seq}"
                 if not lesson_title:
                     continue
+                lesson_count += 1
+                
                 lt = (le.lesson_type or "lesson").strip().lower()
                 if lt not in MANUAL_LESSON_TYPES:
                     lt = "lesson"
@@ -1132,37 +1114,74 @@ async def commit_manual_draft_endpoint(
                     except (TypeError, ValueError):
                         minutes = 60
                 minutes = max(1, min(480, minutes))
-                assessment_payload = {}
-                if lt:
-                    assessment_payload["lesson_type"] = lt
-                if getattr(le, "is_placeholder", False):
-                    assessment_payload["is_placeholder"] = True
-                if getattr(le, "cadence_metadata", None):
-                    assessment_payload["cadence_metadata"] = le.cadence_metadata
-                lesson_row = {
-                    "unit_id": unit_id,
-                    "sequence_index": seq,
-                    "title": lesson_title,
-                    "objective": (le.objective or "").strip() or None,
-                    "minutes_est": minutes,
+                
+                # Extract reference_date from cadence_metadata if present
+                reference_date = None
+                cadence_meta = getattr(le, "cadence_metadata", None) or {}
+                if isinstance(cadence_meta, dict) and cadence_meta.get("reference_date"):
+                    reference_date = cadence_meta["reference_date"]
+                
+                # Build curriculum metadata
+                curriculum_metadata = {
+                    "lesson_type": lt,
                     "modality": modality,
-                    "difficulty": "standard",
+                    "minutes_est": minutes,
+                    "objective": (le.objective or "").strip() or None,
+                    "notes": (le.notes or "").strip() or None,
                     "materials": le.materials if isinstance(le.materials, list) else [],
-                    "assessment": assessment_payload,
-                    "prereqs": [],
-                    "links": [],
+                    "builder_mode": body.builder_mode,
                 }
-                if getattr(le, "notes", None) and (le.notes or "").strip():
-                    lesson_row["assessment"] = {**lesson_row["assessment"], "notes": (le.notes or "").strip()}
-                les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
-                if les_ins.data and len(les_ins.data) > 0:
-                    lesson_ids.append(les_ins.data[0]["id"])
+                if getattr(le, "is_placeholder", False):
+                    curriculum_metadata["is_placeholder"] = True
+                if cadence_meta:
+                    curriculum_metadata["cadence_metadata"] = cadence_meta
+                
+                # Determine if this is a reference date (has reference_date but not scheduled)
+                is_ref_date = reference_date is not None
+                
+                # Parse reference_date to datetime if provided
+                start_ts = None
+                end_ts = None
+                if reference_date:
+                    try:
+                        ref_dt = datetime.fromisoformat(reference_date.replace("Z", "+00:00")) if "T" in reference_date else datetime.combine(date.fromisoformat(reference_date), datetime.min.time()).replace(tzinfo=timezone.utc)
+                        start_ts = ref_dt.isoformat()
+                        end_ts = (ref_dt + timedelta(minutes=minutes)).isoformat()
+                    except (ValueError, AttributeError):
+                        # Invalid date format, treat as reference-only
+                        pass
+                
+                # Create event record
+                event_record = {
+                    "family_id": body.family_id,
+                    "subject_id": body.subject_id,
+                    "child_id": None,  # Will be assigned when scheduled
+                    "title": lesson_title,
+                    "description": (le.objective or "").strip() or None,
+                    "start_ts": start_ts,
+                    "end_ts": end_ts,
+                    "status": "scheduled" if start_ts else "planned",
+                    "source": "curriculum",
+                    "modality": modality,
+                    "is_curriculum_related": True,
+                    "is_reference_date": is_ref_date,
+                    "curriculum_unit_title": unit_title,
+                    "curriculum_lesson_sequence": seq,
+                    "curriculum_metadata": curriculum_metadata,
+                    "counts_toward_plan": True,
+                }
+                
+                event_ins = supabase.table("events").insert(event_record).execute()
+                if event_ins.data and len(event_ins.data) > 0:
+                    event_ids.append(event_ins.data[0]["id"])
+        
         log_event(
             "curriculum.commit_manual.ok",
             family_id=body.family_id,
             subject_id=body.subject_id,
-            units_created=len(unit_ids),
-            lessons_created=len(lesson_ids),
+            units_created=unit_count,
+            lessons_created=lesson_count,
+            events_created=len(event_ids),
             user_id=user["id"],
         )
         return CommitManualDraftResponse(
@@ -1170,10 +1189,10 @@ async def commit_manual_draft_endpoint(
             family_id=body.family_id,
             source_type="manual",
             builder_mode=body.builder_mode,
-            units_created_count=len(unit_ids),
-            lessons_created_count=len(lesson_ids),
-            unit_ids=unit_ids,
-            lesson_ids=lesson_ids,
+            units_created_count=unit_count,
+            lessons_created_count=lesson_count,
+            unit_ids=[],  # No longer using curriculum_units
+            lesson_ids=event_ids,  # Return event IDs instead
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

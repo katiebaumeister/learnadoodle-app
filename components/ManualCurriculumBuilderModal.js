@@ -1,6 +1,5 @@
 /**
  * Manual Curriculum Builder (Add unit manually).
- * Two sub-modes: (1) Build units and lessons, (2) Add class days / placeholders.
  * No AI; draft is built and edited entirely on the frontend, then committed via commit-manual-draft.
  * Saves to canonical curriculum_units and curriculum_lessons (source_type=manual).
  * Future scheduling can consume these lessons to fill plan slots or create events.
@@ -32,23 +31,7 @@ const s = (path) => {
   return typeof v === 'string' ? v : path;
 };
 
-const LESSON_TYPES = ['lesson', 'assignment', 'project', 'assessment', 'review', 'activity', 'reading', 'lab', 'placeholder'];
-const SESSION_NAMES = [
-  { value: 'Day', labelKey: 'sessionDay' },
-  { value: 'Session', labelKey: 'sessionSession' },
-  { value: 'Class', labelKey: 'sessionClass' },
-  { value: 'Lesson', labelKey: 'sessionLesson' },
-  { value: 'Custom', labelKey: 'sessionCustom' },
-];
-const WEEKDAYS = [
-  { key: 'monday', labelKey: 'meetingMon' },
-  { key: 'tuesday', labelKey: 'meetingTue' },
-  { key: 'wednesday', labelKey: 'meetingWed' },
-  { key: 'thursday', labelKey: 'meetingThu' },
-  { key: 'friday', labelKey: 'meetingFri' },
-  { key: 'saturday', labelKey: 'meetingSat' },
-  { key: 'sunday', labelKey: 'meetingSun' },
-];
+const LESSON_TYPES = ['lesson', 'project', 'exam', 'assignment', 'activity'];
 
 function tempId() {
   return `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -75,6 +58,7 @@ const emptyLesson = (seq = 1, type = 'lesson') => ({
   materials: null,
   is_placeholder: false,
   cadence_metadata: null,
+  reference_date: null, // Optional date from reference syllabus (YYYY-MM-DD)
 });
 
 export default function ManualCurriculumBuilderModal({
@@ -88,29 +72,14 @@ export default function ManualCurriculumBuilderModal({
   const toast = useToast();
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, 10002);
-  const [mode, setMode] = useState('rich_units'); // 'rich_units' | 'class_days'
   const [draft, setDraft] = useState({ title: null, units: [emptyUnit(1)] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [expandedUnitIndex, setExpandedUnitIndex] = useState(0);
 
-  // Class-day form state (before "Create placeholders")
-  const [classUnitTitle, setClassUnitTitle] = useState('');
-  const [sessionNaming, setSessionNaming] = useState('Day');
-  const [customPrefix, setCustomPrefix] = useState('');
-  const [totalSessions, setTotalSessions] = useState('18');
-  const [defaultMinutes, setDefaultMinutes] = useState('45');
-  const [meetingDays, setMeetingDays] = useState([]);
-
   const resetDraft = useCallback(() => {
     setDraft({ title: null, units: [emptyUnit(1)] });
     setError(null);
-    setClassUnitTitle('');
-    setSessionNaming('Day');
-    setCustomPrefix('');
-    setTotalSessions('18');
-    setDefaultMinutes('45');
-    setMeetingDays([]);
     setExpandedUnitIndex(0);
   }, []);
 
@@ -197,38 +166,6 @@ export default function ManualCurriculumBuilderModal({
     });
   }, []);
 
-  const createPlaceholders = useCallback(() => {
-    const n = Math.max(1, Math.min(999, parseInt(totalSessions, 10) || 18));
-    const prefix = sessionNaming === 'Custom' ? (customPrefix || 'Session') : sessionNaming;
-    const minutes = Math.max(1, Math.min(480, parseInt(defaultMinutes, 10) || 45));
-    const unitTitle = (classUnitTitle || '').trim() || 'Unit 1';
-    const lessons = [];
-    for (let i = 1; i <= n; i++) {
-      lessons.push({
-        temp_id: tempId(),
-        title: `${prefix} ${i}`,
-        objective: null,
-        notes: null,
-        sequence_index: i,
-        minutes_est: minutes,
-        modality: null,
-        lesson_type: 'placeholder',
-        materials: null,
-        is_placeholder: true,
-        cadence_metadata: meetingDays.length ? { meeting_pattern: meetingDays, session_count: n } : { session_count: n },
-      });
-    }
-    setDraft({
-      title: null,
-      units: [{ temp_id: tempId(), title: unitTitle, description: null, sequence_index: 1, inferred: true, lessons }],
-    });
-    setExpandedUnitIndex(0);
-  }, [classUnitTitle, sessionNaming, customPrefix, totalSessions, defaultMinutes, meetingDays]);
-
-  const toggleMeetingDay = useCallback((key) => {
-    setMeetingDays((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key]));
-  }, []);
-
   const handleSave = useCallback(async () => {
     if (!subjectId || !familyId || !subjectName) return;
     const hasUnits = draft.units?.length > 0;
@@ -246,7 +183,7 @@ export default function ManualCurriculumBuilderModal({
         subject_id: subjectId,
         family_id: familyId,
         subject_name: subjectName,
-        builder_mode: mode,
+        builder_mode: 'rich_units',
         draft: {
           title: draft.title,
           units: draft.units.map((u, i) => ({
@@ -255,19 +192,25 @@ export default function ManualCurriculumBuilderModal({
             description: (u.description || '').trim() || null,
             sequence_index: i + 1,
             inferred: !!u.inferred,
-            lessons: (u.lessons || []).map((le, j) => ({
-              temp_id: le.temp_id,
-              title: (le.title || '').trim() || `Lesson ${j + 1}`,
-              objective: (le.objective || '').trim() || null,
-              notes: (le.notes || '').trim() || null,
-              sequence_index: j + 1,
+            lessons: (u.lessons || []).map((le, j) => {
+              const cadence = le.cadence_metadata || {};
+              if (le.reference_date) {
+                cadence.reference_date = le.reference_date;
+              }
+              return {
+                temp_id: le.temp_id,
+                title: (le.title || '').trim() || `Lesson ${j + 1}`,
+                objective: (le.objective || '').trim() || null,
+                notes: (le.notes || '').trim() || null,
+                sequence_index: j + 1,
               minutes_est: le.minutes_est ?? 60,
               modality: le.modality || null,
-              lesson_type: le.lesson_type || 'lesson',
+              lesson_type: (le.lesson_type === 'exam' ? 'assessment' : le.lesson_type) || 'lesson',
               materials: le.materials || null,
-              is_placeholder: !!le.is_placeholder,
-              cadence_metadata: le.cadence_metadata || null,
-            })),
+                is_placeholder: !!le.is_placeholder,
+                cadence_metadata: Object.keys(cadence).length > 0 ? cadence : null,
+              };
+            }),
           })),
         },
       };
@@ -284,12 +227,12 @@ export default function ManualCurriculumBuilderModal({
     } finally {
       setSaving(false);
     }
-  }, [draft, mode, subjectId, familyId, subjectName, onSaved, toast, handleClose]);
+  }, [draft, subjectId, familyId, subjectName, onSaved, toast, handleClose]);
 
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
       <View ref={overlayRef} style={styles.overlay} collapsable={false}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.overlayInner}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleClose} />
@@ -310,93 +253,12 @@ export default function ManualCurriculumBuilderModal({
             </View>
           ) : null}
 
-          {/* Mode selector */}
-          <View style={styles.modeSection}>
-            <Text style={styles.modeLabel}>Entry mode</Text>
-            <View style={styles.modeRow}>
-              <TouchableOpacity
-                style={[styles.modeCard, mode === 'rich_units' && styles.modeCardSelected]}
-                onPress={() => setMode('rich_units')}
-              >
-                <Text style={[styles.modeCardTitle, mode === 'rich_units' && styles.modeCardTitleSelected]}>{s('courseStructure.manualBuilder.modeRich')}</Text>
-                <Text style={styles.modeCardDesc}>{s('courseStructure.manualBuilder.modeRichDesc')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modeCard, mode === 'class_days' && styles.modeCardSelected]}
-                onPress={() => setMode('class_days')}
-              >
-                <Text style={[styles.modeCardTitle, mode === 'class_days' && styles.modeCardTitleSelected]}>{s('courseStructure.manualBuilder.modeClassDays')}</Text>
-                <Text style={styles.modeCardDesc}>{s('courseStructure.manualBuilder.modeClassDaysDesc')}</Text>
-              </TouchableOpacity>
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            <View style={{ padding: 12, backgroundColor: '#f0f9ff', borderRadius: 8, marginBottom: 16, borderWidth: 1, borderColor: '#bae6fd' }}>
+              <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 16 }}>
+                <Text style={{ fontWeight: '600' }}>Tip:</Text> Add optional reference dates from your syllabus to see how units correlate to your planner.
+              </Text>
             </View>
-          </View>
-
-          {mode === 'class_days' && draft.units?.[0]?.lessons?.length === 0 ? (
-            /* Class-day form: create placeholders */
-            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>{s('courseStructure.manualBuilder.containerTitle')}</Text>
-                <TextInput style={styles.input} value={classUnitTitle} onChangeText={setClassUnitTitle} placeholder="e.g. Fractions" placeholderTextColor="#9ca3af" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>{s('courseStructure.manualBuilder.sessionNaming')}</Text>
-                <View style={styles.chipRow}>
-                  {SESSION_NAMES.map((opt) => (
-                    <TouchableOpacity
-                      key={opt.value}
-                      style={[styles.chip, sessionNaming === opt.value && styles.chipSelected]}
-                      onPress={() => setSessionNaming(opt.value)}
-                    >
-                      <Text style={[styles.chipText, sessionNaming === opt.value && styles.chipTextSelected]}>{s(`courseStructure.manualBuilder.${opt.labelKey}`)}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                {sessionNaming === 'Custom' && (
-                  <TextInput style={[styles.input, { marginTop: 8 }]} value={customPrefix} onChangeText={setCustomPrefix} placeholder={s('courseStructure.manualBuilder.customPrefixPlaceholder')} placeholderTextColor="#9ca3af" />
-                )}
-              </View>
-              <View style={styles.formRow}>
-                <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>{s('courseStructure.manualBuilder.totalSessions')}</Text>
-                  <TextInput style={styles.input} value={totalSessions} onChangeText={setTotalSessions} placeholder="18" keyboardType="number-pad" placeholderTextColor="#9ca3af" />
-                </View>
-                <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>{s('courseStructure.manualBuilder.defaultMinutes')}</Text>
-                  <TextInput style={styles.input} value={defaultMinutes} onChangeText={setDefaultMinutes} placeholder="45" keyboardType="number-pad" placeholderTextColor="#9ca3af" />
-                </View>
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>{s('courseStructure.manualBuilder.meetingDays')}</Text>
-                <View style={styles.chipRow}>
-                  {WEEKDAYS.map((d) => (
-                    <TouchableOpacity
-                      key={d.key}
-                      style={[styles.chip, meetingDays.includes(d.key) && styles.chipSelected]}
-                      onPress={() => toggleMeetingDay(d.key)}
-                    >
-                      <Text style={[styles.chipText, meetingDays.includes(d.key) && styles.chipTextSelected]}>{s(`courseStructure.manualBuilder.${d.labelKey}`)}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-              <TouchableOpacity style={styles.primaryButton} onPress={createPlaceholders}>
-                <Text style={styles.primaryButtonText}>{s('courseStructure.manualBuilder.createPlaceholders')}</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          ) : (
-            /* Rich editor or class-day after placeholders created */
-            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-              {mode === 'class_days' && draft.units?.[0]?.lessons?.length > 0 && (
-                <TouchableOpacity style={styles.secondaryButton} onPress={() => setDraft({ title: null, units: [{ ...emptyUnit(1), lessons: [] }] })}>
-                  <Text style={styles.secondaryButtonText}>{s('courseStructure.manualBuilder.reset')}</Text>
-                </TouchableOpacity>
-              )}
-              {mode === 'rich_units' && (
-                <TouchableOpacity style={styles.addUnitButton} onPress={addUnit}>
-                  <Plus size={18} color="#0ea5e9" />
-                  <Text style={styles.addUnitButtonText}>{s('courseStructure.manualBuilder.addUnit')}</Text>
-                </TouchableOpacity>
-              )}
               {(draft.units || []).map((unit, uIdx) => (
                 <View key={unit.temp_id || uIdx} style={styles.unitCard}>
                   <View style={styles.unitHeader}>
@@ -420,10 +282,7 @@ export default function ManualCurriculumBuilderModal({
                       </View>
                       <View style={styles.lessonActions}>
                         <TouchableOpacity style={styles.smallButton} onPress={() => addLesson(uIdx, 'lesson')}>
-                          <Plus size={14} color="#0ea5e9" /><Text style={styles.smallButtonText}>{s('courseStructure.manualBuilder.addLesson')}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.smallButton} onPress={() => addLesson(uIdx, 'assignment')}>
-                          <Plus size={14} color="#0ea5e9" /><Text style={styles.smallButtonText}>{s('courseStructure.manualBuilder.addAssignment')}</Text>
+                          <Plus size={14} color="#0ea5e9" /><Text style={styles.smallButtonText}>Break it down further</Text>
                         </TouchableOpacity>
                       </View>
                       {(unit.lessons || []).map((lesson, lIdx) => (
@@ -431,12 +290,42 @@ export default function ManualCurriculumBuilderModal({
                           <View style={styles.lessonMain}>
                             <TextInput style={[styles.input, styles.lessonTitleInput]} value={lesson.title} onChangeText={(v) => updateLesson(uIdx, lIdx, 'title', v)} placeholder={s('courseStructure.manualBuilder.lessonTitle')} placeholderTextColor="#9ca3af" />
                             <View style={styles.lessonMeta}>
-                              <TextInput style={[styles.input, { width: 70 }]} value={String(lesson.minutes_est ?? 60)} onChangeText={(v) => updateLesson(uIdx, lIdx, 'minutes_est', v ? parseInt(v, 10) : null)} keyboardType="number-pad" placeholder="Min" placeholderTextColor="#9ca3af" />
+                              <View>
+                                <Text style={styles.smallLabel}>Duration (min)</Text>
+                                <TextInput style={[styles.input, { width: 70 }]} value={String(lesson.minutes_est ?? 60)} onChangeText={(v) => updateLesson(uIdx, lIdx, 'minutes_est', v ? parseInt(v, 10) : null)} keyboardType="number-pad" placeholder="Min" placeholderTextColor="#9ca3af" />
+                              </View>
+                              <View>
+                                <Text style={styles.smallLabel}>Reference date (optional)</Text>
+                                {Platform.OS === 'web' ? (
+                                  <input
+                                    type="date"
+                                    value={lesson.reference_date || ''}
+                                    onChange={(e) => updateLesson(uIdx, lIdx, 'reference_date', e.target.value || null)}
+                                    style={{
+                                      width: 120,
+                                      padding: '8px',
+                                      borderRadius: '8px',
+                                      border: '1px solid #d1d5db',
+                                      fontSize: '14px',
+                                      backgroundColor: '#fff',
+                                    }}
+                                  />
+                                ) : (
+                                  <TextInput
+                                    style={[styles.input, { width: 120 }]}
+                                    value={lesson.reference_date || ''}
+                                    onChangeText={(v) => updateLesson(uIdx, lIdx, 'reference_date', v || null)}
+                                    placeholder="YYYY-MM-DD"
+                                    placeholderTextColor="#9ca3af"
+                                  />
+                                )}
+                                <Text style={[styles.smallLabel, { fontSize: 10, color: '#9ca3af', marginTop: 2 }]}>From syllabus; connects to planner</Text>
+                              </View>
                               <View style={styles.typeWrap}>
                                 <Text style={styles.smallLabel}>{s('courseStructure.manualBuilder.lessonType')}</Text>
                                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                                   <View style={styles.chipRow}>
-                                    {LESSON_TYPES.slice(0, 6).map((t) => (
+                                    {LESSON_TYPES.map((t) => (
                                       <TouchableOpacity key={t} style={[styles.miniChip, (lesson.lesson_type || 'lesson') === t && styles.chipSelected]} onPress={() => updateLesson(uIdx, lIdx, 'lesson_type', t)}>
                                         <Text style={[styles.miniChipText, (lesson.lesson_type || 'lesson') === t && styles.chipTextSelected]}>{t}</Text>
                                       </TouchableOpacity>
@@ -457,8 +346,11 @@ export default function ManualCurriculumBuilderModal({
                   )}
                 </View>
               ))}
+            <TouchableOpacity style={styles.addUnitButton} onPress={addUnit}>
+              <Plus size={18} color="#0ea5e9" />
+              <Text style={styles.addUnitButtonText}>{s('courseStructure.manualBuilder.addUnit')}</Text>
+            </TouchableOpacity>
             </ScrollView>
-          )}
 
           <View style={styles.footer}>
             <TouchableOpacity style={styles.secondaryButton} onPress={handleClose}>

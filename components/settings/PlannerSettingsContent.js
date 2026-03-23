@@ -1,0 +1,967 @@
+/**
+ * Planning Preferences - Family default targets and holidays
+ * Not tied to any plan. These defaults are used when creating/editing a plan year.
+ * Flat layout: static sections, no accordions, Profile-style rhythm.
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  TextInput,
+  ScrollView,
+  ActivityIndicator,
+  Platform,
+  Modal,
+} from 'react-native';
+import { Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import {
+  getFamilyPlannerSettings,
+  saveFamilyPlannerSettings,
+  getPlanDefaultsFromSettings,
+  getFamilyExclusions,
+  addExclusion,
+  deleteExclusion,
+  updateExclusion,
+  saveExcludedPublicHolidayDates,
+} from '../../lib/services/plannerSettingsClient';
+import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
+import { supabase } from '../../lib/supabase';
+import { useToast } from '../Toast';
+
+const MUTED = 'rgba(15,23,42,0.6)';
+const FG = 'rgba(15,23,42,0.9)';
+const ACCENT = '#3b82f6';
+const BORDER = '#E2E8F0';
+
+export default function PlannerSettingsContent({ familyId, onSave, initialData }) {
+  const toast = useToast();
+  const [loading, setLoading] = useState(!initialData);
+  const [saving, setSaving] = useState(false);
+  const [savedIndicator, setSavedIndicator] = useState(false);
+  const [error, setError] = useState(null);
+  const saveTimeoutRef = useRef(null);
+  const subjectTargetSaveTimeoutRef = useRef(null);
+  const stateRef = useRef({});
+
+  // Target scope: overall (one target) vs per_subject
+  const [targetScope, setTargetScope] = useState('overall');
+
+  // Learning goals (overall mode only)
+  const [goalMode, setGoalMode] = useState('none');
+  const [targetDays, setTargetDays] = useState('180');
+  const [targetHours, setTargetHours] = useState('1000');
+  const [hoursPerDay, setHoursPerDay] = useState('5');
+
+  // Public holidays
+  const [followGlobalHolidays, setFollowGlobalHolidays] = useState(true);
+  const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState([]);
+  const [showPublicHolidaysPicker, setShowPublicHolidaysPicker] = useState(false);
+  const [publicHolidaysList, setPublicHolidaysList] = useState([]);
+  const [publicHolidaysLoading, setPublicHolidaysLoading] = useState(false);
+  const countryCode = 'US';
+  const regionCode = null;
+
+  // Custom holidays & breaks
+  const [customHolidays, setCustomHolidays] = useState([]);
+  const [customBreaks, setCustomBreaks] = useState([]);
+  const [addingHoliday, setAddingHoliday] = useState(false);
+  const [addingBreak, setAddingBreak] = useState(false);
+  const [newHolidayDate, setNewHolidayDate] = useState('');
+  const [newHolidayName, setNewHolidayName] = useState('');
+  const [newBreakStart, setNewBreakStart] = useState('');
+  const [newBreakEnd, setNewBreakEnd] = useState('');
+  const [newBreakName, setNewBreakName] = useState('');
+  const [editingHolidayIndex, setEditingHolidayIndex] = useState(null);
+  const [editingHolidayDraft, setEditingHolidayDraft] = useState({ date: '', name: '' });
+  const [editingBreakIndex, setEditingBreakIndex] = useState(null);
+  const [editingBreakDraft, setEditingBreakDraft] = useState({ start: '', end: '', name: '' });
+
+  // Subject targets (per-subject defaults)
+  const [subjects, setSubjects] = useState([]);
+  const [subjectTargets, setSubjectTargets] = useState({}); // { subjectId: { mode, days, hours } }
+
+  useEffect(() => {
+    stateRef.current = { targetScope, goalMode, targetDays, targetHours, hoursPerDay, followGlobalHolidays, countryCode, regionCode, customHolidays, customBreaks, subjectTargets };
+  });
+
+  // Apply preloaded data from FamilyPanel when available (avoids loading flash when navigating to Planning Preferences)
+  useEffect(() => {
+    if (!initialData) return;
+    const s = initialData.settings || {};
+    setTargetScope(s.target_scope || 'overall');
+    setGoalMode(s.default_constraint_mode || 'none');
+    setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
+    setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
+    setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
+    setFollowGlobalHolidays(s.follow_public_holidays !== false);
+    const ex = initialData.exclusions || [];
+    const holidays = ex.filter((e) => e.exclusion_type === 'holiday').map((e) => ({
+      id: e.id,
+      date: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : (e.start_date?.isoformat?.() || String(e.start_date || '').slice(0, 10)),
+      name: e.label || '',
+    }));
+    const breaks = ex.filter((e) => e.exclusion_type === 'break').map((e) => ({
+      id: e.id,
+      start: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : (e.start_date?.isoformat?.() || String(e.start_date || '').slice(0, 10)),
+      end: typeof e.end_date === 'string' ? e.end_date.slice(0, 10) : (e.end_date?.isoformat?.() || String(e.end_date || '').slice(0, 10)),
+      name: e.label || '',
+    }));
+    setCustomHolidays(holidays);
+    setCustomBreaks(breaks);
+    setExcludedPublicHolidayDates(Array.isArray(initialData.excluded_holiday_dates) ? initialData.excluded_holiday_dates : []);
+    const subjectsList = initialData.subjects || [];
+    setSubjects(subjectsList);
+    const st = {};
+    subjectsList.forEach((subj) => {
+      const mode = subj.default_constraint_mode || (subj.default_target_days != null ? 'days' : subj.default_target_hours != null ? 'hours' : 'none');
+      st[subj.id] = {
+        mode,
+        days: subj.default_target_days != null ? String(subj.default_target_days) : '',
+        hours: subj.default_target_hours != null ? String(subj.default_target_hours) : '',
+      };
+    });
+    setSubjectTargets(st);
+    setLoading(false);
+  }, [initialData]);
+
+  const showSaved = () => {
+    setSavedIndicator(true);
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => setSavedIndicator(false), 2000);
+  };
+
+  const loadDefaults = useCallback(async () => {
+    if (!familyId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { settings: s, exclusions: ex, excluded_holiday_dates: excludedDates, error: planErr } = await getPlanDefaultsFromSettings(familyId);
+      if (planErr) throw planErr;
+      if (s) {
+        setTargetScope(s.target_scope || 'overall');
+        setGoalMode(s.default_constraint_mode || 'none');
+        setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
+        setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
+        setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
+        setFollowGlobalHolidays(s.follow_public_holidays !== false);
+      }
+      setExcludedPublicHolidayDates(Array.isArray(excludedDates) ? excludedDates : []);
+      const holidays = (ex || []).filter((e) => e.exclusion_type === 'holiday').map((e) => ({
+        id: e.id,
+        date: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : (e.start_date?.isoformat?.() || String(e.start_date || '').slice(0, 10)),
+        name: e.label || '',
+      }));
+      const breaks = (ex || []).filter((e) => e.exclusion_type === 'break').map((e) => ({
+        id: e.id,
+        start: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : (e.start_date?.isoformat?.() || String(e.start_date || '').slice(0, 10)),
+        end: typeof e.end_date === 'string' ? e.end_date.slice(0, 10) : (e.end_date?.isoformat?.() || String(e.end_date || '').slice(0, 10)),
+        name: e.label || '',
+      }));
+      setCustomHolidays(holidays);
+      setCustomBreaks(breaks);
+      // Load subjects for Subject Targets section
+      const { data: subjectsData } = await supabase
+        .from('subject')
+        .select('id, name, default_constraint_mode, default_target_days, default_target_hours')
+        .eq('family_id', familyId)
+        .order('name');
+      setSubjects(subjectsData || []);
+      const st = {};
+      (subjectsData || []).forEach((s) => {
+        const mode = s.default_constraint_mode || (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
+        st[s.id] = {
+          mode,
+          days: s.default_target_days != null ? String(s.default_target_days) : '',
+          hours: s.default_target_hours != null ? String(s.default_target_hours) : '',
+        };
+      });
+      setSubjectTargets(st);
+    } catch (err) {
+      setError(err?.message || 'Failed to load planner settings');
+    } finally {
+      setLoading(false);
+    }
+  }, [familyId]);
+
+  useEffect(() => {
+    if (initialData) return; // Use preloaded data from FamilyPanel, skip fetch
+    loadDefaults();
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (subjectTargetSaveTimeoutRef.current) clearTimeout(subjectTargetSaveTimeoutRef.current);
+    };
+  }, [loadDefaults, initialData]);
+
+  const persist = useCallback(
+    async (updates) => {
+      if (!familyId) return;
+      const s = stateRef.current;
+      setSaving(true);
+      setError(null);
+      try {
+        const settingsPayload = {
+          target_scope: s.targetScope || 'overall',
+          default_constraint_mode: s.goalMode,
+          default_target_days: s.goalMode === 'days' ? parseInt(s.targetDays, 10) : null,
+          default_target_hours: s.goalMode === 'hours' ? parseInt(s.targetHours, 10) : null,
+          default_planned_hours_per_day: s.goalMode === 'hours' ? parseFloat(s.hoursPerDay) : null,
+          follow_public_holidays: s.followGlobalHolidays,
+          holiday_country: s.countryCode,
+          holiday_region: s.regionCode ?? null,
+          ...updates,
+        };
+        const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload);
+        if (settingsErr) throw settingsErr;
+        const { data: existingExclusions } = await getFamilyExclusions(familyId, 'family_default');
+        const existingIds = new Set((existingExclusions || []).map((e) => e.id));
+        const currentHolidayIds = new Set((s.customHolidays || []).filter((h) => h.id).map((h) => h.id));
+        const currentBreakIds = new Set((s.customBreaks || []).filter((b) => b.id).map((b) => b.id));
+        for (const id of existingIds) {
+          const ex = (existingExclusions || []).find((e) => e.id === id);
+          if (ex?.exclusion_type === 'excluded_date') continue; // managed by U.S. public holidays picker
+          const isHoliday = ex?.exclusion_type === 'holiday';
+          const keep = isHoliday ? currentHolidayIds.has(id) : currentBreakIds.has(id);
+          if (!keep) await deleteExclusion(id);
+        }
+        for (const h of s.customHolidays || []) {
+          if (h.id) {
+            await updateExclusion(h.id, { start_date: h.date, end_date: h.date, label: h.name });
+          } else {
+            await addExclusion({
+              family_id: familyId,
+              scope_type: 'family_default',
+              exclusion_type: 'holiday',
+              start_date: h.date,
+              end_date: h.date,
+              label: h.name,
+              source: 'settings',
+            });
+          }
+        }
+        for (const b of s.customBreaks || []) {
+          if (b.id) {
+            await updateExclusion(b.id, { start_date: b.start, end_date: b.end, label: b.name });
+          } else {
+            await addExclusion({
+              family_id: familyId,
+              scope_type: 'family_default',
+              exclusion_type: 'break',
+              start_date: b.start,
+              end_date: b.end,
+              label: b.name,
+              source: 'settings',
+            });
+          }
+        }
+        showSaved();
+        loadDefaults(); // refresh to get new exclusion ids
+        onSave?.();
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+      } catch (err) {
+        setError(err?.message || 'Failed to save');
+        toast.push(err?.message || 'Failed to save', 'error');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [familyId, onSave, toast, loadDefaults]
+  );
+
+  const debouncedPersist = useCallback(() => {
+    persist({});
+  }, [persist]);
+
+  const handleTargetScopeChange = async (scope) => {
+    setTargetScope(scope);
+    const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope });
+    if (!error) showSaved();
+    else toast.push(error?.message || 'Failed to save', 'error');
+    if (scope === 'per_subject') {
+      // Prefill each subject with overall value in UI (nice UX)
+      const s = stateRef.current;
+      const mode = s.goalMode || 'none';
+      const days = mode === 'days' ? (s.targetDays || '180') : '';
+      const hours = mode === 'hours' ? (s.targetHours || '1000') : '';
+      setSubjectTargets((prev) => {
+        const next = { ...prev };
+        subjects.forEach((subj) => {
+          if (!next[subj.id] || next[subj.id].mode === 'none') {
+            next[subj.id] = { mode, days, hours };
+          }
+        });
+        return next;
+      });
+    }
+  };
+
+  const handleGoalChange = (mode) => {
+    setGoalMode(mode);
+    setTimeout(debouncedPersist, 300);
+  };
+  const handleTargetDaysChange = (v) => {
+    setTargetDays(v);
+    setTimeout(debouncedPersist, 400);
+  };
+  const handleTargetHoursChange = (v) => {
+    setTargetHours(v);
+    setTimeout(debouncedPersist, 400);
+  };
+  const handleHoursPerDayChange = (v) => {
+    setHoursPerDay(v);
+    setTimeout(debouncedPersist, 400);
+  };
+  const handleFollowChange = (v) => {
+    setFollowGlobalHolidays(v);
+    setTimeout(debouncedPersist, 300);
+  };
+  const addHoliday = () => {
+    if (!newHolidayDate || !newHolidayName.trim()) {
+      toast.push('Enter date and name.', 'error');
+      return;
+    }
+    setCustomHolidays([
+      ...customHolidays,
+      { date: newHolidayDate, name: newHolidayName.trim(), type: 'CUSTOM_HOLIDAY' },
+    ]);
+    setNewHolidayDate('');
+    setNewHolidayName('');
+    setAddingHoliday(false);
+    setTimeout(debouncedPersist, 300);
+  };
+
+  const removeHoliday = (index) => {
+    const h = customHolidays[index];
+    setCustomHolidays(customHolidays.filter((_, i) => i !== index));
+    if (h?.id) {
+      deleteExclusion(h.id).catch(() => {});
+    }
+    setTimeout(debouncedPersist, 300);
+  };
+
+  const startEditHoliday = (index) => {
+    setEditingHolidayIndex(index);
+    setEditingHolidayDraft({ date: customHolidays[index].date, name: customHolidays[index].name });
+  };
+  const cancelEditHoliday = () => {
+    setEditingHolidayIndex(null);
+    setEditingHolidayDraft({ date: '', name: '' });
+  };
+  const saveEditHoliday = (index) => {
+    const { date, name } = editingHolidayDraft;
+    const next = [...customHolidays];
+    next[index] = { ...next[index], date, name };
+    setCustomHolidays(next);
+    setEditingHolidayIndex(null);
+    setEditingHolidayDraft({ date: '', name: '' });
+    setTimeout(debouncedPersist, 300);
+  };
+
+  const addBreak = () => {
+    if (!newBreakStart || !newBreakEnd || !newBreakName.trim()) {
+      toast.push('Enter start, end, and name.', 'error');
+      return;
+    }
+    if (newBreakStart > newBreakEnd) {
+      toast.push('End date must be on or after start.', 'error');
+      return;
+    }
+    setCustomBreaks([
+      ...customBreaks,
+      { start: newBreakStart, end: newBreakEnd, name: newBreakName.trim() },
+    ]);
+    setNewBreakStart('');
+    setNewBreakEnd('');
+    setNewBreakName('');
+    setAddingBreak(false);
+    setTimeout(debouncedPersist, 300);
+  };
+
+  const removeBreak = (index) => {
+    const b = customBreaks[index];
+    setCustomBreaks(customBreaks.filter((_, i) => i !== index));
+    if (b?.id) {
+      deleteExclusion(b.id).catch(() => {});
+    }
+    setTimeout(debouncedPersist, 300);
+  };
+
+  const startEditBreak = (index) => {
+    setEditingBreakIndex(index);
+    setEditingBreakDraft({ start: customBreaks[index].start, end: customBreaks[index].end, name: customBreaks[index].name });
+  };
+  const cancelEditBreak = () => {
+    setEditingBreakIndex(null);
+    setEditingBreakDraft({ start: '', end: '', name: '' });
+  };
+  const saveEditBreak = (index) => {
+    const { start, end, name } = editingBreakDraft;
+    const next = [...customBreaks];
+    next[index] = { ...next[index], start, end, name };
+    setCustomBreaks(next);
+    setEditingBreakIndex(null);
+    setEditingBreakDraft({ start: '', end: '', name: '' });
+    setTimeout(debouncedPersist, 300);
+  };
+
+  const handleSubjectTargetChange = useCallback((subjectId, merged) => {
+    setSubjectTargets((prev) => ({ ...prev, [subjectId]: merged }));
+    if (subjectTargetSaveTimeoutRef.current) clearTimeout(subjectTargetSaveTimeoutRef.current);
+    subjectTargetSaveTimeoutRef.current = setTimeout(async () => {
+      const mode = merged.mode || 'none';
+      const days = mode === 'days' && merged.days?.trim() ? parseInt(merged.days, 10) : null;
+      const hours = mode === 'hours' && merged.hours?.trim() ? parseFloat(merged.hours) : null;
+      setSaving(true);
+      try {
+        const { error } = await supabase
+          .from('subject')
+          .update({
+            default_constraint_mode: mode,
+            default_target_days: days,
+            default_target_hours: hours,
+          })
+          .eq('id', subjectId);
+        if (error) throw error;
+        showSaved();
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      } catch (err) {
+        toast.push(err?.message || 'Failed to save', 'error');
+      } finally {
+        setSaving(false);
+      }
+    }, 400);
+  }, [toast]);
+
+  const sectionStyle = {
+    paddingVertical: 16,
+    paddingBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+    marginBottom: 24,
+  };
+  const sectionTitleStyle = {
+    fontSize: 18,
+    fontWeight: '600',
+    color: FG,
+    fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
+  };
+  const pageTitleStyle = {
+    ...sectionTitleStyle,
+    fontSize: 28,
+    fontWeight: '700',
+  };
+  const chip = (active) => ({
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: active ? ACCENT : BORDER,
+    backgroundColor: active ? 'rgba(59, 130, 246, 0.15)' : '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  });
+  const chipText = (active) => ({
+    fontSize: 14,
+    fontWeight: '500',
+    color: active ? ACCENT : MUTED,
+    fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
+  });
+  const inputStyle = {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: FG,
+    minWidth: 72,
+  };
+  const toggleTrackStyle = {
+    width: 52,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#d1d5db',
+    paddingHorizontal: 2,
+    paddingVertical: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  };
+  const toggleTrackOnStyle = { backgroundColor: '#AECBFA' };
+  const toggleThumbStyle = {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      transition: 'transform 0.2s ease',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+    }),
+    ...(Platform.OS !== 'web' && {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 2,
+      elevation: 3,
+    }),
+  };
+  const toggleThumbOnStyle = {
+    transform: [{ translateX: 24 }],
+    backgroundColor: '#0D9488',
+  };
+  if (loading) {
+    return (
+      <View style={{ padding: 32, alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={ACCENT} />
+        <Text style={{ marginTop: 12, fontSize: 14, color: MUTED }}>Loading...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
+      <View style={{ paddingHorizontal: 24, paddingTop: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <Text style={pageTitleStyle}>Planning Preferences</Text>
+          {savedIndicator && (
+            <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
+          )}
+        </View>
+
+        {/* Learning Goals */}
+        <View style={sectionStyle}>
+          <Text style={sectionTitleStyle}>Learning Goals</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, marginBottom: 4 }}>
+            <TouchableOpacity style={chip(targetScope === 'overall')} onPress={() => handleTargetScopeChange('overall')}>
+              <Text style={chipText(targetScope === 'overall')}>Overall</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={chip(targetScope === 'per_subject')} onPress={() => handleTargetScopeChange('per_subject')}>
+              <Text style={chipText(targetScope === 'per_subject')}>Per subject</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Target (only when Overall) */}
+        {targetScope === 'overall' && (
+          <View style={sectionStyle}>
+            <Text style={sectionTitleStyle}>Target</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <TouchableOpacity style={chip(goalMode === 'none')} onPress={() => handleGoalChange('none')}>
+                <Text style={chipText(goalMode === 'none')}>None</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={chip(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
+                <Text style={chipText(goalMode === 'days')}>Days</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={chip(goalMode === 'hours')} onPress={() => handleGoalChange('hours')}>
+                <Text style={chipText(goalMode === 'hours')}>Hours</Text>
+              </TouchableOpacity>
+              {goalMode === 'days' && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <TextInput
+                    value={targetDays}
+                    onChangeText={handleTargetDaysChange}
+                    keyboardType="number-pad"
+                    style={[inputStyle, { width: 56 }]}
+                    placeholder="180"
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <Text style={{ fontSize: 14, color: MUTED }}>days</Text>
+                </View>
+              )}
+              {goalMode === 'hours' && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <TextInput
+                    value={targetHours}
+                    onChangeText={handleTargetHoursChange}
+                    keyboardType="number-pad"
+                    style={[inputStyle, { width: 64 }]}
+                    placeholder="1000"
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <Text style={{ fontSize: 14, color: MUTED }}>hours</Text>
+                  <Text style={{ fontSize: 14, color: MUTED, marginLeft: 4 }}>·</Text>
+                  <TextInput
+                    value={hoursPerDay}
+                    onChangeText={handleHoursPerDayChange}
+                    keyboardType="decimal-pad"
+                    style={[inputStyle, { width: 48 }]}
+                    placeholder="5"
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <Text style={{ fontSize: 14, color: MUTED }}>/day</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Subject targets (only when Per subject) */}
+        {targetScope === 'per_subject' && (
+          <View style={sectionStyle}>
+            <Text style={sectionTitleStyle}>Subject targets</Text>
+            {subjects.length === 0 ? null : (
+              <View style={{ marginTop: 8 }}>
+              {subjects.map((subj) => {
+                const t = subjectTargets[subj.id] || { mode: 'none', days: '', hours: '' };
+                return (
+                  <View key={subj.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: FG, minWidth: 100 }}>{subj.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity style={chip(t.mode === 'none')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'none' })}>
+                        <Text style={chipText(t.mode === 'none')}>None</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={chip(t.mode === 'days')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'days' })}>
+                        <Text style={chipText(t.mode === 'days')}>Days</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={chip(t.mode === 'hours')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'hours' })}>
+                        <Text style={chipText(t.mode === 'hours')}>Hours</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {t.mode === 'days' && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <TextInput
+                          value={t.days}
+                          onChangeText={(v) => handleSubjectTargetChange(subj.id, { ...t, days: v })}
+                          keyboardType="number-pad"
+                          style={[inputStyle, { width: 56 }]}
+                          placeholder="90"
+                          placeholderTextColor="rgba(15,23,42,0.4)"
+                        />
+                        <Text style={{ fontSize: 14, color: MUTED }}>days</Text>
+                      </View>
+                    )}
+                    {t.mode === 'hours' && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <TextInput
+                          value={t.hours}
+                          onChangeText={(v) => handleSubjectTargetChange(subj.id, { ...t, hours: v })}
+                          keyboardType="decimal-pad"
+                          style={[inputStyle, { width: 64 }]}
+                          placeholder="120"
+                          placeholderTextColor="rgba(15,23,42,0.4)"
+                        />
+                        <Text style={{ fontSize: 14, color: MUTED }}>hours</Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Public holidays */}
+        <View style={sectionStyle}>
+          <Text style={sectionTitleStyle}>Public holidays</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+            <TouchableOpacity
+              style={[toggleTrackStyle, followGlobalHolidays && toggleTrackOnStyle]}
+              onPress={() => handleFollowChange(!followGlobalHolidays)}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <View style={[toggleThumbStyle, followGlobalHolidays && toggleThumbOnStyle]} />
+            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+              <Text style={{ fontSize: 15, color: MUTED, marginRight: 4 }}>Follow </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (followGlobalHolidays) {
+                    setShowPublicHolidaysPicker(true);
+                    const start = new Date().toISOString().slice(0, 10);
+                    const end = new Date();
+                    end.setFullYear(end.getFullYear() + 1);
+                    const endStr = end.toISOString().slice(0, 10);
+                    setPublicHolidaysLoading(true);
+                    getPublicHolidaysForRange(countryCode || 'US', start, endStr).then(({ data: res }) => {
+                      setPublicHolidaysList(res?.holidays || []);
+                      setPublicHolidaysLoading(false);
+                    });
+                  }
+                }}
+                activeOpacity={0.7}
+                style={{ flexDirection: 'row', alignItems: 'center' }}
+                {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
+              >
+                <Text style={{ fontSize: 15, color: followGlobalHolidays ? ACCENT : MUTED, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }}>U.S. public holidays</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 15, color: MUTED, marginLeft: 4 }}>?</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* U.S. public holidays picker modal */}
+        {showPublicHolidaysPicker && (
+          <Modal animationType="fade" transparent visible={showPublicHolidaysPicker} onRequestClose={() => setShowPublicHolidaysPicker(false)}>
+            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} activeOpacity={1} onPress={() => setShowPublicHolidaysPicker(false)}>
+              <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, maxWidth: 420, width: '100%', maxHeight: '80%' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: FG }}>U.S. PUBLIC HOLIDAYS</Text>
+                  <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} hitSlop={12} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <X size={22} color={MUTED} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 13, color: MUTED, marginBottom: 12 }}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
+                {publicHolidaysLoading ? (
+                  <View style={{ padding: 24, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color={ACCENT} />
+                  </View>
+                ) : (
+                  <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator>
+                    {publicHolidaysList.map((h) => {
+                      const dateStr = (h.date || '').slice(0, 10);
+                      const isIncluded = !excludedPublicHolidayDates.includes(dateStr);
+                      return (
+                        <TouchableOpacity
+                          key={`${dateStr}-${h.name}`}
+                          onPress={() => {
+                            if (isIncluded) {
+                              setExcludedPublicHolidayDates((prev) => [...prev, dateStr]);
+                            } else {
+                              setExcludedPublicHolidayDates((prev) => prev.filter((d) => d !== dateStr));
+                            }
+                          }}
+                          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                          activeOpacity={0.7}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isIncluded ? ACCENT : BORDER, backgroundColor: isIncluded ? ACCENT : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+                            {isIncluded ? <Check size={14} color="#fff" strokeWidth={3} /> : null}
+                          </View>
+                          <Text style={{ flex: 1, fontSize: 14, color: FG }}>{h.name}</Text>
+                          <Text style={{ fontSize: 13, color: MUTED }}>{dateStr}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {publicHolidaysList.length === 0 && !publicHolidaysLoading && (
+                      <Text style={{ fontSize: 13, color: MUTED, padding: 16 }}>No holidays in this date range. Extend range or add custom holiday.</Text>
+                    )}
+                  </ScrollView>
+                )}
+                <TouchableOpacity
+                  onPress={async () => {
+                    const datesWithNames = excludedPublicHolidayDates.map((d) => {
+                      const h = publicHolidaysList.find((x) => (x.date || '').slice(0, 10) === d);
+                      return { date: d, name: h?.name || 'Holiday' };
+                    });
+                    const { error: saveErr } = await saveExcludedPublicHolidayDates(familyId, datesWithNames);
+                    if (saveErr) toast?.push?.(saveErr?.message || 'Failed to save', 'error');
+                    else {
+                      toast?.push?.('Saved', 'success');
+                      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+                    }
+                    setShowPublicHolidaysPicker(false);
+                  }}
+                  style={{ marginTop: 16, backgroundColor: ACCENT, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8, alignSelf: 'flex-end' }}
+                  activeOpacity={0.9}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
+
+        {/* Custom holidays */}
+        <View style={sectionStyle}>
+          <Text style={sectionTitleStyle}>Custom holidays</Text>
+          <View style={{ marginTop: 8 }}>
+              {customHolidays.map((h, i) => (
+                <View key={h.id || i} style={{ marginBottom: 8 }}>
+                  {editingHolidayIndex === i ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <TextInput
+                        value={editingHolidayDraft.date}
+                        onChangeText={(v) => setEditingHolidayDraft((d) => ({ ...d, date: v }))}
+                        placeholder="YYYY-MM-DD"
+                        style={[inputStyle, { width: 120 }]}
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                      <TextInput
+                        value={editingHolidayDraft.name}
+                        onChangeText={(v) => setEditingHolidayDraft((d) => ({ ...d, name: v }))}
+                        placeholder="Name"
+                        style={[inputStyle, { flex: 1, minWidth: 100 }]}
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                      <TouchableOpacity
+                        onPress={() => saveEditHoliday(i)}
+                        style={{ padding: 8 }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Check size={18} color="#10b981" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={cancelEditHoliday} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <X size={18} color={MUTED} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 14, color: FG }}>
+                        {h.date} — {h.name}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 4 }}>
+                        <TouchableOpacity onPress={() => startEditHoliday(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Pencil size={14} color={MUTED} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => removeHoliday(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={14} color="#94A3B8" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ))}
+              {addingHoliday ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  <TextInput
+                    value={newHolidayDate}
+                    onChangeText={setNewHolidayDate}
+                    placeholder="YYYY-MM-DD"
+                    style={[inputStyle, { width: 120 }]}
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <TextInput
+                    value={newHolidayName}
+                    onChangeText={setNewHolidayName}
+                    placeholder="Holiday name"
+                    style={[inputStyle, { flex: 1, minWidth: 120 }]}
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <TouchableOpacity onPress={addHoliday} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <Check size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setAddingHoliday(false); setNewHolidayDate(''); setNewHolidayName(''); }} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <X size={18} color={MUTED} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => setAddingHoliday(true)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color={ACCENT} />
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>Add holiday</Text>
+                </TouchableOpacity>
+              )}
+          </View>
+        </View>
+
+        {/* Breaks */}
+        <View style={sectionStyle}>
+          <Text style={sectionTitleStyle}>Breaks</Text>
+          <View style={{ marginTop: 8 }}>
+              {customBreaks.map((b, i) => (
+                <View key={b.id || i} style={{ marginBottom: 8 }}>
+                  {editingBreakIndex === i ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <TextInput
+                        value={editingBreakDraft.start}
+                        onChangeText={(v) => setEditingBreakDraft((d) => ({ ...d, start: v }))}
+                        placeholder="Start"
+                        style={[inputStyle, { width: 100 }]}
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                      <TextInput
+                        value={editingBreakDraft.end}
+                        onChangeText={(v) => setEditingBreakDraft((d) => ({ ...d, end: v }))}
+                        placeholder="End"
+                        style={[inputStyle, { width: 100 }]}
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                      <TextInput
+                        value={editingBreakDraft.name}
+                        onChangeText={(v) => setEditingBreakDraft((d) => ({ ...d, name: v }))}
+                        placeholder="Name"
+                        style={[inputStyle, { flex: 1, minWidth: 80 }]}
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                      <TouchableOpacity
+                        onPress={() => saveEditBreak(i)}
+                        style={{ padding: 8 }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Check size={18} color="#10b981" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={cancelEditBreak} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <X size={18} color={MUTED} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 14, color: FG }}>
+                        {b.start}–{b.end} {b.name}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 4 }}>
+                        <TouchableOpacity onPress={() => startEditBreak(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Pencil size={14} color={MUTED} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => removeBreak(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={14} color="#94A3B8" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ))}
+              {addingBreak ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  <TextInput
+                    value={newBreakStart}
+                    onChangeText={setNewBreakStart}
+                    placeholder="Start"
+                    style={[inputStyle, { width: 100 }]}
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <TextInput
+                    value={newBreakEnd}
+                    onChangeText={setNewBreakEnd}
+                    placeholder="End"
+                    style={[inputStyle, { width: 100 }]}
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <TextInput
+                    value={newBreakName}
+                    onChangeText={setNewBreakName}
+                    placeholder="Break name"
+                    style={[inputStyle, { flex: 1, minWidth: 80 }]}
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <TouchableOpacity onPress={addBreak} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <Check size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAddingBreak(false);
+                      setNewBreakStart('');
+                      setNewBreakEnd('');
+                      setNewBreakName('');
+                    }}
+                    style={{ padding: 8 }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={18} color={MUTED} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => setAddingBreak(true)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color={ACCENT} />
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>Add break</Text>
+                </TouchableOpacity>
+              )}
+          </View>
+        </View>
+
+        {error && <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>}
+      </View>
+
+    </ScrollView>
+  );
+}

@@ -996,11 +996,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const detail = event.detail || {};
       
       // Check if we're on the family screen - if so, let WebLayout handle it
-      const isFamilyScreen = activeTab === 'profile' || 
+      const isFamilyScreen = activeTab === 'profile' || activeTab === 'settings' ||
                             (activeTab && typeof activeTab === 'string' && activeTab.startsWith('child-')) ||
                             (activeTab && typeof activeTab === 'string' && activeTab.startsWith('notes-pages-')) ||
                             activeTab === 'children-list';
-      
+
       if (isFamilyScreen) return;
       
       // Only handle for non-family screens (planner, home, etc.)
@@ -1035,11 +1035,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const initialEvent = detail.initialEvent || null;
       
       // Check if we're on the family screen - if so, let WebLayout handle it
-      const isFamilyScreen = activeTab === 'profile' || 
+      const isFamilyScreen = activeTab === 'profile' || activeTab === 'settings' ||
                             (activeTab && typeof activeTab === 'string' && activeTab.startsWith('child-')) ||
                             (activeTab && typeof activeTab === 'string' && activeTab.startsWith('notes-pages-')) ||
                             activeTab === 'children-list';
-      
+
       if (isFamilyScreen) {
         console.log('[WebContent] openEventModal event ignored - on family screen, WebLayout will handle it');
         return;
@@ -3470,12 +3470,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
   }, []);
 
-  // Sync familyId from props
+  // Sync familyId from props and session (session can arrive before propFamilyId propagates)
   useEffect(() => {
-    if (propFamilyId && propFamilyId !== familyId) {
-      setFamilyId(propFamilyId);
+    const nextId = propFamilyId || propSession?.family_id || null;
+    if (nextId) {
+      setFamilyId(prev => (prev === nextId ? prev : nextId));
     }
-  }, [propFamilyId]);
+  }, [propFamilyId, propSession?.family_id]);
 
   // Sync children from props
   useEffect(() => {
@@ -7228,7 +7229,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           flex: 1,
           minHeight: 0,
           ...(Platform.OS === 'web' && {
-            flexGrow: 1,
             minHeight: 'min(70vh, 560px)',
             display: 'flex',
             flexDirection: 'column',
@@ -7737,7 +7737,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           );
         }
       case 'profile':
+      case 'settings':
       case 'children-list':
+        // Show loading until familyId is ready to avoid blank screen on first visit
+        if (user && !familyId) {
+          return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+              <ActivityIndicator size="large" color="#887DEE" />
+              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+            </View>
+          );
+        }
         return (
           <View style={{ flex: 1, minHeight: 0 }}>
             <FamilyPanel
@@ -7750,6 +7760,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               userRole={roleForHome ?? userRole}
               currentChildId={(roleForHome === 'child' || roleForHome === 'student') ? (typeof accessibleForHome[0] === 'string' ? accessibleForHome[0] : accessibleForHome[0]?.id) ?? propSession?.child_id : null}
               viewingAsChildId={(roleForHome === 'parent' || !roleForHome) && propActiveChildId ? propActiveChildId : null}
+              initialSection={activeTab === 'settings' ? (activeSubtab || 'profile') : undefined}
             />
           </View>
         );

@@ -4,6 +4,14 @@
 // - Type-safe keys (autocomplete + compile-time validation)
 // - Simple param interpolation: {name}
 
+/** Shared Plan My Year copy for manual unit builder + paste-to-parse paths */
+const PLAN_MANUAL_INPUT_AND_PASTE_PLAIN_DESCRIPTION = `Paste plain text like "Unit 1: Foundations of Algebra:
+• Evaluating algebraic expressions
+• Combining like terms
+• Understanding variables as representations of unknowns and changing quantities
+• Writing linear equations in slope-intercept and standard form
+Unit 2: Systems of..."`;
+
 export const STRINGS = {
   terminology: {
     instructionalSlot: "Instructional slot",
@@ -60,6 +68,13 @@ export const STRINGS = {
       subtitle: "Set when learning can happen and how much time is required.",
       helper:
         "This creates instructional slots on the calendar. Slots are safe to edit and can be filled with lessons later.",
+      /** Same visual hierarchy as attendance “Year at a glance” (YearHeatmapGrid). */
+      structuredClassPlansTitle: "Build Structured Class Plans",
+      structuredClassPlansHelp:
+        "Choose subjects, set your date range and weekly blocks, then preview and generate instructional slots on your calendar.",
+      /** Edit plan list (inline planner) — same title scale as structuredClassPlansTitle. */
+      editPlanTitle: "Edit plan",
+      editPlanHelp: "Select a plan to view details or make changes.",
     },
 
     sections: {
@@ -107,13 +122,12 @@ export const STRINGS = {
             description: "e.g. A link to a Khan Academy unit — we'll import and create events for each lesson.",
           },
           paste: {
-            label: "Paste list",
-            description: `Paste plain text like "Unit 1: Foundations of Algebra:
-• Evaluating algebraic expressions
-• Combining like terms
-• Understanding variables as representations of unknowns and changing quantities
-• Writing linear equations in slope-intercept and standard form
-Unit 2: Systems of..."`,
+            label: "Manual input",
+            description: "Add units, lessons, projects, exams and their dates by hand.",
+          },
+          pastePlain: {
+            label: "Paste plain text",
+            description: PLAN_MANUAL_INPUT_AND_PASTE_PLAIN_DESCRIPTION,
           },
         },
       },
@@ -132,6 +146,8 @@ Unit 2: Systems of..."`,
           allSubjects: "All subjects",
           selectedSubjects: "Selected subjects",
         },
+        multiSelectHint:
+          "Choose one or more subjects. Each subject gets its own cadence row below.",
       },
       blocks: {
         title: "Weekly blocks",
@@ -197,6 +213,44 @@ Unit 2: Systems of..."`,
           computePotential: "Update preview",
         },
       },
+    },
+
+    multiSubjectUnits: {
+      subjectPickerTitle: "Subject for units & lessons",
+      subjectPickerHint:
+        "You have multiple subjects in this plan. Choose which one you’re adding structure for, or go back to Logistics → Cadence and use Manual, Paste, Upload, or Generate under that subject’s row.",
+      chooseSubjectEmptyTitle: "Choose a subject",
+      chooseSubjectEmptyBody:
+        "Pick which subject you’re adding units for using the chips below, or go back to Logistics → Cadence and choose Manual, Paste plain text, Upload, or Generate under that subject’s row.",
+      backToMethod: "Back to method",
+      backToLogistics: "Back to logistics",
+      subjectBannerPrefix: "Subject:",
+      subjectBannerHint: "Units and lessons you add here apply to this subject only.",
+      cadenceAddUnitsLink: "Add units & lessons for {subjectName}",
+      previewMultiSubjectLead: "Multiple subjects:",
+      previewMultiSubjectHint:
+        "To add units for another subject, go back to Logistics → Cadence and choose Manual, Paste, Upload, or Generate under that subject’s row (or use Back and pick a subject below).",
+      reviewLastSavedUnits: "Last saved units & lessons: {subjectName}",
+      headerUnitsFor: "Units: {subjectName}",
+      toastPickSubjectFirst:
+        "Choose which subject you’re adding units for—pick a chip below, or go back to Cadence and tap Manual, Paste, Upload, or Generate under that subject’s row.",
+      cadenceRowHint:
+        "Each subject has its own row—set weekdays and class times per subject.",
+      cadenceAddUnitsInlinePrompt: "Add units:",
+      cadenceGenerateLabel: "Generate curriculum",
+      unitInputModalTitle: "Units & lessons",
+      a11yCadenceAddUnitsMethod: "{methodLabel} for {subjectName}",
+      footerSaveDraftLogisticsFirst: "Save & continue to review",
+      footerSaveDraftClassic: "Save & Continue → Schedule",
+      footerSkipLogisticsFirst: "Continue to review",
+      footerSkipClassic: "Continue → Schedule",
+      nextChooseMethod: "Next: Choose method",
+      nextContinueToReview: "Next: Review",
+      loadingCurriculum: "Loading existing curriculum…",
+      breadcrumbStep3UnitStructure: "3. Unit structure",
+      breadcrumbUnitStructureForSubject: "3. Unit structure · {subjectName}",
+      a11ySelectSubjectChip: "Select {subjectName} for units and lessons",
+      a11yCadenceAddUnits: "Add units and lessons for {subjectName}",
     },
 
     primaryActions: {

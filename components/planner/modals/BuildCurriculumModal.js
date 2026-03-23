@@ -3441,7 +3441,6 @@ const styles = StyleSheet.create({
   },
   materialSelector: {
     flex: 1,
-    flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
