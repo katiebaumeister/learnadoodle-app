@@ -170,6 +170,26 @@ export default function PlannerSettingsPopover({
     }
   }, [familyId, toast, applySettingsPayload, applySubjectsFromRows]);
 
+  const popoverRefreshTimerRef = useRef(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const scheduleReload = () => {
+      if (!visible) return;
+      if (popoverRefreshTimerRef.current) clearTimeout(popoverRefreshTimerRef.current);
+      popoverRefreshTimerRef.current = setTimeout(() => {
+        popoverRefreshTimerRef.current = null;
+        loadAll();
+      }, 150);
+    };
+    window.addEventListener('refreshPlanDefaults', scheduleReload);
+    window.addEventListener('refreshSubjects', scheduleReload);
+    return () => {
+      window.removeEventListener('refreshPlanDefaults', scheduleReload);
+      window.removeEventListener('refreshSubjects', scheduleReload);
+      if (popoverRefreshTimerRef.current) clearTimeout(popoverRefreshTimerRef.current);
+    };
+  }, [visible, familyId, loadAll]);
+
   useEffect(() => {
     if (initialData?.settings) {
       applySettingsPayload(initialData.settings);

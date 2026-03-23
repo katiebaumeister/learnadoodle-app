@@ -988,7 +988,9 @@ export default function AddSubjectModal({
               </TouchableOpacity>
               {showPlanningAccordion && (
                 <View style={styles.accordionContent}>
-                  <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>These values are used when planning this subject.</Text>
+                  <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>
+                    Changing target here will also change the settings in Planning Preferences.
+                  </Text>
 
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>School year</Text>

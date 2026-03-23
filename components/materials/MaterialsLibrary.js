@@ -12,7 +12,6 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
-  Modal,
   Alert,
   Image,
 } from 'react-native';
@@ -33,92 +32,10 @@ import { useToast } from '../Toast';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import ConfirmDialog from '../ConfirmDialog';
-
-// Helper function to check if a URL is from Supabase storage
-const isSupabaseStorageUrl = (url) => {
-  if (!url || typeof url !== 'string') return false;
-  // Check if URL contains Supabase storage path patterns
-  return url.includes('/storage/v1/object/') || url.includes('supabase.co/storage/');
-};
+import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from './MaterialDocViewerModal';
 
 // Single visible chip row everywhere: role-first
 const ROLE_CHIPS = DOCUMENT_ROLE_CHIPS;
-
-
-// Helper function to check if a string is just a UUID (not a valid URL)
-const isUUID = (str) => {
-  if (!str || typeof str !== 'string') return false;
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidPattern.test(str.trim());
-};
-
-// Helper function to check if a URL is valid for use as an iframe source
-const isValidUrl = (url) => {
-  if (!url || typeof url !== 'string') return false;
-  // Reject if it's just a UUID (not a valid URL)
-  if (isUUID(url)) return false;
-  // Must start with http:// or https://
-  return url.startsWith('http://') || url.startsWith('https://');
-};
-
-// Web-only PDF iframe component
-const PDFIframe = ({ src, title }) => {
-  if (Platform.OS !== 'web') return null;
-  
-  // Use a ref to inject iframe after mount
-  const containerRef = useRef(null);
-  
-  useEffect(() => {
-    if (containerRef.current && src && typeof document !== 'undefined') {
-      // Validate URL before using it
-      if (!isValidUrl(src)) {
-        console.warn('[PDFIframe] Invalid URL provided, skipping iframe creation:', src);
-        return;
-      }
-
-      // In React Native Web, ref.current is the DOM element
-      const domElement = containerRef.current;
-      
-      // Clear any existing content
-      if (domElement.innerHTML !== undefined) {
-        domElement.innerHTML = '';
-      } else if (domElement.removeChild) {
-        while (domElement.firstChild) {
-          domElement.removeChild(domElement.firstChild);
-        }
-      }
-      
-      // Create and inject iframe
-      const iframe = document.createElement('iframe');
-      iframe.src = src;
-      iframe.title = title || 'PDF Viewer';
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.border = 'none';
-      iframe.setAttribute('allow', 'fullscreen');
-      
-      // Add error handler to prevent console errors
-      iframe.onerror = (e) => {
-        console.warn('[PDFIframe] Error loading PDF:', src);
-        e.preventDefault();
-        e.stopPropagation();
-      };
-      
-      domElement.appendChild(iframe);
-    }
-  }, [src, title]);
-  
-  return (
-    <View
-      ref={containerRef}
-      style={{
-        flex: 1,
-        width: '100%',
-        height: '100%',
-      }}
-    />
-  );
-};
 
 export default function MaterialsLibrary({ familyId, children = [], preloadedSubjects = null, preloadedMaterials = null, onMaterialsUpdate = null }) {
   const toast = useToast();
@@ -418,54 +335,17 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
 
   const handleItemClick = async (item) => {
-    // Open PDF viewer for file-based materials
     try {
-      const { getMaterial } = await import('../../lib/services/materialsClient');
-      const material = await getMaterial(item.data.id);
-      
-      // Check if it's a file-based material with storage_path
-      if (material.storage_path) {
-        // Check if it's a PDF
-        const isPdf = material.mime?.includes('pdf') || 
-                     material.filename?.toLowerCase().endsWith('.pdf') ||
-                     (material.title && material.title.toLowerCase().endsWith('.pdf'));
-        
-        if (isPdf) {
-          try {
-            // Get signed URL from storage
-            const { data: signedUrlData, error: signedError } = await supabase.storage
-              .from('evidence')
-              .createSignedUrl(material.storage_path, 3600); // 1 hour expiry
-            
-            if (signedError) {
-              console.error('[MaterialsLibrary] Error getting signed URL:', signedError);
-              toast.push('Unable to access the file. Please try again later.', 'error');
-              return;
-            }
-            
-            if (signedUrlData?.signedUrl) {
-              setPdfUrl(signedUrlData.signedUrl);
-              setPdfTitle(material.title || 'Attachment');
-              setShowPdfViewer(true);
-            } else {
-              toast.push('Unable to generate a URL for this file. Please try again later.', 'error');
-            }
-          } catch (err) {
-            console.error('[MaterialsLibrary] Error getting PDF URL:', err);
-            toast.push(`Unable to open file: ${err.message || 'Unknown error'}`, 'error');
-          }
-        } else {
-          // File-based but not PDF - could open in new tab or show message
-          toast.push('This file type cannot be viewed in the PDF viewer.', 'info');
-        }
-      } else if (material.provider_url && isValidUrl(material.provider_url)) {
-        // If it's a link-based material with a valid URL, open in PDF viewer
-        setPdfUrl(material.provider_url);
-        setPdfTitle(material.title || 'Attachment');
+      const { url, title, error } = await resolveMaterialDocViewerUrl(item.data.id);
+      if (error) {
+        const isInfo = /cannot be viewed|does not have a viewable/i.test(error);
+        toast.push(error, isInfo ? 'info' : 'error');
+        return;
+      }
+      if (url) {
+        setPdfUrl(url);
+        setPdfTitle(title || 'Attachment');
         setShowPdfViewer(true);
-      } else {
-        // No file or valid URL to view
-        toast.push('This material does not have a viewable file.', 'info');
       }
     } catch (error) {
       console.error('[MaterialsLibrary] Error loading material for PDF view:', error);
@@ -1819,73 +1699,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         />
       )}
 
-      {/* PDF Viewer Modal */}
-      {showPdfViewer && pdfUrl && (
-        <Modal
-          visible={showPdfViewer}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => setShowPdfViewer(false)}
-        >
-          <View style={styles.pdfModalOverlay}>
-            <TouchableOpacity
-              style={styles.pdfModalOverlayTouchable}
-              activeOpacity={1}
-              onPress={() => setShowPdfViewer(false)}
-            />
-            <View
-              style={styles.pdfModalContainer}
-              onStartShouldSetResponder={() => true}
-            >
-              <View style={styles.pdfModalHeader}>
-                <Text style={styles.pdfModalTitle} numberOfLines={1}>
-                  {pdfTitle}
-                </Text>
-                <View style={styles.pdfModalActions}>
-                  {Platform.OS === 'web' && (
-                    <TouchableOpacity
-                      style={styles.pdfModalButton}
-                      onPress={() => {
-                        window.open(pdfUrl, '_blank');
-                      }}
-                    >
-                      <ExternalLink size={18} color={colors.accent} />
-                      <Text style={styles.pdfModalButtonText}>Open in new tab</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    style={styles.pdfModalCloseButton}
-                    onPress={() => setShowPdfViewer(false)}
-                  >
-                    <X size={20} color={colors.text} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <View style={styles.pdfViewerContainer}>
-                {Platform.OS === 'web' ? (
-                  <PDFIframe src={pdfUrl} title={pdfTitle} />
-                ) : (
-                  <View style={styles.pdfFallback}>
-                    <Text style={styles.pdfFallbackText}>
-                      PDF viewing is not available on this platform.
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.pdfModalButton}
-                      onPress={() => {
-                        // On native, you might open in a browser or PDF app
-                        Alert.alert('Open PDF', 'Would you like to open this PDF in your browser?');
-                      }}
-                    >
-                      <ExternalLink size={18} color={colors.accent} />
-                      <Text style={styles.pdfModalButtonText}>Open externally</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
+      <MaterialDocViewerModal
+        visible={showPdfViewer && !!pdfUrl}
+        onClose={() => setShowPdfViewer(false)}
+        url={pdfUrl}
+        title={pdfTitle}
+      />
       <ConfirmDialog
         visible={confirmDialog.visible}
         title={confirmDialog.title}
@@ -3286,139 +3105,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.muted,
     marginTop: 2,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  pdfModalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    ...Platform.select({
-      web: {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 10000,
-      },
-    }),
-  },
-  pdfModalOverlayTouchable: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  pdfModalContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    width: Platform.OS === 'web' ? '90%' : '100%',
-    maxWidth: 1200,
-    maxHeight: '85%',
-    overflow: 'hidden',
-    position: 'relative',
-    zIndex: 1,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
-      },
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 8,
-      },
-    }),
-  },
-  pdfModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: '#ffffff',
-  },
-  pdfModalTitle: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    marginRight: 16,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  pdfModalActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  pdfModalButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    backgroundColor: '#ffffff',
-    ...Platform.select({
-      web: { cursor: 'pointer' },
-    }),
-  },
-  pdfModalButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.accent,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  pdfModalCloseButton: {
-    padding: 4,
-    ...Platform.select({
-      web: { cursor: 'pointer' },
-    }),
-  },
-  pdfViewerContainer: {
-    height: Platform.OS === 'web' ? 'calc(85vh - 80px)' : '100%',
-    minHeight: 400,
-    backgroundColor: '#f9fafb',
-    ...Platform.select({
-      web: {
-        maxHeight: 'calc(85vh - 80px)',
-      },
-    }),
-  },
-  pdfIframeContainer: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-    ...Platform.select({
-      web: {
-        position: 'relative',
-        overflow: 'hidden',
-      },
-    }),
-  },
-  pdfFallback: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  pdfFallbackText: {
-    fontSize: 14,
-    color: colors.muted,
-    marginBottom: 20,
-    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

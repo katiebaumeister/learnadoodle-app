@@ -23,11 +23,14 @@ import {
   CheckCircle,
   XCircle,
   Download,
+  X,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
+import { deriveRoleFromTags, DOCUMENT_ROLES } from '../../lib/docs/roles';
 import { useSession } from '../../contexts/SessionContext';
-import ReviewInboxModal from '../parent/ReviewInboxModal';
+import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from '../materials/MaterialDocViewerModal';
+import { useToast } from '../Toast';
 const ATTENDANCE_LIST_LIMIT = 5;
 
 export default function SubjectDetailPage({
@@ -44,12 +47,16 @@ export default function SubjectDetailPage({
   initialScrollToSectionId = null,
 }) {
   const session = useSession();
+  const toast = useToast();
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
-  const [showRecentlySubmittedModal, setShowRecentlySubmittedModal] = useState(false);
   const [showProgressCheckInModal, setShowProgressCheckInModal] = useState(false);
+  const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
+  const [showMaterialDocViewer, setShowMaterialDocViewer] = useState(false);
+  const [materialDocViewerUrl, setMaterialDocViewerUrl] = useState('');
+  const [materialDocViewerTitle, setMaterialDocViewerTitle] = useState('');
   const loadingRef = useRef(false);
 
   useEffect(() => {
@@ -145,6 +152,16 @@ export default function SubjectDetailPage({
     return days[date.getDay()];
   }, []);
 
+  const formatTimeLabel = useCallback((dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }, []);
+
   // Helper to safely format percentage values
   const formatPercent = useCallback((value) => {
     if (value === null || value === undefined || isNaN(value)) {
@@ -176,9 +193,45 @@ export default function SubjectDetailPage({
     }
   }, [subjectId]);
 
+  const handleMaterialChipPress = useCallback(
+    async (material) => {
+      if (!material?.id) return;
+      const fallbackTitle = material.title || material.provider_name || 'Material';
+      try {
+        const { url, title, error } = await resolveMaterialDocViewerUrl(material.id);
+        if (error || !url) {
+          const isInfo = error && /cannot be viewed|does not have a viewable/i.test(error);
+          toast.push(error || 'Could not open this material.', isInfo ? 'info' : 'error');
+          return;
+        }
+        setMaterialDocViewerTitle(title || fallbackTitle);
+        setMaterialDocViewerUrl(url);
+        setShowMaterialDocViewer(true);
+      } catch (err) {
+        console.error('[SubjectDetailPage] material viewer:', err);
+        toast.push('Failed to load material. Please try again.', 'error');
+      }
+    },
+    [toast]
+  );
+
+  const closeMaterialDocViewer = useCallback(() => {
+    setShowMaterialDocViewer(false);
+    setMaterialDocViewerUrl('');
+    setMaterialDocViewerTitle('');
+  }, []);
+
   // Extract data
   const subject = subjectData?.subject;
   const materials = subjectData?.materials || [];
+  const syllabusMaterials = useMemo(
+    () => materials.filter((m) => deriveRoleFromTags(m?.tags) === DOCUMENT_ROLES.SYLLABUS),
+    [materials]
+  );
+  const lessonPlanMaterials = useMemo(
+    () => materials.filter((m) => deriveRoleFromTags(m?.tags) === DOCUMENT_ROLES.LESSON_PLAN),
+    [materials]
+  );
   const upcomingItems = subjectData?.upcomingItems || [];
   const overdueItems = subjectData?.overdueItems || [];
   const nextItem = subjectData?.nextItem;
@@ -201,6 +254,23 @@ export default function SubjectDetailPage({
   }, [subject, subjectData?.events]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
+
+  const openAddMaterialModalForRole = useCallback(
+    (role) => {
+      if (!subject?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+      window.dispatchEvent(
+        new CustomEvent('openAddMaterialModal', {
+          detail: {
+            subjectId: subject.id,
+            subjectName: subject.name || null,
+            childIds: assignedChildren,
+            role,
+          },
+        })
+      );
+    },
+    [subject?.id, subject?.name, assignedChildren]
+  );
 
   const handleAddLesson = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -393,7 +463,7 @@ export default function SubjectDetailPage({
               )}
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => onNavigateToPlanner?.({ subjectId: subject.id })}
+                onPress={() => onNavigateToPlanner?.({ subjectId: subject.id, view: 'month' })}
               >
                 <Calendar size={16} color="#6B7280" />
                 <Text style={styles.actionButtonText}>View in Planner</Text>
@@ -455,7 +525,6 @@ export default function SubjectDetailPage({
               if (attendanceRate30 !== null && attendanceRate30 !== undefined && !isNaN(attendanceRate30)) {
                 scrollToSection('attendance-section');
               } else {
-                // Could open a log time modal or scroll to attendance section
                 scrollToSection('attendance-section');
               }
             }}
@@ -468,18 +537,10 @@ export default function SubjectDetailPage({
               </>
             ) : (
               <>
-                <Text style={styles.summaryTileValue}>No time logged</Text>
-                <Text style={styles.summaryTileSubtext}>Log a completed lesson to see trends.</Text>
-                <TouchableOpacity
-                  style={styles.summaryTileAction}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    // Could open log time modal or navigate to planner
-                    scrollToSection('attendance-section');
-                  }}
-                >
-                  <Text style={styles.summaryTileActionText}>Log time</Text>
-                </TouchableOpacity>
+                <Text style={styles.summaryTileValue}>None attended</Text>
+                <Text style={styles.summaryTileEmptyAttendanceDetail}>
+                  No events related to {subject?.name || 'this subject'} have been marked as attended.
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -519,42 +580,111 @@ export default function SubjectDetailPage({
               </TouchableOpacity>
             )}
           </View>
-          {materials.length > 0 ? (
-            <View style={styles.materialsGrid}>
-              {materials.slice(0, 6).map((material) => (
+          <View style={styles.materialsSubsections}>
+            <View style={styles.materialsSubsection}>
+              <Text style={styles.materialsSubsectionLabel}>Syllabus</Text>
+              {syllabusMaterials.length > 0 ? (
+                <View style={styles.materialsGrid}>
+                  {syllabusMaterials.map((material) => (
+                    <TouchableOpacity
+                      key={material.id}
+                      style={styles.materialChip}
+                      onPress={() => handleMaterialChipPress(material)}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <BookOpen size={14} color={colors.accent || '#4F46E5'} />
+                      <Text style={styles.materialChipText} numberOfLines={1}>
+                        {material.title || material.provider_name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
                 <TouchableOpacity
-                  key={material.id}
-                  style={styles.materialChip}
-                  onPress={() => onNavigateToLibrary?.(subjectId)}
+                  style={styles.materialsAddCta}
+                  onPress={() => openAddMaterialModalForRole(DOCUMENT_ROLES.SYLLABUS)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add syllabus"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <BookOpen size={14} color={colors.accent || '#4F46E5'} />
-                  <Text style={styles.materialChipText} numberOfLines={1}>
-                    {material.title || material.provider_name}
-                  </Text>
+                  <Plus size={16} color={colors.accent || '#4F46E5'} />
+                  <Text style={styles.materialsAddCtaText}>Add Syllabus</Text>
                 </TouchableOpacity>
-              ))}
+              )}
             </View>
-          ) : (
-            <View style={styles.emptyStateBox}>
-              <Text style={styles.emptyStateText}>
-                No materials associated with this subject. Adding materials over time helps Learnadoodle plan lessons, track coverage, and generate insights.
-              </Text>
+
+            <View style={styles.materialsSubsection}>
+              <Text style={styles.materialsSubsectionLabel}>Lesson plan</Text>
+              {lessonPlanMaterials.length > 0 ? (
+                <View style={styles.materialsGrid}>
+                  {lessonPlanMaterials.map((material) => (
+                    <TouchableOpacity
+                      key={material.id}
+                      style={styles.materialChip}
+                      onPress={() => handleMaterialChipPress(material)}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <BookOpen size={14} color={colors.accent || '#4F46E5'} />
+                      <Text style={styles.materialChipText} numberOfLines={1}>
+                        {material.title || material.provider_name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.materialsAddCta}
+                  onPress={() => openAddMaterialModalForRole(DOCUMENT_ROLES.LESSON_PLAN)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add lesson plan"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color={colors.accent || '#4F46E5'} />
+                  <Text style={styles.materialsAddCtaText}>Add Lesson Plan</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          )}
+          </View>
         </View>
 
         {/* Section 1: Progress - next 7 days only; then link to Planner */}
         <View id="progress-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Progress</Text>
-          <View style={styles.progressCheckInRow}>
-            <Text style={styles.progressCheckInPrompt}>Where are you in the syllabus?</Text>
+          <View style={styles.attendanceSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
+            {onNavigateToPlanner && (
+              <TouchableOpacity
+                style={styles.exportIconButton}
+                onPress={() => onNavigateToPlanner({ subjectId: subject.id, view: 'month' })}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="View full schedule in Planner month view"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <ExternalLink size={18} color="#6B7280" />
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.attendanceChips}>
             <TouchableOpacity
-              style={styles.progressCheckInButton}
+              style={styles.attendanceChip}
               onPress={() => setShowProgressCheckInModal(true)}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Where are you in the syllabus? Open progress check-in."
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.progressCheckInButtonText}>Tell us where we are</Text>
+              <TrendingUp size={14} color="#10B981" />
+              <Text style={styles.attendanceChipText}>
+                {progressPercent !== null &&
+                progressPercent !== undefined &&
+                !isNaN(Number(progressPercent))
+                  ? `${Math.round(Math.max(0, Math.min(100, Number(progressPercent))))}%`
+                  : '0%'}
+              </Text>
             </TouchableOpacity>
           </View>
           {whatsNextInNext7Days.length > 0 ? (
@@ -565,6 +695,7 @@ export default function SubjectDetailPage({
                     ? item.id.slice(6)
                     : item.id;
                   const event = (subjectData?.events || []).find(e => e.id === eventId);
+                  const timeLabel = formatTimeLabel(item.dueDate);
                   return (
                     <TouchableOpacity
                       key={item.id}
@@ -581,6 +712,7 @@ export default function SubjectDetailPage({
                         </Text>
                         <Text style={styles.timelineItemDate}>
                           {formatRelativeDate(item.dueDate)} ({formatDayOfWeek(item.dueDate)})
+                          {timeLabel ? ` · ${timeLabel}` : ''}
                         </Text>
                       </View>
                       <ChevronRight size={16} color={colors.muted || '#6B7280'} />
@@ -591,7 +723,7 @@ export default function SubjectDetailPage({
               {hasMoreBeyond7Days && onNavigateToPlanner && (
                 <TouchableOpacity
                   style={styles.attendanceViewTotalBtn}
-                  onPress={() => onNavigateToPlanner({ subjectId: subject.id })}
+                  onPress={() => onNavigateToPlanner({ subjectId: subject.id, view: 'month' })}
                   activeOpacity={0.7}
                 >
                   <Calendar size={16} color={colors.accent || '#4F46E5'} />
@@ -611,7 +743,7 @@ export default function SubjectDetailPage({
                   <View style={styles.emptyStateButtonRow}>
                     <TouchableOpacity
                       style={styles.attendanceViewTotalBtn}
-                      onPress={() => onNavigateToPlanner({ subjectId: subject.id })}
+                      onPress={() => onNavigateToPlanner({ subjectId: subject.id, view: 'month' })}
                       activeOpacity={0.7}
                     >
                       <Calendar size={16} color={colors.accent || '#4F46E5'} />
@@ -622,7 +754,7 @@ export default function SubjectDetailPage({
                       <Calendar size={18} color="#6B7280" />
                       <Text style={styles.emptyStateButtonText}>Plan my year</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowRecentlySubmittedModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowExportComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                       <FileText size={18} color="#6B7280" />
                       <Text style={styles.emptyStateButtonText}>Recently submitted</Text>
                     </TouchableOpacity>
@@ -643,7 +775,7 @@ export default function SubjectDetailPage({
                       <Calendar size={18} color="#6B7280" />
                       <Text style={styles.emptyStateButtonText}>Plan my year</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowRecentlySubmittedModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowExportComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                       <FileText size={18} color="#6B7280" />
                       <Text style={styles.emptyStateButtonText}>Recently submitted</Text>
                     </TouchableOpacity>
@@ -664,7 +796,7 @@ export default function SubjectDetailPage({
                       <Calendar size={18} color="#6B7280" />
                       <Text style={styles.emptyStateButtonText}>Plan my year</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowRecentlySubmittedModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <TouchableOpacity style={styles.emptyStateButton} onPress={() => setShowExportComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                       <FileText size={18} color="#6B7280" />
                       <Text style={styles.emptyStateButtonText}>Recently submitted</Text>
                     </TouchableOpacity>
@@ -679,16 +811,32 @@ export default function SubjectDetailPage({
         <View id="attendance-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
-            {Platform.OS === 'web' && (
-              <TouchableOpacity
-                style={styles.exportIconButton}
-                onPress={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }))}
-                activeOpacity={0.7}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Download size={18} color="#6B7280" />
-              </TouchableOpacity>
-            )}
+            <View style={styles.attendanceHeaderActions}>
+              {onNavigateToPlannerAttendance && (
+                <TouchableOpacity
+                  style={styles.exportIconButton}
+                  onPress={onNavigateToPlannerAttendance}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="View full attendance"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <ExternalLink size={18} color="#6B7280" />
+                </TouchableOpacity>
+              )}
+              {Platform.OS === 'web' && (
+                <TouchableOpacity
+                  style={styles.exportIconButton}
+                  onPress={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }))}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Export attendance"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Download size={18} color="#6B7280" />
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
           {attendanceRecords.length > 0 ? (
             <>
@@ -740,45 +888,37 @@ export default function SubjectDetailPage({
                   </Text>
                 </TouchableOpacity>
               )}
-              {onNavigateToPlannerAttendance && (
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, { marginTop: 16 }]}
-                  onPress={onNavigateToPlannerAttendance}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>View more</Text>
-                </TouchableOpacity>
-              )}
             </>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
                 Attendance appears after you complete lessons or log time.
               </Text>
-              {onNavigateToPlannerAttendance && (
-                <TouchableOpacity
-                  style={styles.emptyStateButton}
-                  onPress={onNavigateToPlannerAttendance}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>View more</Text>
-                </TouchableOpacity>
-              )}
             </View>
           )}
         </View>
 
         {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Grades</Text>
-          <View style={styles.gradeAverage}>
-            <Text style={styles.gradeAverageLabel}>Current Average</Text>
-            <Text style={styles.gradeAverageComingSoon}>Logic for calculating grade averages is still being built, check back soon...</Text>
+          <View style={styles.attendanceSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
+            <TouchableOpacity
+              style={styles.exportIconButton}
+              onPress={() => setShowExportComingSoonModal(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Export grades"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Download size={18} color="#6B7280" />
+            </TouchableOpacity>
           </View>
+          {gradedItems.length > 0 && (
+            <View style={styles.gradeAverage}>
+              <Text style={styles.gradeAverageLabel}>Current Average</Text>
+              <Text style={styles.gradeAverageComingSoon}>Logic for calculating grade averages is still being built, check back soon...</Text>
+            </View>
+          )}
           {gradedItems.length > 0 ? (
             <>
               <View style={styles.gradesList}>
@@ -844,7 +984,19 @@ export default function SubjectDetailPage({
 
         {/* Section: Learning Goals */}
         <View id="learning-goals-section" style={styles.section}>
-          <Text style={styles.sectionTitle}>Learning Goals</Text>
+          <View style={styles.attendanceSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Learning Goals</Text>
+            <TouchableOpacity
+              style={styles.exportIconButton}
+              onPress={() => setShowExportComingSoonModal(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Export learning goals"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Download size={18} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
           <View style={styles.emptyStateBox}>
             <Text style={styles.emptyStateText}>
               Learning Goals logic is still being built to provide you with typical state learning requirements. Check back soon...
@@ -852,12 +1004,6 @@ export default function SubjectDetailPage({
           </View>
         </View>
       </ScrollView>
-      <ReviewInboxModal
-        visible={showRecentlySubmittedModal}
-        onClose={() => setShowRecentlySubmittedModal(false)}
-        familyId={familyId}
-        initialSection="submissions"
-      />
       <Modal
         visible={showProgressCheckInModal}
         transparent
@@ -887,6 +1033,45 @@ export default function SubjectDetailPage({
           </View>
         </TouchableOpacity>
       </Modal>
+      <Modal
+        visible={showExportComingSoonModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExportComingSoonModal(false)}
+      >
+        <View style={styles.comingSoonModalOverlay}>
+          <View style={styles.comingSoonModalContent}>
+            <TouchableOpacity
+              style={styles.comingSoonModalClose}
+              onPress={() => setShowExportComingSoonModal(false)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={24} color="#64748b" />
+            </TouchableOpacity>
+            <Text style={styles.comingSoonModalTitle}>Coming soon</Text>
+            <Text style={styles.comingSoonModalText}>
+              This feature is in development. Stay tuned for updates!
+            </Text>
+            <TouchableOpacity
+              style={styles.comingSoonModalButton}
+              onPress={() => setShowExportComingSoonModal(false)}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.comingSoonModalButtonText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <MaterialDocViewerModal
+        visible={showMaterialDocViewer && !!materialDocViewerUrl}
+        onClose={closeMaterialDocViewer}
+        url={materialDocViewerUrl}
+        title={materialDocViewerTitle}
+      />
     </View>
   );
 }
@@ -1060,6 +1245,15 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  summaryTileEmptyAttendanceDetail: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 4,
+    lineHeight: 15,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   summaryProgressBar: {
     height: 4,
     backgroundColor: '#E5E7EB',
@@ -1118,11 +1312,55 @@ const styles = StyleSheet.create({
   materialsSectionHeader: {
     marginBottom: 2,
   },
+  materialsSubsections: {
+    marginTop: 8,
+    gap: 20,
+  },
+  materialsSubsection: {
+    gap: 8,
+  },
+  materialsSubsectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialsAddCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(79, 70, 229, 0.35)',
+    borderStyle: 'dashed',
+    backgroundColor: '#FAFBFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  materialsAddCtaText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent || '#4F46E5',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   attendanceSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginBottom: 16,
+  },
+  attendanceHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   exportIconButton: {
     padding: 4,
@@ -1133,43 +1371,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1F2937',
     marginBottom: 16,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  progressCheckInRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#F4F7FF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(79, 70, 229, 0.12)',
-  },
-  progressCheckInPrompt: {
-    fontSize: 14,
-    color: '#374151',
-    flex: 1,
-    minWidth: 0,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  progressCheckInButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: colors.accent || '#4F46E5',
-    borderRadius: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  progressCheckInButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1218,6 +1419,67 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  comingSoonModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  comingSoonModalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    alignItems: 'center',
+  },
+  comingSoonModalClose: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    padding: 4,
+    zIndex: 1,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  comingSoonModalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+    marginTop: 8,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  comingSoonModalText: {
+    fontSize: 15,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 22,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  comingSoonModalButton: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 10,
+    minWidth: 100,
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  comingSoonModalButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

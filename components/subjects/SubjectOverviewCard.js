@@ -29,11 +29,29 @@ export default function SubjectOverviewCard({
     return children.find(c => String(c.id) === String(childId));
   };
 
-  const formatDayOfWeek = (dateString) => {
-    if (!dateString) return null;
-    const date = new Date(dateString);
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return days[date.getDay()];
+  /** Weekday + time for "Up next" row, e.g. "Tue 9:00 AM–10:00 AM" */
+  const formatNextUpWhenLine = (item) => {
+    if (!item) return '';
+    const anchor = item.startTs || item.dueDate;
+    if (!anchor) return '';
+    const weekday = new Date(anchor).toLocaleDateString(undefined, { weekday: 'short' });
+    const tOpts = { hour: 'numeric', minute: '2-digit' };
+    let timeStr = '';
+    if (item.startTs && item.endTs) {
+      const s = new Date(item.startTs);
+      const e = new Date(item.endTs);
+      if (!Number.isNaN(s.getTime()) && !Number.isNaN(e.getTime())) {
+        timeStr =
+          s.getTime() !== e.getTime()
+            ? `${s.toLocaleTimeString(undefined, tOpts)}–${e.toLocaleTimeString(undefined, tOpts)}`
+            : s.toLocaleTimeString(undefined, tOpts);
+      }
+    }
+    if (!timeStr) {
+      const d = new Date(item.dueDate || item.startTs);
+      timeStr = Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, tOpts);
+    }
+    return timeStr ? `${weekday} ${timeStr}` : weekday;
   };
 
   const formatDaysAgo = (dateString) => {
@@ -43,7 +61,7 @@ export default function SubjectOverviewCard({
     const diffTime = now - date;
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
     
-    if (diffDays === 0) return 'today';
+    if (diffDays === 0) return 'Today';
     if (diffDays === 1) return '1 day ago';
     return `${diffDays} days ago`;
   };
@@ -284,8 +302,8 @@ export default function SubjectOverviewCard({
             onPress={(e) => handleNavigateToPlanner(nextItem, e)}
           >
             <Clock size={16} color={colors.accent || '#4F46E5'} />
-            <Text style={styles.decisionRowText}>
-              Next: {nextItem.title} — {formatDayOfWeek(nextItem.dueDate)}
+            <Text style={styles.decisionRowText} numberOfLines={2}>
+              Next: {nextItem.title} - {formatNextUpWhenLine(nextItem)}
             </Text>
             <ChevronRight size={16} color={colors.muted || '#6B7280'} />
           </TouchableOpacity>

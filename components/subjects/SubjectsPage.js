@@ -559,10 +559,12 @@ export default function SubjectsPage({
     if (onNavigateToPlanner) {
       onNavigateToPlanner(params);
     } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const view = params.view || 'month';
       const queryParams = new URLSearchParams();
       if (params.subjectId) queryParams.set('subjectId', params.subjectId);
       if (params.childId) queryParams.set('childId', params.childId);
       if (params.date) queryParams.set('date', params.date);
+      queryParams.set('view', view);
       window.location.href = `/planner?${queryParams.toString()}`;
     }
   };

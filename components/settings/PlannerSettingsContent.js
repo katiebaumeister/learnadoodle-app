@@ -185,6 +185,57 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
     }
   }, [familyId]);
 
+  /** Keep Subject targets in sync when a subject is saved elsewhere (e.g. Edit subject modal). */
+  const reloadSubjectTargetsFromDb = useCallback(async () => {
+    if (!familyId) return;
+    try {
+      const { data: subjectsData } = await supabase
+        .from('subject')
+        .select('id, name, default_constraint_mode, default_target_days, default_target_hours')
+        .eq('family_id', familyId)
+        .order('name');
+      const list = subjectsData || [];
+      setSubjects(list);
+      const st = {};
+      list.forEach((subj) => {
+        const mode =
+          subj.default_constraint_mode ||
+          (subj.default_target_days != null ? 'days' : subj.default_target_hours != null ? 'hours' : 'none');
+        st[subj.id] = {
+          mode,
+          days: subj.default_target_days != null ? String(subj.default_target_days) : '',
+          hours: subj.default_target_hours != null ? String(subj.default_target_hours) : '',
+        };
+      });
+      setSubjectTargets(st);
+    } catch (_) {
+      /* ignore */
+    }
+  }, [familyId]);
+
+  const subjectTargetsExternalReloadTimerRef = useRef(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const scheduleReload = () => {
+      if (subjectTargetsExternalReloadTimerRef.current) {
+        clearTimeout(subjectTargetsExternalReloadTimerRef.current);
+      }
+      subjectTargetsExternalReloadTimerRef.current = setTimeout(() => {
+        subjectTargetsExternalReloadTimerRef.current = null;
+        reloadSubjectTargetsFromDb();
+      }, 150);
+    };
+    window.addEventListener('refreshPlanDefaults', scheduleReload);
+    window.addEventListener('refreshSubjects', scheduleReload);
+    return () => {
+      window.removeEventListener('refreshPlanDefaults', scheduleReload);
+      window.removeEventListener('refreshSubjects', scheduleReload);
+      if (subjectTargetsExternalReloadTimerRef.current) {
+        clearTimeout(subjectTargetsExternalReloadTimerRef.current);
+      }
+    };
+  }, [familyId, reloadSubjectTargetsFromDb]);
+
   useEffect(() => {
     if (initialData) return; // Use preloaded data from FamilyPanel, skip fetch
     loadDefaults();

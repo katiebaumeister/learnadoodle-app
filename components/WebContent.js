@@ -1210,9 +1210,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const childIds = detail.childIds && Array.isArray(detail.childIds)
         ? detail.childIds
         : (detail.childId ? [detail.childId] : []);
-      
-      console.log('[WebContent] openAddMaterialModal event received:', { subjectId, subjectName, childIds, activeTab });
-      
+      const role = detail.role && typeof detail.role === 'string' ? detail.role : null;
+
+      console.log('[WebContent] openAddMaterialModal event received:', { subjectId, subjectName, childIds, role, activeTab });
+
+      setAddMaterialModalDefaultRole(role);
       setAddMaterialModalDefaultSubjectId(subjectId);
       setAddMaterialModalDefaultSubjectName(subjectName);
       setAddMaterialModalDefaultChildIds(childIds);
@@ -7441,18 +7443,26 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 }));
               }
             }}
-            onNavigateToPlanner={(params) => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                if (onTabChange) onTabChange('planner');
-                const queryParams = new URLSearchParams();
-                if (params.subjectId) queryParams.set('subjectId', params.subjectId);
-                if (params.childId) queryParams.set('childId', params.childId);
-                if (params.date) queryParams.set('date', params.date);
-                const view = params.view || 'month';
-                queryParams.set('view', view);
-                const path = `/planner?${queryParams.toString()}`;
-                window.history.replaceState({}, '', path);
+            onNavigateToPlanner={(params = {}) => {
+              if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+              if (onTabChange) onTabChange('planner');
+              const view = params.view || 'month';
+              const queryParams = new URLSearchParams();
+              if (params.subjectId) queryParams.set('subjectId', params.subjectId);
+              if (params.childId) queryParams.set('childId', params.childId);
+              if (params.date) queryParams.set('date', params.date);
+              queryParams.set('view', view);
+              const url = new URL(window.location.href);
+              url.pathname = '/planner';
+              url.search = queryParams.toString();
+              window.history.replaceState({}, '', url.toString());
+              const syncView = () => {
                 window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
+              };
+              if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(syncView);
+              } else {
+                setTimeout(syncView, 0);
               }
             }}
             onNavigateToLibrary={(subjectId) => {
@@ -7751,6 +7761,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 const assignedChildIds = subject.assignedChildren && Array.isArray(subject.assignedChildren)
                   ? subject.assignedChildren
                   : (subject.assignedChildren ? [subject.assignedChildren] : []);
+                setAddMaterialModalDefaultRole(null);
                 setAddMaterialModalDefaultSubjectId(subject.id);
                 setAddMaterialModalDefaultSubjectName(subject.name);
                 setAddMaterialModalDefaultChildIds(assignedChildIds);
@@ -7763,9 +7774,26 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   }));
                 }
               }}
-              onNavigateToPlanner={(params) => {
-                if (onTabChange) {
-                  onTabChange('planner');
+              onNavigateToPlanner={(params = {}) => {
+                if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+                if (onTabChange) onTabChange('planner');
+                const view = params.view || 'month';
+                const queryParams = new URLSearchParams();
+                if (params.subjectId) queryParams.set('subjectId', params.subjectId);
+                if (params.childId) queryParams.set('childId', params.childId);
+                if (params.date) queryParams.set('date', params.date);
+                queryParams.set('view', view);
+                const url = new URL(window.location.href);
+                url.pathname = '/planner';
+                url.search = queryParams.toString();
+                window.history.replaceState({}, '', url.toString());
+                const syncView = () => {
+                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
+                };
+                if (typeof requestAnimationFrame === 'function') {
+                  requestAnimationFrame(syncView);
+                } else {
+                  setTimeout(syncView, 0);
                 }
               }}
               onNavigateToPlannerAttendance={() => {
@@ -7897,13 +7925,24 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       </View>
       <AddMaterialModal
         visible={showAddMaterialModal}
-        onClose={() => setShowAddMaterialModal(false)}
+        onClose={() => {
+          setShowAddMaterialModal(false);
+          setAddMaterialModalDefaultRole(null);
+          setAddMaterialModalDefaultSubjectId(null);
+          setAddMaterialModalDefaultSubjectName(null);
+          setAddMaterialModalDefaultChildIds([]);
+        }}
         onSaved={() => {
           setShowAddMaterialModal(false);
+          setAddMaterialModalDefaultRole(null);
+          setAddMaterialModalDefaultSubjectId(null);
+          setAddMaterialModalDefaultSubjectName(null);
+          setAddMaterialModalDefaultChildIds([]);
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('materialSaved'));
         }}
         familyId={familyId}
         children={children || []}
+        defaultRole={addMaterialModalDefaultRole}
         defaultSubjectId={addMaterialModalDefaultSubjectId}
         defaultSubjectName={addMaterialModalDefaultSubjectName}
         defaultChildIds={addMaterialModalDefaultChildIds}

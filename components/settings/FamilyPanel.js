@@ -663,7 +663,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     if (typeof window === 'undefined') return;
     const handler = () => loadPlannerDataRef.current?.();
     window.addEventListener('refreshPlanDefaults', handler);
-    return () => window.removeEventListener('refreshPlanDefaults', handler);
+    window.addEventListener('refreshSubjects', handler);
+    return () => {
+      window.removeEventListener('refreshPlanDefaults', handler);
+      window.removeEventListener('refreshSubjects', handler);
+    };
   }, []);
 
   // Handle browser back button for About page

@@ -1361,7 +1361,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             try {
               const { data: fullSubjectsData } = await supabase
                 .from('subject')
-                .select('id, name, child_id, grade, notes, created_at, updated_at, default_target_days, default_target_hours')
+                .select('id, name, child_id, grade, notes, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
                 .eq('family_id', profileData.family_id)
                 .order('name');
               setFullSubjects(fullSubjectsData || []);
@@ -1562,10 +1562,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         .eq('family_id', familyId)
         .order('name');
       setSubjects(subjectsData || []);
-      // Also refetch full subject data (including child_id) so Courses tab shows correct per-child assignments
+      // Also refetch full subject data (including planning targets) for Plan Year / courses / preferences UIs
       const { data: fullSubjectsData } = await supabase
         .from('subject')
-        .select('id, name, child_id, grade, notes, created_at, updated_at')
+        .select('id, name, child_id, grade, notes, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
         .eq('family_id', familyId)
         .order('name');
       setFullSubjects(fullSubjectsData || []);
