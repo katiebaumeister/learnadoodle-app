@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
-import { ONBOARDING_SKY, ONBOARDING_TEXT_PURPLE } from '../../lib/constants/onboardingTheme';
+import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY } from '../../lib/constants/onboardingTheme';
 
 const MODE_OPTIONS = [
   { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschool' },
@@ -89,7 +89,7 @@ const styles = StyleSheet.create({
   prompt: {
     fontSize: 30,
     fontWeight: '600',
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
     marginBottom: 16,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
@@ -142,12 +142,12 @@ const styles = StyleSheet.create({
   cardLabel: {
     fontSize: 20,
     fontWeight: '700',
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardLabelSelected: {
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
   },
   continueBtn: {
     backgroundColor: ONBOARDING_SKY,

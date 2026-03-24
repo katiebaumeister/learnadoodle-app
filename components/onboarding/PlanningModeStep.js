@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
-import { ONBOARDING_SKY, ONBOARDING_TEXT_PURPLE } from '../../lib/constants/onboardingTheme';
+import { ONBOARDING_SKY, ONBOARDING_TEXT_PRIMARY } from '../../lib/constants/onboardingTheme';
 
 const WHO_OPTIONS = [
   { id: 'parent', label: 'My family (I\'m a parent)' },
@@ -136,7 +136,7 @@ const styles = StyleSheet.create({
   prompt: {
     fontSize: 30,
     fontWeight: '600',
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
     marginBottom: 36,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
   confirmLabel: {
     flex: 1,
     fontSize: 16,
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardWrapper: {
@@ -216,12 +216,12 @@ const styles = StyleSheet.create({
   cardLabel: {
     fontSize: 20,
     fontWeight: '700',
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardLabelSelected: {
-    color: ONBOARDING_TEXT_PURPLE,
+    color: ONBOARDING_TEXT_PRIMARY,
   },
   continueBtn: {
     backgroundColor: ONBOARDING_SKY,
