@@ -8,22 +8,13 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { ChevronDown, ChevronUp, Plus, X, Calculator, BookOpen, Pencil, FlaskConical, Clock, Layers, CheckCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, X, CheckCircle } from 'lucide-react';
 import { getMaterials } from '../../lib/services/materialsClient';
 import { getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
 import { deriveRoleFromTags, DOCUMENT_ROLES } from '../../lib/docs/roles';
 import AddMaterialModal from '../materials/AddMaterialModal';
 
-const PRESETS = ['Math', 'Reading', 'Writing', 'Science', 'History', 'Other'];
-const PRESET_ICONS = {
-  Math: Calculator,
-  Reading: BookOpen,
-  Writing: Pencil,
-  Science: FlaskConical,
-  History: Clock,
-  Other: Layers,
-};
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
 const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
@@ -71,13 +62,14 @@ export default function AddSubjectStep({
 }) {
   const [subjectName, setSubjectName] = useState('');
   const [subjectNameFocused, setSubjectNameFocused] = useState(false);
-  const [summary, setSummary] = useState('');
+  const [additionalNotes, setAdditionalNotes] = useState('');
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || 'K');
   const [credits, setCredits] = useState('');
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
   const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
+  const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [materials, setMaterials] = useState([]);
   const [loadingMaterials, setLoadingMaterials] = useState(false);
   const [materialPickerSlot, setMaterialPickerSlot] = useState(null);
@@ -107,13 +99,14 @@ export default function AddSubjectStep({
 
   useEffect(() => {
     setSubjectName('');
-    setSummary('');
+    setAdditionalNotes('');
     setCredits('');
     setGrade(GRADE_OPTIONS[0] || 'K');
     setError(null);
     setSubjectNameFocused(false);
     setShowMaterialsAccordion(false);
     setShowPlanningAccordion(false);
+    setShowAdditionalNotesAccordion(false);
     setMaterialPickerSlot(null);
     setSelectedSyllabusMaterialId(null);
     setSelectedLessonPlanMaterialId(null);
@@ -178,7 +171,8 @@ export default function AddSubjectStep({
   }, [familyId]);
 
   useEffect(() => {
-    if (!familyPlannerContext || goalModeForSubject !== 'per_subject') return;
+    if (!familyPlannerContext) return;
+    if (goalModeForSubject !== 'per_subject' && goalModeForSubject !== 'overall') return;
     if (defaultTargetDays !== '' || defaultTargetHours !== '') return;
     if (hasPrefilledFromFamilyRef.current) return;
     hasPrefilledFromFamilyRef.current = true;
@@ -206,10 +200,10 @@ export default function AddSubjectStep({
     return {
       name: nameTrim,
       child_id: currentChild.id,
-      summary: summary.trim() || null,
+      summary: null,
       grade: grade || null,
       credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
-      notes: null,
+      notes: additionalNotes.trim() || null,
       school_year: schoolYear || getDefaultSchoolYear(),
       default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
       default_target_days:
@@ -220,6 +214,21 @@ export default function AddSubjectStep({
         goalModeForSubject === 'per_subject' && targetMode === 'hours' && defaultTargetHours.trim()
           ? parseFloat(defaultTargetHours) || null
           : null,
+      familyPlannerTargets:
+        goalModeForSubject === 'overall'
+          ? {
+              target_scope: 'overall',
+              default_constraint_mode: targetMode,
+              default_target_days:
+                targetMode === 'days' && defaultTargetDays.trim()
+                  ? parseInt(defaultTargetDays, 10) || null
+                  : null,
+              default_target_hours:
+                targetMode === 'hours' && defaultTargetHours.trim()
+                  ? parseFloat(defaultTargetHours) || null
+                  : null,
+            }
+          : null,
       syllabus_material_id: selectedSyllabusMaterialId,
       lesson_plan_material_id: selectedLessonPlanMaterialId,
     };
@@ -227,7 +236,7 @@ export default function AddSubjectStep({
 
   const resetAfterAdd = () => {
     setSubjectName('');
-    setSummary('');
+    setAdditionalNotes('');
     setCredits('');
     setGrade(GRADE_OPTIONS[0] || 'K');
     setSelectedSyllabusMaterialId(null);
@@ -235,6 +244,7 @@ export default function AddSubjectStep({
     setMaterialPickerSlot(null);
     setShowMaterialsAccordion(false);
     setShowPlanningAccordion(false);
+    setShowAdditionalNotesAccordion(false);
     setSchoolYear(getDefaultSchoolYear());
     setGoalModeForSubject(familyPlannerContext?.targetScope === 'per_subject' ? 'per_subject' : 'overall');
     setTargetMode('none');
@@ -296,7 +306,6 @@ export default function AddSubjectStep({
 
   const friendlyErrorMessage = 'UH OH. SOMETHING WENT WRONG. PLEASE TRY REFRESHING OR CONTACT US: CONTACT@LEARNADOODLE.COM';
 
-  const syllabusLessonCount = [selectedSyllabusMaterialId, selectedLessonPlanMaterialId].filter(Boolean).length;
   const syllabusPickerMaterials = materials.filter(materialEligibleForSyllabusPicker);
   const lessonPickerMaterials = materials.filter(materialEligibleForLessonPicker);
 
@@ -436,31 +445,6 @@ export default function AddSubjectStep({
         />
       </View>
 
-      {/* Quick presets — fill subject name only */}
-      <Text style={styles.quickPresetsLabel}>Quick add</Text>
-      <View style={styles.presetsRow}>
-        {PRESETS.map((preset) => {
-          const Icon = PRESET_ICONS[preset];
-          return (
-            <TouchableOpacity
-              key={preset}
-              style={[styles.presetChip, (isSaving || adding) && styles.chipDisabled]}
-              onPress={() => {
-                setSubjectName(preset === 'Other' ? '' : preset);
-                setError(null);
-              }}
-              disabled={isSaving || adding}
-              activeOpacity={0.8}
-            >
-              {Icon ? (
-                <Icon size={16} color="#6b7280" style={styles.chipIcon} />
-              ) : null}
-              <Text style={styles.presetChipText}>{preset}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
       {/* Students — match modal chips; only current learner is active on this step */}
       <View style={styles.formGroup}>
         <Text style={styles.modalLabel}>
@@ -534,25 +518,6 @@ export default function AddSubjectStep({
         </View>
       </View>
 
-      {/* Summary */}
-      <View style={[styles.formGroup, { marginBottom: 16 }]}>
-        <Text style={styles.modalLabel}>Summary (Optional)</Text>
-        <TextInput
-          style={[styles.modalInput, styles.textArea]}
-          value={summary}
-          onChangeText={(t) => {
-            setSummary(t);
-            setError(null);
-          }}
-          placeholder="E.g., Building foundational knowledge on fractions."
-          placeholderTextColor={MUTED}
-          multiline
-          numberOfLines={3}
-          textAlignVertical="top"
-          editable={!isSaving && !adding}
-        />
-      </View>
-
       {/* Syllabus & Lesson Plan accordion */}
       {familyId ? (
         <View style={styles.accordionSection}>
@@ -562,10 +527,7 @@ export default function AddSubjectStep({
             activeOpacity={0.8}
             disabled={isSaving || adding}
           >
-            <Text style={styles.accordionSectionLabel}>
-              Syllabus and Lesson Plan
-              {syllabusLessonCount === 0 ? ' · None' : ` · ${syllabusLessonCount} linked`}
-            </Text>
+            <Text style={styles.accordionSectionLabel}>Syllabus and Lesson Plan</Text>
             {showMaterialsAccordion ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
           </TouchableOpacity>
           {showMaterialsAccordion && (
@@ -583,7 +545,7 @@ export default function AddSubjectStep({
       ) : null}
 
       {/* Planning Preferences accordion */}
-      <View style={[styles.accordionSection, styles.accordionSectionLast]}>
+      <View style={styles.accordionSection}>
         <TouchableOpacity
           onPress={() => setShowPlanningAccordion(!showPlanningAccordion)}
           style={styles.accordionHeader}
@@ -595,10 +557,6 @@ export default function AddSubjectStep({
         </TouchableOpacity>
         {showPlanningAccordion && (
           <View style={styles.accordionContent}>
-            <Text style={styles.planningHint}>
-              {`Changing target here will also change the settings in ${PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}.`}
-            </Text>
-
             <View style={[styles.formGroup, styles.planningDefaultsField]}>
               <Text style={styles.modalLabel}>School year</Text>
               <TouchableOpacity
@@ -679,94 +637,116 @@ export default function AddSubjectStep({
                   </Text>
                 </TouchableOpacity>
               </View>
-              {goalModeForSubject === 'overall' && (
-                <View style={styles.overallGoalsBox}>
-                  {familyPlannerContext ? (
-                    <>
-                      <Text style={styles.overallGoalsText}>
-                        {familyPlannerContext.mode === 'days' && familyPlannerContext.days
-                          ? `Target: ${familyPlannerContext.days} days per year`
-                          : familyPlannerContext.mode === 'hours' && familyPlannerContext.hours
-                            ? `Target: ${familyPlannerContext.hours} hours per year`
-                            : 'No target set'}
-                      </Text>
-                      {planningPrefilledFromFamily ? (
-                        <Text style={styles.prefillNote}>Prefilled from family planning settings.</Text>
-                      ) : null}
-                    </>
-                  ) : (
-                    <Text style={styles.mutedSmall}>Loading…</Text>
-                  )}
+              {goalModeForSubject === 'per_subject' && (
+                <View style={styles.perSubjectPreview}>
+                  <Text style={styles.modalLabel}>Subject</Text>
+                  <View style={styles.subjectNamePreviewChip}>
+                    <Text style={styles.subjectNamePreviewText} numberOfLines={2}>
+                      {nameTrim || 'Type in Subject name above'}
+                    </Text>
+                  </View>
                 </View>
               )}
             </View>
 
-            {goalModeForSubject === 'per_subject' && (
-              <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
-                <Text style={[styles.modalLabel, { marginBottom: 6 }]}>Target</Text>
-                <View style={styles.targetRow}>
-                  {['none', 'days', 'hours'].map((m) => (
-                    <TouchableOpacity
-                      key={m}
-                      style={[styles.targetPill, targetMode === m ? styles.targetPillSelected : styles.targetPillIdle]}
-                      onPress={() => {
-                        setTargetMode(m);
-                        setPlanningPrefilledFromFamily(false);
-                      }}
-                      activeOpacity={0.8}
+            <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
+              <Text style={[styles.modalLabel, { marginBottom: 6 }]}>Target</Text>
+              <View style={styles.targetRow}>
+                {['none', 'days', 'hours'].map((m) => (
+                  <TouchableOpacity
+                    key={m}
+                    style={[styles.targetPill, targetMode === m ? styles.targetPillSelected : styles.targetPillIdle]}
+                    onPress={() => {
+                      setTargetMode(m);
+                      setPlanningPrefilledFromFamily(false);
+                    }}
+                    activeOpacity={0.8}
+                    disabled={isSaving || adding}
+                  >
+                    <Text
+                      style={[
+                        styles.goalPillText,
+                        { color: targetMode === m ? '#3b82f6' : '#6b7280' },
+                      ]}
                     >
-                      <Text
-                        style={[
-                          styles.goalPillText,
-                          { color: targetMode === m ? '#3b82f6' : '#6b7280' },
-                        ]}
-                      >
-                        {m === 'none' ? 'None' : m === 'days' ? 'Days' : 'Hours'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                {targetMode === 'days' && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={[styles.modalLabel, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      value={defaultTargetDays}
-                      onChangeText={(v) => {
-                        setDefaultTargetDays(v);
-                        setPlanningPrefilledFromFamily(false);
-                      }}
-                      placeholder="e.g. 36"
-                      placeholderTextColor={MUTED}
-                      keyboardType="number-pad"
-                      editable={!isSaving && !adding}
-                    />
-                  </View>
-                )}
-                {targetMode === 'hours' && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={[styles.modalLabel, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      value={defaultTargetHours}
-                      onChangeText={(v) => {
-                        setDefaultTargetHours(v);
-                        setPlanningPrefilledFromFamily(false);
-                      }}
-                      placeholder="e.g. 72"
-                      placeholderTextColor={MUTED}
-                      keyboardType="decimal-pad"
-                      editable={!isSaving && !adding}
-                    />
-                  </View>
-                )}
-                {planningPrefilledFromFamily &&
-                  familyPlannerContext &&
-                  (familyPlannerContext.days || familyPlannerContext.hours) && (
-                    <Text style={styles.prefillNote}>Prefilled from family planning settings.</Text>
-                  )}
+                      {m === 'none' ? 'None' : m === 'days' ? 'Days' : 'Hours'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-            )}
+              {targetMode === 'days' && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={[styles.modalLabel, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={defaultTargetDays}
+                    onChangeText={(v) => {
+                      setDefaultTargetDays(v);
+                      setPlanningPrefilledFromFamily(false);
+                    }}
+                    placeholder="e.g. 36"
+                    placeholderTextColor={MUTED}
+                    keyboardType="number-pad"
+                    editable={!isSaving && !adding}
+                  />
+                </View>
+              )}
+              {targetMode === 'hours' && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={[styles.modalLabel, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={defaultTargetHours}
+                    onChangeText={(v) => {
+                      setDefaultTargetHours(v);
+                      setPlanningPrefilledFromFamily(false);
+                    }}
+                    placeholder="e.g. 72"
+                    placeholderTextColor={MUTED}
+                    keyboardType="decimal-pad"
+                    editable={!isSaving && !adding}
+                  />
+                </View>
+              )}
+              {planningPrefilledFromFamily &&
+                familyPlannerContext &&
+                (familyPlannerContext.days || familyPlannerContext.hours) && (
+                  <Text style={styles.prefillNote}>Prefilled from family planning settings.</Text>
+                )}
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* Additional notes — match Add Child accordion */}
+      <View style={[styles.accordionSection, styles.accordionSectionLast]}>
+        <TouchableOpacity
+          onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
+          style={styles.accordionHeader}
+          activeOpacity={0.8}
+          disabled={isSaving || adding}
+        >
+          <Text style={styles.accordionSectionLabel}>Additional notes</Text>
+          {showAdditionalNotesAccordion ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
+        </TouchableOpacity>
+        {showAdditionalNotesAccordion && (
+          <View style={styles.accordionContent}>
+            <View style={styles.accordionNotesField}>
+              <TextInput
+                style={[styles.modalInput, styles.notesTextArea]}
+                placeholder="Add any additional notes about this subject"
+                value={additionalNotes}
+                onChangeText={(t) => {
+                  setAdditionalNotes(t);
+                  setError(null);
+                }}
+                placeholderTextColor={MUTED}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                editable={!isSaving && !adding}
+              />
+            </View>
           </View>
         )}
       </View>
@@ -871,15 +851,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
-  quickPresetsLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#6b7280',
-    marginBottom: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   list: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -971,35 +942,13 @@ const styles = StyleSheet.create({
     minHeight: 80,
     paddingTop: 12,
   },
-  presetsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 20,
+  notesTextArea: {
+    minHeight: 80,
+    paddingTop: 10,
+    textAlignVertical: 'top',
   },
-  presetChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: CHIP_BORDER,
-    backgroundColor: '#ffffff',
-  },
-  chipDisabled: {
-    opacity: 0.6,
-  },
-  chipIcon: {
-    marginRight: 6,
-  },
-  presetChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  accordionNotesField: {
+    marginBottom: 0,
   },
   childrenScroll: {
     marginTop: 6,
@@ -1198,11 +1147,6 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     padding: 12,
   },
-  planningHint: {
-    fontSize: 12,
-    color: MUTED,
-    marginBottom: 8,
-  },
   planningDefaultsField: {
     marginBottom: 8,
   },
@@ -1275,15 +1219,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  overallGoalsBox: {
+  perSubjectPreview: {
     marginTop: 12,
-    padding: 10,
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
   },
-  overallGoalsText: {
-    fontSize: 13,
-    color: '#374151',
+  subjectNamePreviewChip: {
+    marginTop: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    backgroundColor: '#f9fafb',
+  },
+  subjectNamePreviewText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   prefillNote: {
     fontSize: 12,

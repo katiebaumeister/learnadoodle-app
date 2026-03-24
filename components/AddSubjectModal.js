@@ -59,7 +59,7 @@ export default function AddSubjectModal({
 }) {
   const [subjectName, setSubjectName] = useState(defaultSubjectName || '');
   const [subjectNameInputFocused, setSubjectNameInputFocused] = useState(false);
-  const [summary, setSummary] = useState('');
+  const [additionalNotes, setAdditionalNotes] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
   const [schoolYear, setSchoolYear] = useState(getDefaultSchoolYear());
@@ -110,6 +110,7 @@ export default function AddSubjectModal({
     if (!showMaterialsAccordion) setMaterialDropdownSlot(null);
   }, [showMaterialsAccordion]);
   const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
+  const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [showEventMgmtAccordion, setShowEventMgmtAccordion] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [confirmDeleteSubjectName, setConfirmDeleteSubjectName] = useState('');
@@ -137,7 +138,7 @@ export default function AddSubjectModal({
       // If editing a subject, populate fields (but wait for children to load for child IDs)
       if (subject) {
         setSubjectName(subject.name || '');
-        setSummary(subject.summary || '');
+        setAdditionalNotes(subject.notes || subject.summary || '');
         setGrade(subject.grade || GRADE_OPTIONS[0] || '');
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setCredits(subject.credits ? String(subject.credits) : '');
@@ -155,6 +156,7 @@ export default function AddSubjectModal({
         loadSubjectEvents(subject.id);
       } else {
         // Add mode - use defaults
+        setAdditionalNotes('');
         setSchoolYear(getDefaultSchoolYear());
         setSelectedSyllabusMaterialId(null);
         setSelectedLessonPlanMaterialId(null);
@@ -169,7 +171,7 @@ export default function AddSubjectModal({
     } else if (!visible) {
       // Reset form when modal closes
       setSubjectName('');
-      setSummary('');
+      setAdditionalNotes('');
       setSelectedChildIds([]);
       setGrade(GRADE_OPTIONS[0] || '');
       setSchoolYear(getDefaultSchoolYear());
@@ -192,6 +194,7 @@ export default function AddSubjectModal({
       setMarkingAttended(false);
       setShowMaterialsAccordion(false);
       setShowPlanningAccordion(false);
+      setShowAdditionalNotesAccordion(false);
       setShowEventMgmtAccordion(false);
       hasPrefilledFromFamilyRef.current = false;
     }
@@ -666,12 +669,12 @@ export default function AddSubjectModal({
 
       const subjectData = {
         name: subjectName.trim(),
-        summary: summary.trim() || null,
+        summary: null,
         child_id: childIdString, // Now stores semicolon-separated IDs
         grade: grade || null,
         school_year: schoolYear || getDefaultSchoolYear(),
         credits: credits ? parseFloat(credits) : null,
-        notes: null,
+        notes: additionalNotes.trim() || null,
         default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
         default_target_days: goalModeForSubject === 'per_subject' && targetMode === 'days' && defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
         default_target_hours: goalModeForSubject === 'per_subject' && targetMode === 'hours' && defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
@@ -939,24 +942,8 @@ export default function AddSubjectModal({
               </View>
             </View>
 
-            {/* Summary (Optional) */}
-            <View style={[styles.formGroup, { marginBottom: 16 }]}>
-              <Text style={styles.label}>Summary (Optional)</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={summary}
-                onChangeText={setSummary}
-                placeholder="E.g., Building foundational knowledge on fractions."
-                placeholderTextColor="#9ca3af"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-            </View>
-
             {/* Accordion B: Syllabus and lesson plan attachments */}
             {familyId && (() => {
-              const syllabusLessonCount = [selectedSyllabusMaterialId, selectedLessonPlanMaterialId].filter(Boolean).length;
               const syllabusPickerMaterials = materials.filter(materialEligibleForSyllabusPicker);
               const lessonPickerMaterials = materials.filter(materialEligibleForLessonPicker);
               const dropdownSlot = materialDropdownSlot;
@@ -1022,10 +1009,7 @@ export default function AddSubjectModal({
                     style={styles.accordionHeader}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.accordionSectionLabel}>
-                      Syllabus and Lesson Plan
-                      {syllabusLessonCount === 0 ? ' · None' : ` · ${syllabusLessonCount} linked`}
-                    </Text>
+                    <Text style={styles.accordionSectionLabel}>Syllabus and Lesson Plan</Text>
                     {showMaterialsAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
                   </TouchableOpacity>
                   {showMaterialsAccordion && (
@@ -1156,7 +1140,7 @@ export default function AddSubjectModal({
             })()}
 
             {/* Accordion C: Planning preferences */}
-            <View style={[styles.accordionSection, !subject && styles.accordionSectionLastInForm]}>
+            <View style={styles.accordionSection}>
               <TouchableOpacity onPress={() => setShowPlanningAccordion(!showPlanningAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
                 <Text style={styles.accordionSectionLabel}>
                   {PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}
@@ -1165,10 +1149,6 @@ export default function AddSubjectModal({
               </TouchableOpacity>
               {showPlanningAccordion && (
                 <View style={styles.accordionContent}>
-                  <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
-                    {`Changing target here will also change the settings in ${PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}.`}
-                  </Text>
-
                   <View style={[styles.formGroup, styles.planningDefaultsField]}>
                     <Text style={styles.label}>School year</Text>
                     <TouchableOpacity
@@ -1313,6 +1293,34 @@ export default function AddSubjectModal({
                       )}
                     </View>
                   )}
+                </View>
+              )}
+            </View>
+
+            {/* Additional notes — same card pattern as Add Child */}
+            <View style={[styles.accordionSection, !subject && styles.accordionSectionLastInForm]}>
+              <TouchableOpacity
+                onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
+                style={styles.accordionHeader}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.accordionSectionLabel}>Additional notes</Text>
+                {showAdditionalNotesAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
+              </TouchableOpacity>
+              {showAdditionalNotesAccordion && (
+                <View style={styles.accordionContent}>
+                  <View style={styles.formGroup}>
+                    <TextInput
+                      style={[styles.input, styles.textArea]}
+                      placeholder="Add any additional notes about this subject"
+                      value={additionalNotes}
+                      onChangeText={setAdditionalNotes}
+                      placeholderTextColor="#9ca3af"
+                      multiline
+                      numberOfLines={3}
+                      textAlignVertical="top"
+                    />
+                  </View>
                 </View>
               )}
             </View>

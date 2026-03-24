@@ -214,9 +214,8 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
       )}
 
-      {/* Section: Profile — Name, Age, Grade, Avatar (standards live under Learning setup) */}
+      {/* Name, Age, Grade, Avatar (standards live under Learning setup) */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Profile</Text>
         {/* Live preview — when name + avatar, show profile preview */}
         {name.trim() && (
           <View style={styles.previewWrap}>
@@ -994,12 +993,5 @@ const styles = StyleSheet.create({
   avatarImg: {
     width: 48,
     height: 48,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
 });

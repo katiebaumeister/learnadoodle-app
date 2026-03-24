@@ -11,6 +11,7 @@ import {
   getFamilyMembers,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
+import { saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
 import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
@@ -342,7 +343,7 @@ export default function OnboardingModal({
         family_id: fid,
         name: subject.name,
         child_id: subject.child_id,
-        summary: subject.summary ?? null,
+        summary: null,
         grade: subject.grade ?? null,
         credits: subject.credits ?? null,
         notes: subject.notes ?? null,
@@ -378,6 +379,17 @@ export default function OnboardingModal({
             if (patchErr) console.warn('[OnboardingModal] Subject planning fields update:', patchErr);
           } catch (e) {
             console.warn('[OnboardingModal] Subject planning fields update failed:', e);
+          }
+        }
+        if (subject.familyPlannerTargets && fid) {
+          try {
+            const { error: famErr } = await saveFamilyPlannerSettings(fid, subject.familyPlannerTargets);
+            if (famErr) console.warn('[OnboardingModal] Family planner targets:', famErr);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+            }
+          } catch (e) {
+            console.warn('[OnboardingModal] Family planner targets save failed:', e);
           }
         }
         const pickIds = [

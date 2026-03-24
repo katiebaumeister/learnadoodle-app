@@ -166,10 +166,8 @@ export default function SubjectOverviewCard({
     }
   };
 
-  // Get subject intent (only if summary exists)
-  const subjectIntent = subject.summary && subject.summary.trim()
-    ? subject.summary.trim()
-    : null;
+  // Subject blurb: prefer notes, then legacy summary
+  const subjectIntent = subject.notes?.trim() || subject.summary?.trim() || null;
 
   // Get status info
   const status = subject.status || 'not_started';
