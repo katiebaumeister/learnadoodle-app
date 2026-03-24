@@ -1,7 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { ChevronDown, ChevronUp, X, Calculator, BookOpen, Pencil, FlaskConical, Clock, Layers, Plus, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  ScrollView,
+} from 'react-native';
+import { ChevronDown, ChevronUp, Plus, X, Calculator, BookOpen, Pencil, FlaskConical, Clock, Layers, CheckCircle } from 'lucide-react';
 import { getMaterials } from '../../lib/services/materialsClient';
+import { getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
+import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
+import { deriveRoleFromTags, DOCUMENT_ROLES } from '../../lib/docs/roles';
 import AddMaterialModal from '../materials/AddMaterialModal';
 
 const PRESETS = ['Math', 'Reading', 'Writing', 'Science', 'History', 'Other'];
@@ -15,6 +26,39 @@ const PRESET_ICONS = {
 };
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
+const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
+
+function materialEligibleForSyllabusPicker(m) {
+  const r = deriveRoleFromTags(m.tags);
+  return r == null || r === DOCUMENT_ROLES.SYLLABUS;
+}
+
+function materialEligibleForLessonPicker(m) {
+  const r = deriveRoleFromTags(m.tags);
+  return r == null || r === DOCUMENT_ROLES.LESSON_PLAN;
+}
+
+function getSchoolYearOptions() {
+  const options = [];
+  for (let y = 2025; y <= 2040; y++) {
+    options.push(`${y}/${String(y + 1).slice(-2)}`);
+  }
+  return options;
+}
+const SCHOOL_YEAR_OPTIONS = getSchoolYearOptions();
+
+function getDefaultSchoolYear() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  if (month < 5) return `${year}/${String(year + 1).slice(-2)}`;
+  return `${year + 1}/${String(year + 2).slice(-2)}`;
+}
+
+const MUTED = '#9ca3af';
+const CHIP_BORDER = '#e5e7eb';
+const FG = '#111827';
+
 export default function AddSubjectStep({
   familyId = null,
   createdChildren = [],
@@ -25,20 +69,32 @@ export default function AddSubjectStep({
   onContinue,
   isSaving,
 }) {
-  const [customName, setCustomName] = useState('');
-  const [selectedPreset, setSelectedPreset] = useState(null);
+  const [subjectName, setSubjectName] = useState('');
+  const [subjectNameFocused, setSubjectNameFocused] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [grade, setGrade] = useState(GRADE_OPTIONS[0] || 'K');
+  const [credits, setCredits] = useState('');
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [showAdditional, setShowAdditional] = useState(false);
-  const [hoveredPreset, setHoveredPreset] = useState(null);
-  const [summary, setSummary] = useState('');
-  const [grade, setGrade] = useState('');
-  const [credits, setCredits] = useState('');
-  const [notes, setNotes] = useState('');
-  const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
-  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
+  const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
   const [materials, setMaterials] = useState([]);
   const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [materialPickerSlot, setMaterialPickerSlot] = useState(null);
+  const [selectedSyllabusMaterialId, setSelectedSyllabusMaterialId] = useState(null);
+  const [selectedLessonPlanMaterialId, setSelectedLessonPlanMaterialId] = useState(null);
+  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null);
+
+  const [schoolYear, setSchoolYear] = useState(() => getDefaultSchoolYear());
+  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
+  const [goalModeForSubject, setGoalModeForSubject] = useState('overall');
+  const [targetMode, setTargetMode] = useState('none');
+  const [defaultTargetDays, setDefaultTargetDays] = useState('');
+  const [defaultTargetHours, setDefaultTargetHours] = useState('');
+  const [familyPlannerContext, setFamilyPlannerContext] = useState(null);
+  const [planningPrefilledFromFamily, setPlanningPrefilledFromFamily] = useState(false);
+  const hasPrefilledFromFamilyRef = useRef(false);
 
   const currentChild = createdChildren[subjectStepChildIndex] || null;
   const childName = currentChild?.name || 'Child';
@@ -46,46 +102,160 @@ export default function AddSubjectStep({
   const nextChildName = !isLastChild ? createdChildren[subjectStepChildIndex + 1]?.name : null;
 
   useEffect(() => {
-    if (!showAdditional || !familyId) return;
+    if (!showMaterialsAccordion) setMaterialPickerSlot(null);
+  }, [showMaterialsAccordion]);
+
+  useEffect(() => {
+    setSubjectName('');
+    setSummary('');
+    setCredits('');
+    setGrade(GRADE_OPTIONS[0] || 'K');
+    setError(null);
+    setSubjectNameFocused(false);
+    setShowMaterialsAccordion(false);
+    setShowPlanningAccordion(false);
+    setMaterialPickerSlot(null);
+    setSelectedSyllabusMaterialId(null);
+    setSelectedLessonPlanMaterialId(null);
+    setSchoolYear(getDefaultSchoolYear());
+    setShowSchoolYearDropdown(false);
+    setGoalModeForSubject(
+      familyPlannerContext?.targetScope === 'per_subject' ? 'per_subject' : 'overall'
+    );
+    setTargetMode('none');
+    setDefaultTargetDays('');
+    setDefaultTargetHours('');
+    setPlanningPrefilledFromFamily(false);
+    hasPrefilledFromFamilyRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset form when learner step changes; read latest planner context from closure
+  }, [subjectStepChildIndex]);
+
+  useEffect(() => {
+    if (!familyPlannerContext) return;
+    setGoalModeForSubject(familyPlannerContext.targetScope === 'per_subject' ? 'per_subject' : 'overall');
+    setPlanningPrefilledFromFamily(true);
+  }, [familyPlannerContext]);
+
+  useEffect(() => {
+    if (!familyId) return;
     let cancelled = false;
     setLoadingMaterials(true);
     getMaterials(familyId, {}, null)
-      .then((list) => { if (!cancelled) setMaterials(list || []); })
-      .catch(() => { if (!cancelled) setMaterials([]); })
-      .finally(() => { if (!cancelled) setLoadingMaterials(false); });
-    return () => { cancelled = true; };
-  }, [showAdditional, familyId]);
+      .then((list) => {
+        if (!cancelled) setMaterials(list || []);
+      })
+      .catch(() => {
+        if (!cancelled) setMaterials([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingMaterials(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId]);
 
-  const nameToAdd = selectedPreset === 'Other' ? customName.trim() : (selectedPreset || customName.trim());
-  const canAdd = nameToAdd.length > 0 && currentChild?.id;
-  const canContinue = subjectsForCurrentChild.length >= 1 || nameToAdd.length > 0;
+  useEffect(() => {
+    if (!familyId) return;
+    let cancelled = false;
+    getFamilyPlannerSettings(familyId).then(({ data: s }) => {
+      if (cancelled) return;
+      if (!s) {
+        setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
+        return;
+      }
+      const scope = s.target_scope || 'overall';
+      const mode =
+        s.default_constraint_mode ||
+        (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
+      const days = s.default_target_days != null ? String(s.default_target_days) : '';
+      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId]);
 
-  const addSubjectByName = async (name) => {
-    if (!name?.trim() || !currentChild?.id) return;
-    const nameNorm = name.trim().toLowerCase();
-    const alreadyAdded = (subjectsForCurrentChild || []).some((s) => (s.name || '').trim().toLowerCase() === nameNorm);
+  useEffect(() => {
+    if (!familyPlannerContext || goalModeForSubject !== 'per_subject') return;
+    if (defaultTargetDays !== '' || defaultTargetHours !== '') return;
+    if (hasPrefilledFromFamilyRef.current) return;
+    hasPrefilledFromFamilyRef.current = true;
+    setTargetMode(familyPlannerContext.mode);
+    setDefaultTargetDays(familyPlannerContext.days);
+    setDefaultTargetHours(familyPlannerContext.hours);
+  }, [familyPlannerContext, goalModeForSubject, defaultTargetDays, defaultTargetHours]);
+
+  const nameTrim = subjectName.trim();
+  const canAdd = nameTrim.length > 0 && currentChild?.id;
+  const canContinue = subjectsForCurrentChild.length >= 1 || nameTrim.length > 0;
+
+  const setSlotSelection = (slot, materialId) => {
+    if (slot === MATERIAL_SLOT.SYLLABUS) {
+      setSelectedSyllabusMaterialId(materialId);
+      if (materialId) setSelectedLessonPlanMaterialId((prev) => (prev === materialId ? null : prev));
+    } else {
+      setSelectedLessonPlanMaterialId(materialId);
+      if (materialId) setSelectedSyllabusMaterialId((prev) => (prev === materialId ? null : prev));
+    }
+  };
+
+  const buildPayload = () => {
+    const creditsVal = credits.trim() ? parseFloat(credits.trim()) : null;
+    return {
+      name: nameTrim,
+      child_id: currentChild.id,
+      summary: summary.trim() || null,
+      grade: grade || null,
+      credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
+      notes: null,
+      school_year: schoolYear || getDefaultSchoolYear(),
+      default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
+      default_target_days:
+        goalModeForSubject === 'per_subject' && targetMode === 'days' && defaultTargetDays.trim()
+          ? parseInt(defaultTargetDays, 10) || null
+          : null,
+      default_target_hours:
+        goalModeForSubject === 'per_subject' && targetMode === 'hours' && defaultTargetHours.trim()
+          ? parseFloat(defaultTargetHours) || null
+          : null,
+      syllabus_material_id: selectedSyllabusMaterialId,
+      lesson_plan_material_id: selectedLessonPlanMaterialId,
+    };
+  };
+
+  const resetAfterAdd = () => {
+    setSubjectName('');
+    setSummary('');
+    setCredits('');
+    setGrade(GRADE_OPTIONS[0] || 'K');
+    setSelectedSyllabusMaterialId(null);
+    setSelectedLessonPlanMaterialId(null);
+    setMaterialPickerSlot(null);
+    setShowMaterialsAccordion(false);
+    setShowPlanningAccordion(false);
+    setSchoolYear(getDefaultSchoolYear());
+    setGoalModeForSubject(familyPlannerContext?.targetScope === 'per_subject' ? 'per_subject' : 'overall');
+    setTargetMode('none');
+    setDefaultTargetDays('');
+    setDefaultTargetHours('');
+    setPlanningPrefilledFromFamily(true);
+    hasPrefilledFromFamilyRef.current = false;
+  };
+
+  const addSubjectByName = async () => {
+    if (!nameTrim || !currentChild?.id) return;
+    const nameNorm = nameTrim.toLowerCase();
+    const alreadyAdded = (subjectsForCurrentChild || []).some(
+      (s) => (s.name || '').trim().toLowerCase() === nameNorm
+    );
     if (alreadyAdded) return;
     setError(null);
     setAdding(true);
     try {
-      const creditsVal = credits.trim() ? parseFloat(credits.trim()) : null;
-      await onAddSubject({
-        name: name.trim(),
-        child_id: currentChild.id,
-        summary: summary.trim() || null,
-        grade: grade || null,
-        credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
-        notes: notes.trim() || null,
-        material_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : undefined,
-      });
-      setSelectedPreset(null);
-      setCustomName('');
-      setSummary('');
-      setGrade('');
-      setCredits('');
-      setNotes('');
-      setAttachedMaterialIds([]);
-      setShowAdditional(false);
+      await onAddSubject(buildPayload());
+      resetAfterAdd();
     } catch (e) {
       setError(e?.message || 'Failed to add subject.');
     } finally {
@@ -93,57 +263,125 @@ export default function AddSubjectStep({
     }
   };
 
-  const handlePresetPress = (preset) => {
-    if (preset === 'Other') {
-      setSelectedPreset('Other');
-      setCustomName('');
-      setError(null);
-      return;
-    }
-    addSubjectByName(preset);
-  };
-
-  const handleAddAnother = async () => {
-    const name = nameToAdd;
-    if (!name) {
-      setError('Choose a subject or type a name.');
-      return;
-    }
-    await addSubjectByName(name);
-  };
-
   const handleContinue = () => {
     setError(null);
-    if (nameToAdd && currentChild?.id) {
-      const creditsVal = credits.trim() ? parseFloat(credits.trim()) : null;
-      const payload = {
-        name: nameToAdd,
-        child_id: currentChild.id,
-        summary: summary.trim() || null,
-        grade: grade || null,
-        credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
-        notes: notes.trim() || null,
-        material_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : undefined,
-      };
-      setSelectedPreset(null);
-      setCustomName('');
-      setSummary('');
-      setGrade('');
-      setCredits('');
-      setNotes('');
-      setAttachedMaterialIds([]);
-      setShowAdditional(false);
+    if (nameTrim && currentChild?.id) {
+      const nameNorm = nameTrim.toLowerCase();
+      const alreadyAdded = (subjectsForCurrentChild || []).some(
+        (s) => (s.name || '').trim().toLowerCase() === nameNorm
+      );
+      if (alreadyAdded) {
+        setError(`"${nameTrim}" is already added for ${childName}.`);
+        return;
+      }
+      const payload = buildPayload();
       onContinue(payload);
+      resetAfterAdd();
       return;
     }
     if (subjectsForCurrentChild.length >= 1) {
       onContinue();
       return;
     }
-    setError(`Choose or type a subject for ${childName}, or add one above.`);
+    setError(`Enter a subject name for ${childName}, or add one above.`);
+  };
+
+  const handleAddAnother = async () => {
+    if (!nameTrim) {
+      setError('Enter a subject name.');
+      return;
+    }
+    await addSubjectByName();
   };
 
   const friendlyErrorMessage = 'UH OH. SOMETHING WENT WRONG. PLEASE TRY REFRESHING OR CONTACT US: CONTACT@LEARNADOODLE.COM';
+
+  const syllabusLessonCount = [selectedSyllabusMaterialId, selectedLessonPlanMaterialId].filter(Boolean).length;
+  const syllabusPickerMaterials = materials.filter(materialEligibleForSyllabusPicker);
+  const lessonPickerMaterials = materials.filter(materialEligibleForLessonPicker);
+
+  const renderMaterialRow = (slot, sectionLabel, addLabel, selectedId) => (
+    <View style={[styles.formGroup, { marginBottom: 14 }]}>
+      <Text style={styles.modalLabel}>{sectionLabel}</Text>
+      <View style={styles.materialSelectorContainer}>
+        <TouchableOpacity
+          style={styles.materialSelector}
+          onPress={() => setMaterialPickerSlot((prev) => (prev === slot ? null : slot))}
+        >
+          <Text
+            style={[styles.materialSelectorText, !selectedId && styles.materialSelectorPlaceholder]}
+            numberOfLines={1}
+          >
+            {selectedId
+              ? materials.find((m) => m.id === selectedId)?.title ||
+                materials.find((m) => m.id === selectedId)?.provider_name ||
+                'Select attachment...'
+              : 'Select attachment...'}
+          </Text>
+          <ChevronDown size={16} color="#6b7280" />
+        </TouchableOpacity>
+        {selectedId ? (
+          <TouchableOpacity style={styles.clearMaterialButton} onPress={() => setSlotSelection(slot, null)}>
+            <Text style={styles.clearMaterialText}>Clear</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          style={styles.addMaterialButton}
+          onPress={() => {
+            setMaterialPickerSlot(null);
+            setAddMaterialDefaultRole(slot === MATERIAL_SLOT.SYLLABUS ? 'syllabus' : 'lesson_plan');
+            setShowAddMaterialModal(true);
+          }}
+        >
+          <Plus size={14} color="#B8D7F9" />
+          <Text style={styles.addMaterialText}>{addLabel}</Text>
+        </TouchableOpacity>
+      </View>
+      {materialPickerSlot === slot && (
+        <View style={styles.inlineMaterialList}>
+          {loadingMaterials ? (
+            <Text style={styles.mutedSmall}>Loading…</Text>
+          ) : (slot === MATERIAL_SLOT.SYLLABUS ? syllabusPickerMaterials : lessonPickerMaterials).length === 0 ? (
+            <Text style={styles.mutedSmall}>No materials yet</Text>
+          ) : (
+            <ScrollView style={styles.inlineMaterialScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={styles.inlineMaterialOption}
+                onPress={() => {
+                  setSlotSelection(slot, null);
+                  setMaterialPickerSlot(null);
+                }}
+              >
+                <Text style={styles.inlineMaterialOptionText}>None</Text>
+              </TouchableOpacity>
+              {(slot === MATERIAL_SLOT.SYLLABUS ? syllabusPickerMaterials : lessonPickerMaterials).map((material) => (
+                <TouchableOpacity
+                  key={material.id}
+                  style={[
+                    styles.inlineMaterialOption,
+                    selectedId === material.id && styles.inlineMaterialOptionSelected,
+                  ]}
+                  onPress={() => {
+                    setSlotSelection(slot, material.id);
+                    setMaterialPickerSlot(null);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.inlineMaterialOptionText,
+                      selectedId === material.id && styles.inlineMaterialOptionTextSelected,
+                    ]}
+                  >
+                    {material.title || material.provider_name || 'Untitled'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      )}
+    </View>
+  );
 
   if (!currentChild) {
     return (
@@ -155,10 +393,9 @@ export default function AddSubjectStep({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.sectionHeading}>
-        What is {childName} learning?
-      </Text>
+      <Text style={styles.sectionHeading}>What is {childName} learning?</Text>
       <Text style={styles.supportingText}>You can change these anytime.</Text>
+
       {subjectsForCurrentChild.length > 0 && (
         <View style={styles.list}>
           {subjectsForCurrentChild.map((s) => (
@@ -178,212 +415,391 @@ export default function AddSubjectStep({
           ))}
         </View>
       )}
-      <Text style={styles.subjectsTitle}>Subjects <Text style={styles.requiredAsterisk}>*</Text></Text>
+
+      {/* Subject Name — match AddSubjectModal */}
+      <View style={styles.formGroup}>
+        <Text style={styles.subjectNameLabel}>
+          Subject Name <Text style={styles.required}>*</Text>
+        </Text>
+        <TextInput
+          style={[styles.subjectNameInput, subjectNameFocused && styles.subjectNameInputFocused]}
+          value={subjectName}
+          onChangeText={(t) => {
+            setSubjectName(t);
+            setError(null);
+          }}
+          placeholder="e.g., Algebra I, World History, Spanish"
+          placeholderTextColor={MUTED}
+          onFocus={() => setSubjectNameFocused(true)}
+          onBlur={() => setSubjectNameFocused(false)}
+          editable={!isSaving && !adding}
+        />
+      </View>
+
+      {/* Quick presets — fill subject name only */}
+      <Text style={styles.quickPresetsLabel}>Quick add</Text>
       <View style={styles.presetsRow}>
         {PRESETS.map((preset) => {
-          const selected = selectedPreset === preset;
-          const hovered = hoveredPreset === preset;
           const Icon = PRESET_ICONS[preset];
           return (
             <TouchableOpacity
               key={preset}
-              style={[
-                styles.presetChip,
-                selected && styles.presetChipSelected,
-                Platform.OS === 'web' && !selected && hovered && styles.presetChipHovered,
-                (isSaving || adding) && styles.chipDisabled,
-              ]}
-              onPress={() => handlePresetPress(preset)}
-              onMouseEnter={Platform.OS === 'web' ? () => setHoveredPreset(preset) : undefined}
-              onMouseLeave={Platform.OS === 'web' ? () => setHoveredPreset(null) : undefined}
+              style={[styles.presetChip, (isSaving || adding) && styles.chipDisabled]}
+              onPress={() => {
+                setSubjectName(preset === 'Other' ? '' : preset);
+                setError(null);
+              }}
               disabled={isSaving || adding}
               activeOpacity={0.8}
             >
               {Icon ? (
-                <Icon size={16} color={selected ? '#6BB3E8' : '#6b7280'} style={styles.chipIcon} />
+                <Icon size={16} color="#6b7280" style={styles.chipIcon} />
               ) : null}
-              <Text style={[styles.presetChipText, selected && styles.presetChipTextSelected]}>
-                {preset}
-              </Text>
+              <Text style={styles.presetChipText}>{preset}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
-      {selectedPreset === 'Other' && (
-        <View style={styles.customSubjectRow}>
-          <TextInput
-            style={[styles.subjectNameInput, styles.customSubjectInput]}
-            value={customName}
-            onChangeText={(t) => { setCustomName(t); setError(null); }}
-            placeholder="Add a custom subject (Art, Piano, Robotics…)"
-            placeholderTextColor="#9CA3AF"
-            onSubmitEditing={() => {
-              const name = customName.trim();
-              if (name && !adding && !isSaving) addSubjectByName(name);
-            }}
-            returnKeyType="done"
-          />
-          <TouchableOpacity
-            onPress={() => {
-              const name = customName.trim();
-              if (!name || adding || isSaving) return;
-              addSubjectByName(name);
-            }}
-            style={[styles.otherConfirmButton, (!customName.trim() || adding || isSaving) && styles.otherConfirmButtonDisabled]}
-            disabled={!customName.trim() || adding || isSaving}
-          >
-            <Check size={20} color={customName.trim() && !adding && !isSaving ? '#ffffff' : '#9CA3AF'} strokeWidth={2.5} />
-            <Text style={[styles.otherConfirmButtonText, (!customName.trim() || adding || isSaving) && styles.otherConfirmButtonTextDisabled]}>Add</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
-      <TouchableOpacity
-        style={styles.additionalToggle}
-        onPress={() => setShowAdditional((v) => !v)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.additionalToggleText}>Show additional fields</Text>
-        <View style={styles.additionalToggleIcon}>
-          {showAdditional ? <ChevronUp size={16} color="#374151" /> : <ChevronDown size={16} color="#374151" />}
-        </View>
-      </TouchableOpacity>
-
-      {showAdditional && (
-        <View style={styles.additionalSection}>
-          <Text style={styles.fieldLabel}>Summary</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={summary}
-            onChangeText={(t) => { setSummary(t); setError(null); }}
-            placeholder="E.g., Building foundational knowledge on fractions."
-            placeholderTextColor="#9CA3AF"
-          />
-
-          <Text style={styles.fieldLabel}>Grade level</Text>
-          <View style={styles.chipsWrap}>
-            {GRADE_OPTIONS.map((g) => (
+      {/* Students — match modal chips; only current learner is active on this step */}
+      <View style={styles.formGroup}>
+        <Text style={styles.modalLabel}>
+          Students<Text style={styles.required}> *</Text>
+        </Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.childrenScroll}>
+          {createdChildren.map((c) => {
+            const isCurrent = c.id === currentChild.id;
+            const isSelected = isCurrent;
+            return (
               <TouchableOpacity
-                key={g}
+                key={c.id}
                 style={[
-                  styles.gradeChip,
-                  grade === g && styles.gradeChipSelected,
-                  (isSaving || adding) && styles.chipDisabled,
+                  styles.childChip,
+                  isSelected && styles.childChipSelected,
+                  !isCurrent && styles.childChipInactive,
                 ]}
-                onPress={() => { setGrade(grade === g ? '' : g); setError(null); }}
-                disabled={isSaving || adding}
-                activeOpacity={0.8}
+                disabled={!isCurrent}
+                activeOpacity={isCurrent ? 0.8 : 1}
               >
-                <Text style={[styles.gradeChipText, grade === g && styles.gradeChipTextSelected]}>{g}</Text>
+                <Text style={[styles.childChipText, isSelected && styles.childChipTextSelected]}>{c.name}</Text>
               </TouchableOpacity>
-            ))}
-          </View>
+            );
+          })}
+        </ScrollView>
+        {!createdChildren.some((c) => c.id === currentChild.id) ? null : (
+          <Text style={styles.studentsHint}>Adding subjects for {childName} on this step.</Text>
+        )}
+      </View>
 
-          <Text style={styles.fieldLabel}>Credits</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={credits}
-            onChangeText={(t) => { setCredits(t.replace(/[^\d.]/g, '').slice(0, 6)); setError(null); }}
-            placeholder="e.g. 0.5, 1.0"
-            placeholderTextColor="#9CA3AF"
-            keyboardType="decimal-pad"
-          />
-
-          <Text style={styles.fieldLabel}>Notes</Text>
-          <TextInput
-            style={[styles.modalInput, styles.textArea]}
-            value={notes}
-            onChangeText={(t) => { setNotes(t); setError(null); }}
-            placeholder="Add any additional notes about this subject"
-            placeholderTextColor="#9CA3AF"
-            multiline
-            numberOfLines={3}
-          />
-
-          {familyId && (
-            <>
-              <Text style={styles.fieldLabel}>Material (optional)</Text>
-              <View style={styles.materialRow}>
-                <View style={styles.materialSelectedWrap}>
-                  {attachedMaterialIds.length === 0 ? (
-                    <Text style={styles.materialPlaceholder}>No material attached</Text>
-                  ) : (
-                    materials
-                      .filter((m) => attachedMaterialIds.includes(m.id))
-                      .map((m) => (
-                        <View key={m.id} style={styles.materialChip}>
-                          <Text style={styles.materialChipText} numberOfLines={1}>
-                            {m.title || m.provider_name || 'Material'}
-                          </Text>
-                          <TouchableOpacity
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            onPress={() => setAttachedMaterialIds((prev) => prev.filter((id) => id !== m.id))}
-                            style={styles.materialChipClear}
-                            disabled={isSaving || adding}
-                          >
-                            <X size={14} color="#6B7280" />
-                          </TouchableOpacity>
-                        </View>
-                      ))
-                  )}
-                </View>
+      {/* Grade + Credits row */}
+      <View style={styles.formGroup}>
+        <View style={styles.gradeCreditsRow}>
+          <View style={styles.gradeCreditsCol}>
+            <Text style={styles.modalLabel}>Grade Level (Optional)</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.gradeScroll}>
+              {GRADE_OPTIONS.map((g) => (
                 <TouchableOpacity
-                  style={styles.addMaterialBtn}
-                  onPress={() => setShowAddMaterialModal(true)}
+                  key={g}
+                  style={[styles.gradeChip, grade === g && styles.gradeChipSelected]}
+                  onPress={() => {
+                    setGrade(g);
+                    setError(null);
+                  }}
                   disabled={isSaving || adding}
                 >
-                  <Plus size={14} color="#6BB3E8" />
-                  <Text style={styles.addMaterialBtnText}>Add material</Text>
+                  <Text style={[styles.gradeChipText, grade === g && styles.gradeChipTextSelected]}>{g}</Text>
                 </TouchableOpacity>
-              </View>
-              {loadingMaterials ? (
-                <Text style={styles.materialPlaceholder}>Loading materials…</Text>
-              ) : materials.length > 0 ? (
-                <View style={styles.materialLibraryWrap}>
-                  <Text style={styles.materialLibraryLabel}>Select from library</Text>
-                  <View style={styles.materialLibraryList}>
-                    {materials
-                      .filter((m) => !attachedMaterialIds.includes(m.id))
-                      .slice(0, 8)
-                      .map((m) => (
-                        <TouchableOpacity
-                          key={m.id}
-                          style={[styles.libraryChip, (isSaving || adding) && styles.chipDisabled]}
-                          onPress={() => setAttachedMaterialIds((prev) => [...prev, m.id])}
-                          disabled={isSaving || adding}
-                        >
-                          <Text style={styles.libraryChipText} numberOfLines={1}>
-                            {m.title || m.provider_name || 'Material'}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                  </View>
-                </View>
-              ) : null}
-            </>
+              ))}
+            </ScrollView>
+          </View>
+          <View style={styles.creditsCol}>
+            <Text style={styles.modalLabel}>Credits (Optional)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={credits}
+              onChangeText={(text) => {
+                const numericValue = text.replace(/[^0-9.]/g, '');
+                const parts = numericValue.split('.');
+                const filteredValue =
+                  parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : numericValue;
+                setCredits(filteredValue.slice(0, 8));
+                setError(null);
+              }}
+              placeholder="e.g., 0.5, 1.0, 1.5"
+              placeholderTextColor={MUTED}
+              keyboardType="numeric"
+              editable={!isSaving && !adding}
+            />
+          </View>
+        </View>
+      </View>
+
+      {/* Summary */}
+      <View style={[styles.formGroup, { marginBottom: 16 }]}>
+        <Text style={styles.modalLabel}>Summary (Optional)</Text>
+        <TextInput
+          style={[styles.modalInput, styles.textArea]}
+          value={summary}
+          onChangeText={(t) => {
+            setSummary(t);
+            setError(null);
+          }}
+          placeholder="E.g., Building foundational knowledge on fractions."
+          placeholderTextColor={MUTED}
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+          editable={!isSaving && !adding}
+        />
+      </View>
+
+      {/* Syllabus & Lesson Plan accordion */}
+      {familyId ? (
+        <View style={styles.accordionSection}>
+          <TouchableOpacity
+            onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
+            style={styles.accordionHeader}
+            activeOpacity={0.8}
+            disabled={isSaving || adding}
+          >
+            <Text style={styles.accordionSectionLabel}>
+              Syllabus and Lesson Plan
+              {syllabusLessonCount === 0 ? ' · None' : ` · ${syllabusLessonCount} linked`}
+            </Text>
+            {showMaterialsAccordion ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
+          </TouchableOpacity>
+          {showMaterialsAccordion && (
+            <View style={styles.accordionContent}>
+              {renderMaterialRow(MATERIAL_SLOT.SYLLABUS, 'Syllabus', 'Add syllabus', selectedSyllabusMaterialId)}
+              {renderMaterialRow(
+                MATERIAL_SLOT.LESSON_PLAN,
+                'Lesson plan',
+                'Add lesson plan',
+                selectedLessonPlanMaterialId
+              )}
+            </View>
           )}
         </View>
-      )}
+      ) : null}
+
+      {/* Planning Preferences accordion */}
+      <View style={[styles.accordionSection, styles.accordionSectionLast]}>
+        <TouchableOpacity
+          onPress={() => setShowPlanningAccordion(!showPlanningAccordion)}
+          style={styles.accordionHeader}
+          activeOpacity={0.8}
+          disabled={isSaving || adding}
+        >
+          <Text style={styles.accordionSectionLabel}>{PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}</Text>
+          {showPlanningAccordion ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
+        </TouchableOpacity>
+        {showPlanningAccordion && (
+          <View style={styles.accordionContent}>
+            <Text style={styles.planningHint}>
+              {`Changing target here will also change the settings in ${PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}.`}
+            </Text>
+
+            <View style={[styles.formGroup, styles.planningDefaultsField]}>
+              <Text style={styles.modalLabel}>School year</Text>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowSchoolYearDropdown(!showSchoolYearDropdown)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
+                <ChevronDown size={18} color="#6b7280" />
+              </TouchableOpacity>
+              {showSchoolYearDropdown && (
+                <View style={styles.dropdownList}>
+                  <ScrollView style={styles.dropdownScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {SCHOOL_YEAR_OPTIONS.map((opt) => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
+                        onPress={() => {
+                          setSchoolYear(opt);
+                          setShowSchoolYearDropdown(false);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}
+                        >
+                          {opt}
+                        </Text>
+                        {opt === schoolYear ? <CheckCircle size={16} color="#3b82f6" /> : null}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+
+            <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
+              <Text style={[styles.modalLabel, { marginBottom: 6 }]}>Learning goals</Text>
+              <View style={styles.learningGoalsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.goalPill,
+                    goalModeForSubject === 'overall' ? styles.goalPillSelected : styles.goalPillIdle,
+                  ]}
+                  onPress={() => {
+                    setGoalModeForSubject('overall');
+                    setPlanningPrefilledFromFamily(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.goalPillText,
+                      { color: goalModeForSubject === 'overall' ? '#3b82f6' : '#9ca3af' },
+                    ]}
+                  >
+                    Overall
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.goalPill,
+                    goalModeForSubject === 'per_subject' ? styles.goalPillSelected : styles.goalPillIdle,
+                  ]}
+                  onPress={() => {
+                    setGoalModeForSubject('per_subject');
+                    setPlanningPrefilledFromFamily(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.goalPillText,
+                      { color: goalModeForSubject === 'per_subject' ? '#3b82f6' : '#9ca3af' },
+                    ]}
+                  >
+                    Per subject
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {goalModeForSubject === 'overall' && (
+                <View style={styles.overallGoalsBox}>
+                  {familyPlannerContext ? (
+                    <>
+                      <Text style={styles.overallGoalsText}>
+                        {familyPlannerContext.mode === 'days' && familyPlannerContext.days
+                          ? `Target: ${familyPlannerContext.days} days per year`
+                          : familyPlannerContext.mode === 'hours' && familyPlannerContext.hours
+                            ? `Target: ${familyPlannerContext.hours} hours per year`
+                            : 'No target set'}
+                      </Text>
+                      {planningPrefilledFromFamily ? (
+                        <Text style={styles.prefillNote}>Prefilled from family planning settings.</Text>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Text style={styles.mutedSmall}>Loading…</Text>
+                  )}
+                </View>
+              )}
+            </View>
+
+            {goalModeForSubject === 'per_subject' && (
+              <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
+                <Text style={[styles.modalLabel, { marginBottom: 6 }]}>Target</Text>
+                <View style={styles.targetRow}>
+                  {['none', 'days', 'hours'].map((m) => (
+                    <TouchableOpacity
+                      key={m}
+                      style={[styles.targetPill, targetMode === m ? styles.targetPillSelected : styles.targetPillIdle]}
+                      onPress={() => {
+                        setTargetMode(m);
+                        setPlanningPrefilledFromFamily(false);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.goalPillText,
+                          { color: targetMode === m ? '#3b82f6' : '#6b7280' },
+                        ]}
+                      >
+                        {m === 'none' ? 'None' : m === 'days' ? 'Days' : 'Hours'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {targetMode === 'days' && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={[styles.modalLabel, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      value={defaultTargetDays}
+                      onChangeText={(v) => {
+                        setDefaultTargetDays(v);
+                        setPlanningPrefilledFromFamily(false);
+                      }}
+                      placeholder="e.g. 36"
+                      placeholderTextColor={MUTED}
+                      keyboardType="number-pad"
+                      editable={!isSaving && !adding}
+                    />
+                  </View>
+                )}
+                {targetMode === 'hours' && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={[styles.modalLabel, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      value={defaultTargetHours}
+                      onChangeText={(v) => {
+                        setDefaultTargetHours(v);
+                        setPlanningPrefilledFromFamily(false);
+                      }}
+                      placeholder="e.g. 72"
+                      placeholderTextColor={MUTED}
+                      keyboardType="decimal-pad"
+                      editable={!isSaving && !adding}
+                    />
+                  </View>
+                )}
+                {planningPrefilledFromFamily &&
+                  familyPlannerContext &&
+                  (familyPlannerContext.days || familyPlannerContext.hours) && (
+                    <Text style={styles.prefillNote}>Prefilled from family planning settings.</Text>
+                  )}
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+
       {familyId && (
         <AddMaterialModal
           visible={showAddMaterialModal}
-          onClose={() => setShowAddMaterialModal(false)}
+          onClose={() => {
+            setShowAddMaterialModal(false);
+            setAddMaterialDefaultRole(null);
+          }}
           onSaved={async (detail) => {
-            if (detail?.materialId) {
-              setAttachedMaterialIds((prev) => (prev.includes(detail.materialId) ? prev : [...prev, detail.materialId]));
-              if (familyId) {
-                try {
-                  const list = await getMaterials(familyId, {}, null);
-                  setMaterials(list || []);
-                } catch (_) {}
-              }
+            if (detail?.materialId && addMaterialDefaultRole) {
+              const slot =
+                addMaterialDefaultRole === 'syllabus' ? MATERIAL_SLOT.SYLLABUS : MATERIAL_SLOT.LESSON_PLAN;
+              setSlotSelection(slot, detail.materialId);
+            }
+            if (familyId) {
+              try {
+                const list = await getMaterials(familyId, {}, null);
+                setMaterials(list || []);
+              } catch (_) {}
             }
             setShowAddMaterialModal(false);
+            setAddMaterialDefaultRole(null);
           }}
           familyId={familyId}
-          children={currentChild ? [{ id: currentChild.id, first_name: currentChild.name }] : []}
+          children={createdChildren.map((c) => ({ id: c.id, first_name: c.name, name: c.name }))}
+          defaultRole={addMaterialDefaultRole ?? null}
+          defaultChildIds={currentChild ? [currentChild.id] : []}
         />
       )}
+
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={styles.footer}>
@@ -455,16 +871,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
-  subjectsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'rgba(15,23,42,0.8)',
+  quickPresetsLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
     marginBottom: 8,
-    textAlign: 'left',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
-  requiredAsterisk: {
-    color: '#DC2626',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   list: {
     flexDirection: 'row',
@@ -494,11 +908,74 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  formGroup: {
+    marginBottom: 20,
+  },
+  subjectNameLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectNameInput: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: FG,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    borderRadius: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+      transition: 'border-color 0.15s ease',
+    }),
+  },
+  subjectNameInputFocused: {
+    borderColor: '#6BB3E8',
+    borderWidth: 1.5,
+  },
+  required: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    color: '#0f172a',
+    backgroundColor: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  textArea: {
+    minHeight: 80,
+    paddingTop: 12,
+  },
   presetsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   presetChip: {
     flexDirection: 'row',
@@ -507,16 +984,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: CHIP_BORDER,
     backgroundColor: '#ffffff',
-  },
-  presetChipHovered: {
-    borderColor: '#d1d5db',
-    backgroundColor: '#f9fafb',
-  },
-  presetChipSelected: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   chipDisabled: {
     opacity: 0.6,
@@ -532,58 +1001,59 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  presetChipTextSelected: {
+  childrenScroll: {
+    marginTop: 6,
+  },
+  childChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 6,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+  },
+  childChipSelected: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
+  },
+  childChipInactive: {
+    opacity: 0.45,
+  },
+  childChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  childChipTextSelected: {
     color: '#6BB3E8',
     fontWeight: '700',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 4,
-    marginTop: 16,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  studentsHint: {
+    fontSize: 12,
+    color: MUTED,
+    marginTop: 8,
+    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
-  subjectNameInput: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 6,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    minHeight: 48,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      outlineStyle: 'none',
-    }),
-  },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    minHeight: 44,
-    fontSize: 14,
-    color: '#0f172a',
-    backgroundColor: '#ffffff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  chipsWrap: {
+  gradeCreditsRow: {
     flexDirection: 'row',
+    gap: 24,
+    alignItems: 'flex-start',
     flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 4,
+  },
+  gradeCreditsCol: {
+    flex: 1,
+    minWidth: 200,
+  },
+  creditsCol: {
+    width: 160,
+    minWidth: 120,
+  },
+  gradeScroll: {
+    marginTop: 6,
   },
   gradeChip: {
     paddingHorizontal: 12,
@@ -591,7 +1061,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: CHIP_BORDER,
+    marginRight: 6,
   },
   gradeChipSelected: {
     borderColor: '#6BB3E8',
@@ -608,63 +1079,237 @@ const styles = StyleSheet.create({
   gradeChipTextSelected: {
     color: '#6BB3E8',
     fontWeight: '700',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
-  libraryChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+  accordionSection: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-    maxWidth: '100%',
+    borderColor: CHIP_BORDER,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: '#f9fafb',
   },
-  libraryChipText: {
-    fontSize: 12,
-    color: '#6b7280',
+  accordionSectionLast: {
+    marginBottom: 4,
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  accordionContent: {
+    marginTop: 12,
+    paddingTop: 8,
+  },
+  accordionSectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    flex: 1,
+    paddingRight: 8,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  customSubjectRow: {
+  materialSelectorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 10,
+    marginTop: 8,
+    flexWrap: 'wrap',
   },
-  customSubjectInput: {
+  materialSelector: {
     flex: 1,
-    marginTop: 0,
-  },
-  otherConfirmButton: {
+    minWidth: 120,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    minHeight: 48,
-    borderRadius: 12,
+    justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2563eb',
-    backgroundColor: '#2563eb',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: '#ffffff',
   },
-  otherConfirmButtonDisabled: {
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F3F4F6',
-    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  materialSelectorText: {
+    fontSize: 14,
+    color: FG,
+    flex: 1,
   },
-  otherConfirmButtonText: {
-    fontSize: 15,
+  materialSelectorPlaceholder: {
+    color: MUTED,
+  },
+  clearMaterialButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+  },
+  clearMaterialText: {
+    fontSize: 13,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  addMaterialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#B8D7F9',
+  },
+  addMaterialText: {
+    fontSize: 13,
+    color: '#1e40af',
     fontWeight: '600',
-    color: '#ffffff',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
-  otherConfirmButtonTextDisabled: {
-    color: '#9CA3AF',
+  inlineMaterialList: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    maxHeight: 200,
+    overflow: 'hidden',
+  },
+  inlineMaterialScroll: {
+    maxHeight: 200,
+  },
+  inlineMaterialOption: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  inlineMaterialOptionSelected: {
+    backgroundColor: 'rgba(184, 215, 249, 0.1)',
+  },
+  inlineMaterialOptionText: {
+    fontSize: 13,
+    color: FG,
+  },
+  inlineMaterialOptionTextSelected: {
+    color: '#1e40af',
+    fontWeight: '600',
+  },
+  mutedSmall: {
+    fontSize: 13,
+    color: '#6b7280',
+    padding: 12,
+  },
+  planningHint: {
+    fontSize: 12,
+    color: MUTED,
+    marginBottom: 8,
+  },
+  planningDefaultsField: {
+    marginBottom: 8,
+  },
+  planningDefaultsStack: {
+    marginTop: 8,
+  },
+  dropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: '#ffffff',
+  },
+  dropdownButtonText: {
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  dropdownList: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: CHIP_BORDER,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    maxHeight: 200,
+  },
+  dropdownScroll: {
+    maxHeight: 200,
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: 'rgba(79, 70, 229, 0.08)',
+  },
+  dropdownOptionText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  dropdownOptionTextSelected: {
+    color: '#4F46E5',
+    fontWeight: '600',
+  },
+  learningGoalsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  goalPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  goalPillSelected: {
+    borderColor: '#3b82f6',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+  },
+  goalPillIdle: {
+    borderColor: CHIP_BORDER,
+    backgroundColor: '#fff',
+  },
+  goalPillText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  overallGoalsBox: {
+    marginTop: 12,
+    padding: 10,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+  },
+  overallGoalsText: {
+    fontSize: 13,
+    color: '#374151',
+  },
+  prefillNote: {
+    fontSize: 12,
+    color: MUTED,
+    marginTop: 6,
+  },
+  targetRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginBottom: 8,
+  },
+  targetPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  targetPillSelected: {
+    borderColor: '#3b82f6',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+  },
+  targetPillIdle: {
+    borderColor: CHIP_BORDER,
+    backgroundColor: '#fff',
   },
   errorText: {
     fontSize: 13,
@@ -683,105 +1328,6 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  additionalToggle: {
-    marginTop: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-  },
-  additionalToggleText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
-  additionalToggleIcon: {
-    marginLeft: 4,
-  },
-  additionalSection: {
-    marginTop: 14,
-    paddingTop: 10,
-  },
-  materialRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 8,
-  },
-  materialSelectedWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    flex: 1,
-    minWidth: 0,
-  },
-  materialPlaceholder: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
-  },
-  materialChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-    paddingLeft: 10,
-    paddingRight: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(133,196,242,0.2)',
-    borderWidth: 1,
-    borderColor: '#6BB3E8',
-    maxWidth: '100%',
-  },
-  materialChipText: {
-    fontSize: 14,
-    color: '#374151',
-    maxWidth: 180,
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
-  },
-  materialChipClear: {
-    marginLeft: 4,
-    padding: 2,
-  },
-  addMaterialBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  addMaterialBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6BB3E8',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  materialLibraryWrap: {
-    marginTop: 12,
-  },
-  materialLibraryLabel: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 6,
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
-  },
-  materialLibraryList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  textArea: {
-    minHeight: 80,
-    paddingTop: 12,
-    textAlignVertical: 'top',
-  },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -790,7 +1336,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingTop: 20,
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+    borderTopColor: CHIP_BORDER,
     gap: 12,
   },
   footerSecondaryBtn: {

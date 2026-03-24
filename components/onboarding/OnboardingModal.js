@@ -355,12 +355,43 @@ export default function OnboardingModal({
           const list = prev[subject.child_id] || [];
           return { ...prev, [subject.child_id]: list.map((s) => (s.id === optimisticId ? { id, name: subject.name } : s)) };
         });
-        if (subject.material_ids?.length > 0) {
+        const subjectPatch = {};
+        if (subject.school_year != null && subject.school_year !== '') {
+          subjectPatch.school_year = subject.school_year;
+        }
+        if (subject.default_constraint_mode !== undefined && subject.default_constraint_mode !== null) {
+          subjectPatch.default_constraint_mode = subject.default_constraint_mode;
+        }
+        if (subject.default_target_days !== undefined) {
+          subjectPatch.default_target_days = subject.default_target_days;
+        }
+        if (subject.default_target_hours !== undefined) {
+          subjectPatch.default_target_hours = subject.default_target_hours;
+        }
+        if (Object.keys(subjectPatch).length > 0) {
+          try {
+            const { error: patchErr } = await supabase
+              .from('subject')
+              .update(subjectPatch)
+              .eq('id', id)
+              .eq('family_id', fid);
+            if (patchErr) console.warn('[OnboardingModal] Subject planning fields update:', patchErr);
+          } catch (e) {
+            console.warn('[OnboardingModal] Subject planning fields update failed:', e);
+          }
+        }
+        const pickIds = [
+          subject.syllabus_material_id,
+          subject.lesson_plan_material_id,
+          ...(Array.isArray(subject.material_ids) ? subject.material_ids : []),
+        ].filter(Boolean);
+        const uniquePickIds = [...new Set(pickIds)];
+        if (uniquePickIds.length > 0) {
           try {
             const { error: materialUpdateError } = await supabase
               .from('materials')
               .update({ subject_id: id })
-              .in('id', subject.material_ids);
+              .in('id', uniquePickIds);
             if (materialUpdateError) {
               console.warn('Failed to link materials to subject:', materialUpdateError);
             }
