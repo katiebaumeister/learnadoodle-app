@@ -1,5 +1,5 @@
 /**
- * Full-screen doc/PDF viewer (same UX as Materials Library). URL resolution shared with library list.
+ * In-app preview modal: PDF, images, Office (via Microsoft Office Online), video/audio, and generic HTTPS links.
  */
 import React, { useEffect, useRef } from 'react';
 import {
@@ -9,6 +9,8 @@ import {
   StyleSheet,
   Modal,
   Platform,
+  Image,
+  ScrollView,
 } from 'react-native';
 import { X, ExternalLink } from 'lucide-react';
 import { colors } from '../../theme/colors';
@@ -27,69 +29,173 @@ export const isValidDocViewerUrl = (url) => {
   return url.startsWith('http://') || url.startsWith('https://');
 };
 
-const PDFIframe = ({ src, title }) => {
-  const containerRef = useRef(null);
+/** @typedef {'pdf'|'image'|'office'|'video'|'audio'|'iframe'|'download'|'unsupported'} ViewerKind */
 
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !containerRef.current || !src || typeof document === 'undefined') return;
-    if (!isValidDocViewerUrl(src)) {
-      console.warn('[MaterialDocViewerModal] Invalid URL:', src);
-      return;
-    }
-    const domElement = containerRef.current;
-    if (domElement.innerHTML !== undefined) {
-      domElement.innerHTML = '';
-    } else if (domElement.removeChild) {
-      while (domElement.firstChild) {
-        domElement.removeChild(domElement.firstChild);
-      }
-    }
-    const iframe = document.createElement('iframe');
-    iframe.src = src;
-    iframe.title = title || 'Document';
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.border = 'none';
-    iframe.setAttribute('allow', 'fullscreen');
-    iframe.onerror = (e) => {
-      e.preventDefault?.();
-      e.stopPropagation?.();
-    };
-    domElement.appendChild(iframe);
-  }, [src, title]);
+const OFFICE_ONLINE_EMBED = (fileUrl) =>
+  `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
 
-  return <View ref={containerRef} style={styles.pdfIframeHost} />;
-};
+function extensionFromString(s) {
+  if (!s || typeof s !== 'string') return '';
+  const base = s.split('?')[0].split('#')[0].toLowerCase();
+  const m = base.match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : '';
+}
 
 /**
- * Load viewable URL for a material (PDF in storage, or provider link).
- * @returns {{ url: string|null, title: string, error: string|null }}
+ * Decide how to render a file in the in-app viewer.
+ * @param {object} material — row from `materials` (mime, filename, title, storage_path, provider_url, …)
+ * @returns {ViewerKind}
+ */
+export function inferMaterialViewerKind(material) {
+  if (!material) return 'unsupported';
+  const mime = (material.mime || '').toLowerCase();
+  const ext =
+    extensionFromString(material.filename) ||
+    extensionFromString(material.title) ||
+    extensionFromString(material.storage_path) ||
+    extensionFromString(material.provider_url || '');
+
+  if (mime.includes('pdf') || ext === 'pdf') return 'pdf';
+  if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'heic'].includes(ext)) {
+    return 'image';
+  }
+  if (mime.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v', 'ogv', 'ogg'].includes(ext)) return 'video';
+  if (mime.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'flac', 'opus'].includes(ext)) return 'audio';
+
+  const officeExt = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'odt', 'ods', 'odp', 'rtf'];
+  const officeMime =
+    /word|excel|powerpoint|spreadsheet|presentation|officedocument|msword|ms-powerpoint|ms-excel/.test(mime);
+  if (officeMime || officeExt.includes(ext)) return 'office';
+
+  if (material.storage_path) {
+    return 'download';
+  }
+
+  if (material.provider_url && isValidDocViewerUrl(material.provider_url)) {
+    return 'iframe';
+  }
+
+  return 'unsupported';
+}
+
+function WebMediaMount({ viewerKind, url, title }) {
+  const hostRef = useRef(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined' || !url || !isValidDocViewerUrl(url)) return;
+
+    const getDomNode = () => {
+      const n = hostRef.current;
+      if (!n) return null;
+      if (n.nodeType === 1) return n;
+      return n._nativeNode ?? n.getNativeNode?.() ?? n;
+    };
+
+    const mount = () => {
+      const native = getDomNode();
+      if (!native) return;
+      if (native.innerHTML !== undefined) {
+        native.innerHTML = '';
+      } else if (typeof native.appendChild === 'function') {
+        while (native.firstChild) {
+          native.removeChild(native.firstChild);
+        }
+      } else {
+        return;
+      }
+
+      if (viewerKind === 'image') {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = title || 'Preview';
+        Object.assign(img.style, {
+          maxWidth: '100%',
+          maxHeight: 'calc(85vh - 120px)',
+          objectFit: 'contain',
+          display: 'block',
+          margin: '0 auto',
+        });
+        if (typeof native.appendChild === 'function') native.appendChild(img);
+        return;
+      }
+
+      if (viewerKind === 'video') {
+        const v = document.createElement('video');
+        v.src = url;
+        v.controls = true;
+        v.setAttribute('playsinline', '');
+        Object.assign(v.style, { width: '100%', maxHeight: 'calc(85vh - 120px)', backgroundColor: '#000' });
+        if (typeof native.appendChild === 'function') native.appendChild(v);
+        return;
+      }
+
+      if (viewerKind === 'audio') {
+        const a = document.createElement('audio');
+        a.src = url;
+        a.controls = true;
+        Object.assign(a.style, { width: '100%', maxWidth: 560, marginTop: 32 });
+        if (typeof native.appendChild === 'function') native.appendChild(a);
+        return;
+      }
+
+      let iframeSrc = null;
+      if (viewerKind === 'office') {
+        iframeSrc = OFFICE_ONLINE_EMBED(url);
+      } else if (viewerKind === 'pdf' || viewerKind === 'iframe') {
+        iframeSrc = url;
+      }
+
+      if (iframeSrc) {
+        const iframe = document.createElement('iframe');
+        iframe.src = iframeSrc;
+        iframe.title = title || 'Document';
+        Object.assign(iframe.style, {
+          width: '100%',
+          height: '100%',
+          minHeight: 'min(480px, 70vh)',
+          border: 'none',
+          flex: '1',
+        });
+        iframe.setAttribute('allow', 'fullscreen');
+        if (typeof native.appendChild === 'function') native.appendChild(iframe);
+      }
+    };
+
+    const t = requestAnimationFrame(() => mount());
+    return () => {
+      cancelAnimationFrame(t);
+      const native = getDomNode();
+      if (native && typeof native.removeChild === 'function') {
+        while (native.firstChild) {
+          try {
+            native.removeChild(native.firstChild);
+          } catch {
+            break;
+          }
+        }
+      }
+    };
+  }, [viewerKind, url, title]);
+
+  return <View ref={hostRef} style={styles.webMediaHost} />;
+}
+
+/**
+ * @returns {{ url: string|null, title: string, error: string|null, viewerKind: ViewerKind }}
  */
 export async function resolveMaterialDocViewerUrl(materialId) {
   if (!materialId) {
-    return { url: null, title: '', error: 'Missing material.' };
+    return { url: null, title: '', error: 'Missing material.', viewerKind: 'unsupported' };
   }
   try {
     const material = await getMaterial(materialId);
     if (!material) {
-      return { url: null, title: '', error: 'Material not found.' };
+      return { url: null, title: '', error: 'Material not found.', viewerKind: 'unsupported' };
     }
     const title = material.title || material.provider_name || 'Material';
+    const viewerKind = inferMaterialViewerKind(material);
 
     if (material.storage_path) {
-      const isPdf =
-        material.mime?.includes('pdf') ||
-        material.filename?.toLowerCase().endsWith('.pdf') ||
-        (material.title && material.title.toLowerCase().endsWith('.pdf'));
-
-      if (!isPdf) {
-        return {
-          url: null,
-          title,
-          error: 'This file type cannot be viewed in the document viewer.',
-        };
-      }
-
       const { data: signedUrlData, error: signedError } = await supabase.storage
         .from('evidence')
         .createSignedUrl(material.storage_path, 3600);
@@ -99,19 +205,21 @@ export async function resolveMaterialDocViewerUrl(materialId) {
           url: null,
           title,
           error: 'Unable to access the file. Please try again later.',
+          viewerKind: 'unsupported',
         };
       }
-      return { url: signedUrlData.signedUrl, title, error: null };
+      return { url: signedUrlData.signedUrl, title, error: null, viewerKind };
     }
 
     if (material.provider_url && isValidDocViewerUrl(material.provider_url)) {
-      return { url: material.provider_url, title, error: null };
+      return { url: material.provider_url, title, error: null, viewerKind };
     }
 
     return {
       url: null,
       title,
       error: 'This material does not have a viewable document.',
+      viewerKind: 'unsupported',
     };
   } catch (err) {
     console.error('[resolveMaterialDocViewerUrl]', err);
@@ -119,12 +227,32 @@ export async function resolveMaterialDocViewerUrl(materialId) {
       url: null,
       title: '',
       error: err?.message || 'Failed to load material.',
+      viewerKind: 'unsupported',
     };
   }
 }
 
-export default function MaterialDocViewerModal({ visible, onClose, url, title }) {
+export default function MaterialDocViewerModal({
+  visible,
+  onClose,
+  url,
+  title,
+  viewerKind = 'pdf',
+}) {
   if (!visible || !url) return null;
+
+  const openExternal = () => {
+    if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const webInteractiveKinds = ['pdf', 'office', 'image', 'video', 'audio', 'iframe'];
+  const useWebHost = Platform.OS === 'web' && webInteractiveKinds.includes(viewerKind);
+  const useDownloadPanel = viewerKind === 'download' || viewerKind === 'unsupported';
+
+  const subtitle =
+    viewerKind === 'office'
+      ? 'Preview is provided by Microsoft Office Online. If it does not load, use “Open in new tab”.'
+      : null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -139,9 +267,7 @@ export default function MaterialDocViewerModal({ visible, onClose, url, title })
               {Platform.OS === 'web' && (
                 <TouchableOpacity
                   style={styles.pdfModalButton}
-                  onPress={() => {
-                    if (typeof window !== 'undefined') window.open(url, '_blank');
-                  }}
+                  onPress={openExternal}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <ExternalLink size={18} color={colors.accent} />
@@ -157,12 +283,34 @@ export default function MaterialDocViewerModal({ visible, onClose, url, title })
               </TouchableOpacity>
             </View>
           </View>
+          {subtitle ? (
+            <Text style={styles.viewerHint} numberOfLines={3}>
+              {subtitle}
+            </Text>
+          ) : null}
           <View style={styles.pdfViewerContainer}>
-            {Platform.OS === 'web' ? (
-              <PDFIframe src={url} title={title} />
+            {useWebHost ? (
+              <WebMediaMount viewerKind={viewerKind} url={url} title={title} />
+            ) : useDownloadPanel ? (
+              <View style={styles.pdfFallback}>
+                <Text style={styles.pdfFallbackText}>
+                  {viewerKind === 'download'
+                    ? 'This file type can’t be previewed in the app. You can open or download it in a new tab.'
+                    : 'Preview isn’t available for this item.'}
+                </Text>
+                {Platform.OS === 'web' ? (
+                  <TouchableOpacity style={styles.primaryOpenButton} onPress={openExternal}>
+                    <Text style={styles.primaryOpenButtonText}>Open or download</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : viewerKind === 'image' ? (
+              <ScrollView contentContainerStyle={styles.imageScroll}>
+                <Image source={{ uri: url }} style={styles.nativeImage} resizeMode="contain" />
+              </ScrollView>
             ) : (
               <View style={styles.pdfFallback}>
-                <Text style={styles.pdfFallbackText}>Document viewing is available on web.</Text>
+                <Text style={styles.pdfFallbackText}>Document preview is available on the web app.</Text>
               </View>
             )}
           </View>
@@ -173,10 +321,50 @@ export default function MaterialDocViewerModal({ visible, onClose, url, title })
 }
 
 const styles = StyleSheet.create({
-  pdfIframeHost: {
+  webMediaHost: {
     flex: 1,
     width: '100%',
-    height: '100%',
+    minHeight: 400,
+    alignSelf: 'stretch',
+  },
+  viewerHint: {
+    fontSize: 12,
+    color: colors.muted || '#6b7280',
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    lineHeight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  primaryOpenButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: colors.accent || '#d4a256',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  primaryOpenButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  imageScroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 8,
+  },
+  nativeImage: {
+    width: '100%',
+    minHeight: 280,
+    maxHeight: 600,
   },
   pdfModalOverlay: {
     flex: 1,
@@ -210,6 +398,8 @@ const styles = StyleSheet.create({
     ...Platform.select({
       web: {
         boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
+        display: 'flex',
+        flexDirection: 'column',
       },
       ios: {
         shadowColor: '#000',
@@ -276,12 +466,15 @@ const styles = StyleSheet.create({
     }),
   },
   pdfViewerContainer: {
-    height: Platform.OS === 'web' ? 'calc(85vh - 80px)' : '100%',
+    flex: 1,
+    height: Platform.OS === 'web' ? 'calc(85vh - 80px)' : 480,
     minHeight: 400,
     backgroundColor: '#f9fafb',
     ...Platform.select({
       web: {
         maxHeight: 'calc(85vh - 80px)',
+        display: 'flex',
+        flexDirection: 'column',
       },
     }),
   },
@@ -294,5 +487,8 @@ const styles = StyleSheet.create({
   pdfFallbackText: {
     fontSize: 14,
     color: colors.muted,
+    textAlign: 'center',
+    maxWidth: 360,
+    lineHeight: 20,
   },
 });

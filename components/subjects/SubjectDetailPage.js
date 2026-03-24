@@ -57,6 +57,7 @@ export default function SubjectDetailPage({
   const [showMaterialDocViewer, setShowMaterialDocViewer] = useState(false);
   const [materialDocViewerUrl, setMaterialDocViewerUrl] = useState('');
   const [materialDocViewerTitle, setMaterialDocViewerTitle] = useState('');
+  const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
   const loadingRef = useRef(false);
 
   useEffect(() => {
@@ -198,14 +199,17 @@ export default function SubjectDetailPage({
       if (!material?.id) return;
       const fallbackTitle = material.title || material.provider_name || 'Material';
       try {
-        const { url, title, error } = await resolveMaterialDocViewerUrl(material.id);
+        const { url, title, error, viewerKind } = await resolveMaterialDocViewerUrl(material.id);
         if (error || !url) {
-          const isInfo = error && /cannot be viewed|does not have a viewable/i.test(error);
+          const isInfo =
+            error &&
+            /cannot be viewed|does not have a viewable|isn’t available|isn't available|Preview isn’t/i.test(error);
           toast.push(error || 'Could not open this material.', isInfo ? 'info' : 'error');
           return;
         }
         setMaterialDocViewerTitle(title || fallbackTitle);
         setMaterialDocViewerUrl(url);
+        setMaterialDocViewerKind(viewerKind || 'pdf');
         setShowMaterialDocViewer(true);
       } catch (err) {
         console.error('[SubjectDetailPage] material viewer:', err);
@@ -219,6 +223,7 @@ export default function SubjectDetailPage({
     setShowMaterialDocViewer(false);
     setMaterialDocViewerUrl('');
     setMaterialDocViewerTitle('');
+    setMaterialDocViewerKind('pdf');
   }, []);
 
   // Extract data
@@ -1071,6 +1076,7 @@ export default function SubjectDetailPage({
         onClose={closeMaterialDocViewer}
         url={materialDocViewerUrl}
         title={materialDocViewerTitle}
+        viewerKind={materialDocViewerKind}
       />
     </View>
   );

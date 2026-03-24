@@ -843,6 +843,18 @@ export default function TaskCreateModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, familyId, assigneeIds]);
 
+  // New library items (e.g. syllabus from Edit Subject) should appear in attachment picker while modal is open
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId || !visible) return;
+    const onMaterialsRefresh = (e) => {
+      const fid = e?.detail?.familyId;
+      if (fid && fid !== familyId) return;
+      loadMaterials();
+    };
+    window.addEventListener('refreshMaterials', onMaterialsRefresh);
+    return () => window.removeEventListener('refreshMaterials', onMaterialsRefresh);
+  }, [familyId, visible, loadMaterials]);
+
   useEffect(() => {
     if (visible) {
       setTitle(defaultTitle && String(defaultTitle).trim() ? defaultTitle : '');

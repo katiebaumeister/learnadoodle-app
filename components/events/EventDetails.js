@@ -1320,6 +1320,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
   };
 
+  const loadMaterialsRef = useRef(loadMaterials);
+  loadMaterialsRef.current = loadMaterials;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const onMaterialsRefresh = (e) => {
+      const fid = e?.detail?.familyId;
+      if (fid && fid !== familyId) return;
+      loadMaterialsRef.current?.();
+    };
+    window.addEventListener('refreshMaterials', onMaterialsRefresh);
+    return () => window.removeEventListener('refreshMaterials', onMaterialsRefresh);
+  }, [familyId]);
+
   const fetchSubjects = async () => {
     if (!familyId) return;
     setLoadingSubjects(true);

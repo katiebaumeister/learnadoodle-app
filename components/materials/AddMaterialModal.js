@@ -2,7 +2,7 @@
  * Add Material Modal
  * Form for adding a new material to the library
  */
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
+import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
@@ -101,6 +102,8 @@ export default function AddMaterialModal({
   const [allSubjects, setAllSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const loadingSubjectsRef = useRef(false);
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible, NESTED_MODAL_STACK_Z);
 
   // Pure computation: filter subjects by selected children. subject.child_id is semicolon-separated (e.g. "id1;id2").
   // When children are selected: show only subjects assigned to ALL selected children (or family-wide).
@@ -306,12 +309,18 @@ export default function AddMaterialModal({
     setSelectedSubjectId(subject ? subject.id : null);
   }, [visible, material?.id, material?.subject_key, allSubjects]);
 
+  // Apply type (role) from parent as soon as the add-material sheet opens — before paint so chips match "Add syllabus" / "Add lesson plan".
+  useLayoutEffect(() => {
+    if (!visible || material) return;
+    setRole(defaultRole ? String(defaultRole) : '');
+  }, [visible, material, defaultRole]);
+
   // Separate effect for resetting form in add mode (stable deps: no array refs to avoid loop when parent passes defaultChildIds=[] or omits it)
   const defaultChildIdsKey = Array.isArray(defaultChildIds) ? defaultChildIds.join(',') : '';
   useEffect(() => {
     if (visible && !material) {
       setTitle('');
-      setRole(defaultRole || '');
+      setRole(defaultRole ? String(defaultRole) : '');
       setSelectedSubjectId(defaultSubjectId || null);
       const initialChildIds =
         Array.isArray(defaultChildIds) && defaultChildIds.length > 0
@@ -583,6 +592,9 @@ export default function AddMaterialModal({
         tags.push(`subscription:${subscriptionFrequency}`);
       }
 
+      /** Set in add mode only; shared by post-save events + onSaved below */
+      let created = null;
+
       if (material) {
         // Edit mode: update existing material
         const subjectName = selectedSubjectId ? allSubjects.find(s => s.id === selectedSubjectId)?.name || null : null;
@@ -655,7 +667,7 @@ export default function AddMaterialModal({
           window.dispatchEvent(new CustomEvent('materialUpdated', { 
             detail: { materialId: material.id, familyId } 
           }));
-          window.dispatchEvent(new CustomEvent('refreshMaterials'));
+          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
           const subId = selectedSubjectId || material?.subject_id;
           if (subId) {
@@ -712,8 +724,6 @@ export default function AddMaterialModal({
         // Get current user for created_by
         const { data: { user } } = await supabase.auth.getUser();
 
-        let created;
-        
         // If we have an uploaded file, use createFileMaterial (handles storage_path properly)
         if (uploadedFile && uploadedFile.path) {
           const { createFileMaterial } = await import('../../lib/services/materialsClient');
@@ -793,7 +803,7 @@ export default function AddMaterialModal({
           window.dispatchEvent(new CustomEvent('materialUpdated', { 
             detail: { materialId, familyId, action: material ? 'updated' : 'created' } 
           }));
-          window.dispatchEvent(new CustomEvent('refreshMaterials'));
+          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
           const subId = material ? (selectedSubjectId || material?.subject_id) : (selectedSubjectId || created?.subject_id);
           if (subId) {
@@ -803,7 +813,7 @@ export default function AddMaterialModal({
       }
 
       if (onSaved) {
-        onSaved();
+        onSaved(material || created);
       }
       onClose();
     } catch (error) {
@@ -822,7 +832,7 @@ export default function AddMaterialModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}

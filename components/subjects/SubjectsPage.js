@@ -712,7 +712,12 @@ export default function SubjectsPage({
 
       {/* Year Filter Chips - only show when we have at least one year */}
       {registeredYears.length > 0 && (
-        <View style={styles.filterRow}>
+        <View
+          style={[
+            styles.filterRow,
+            !isChildView && styles.filterRowBelowChildren,
+          ]}
+        >
           <Text style={styles.filterLabel}>Year</Text>
           <ScrollView
             horizontal
@@ -1224,9 +1229,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
-    // Match Materials Library spacing from divider to chip row
+    // Match Materials Library spacing from divider to first chip row
     marginTop: 24,
     backgroundColor: '#FFFFFF',
+  },
+  /** Tighter gap when Year row follows Children (avoid double 24px margin) */
+  filterRowBelowChildren: {
+    marginTop: 8,
   },
   filterLabel: {
     fontSize: 15,

@@ -11,8 +11,22 @@ import { parseChildIds } from '../lib/services/subjectsClient';
 import { getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
+import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
+import { deriveRoleFromTags, DOCUMENT_ROLES } from '../lib/docs/roles';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
+const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
+
+function materialEligibleForSyllabusPicker(m) {
+  const r = deriveRoleFromTags(m.tags);
+  return r == null || r === DOCUMENT_ROLES.SYLLABUS;
+}
+
+function materialEligibleForLessonPicker(m) {
+  const r = deriveRoleFromTags(m.tags);
+  return r == null || r === DOCUMENT_ROLES.LESSON_PLAN;
+}
 
 // School year options: 2025/26 through 2040/41 (16 years)
 function getSchoolYearOptions() {
@@ -64,15 +78,17 @@ export default function AddSubjectModal({
   const toast = useToast();
   const session = useSession();
 
-  // Materials/attachments state
+  // Materials/attachments state (syllabus + lesson plan rows)
   const [materials, setMaterials] = useState([]);
   const [loadingMaterials, setLoadingMaterials] = useState(false);
-  const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
-  const [selectedMaterialId, setSelectedMaterialId] = useState(null);
-  const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
+  const [materialDropdownSlot, setMaterialDropdownSlot] = useState(null); // null | 'syllabus' | 'lesson_plan'
+  const [selectedSyllabusMaterialId, setSelectedSyllabusMaterialId] = useState(null);
+  const [selectedLessonPlanMaterialId, setSelectedLessonPlanMaterialId] = useState(null);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+  const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null); // 'syllabus' | 'lesson_plan'
   const materialDropdownRef = useRef(null);
-  const materialButtonRef = useRef(null);
+  const syllabusMaterialButtonRef = useRef(null);
+  const lessonMaterialButtonRef = useRef(null);
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible);
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
@@ -89,6 +105,10 @@ export default function AddSubjectModal({
 
   // Accordion state (all collapsed by default)
   const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
+
+  useEffect(() => {
+    if (!showMaterialsAccordion) setMaterialDropdownSlot(null);
+  }, [showMaterialsAccordion]);
   const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
   const [showEventMgmtAccordion, setShowEventMgmtAccordion] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
@@ -136,6 +156,9 @@ export default function AddSubjectModal({
       } else {
         // Add mode - use defaults
         setSchoolYear(getDefaultSchoolYear());
+        setSelectedSyllabusMaterialId(null);
+        setSelectedLessonPlanMaterialId(null);
+        setMaterialDropdownSlot(null);
         if (defaultSubjectName) {
           setSubjectName(defaultSubjectName);
         }
@@ -159,9 +182,10 @@ export default function AddSubjectModal({
       setFamilyPlannerContext(null);
       setPlanningPrefilledFromFamily(false);
       setError(null);
-      setSelectedMaterialId(null);
-      setAttachedMaterialIds([]);
-      setShowMaterialDropdown(false);
+      setMaterialDropdownSlot(null);
+      setSelectedSyllabusMaterialId(null);
+      setSelectedLessonPlanMaterialId(null);
+      setAddMaterialDefaultRole(null);
       setSubjectEvents([]);
       setLoadingEvents(false);
       setDeletingEvents(false);
@@ -191,6 +215,33 @@ export default function AddSubjectModal({
     });
     return () => { cancelled = true; };
   }, [visible, familyId]);
+
+  // Pre-select syllabus / lesson plan materials when editing (linked by subject_id + role tag)
+  useEffect(() => {
+    if (!visible || !subject?.id || !familyId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('materials')
+        .select('id, tags')
+        .eq('subject_id', subject.id)
+        .eq('family_id', familyId)
+        .is('deleted_at', null);
+      if (cancelled || error) return;
+      let syllabusId = null;
+      let lessonId = null;
+      for (const m of data || []) {
+        const r = deriveRoleFromTags(m.tags);
+        if (r === DOCUMENT_ROLES.SYLLABUS && !syllabusId) syllabusId = m.id;
+        if (r === DOCUMENT_ROLES.LESSON_PLAN && !lessonId) lessonId = m.id;
+      }
+      setSelectedSyllabusMaterialId(syllabusId);
+      setSelectedLessonPlanMaterialId(lessonId);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, subject?.id, familyId]);
 
   // When family planner context loads and we're in add mode, set goal mode from family scope
   useEffect(() => {
@@ -427,30 +478,36 @@ export default function AddSubjectModal({
     }
   };
 
-  const handleMaterialDropdownToggle = () => {
-    const willShow = !showMaterialDropdown;
-    
-    if (willShow && Platform.OS === 'web' && materialButtonRef.current) {
-      // Calculate position before showing dropdown
-      const node = materialButtonRef.current._nativeNode || materialButtonRef.current;
+  const handleMaterialDropdownToggle = (slot) => {
+    const willShow = materialDropdownSlot !== slot;
+    const buttonRef = slot === MATERIAL_SLOT.SYLLABUS ? syllabusMaterialButtonRef : lessonMaterialButtonRef;
+
+    if (willShow && Platform.OS === 'web' && buttonRef.current) {
+      const node = buttonRef.current._nativeNode || buttonRef.current;
       if (node && typeof node.getBoundingClientRect === 'function') {
         const rect = node.getBoundingClientRect();
         const dropdownMaxHeight = 300;
-        
-        // Position below the button
         const top = rect.bottom + 4;
-        
-        const newPosition = {
-          top: top,
+        setMaterialDropdownPosition({
+          top,
           left: rect.left,
-          width: rect.width, // Match the selector box width exactly
+          width: rect.width,
           maxHeight: dropdownMaxHeight,
-        };
-        setMaterialDropdownPosition(newPosition);
+        });
       }
     }
-    
-    setShowMaterialDropdown(willShow);
+
+    setMaterialDropdownSlot(willShow ? slot : null);
+  };
+
+  const setSlotSelection = (slot, materialId) => {
+    if (slot === MATERIAL_SLOT.SYLLABUS) {
+      setSelectedSyllabusMaterialId(materialId);
+      setSelectedLessonPlanMaterialId((prev) => (materialId && prev === materialId ? null : prev));
+    } else {
+      setSelectedLessonPlanMaterialId(materialId);
+      setSelectedSyllabusMaterialId((prev) => (materialId && prev === materialId ? null : prev));
+    }
   };
 
   const fetchChildren = async () => {
@@ -599,25 +656,48 @@ export default function AddSubjectModal({
         throw insertError;
       }
 
-      // Link materials to the newly created subjects
-      if (attachedMaterialIds.length > 0 && newSubjects && newSubjects.length > 0) {
+      // Link syllabus + lesson plan materials (clear prior syllabus/lesson_plan links on this subject, then attach selections)
+      if (newSubjects && newSubjects.length > 0) {
         try {
-          // Update each material to link to the first subject (or all subjects if multiple)
-          // For simplicity, link to the first subject created
           const subjectId = newSubjects[0].id;
-          
-          const { error: materialUpdateError } = await supabase
-            .from('materials')
-            .update({ subject_id: subjectId })
-            .in('id', attachedMaterialIds);
+          const pickIds = [selectedSyllabusMaterialId, selectedLessonPlanMaterialId].filter(Boolean);
+          const uniquePickIds = [...new Set(pickIds)];
 
-          if (materialUpdateError) {
-            console.warn('Failed to link materials to subject:', materialUpdateError);
-            // Don't throw - subject creation succeeded, material linking is secondary
+          const { data: linkedRows, error: linkedErr } = await supabase
+            .from('materials')
+            .select('id, tags')
+            .eq('subject_id', subjectId)
+            .eq('family_id', familyId)
+            .is('deleted_at', null);
+
+          if (!linkedErr && linkedRows?.length) {
+            const toClear = linkedRows
+              .filter((row) => {
+                const r = deriveRoleFromTags(row.tags);
+                return r === DOCUMENT_ROLES.SYLLABUS || r === DOCUMENT_ROLES.LESSON_PLAN;
+              })
+              .map((row) => row.id);
+            if (toClear.length) {
+              const { error: clearErr } = await supabase
+                .from('materials')
+                .update({ subject_id: null })
+                .in('id', toClear);
+              if (clearErr) console.warn('Failed to clear prior subject materials:', clearErr);
+            }
+          }
+
+          if (uniquePickIds.length > 0) {
+            const { error: materialUpdateError } = await supabase
+              .from('materials')
+              .update({ subject_id: subjectId })
+              .in('id', uniquePickIds);
+
+            if (materialUpdateError) {
+              console.warn('Failed to link materials to subject:', materialUpdateError);
+            }
           }
         } catch (materialError) {
           console.warn('Error linking materials to subject:', materialError);
-          // Don't throw - subject creation succeeded
         }
       }
 
@@ -641,6 +721,7 @@ export default function AddSubjectModal({
       // Dispatch events to refresh subjects and planner-related data
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
         if (subject && subject.id) {
@@ -664,6 +745,7 @@ export default function AddSubjectModal({
   const canSubmit = subjectName.trim().length > 0 && selectedChildIds.length > 0 && !isSubmitting;
 
   return (
+    <>
     <RNModal
       visible={visible}
       transparent={true}
@@ -819,180 +901,222 @@ export default function AddSubjectModal({
               />
             </View>
 
-            {/* Accordion B: Materials & attachments */}
-            {familyId && (
-              <View style={styles.accordionSection}>
-                <TouchableOpacity onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
-                  <Text style={styles.accordionSectionLabel}>
-                    Materials & attachments
-                    {attachedMaterialIds?.length ? ` · ${attachedMaterialIds.length} selected` : ' · No attachment'}
-                  </Text>
-                  {showMaterialsAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
-                </TouchableOpacity>
-                {showMaterialsAccordion && (
-                  <View style={styles.accordionContent}>
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Attachments (optional)</Text>
-                <View style={styles.materialSelectorContainer}>
-                  <TouchableOpacity
-                    ref={materialButtonRef}
-                    style={styles.materialSelector}
-                    onPress={handleMaterialDropdownToggle}
-                  >
-                    <Text style={[
-                      styles.materialSelectorText,
-                      !selectedMaterialId && styles.materialSelectorPlaceholder
-                    ]}>
-                      {selectedMaterialId
-                        ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select attachment...')
-                        : 'Select attachment...'}
-                    </Text>
-                    <ChevronDown size={16} color="#6b7280" />
-                  </TouchableOpacity>
-                  {selectedMaterialId && (
-                    <TouchableOpacity
-                      style={styles.clearMaterialButton}
-                      onPress={() => {
-                        setSelectedMaterialId(null);
-                        setAttachedMaterialIds([]);
-                      }}
-                    >
-                      <Text style={styles.clearMaterialText}>Clear</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    style={styles.addMaterialButton}
-                    onPress={() => setShowAddMaterialModal(true)}
-                  >
-                    <Plus size={14} color="#B8D7F9" />
-                    <Text style={styles.addMaterialText}>Add New</Text>
-                  </TouchableOpacity>
-                </View>
-                {showMaterialDropdown && Platform.OS === 'web' && (() => {
-                  let ReactDOM;
-                  try {
-                    ReactDOM = require('react-dom');
-                  } catch (e) {
-                  }
-                  
-                  const dropdownContent = (
-                    <View
-                      ref={materialDropdownRef}
-                      style={{
-                        position: 'fixed',
-                        top: materialDropdownPosition.top,
-                        left: materialDropdownPosition.left,
-                        width: materialDropdownPosition.width || 400,
-                        backgroundColor: '#FFFFFF',
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: 'rgba(15,23,42,0.08)',
-                        padding: 4,
-                        minWidth: 400,
-                        maxHeight: materialDropdownPosition.maxHeight || 300,
-                        zIndex: 99999,
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                        ...(Platform.OS === 'web' && {
-                          overflow: 'hidden',
-                          display: 'flex',
-                          flexDirection: 'column',
-                        }),
-                      }}
-                    >
-                      <ScrollView 
-                        style={{ 
-                          maxHeight: (materialDropdownPosition.maxHeight || 300) - 8,
-                          ...(Platform.OS === 'web' && {
-                            overflowY: 'auto',
-                            overflowX: 'hidden',
-                            WebkitOverflowScrolling: 'touch',
-                          }),
-                        }} 
-                        nestedScrollEnabled
-                        showsVerticalScrollIndicator={Platform.OS !== 'web'}
-                      >
-                        {loadingMaterials ? (
-                          <View style={{ padding: 12 }}>
-                            <Text style={{ fontSize: 13, color: '#6b7280' }}>Loading...</Text>
-                          </View>
-                        ) : materials.length === 0 ? (
-                          <View style={{ padding: 12 }}>
-                            <Text style={{ fontSize: 13, color: '#6b7280' }}>No materials yet</Text>
-                          </View>
-                        ) : (
-                          <>
-                            <TouchableOpacity
-                              style={{
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                              }}
-                              onPress={() => {
-                                setSelectedMaterialId(null);
-                                setAttachedMaterialIds([]);
-                                setShowMaterialDropdown(false);
-                              }}
-                            >
-                              <Text style={{ fontSize: 13, color: '#111827' }}>None</Text>
-                            </TouchableOpacity>
-                            {materials.map((material) => (
-                              <TouchableOpacity
-                                key={material.id}
-                                style={{
-                                  paddingVertical: 6,
-                                  paddingHorizontal: 10,
-                                  borderRadius: 4,
-                                  backgroundColor: selectedMaterialId === material.id ? 'rgba(184, 215, 249, 0.1)' : 'transparent',
-                                }}
-                                onPress={() => {
-                                  setSelectedMaterialId(material.id);
-                                  setAttachedMaterialIds([material.id]);
-                                  setShowMaterialDropdown(false);
-                                }}
-                              >
-                                <Text style={{
-                                  fontSize: 13,
-                                  color: selectedMaterialId === material.id ? '#1e40af' : '#111827',
-                                  fontWeight: selectedMaterialId === material.id ? '600' : '400',
-                                }}>
-                                  {material.title || material.provider_name || 'Untitled Material'}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </>
-                        )}
-                      </ScrollView>
-                    </View>
-                  );
-                  
-                  if (ReactDOM && typeof document !== 'undefined' && document.body) {
-                    return ReactDOM.createPortal(dropdownContent, document.body);
-                  }
-                  
-                  return dropdownContent;
-                })()}
-                </View>
-                </View>
-              )}
-              </View>
-            )}
+            {/* Accordion B: Syllabus and lesson plan attachments */}
+            {familyId && (() => {
+              const syllabusLessonCount = [selectedSyllabusMaterialId, selectedLessonPlanMaterialId].filter(Boolean).length;
+              const syllabusPickerMaterials = materials.filter(materialEligibleForSyllabusPicker);
+              const lessonPickerMaterials = materials.filter(materialEligibleForLessonPicker);
+              const dropdownSlot = materialDropdownSlot;
+              const dropdownList =
+                dropdownSlot === MATERIAL_SLOT.SYLLABUS ? syllabusPickerMaterials : dropdownSlot === MATERIAL_SLOT.LESSON_PLAN ? lessonPickerMaterials : [];
+              const dropdownSelectedId =
+                dropdownSlot === MATERIAL_SLOT.SYLLABUS
+                  ? selectedSyllabusMaterialId
+                  : dropdownSlot === MATERIAL_SLOT.LESSON_PLAN
+                    ? selectedLessonPlanMaterialId
+                    : null;
 
-            {/* Accordion C: Planning defaults */}
-            <View style={styles.accordionSection}>
+              const renderAttachmentRow = (slot, sectionLabel, addLabel, selectedId, buttonRef) => (
+                <View style={[styles.formGroup, { marginBottom: 14 }]}>
+                  <Text style={styles.label}>{sectionLabel}</Text>
+                  <View style={styles.materialSelectorContainer}>
+                    <TouchableOpacity
+                      ref={buttonRef}
+                      style={styles.materialSelector}
+                      onPress={() => handleMaterialDropdownToggle(slot)}
+                    >
+                      <Text
+                        style={[
+                          styles.materialSelectorText,
+                          !selectedId && styles.materialSelectorPlaceholder,
+                        ]}
+                      >
+                        {selectedId
+                          ? (materials.find((m) => m.id === selectedId)?.title ||
+                              materials.find((m) => m.id === selectedId)?.provider_name ||
+                              'Select attachment...')
+                          : 'Select attachment...'}
+                      </Text>
+                      <ChevronDown size={16} color="#6b7280" />
+                    </TouchableOpacity>
+                    {selectedId ? (
+                      <TouchableOpacity
+                        style={styles.clearMaterialButton}
+                        onPress={() => setSlotSelection(slot, null)}
+                      >
+                        <Text style={styles.clearMaterialText}>Clear</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity
+                      style={styles.addMaterialButton}
+                      onPress={() => {
+                        setMaterialDropdownSlot(null);
+                        setAddMaterialDefaultRole(slot === MATERIAL_SLOT.SYLLABUS ? 'syllabus' : 'lesson_plan');
+                        setShowAddMaterialModal(true);
+                      }}
+                    >
+                      <Plus size={14} color="#B8D7F9" />
+                      <Text style={styles.addMaterialText}>{addLabel}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+
+              return (
+                <View style={styles.accordionSection}>
+                  <TouchableOpacity
+                    onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
+                    style={styles.accordionHeader}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.accordionSectionLabel}>
+                      Syllabus and Lesson Plan
+                      {syllabusLessonCount === 0 ? ' · None' : ` · ${syllabusLessonCount} linked`}
+                    </Text>
+                    {showMaterialsAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
+                  </TouchableOpacity>
+                  {showMaterialsAccordion && (
+                    <View style={styles.accordionContent}>
+                      {renderAttachmentRow(
+                        MATERIAL_SLOT.SYLLABUS,
+                        'Syllabus',
+                        'Add syllabus',
+                        selectedSyllabusMaterialId,
+                        syllabusMaterialButtonRef
+                      )}
+                      {renderAttachmentRow(
+                        MATERIAL_SLOT.LESSON_PLAN,
+                        'Lesson plan',
+                        'Add lesson plan',
+                        selectedLessonPlanMaterialId,
+                        lessonMaterialButtonRef
+                      )}
+                      {dropdownSlot && Platform.OS === 'web' && (() => {
+                        let ReactDOM;
+                        try {
+                          ReactDOM = require('react-dom');
+                        } catch (e) {
+                          // ignore
+                        }
+
+                        const dropdownContent = (
+                          <View
+                            ref={materialDropdownRef}
+                            style={{
+                              position: 'fixed',
+                              top: materialDropdownPosition.top,
+                              left: materialDropdownPosition.left,
+                              width: materialDropdownPosition.width || 400,
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: 'rgba(15,23,42,0.08)',
+                              padding: 4,
+                              minWidth: 400,
+                              maxHeight: materialDropdownPosition.maxHeight || 300,
+                              zIndex: 99999,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                              ...(Platform.OS === 'web' && {
+                                overflow: 'hidden',
+                                display: 'flex',
+                                flexDirection: 'column',
+                              }),
+                            }}
+                          >
+                            <ScrollView
+                              style={{
+                                maxHeight: (materialDropdownPosition.maxHeight || 300) - 8,
+                                ...(Platform.OS === 'web' && {
+                                  overflowY: 'auto',
+                                  overflowX: 'hidden',
+                                  WebkitOverflowScrolling: 'touch',
+                                }),
+                              }}
+                              nestedScrollEnabled
+                              showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                            >
+                              {loadingMaterials ? (
+                                <View style={{ padding: 12 }}>
+                                  <Text style={{ fontSize: 13, color: '#6b7280' }}>Loading...</Text>
+                                </View>
+                              ) : dropdownList.length === 0 ? (
+                                <View style={{ padding: 12 }}>
+                                  <Text style={{ fontSize: 13, color: '#6b7280' }}>No materials yet</Text>
+                                </View>
+                              ) : (
+                                <>
+                                  <TouchableOpacity
+                                    style={{
+                                      paddingVertical: 6,
+                                      paddingHorizontal: 10,
+                                      borderRadius: 4,
+                                    }}
+                                    onPress={() => {
+                                      setSlotSelection(dropdownSlot, null);
+                                      setMaterialDropdownSlot(null);
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 13, color: '#111827' }}>None</Text>
+                                  </TouchableOpacity>
+                                  {dropdownList.map((material) => (
+                                    <TouchableOpacity
+                                      key={material.id}
+                                      style={{
+                                        paddingVertical: 6,
+                                        paddingHorizontal: 10,
+                                        borderRadius: 4,
+                                        backgroundColor:
+                                          dropdownSelectedId === material.id ? 'rgba(184, 215, 249, 0.1)' : 'transparent',
+                                      }}
+                                      onPress={() => {
+                                        setSlotSelection(dropdownSlot, material.id);
+                                        setMaterialDropdownSlot(null);
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          fontSize: 13,
+                                          color: dropdownSelectedId === material.id ? '#1e40af' : '#111827',
+                                          fontWeight: dropdownSelectedId === material.id ? '600' : '400',
+                                        }}
+                                      >
+                                        {material.title || material.provider_name || 'Untitled Material'}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </>
+                              )}
+                            </ScrollView>
+                          </View>
+                        );
+
+                        if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                          return ReactDOM.createPortal(dropdownContent, document.body);
+                        }
+
+                        return dropdownContent;
+                      })()}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* Accordion C: Planning preferences */}
+            <View style={[styles.accordionSection, !subject && styles.accordionSectionLastInForm]}>
               <TouchableOpacity onPress={() => setShowPlanningAccordion(!showPlanningAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
                 <Text style={styles.accordionSectionLabel}>
-                  Planning defaults
-                  {goalModeForSubject === 'per_subject' ? ` · ${targetMode === 'days' ? (defaultTargetDays || '—') + ' days' : targetMode === 'hours' ? (defaultTargetHours || '—') + ' hrs' : 'None'}` : ''}
+                  {PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}
                 </Text>
                 {showPlanningAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
               </TouchableOpacity>
               {showPlanningAccordion && (
                 <View style={styles.accordionContent}>
-                  <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>
-                    Changing target here will also change the settings in Planning Preferences.
+                  <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
+                    {`Changing target here will also change the settings in ${PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}.`}
                   </Text>
 
-                  <View style={styles.formGroup}>
+                  <View style={[styles.formGroup, styles.planningDefaultsField]}>
                     <Text style={styles.label}>School year</Text>
                     <TouchableOpacity
                       style={styles.dropdownButton}
@@ -1024,8 +1148,8 @@ export default function AddSubjectModal({
                     )}
                   </View>
 
-                  <View style={[styles.formGroup, { marginTop: 16 }]}>
-                    <Text style={[styles.label, { marginBottom: 8 }]}>Learning goals</Text>
+                  <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
+                    <Text style={[styles.label, { marginBottom: 6 }]}>Learning goals</Text>
                     <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                       <TouchableOpacity
                         style={[
@@ -1071,9 +1195,9 @@ export default function AddSubjectModal({
                   </View>
 
                   {goalModeForSubject === 'per_subject' && (
-                    <View style={[styles.formGroup, { marginTop: 16 }]}>
-                      <Text style={[styles.label, { marginBottom: 8 }]}>Target</Text>
-                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                    <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
+                      <Text style={[styles.label, { marginBottom: 6 }]}>Target</Text>
+                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
                         <TouchableOpacity
                           style={[
                             { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
@@ -1278,20 +1402,6 @@ export default function AddSubjectModal({
         </TouchableOpacity>
       </View>
 
-      {/* Add Material Modal */}
-      <AddMaterialModal
-        visible={showAddMaterialModal}
-        onClose={() => setShowAddMaterialModal(false)}
-        onSaved={(newMaterial) => {
-          loadMaterials();
-          if (newMaterial?.id) {
-            setSelectedMaterialId(newMaterial.id);
-            setAttachedMaterialIds([newMaterial.id]);
-          }
-        }}
-        familyId={familyId}
-        children={children}
-      />
       <ConfirmDialog
         visible={deleteEventsConfirm.visible}
         title="Delete All Events"
@@ -1305,6 +1415,30 @@ export default function AddSubjectModal({
         onCancel={() => setDeleteEventsConfirm({ visible: false })}
       />
     </RNModal>
+
+    <AddMaterialModal
+      key={showAddMaterialModal ? `subject-add-material-${addMaterialDefaultRole ?? 'any'}` : 'subject-add-material-closed'}
+      visible={showAddMaterialModal}
+      onClose={() => {
+        setShowAddMaterialModal(false);
+        setAddMaterialDefaultRole(null);
+      }}
+      onSaved={(newMaterial) => {
+        loadMaterials();
+        if (newMaterial?.id && addMaterialDefaultRole) {
+          const slot =
+            addMaterialDefaultRole === 'syllabus' ? MATERIAL_SLOT.SYLLABUS : MATERIAL_SLOT.LESSON_PLAN;
+          setSlotSelection(slot, newMaterial.id);
+        }
+        setAddMaterialDefaultRole(null);
+      }}
+      familyId={familyId}
+      children={children}
+      defaultRole={addMaterialDefaultRole ?? null}
+      defaultSubjectId={subject?.id ?? null}
+      defaultChildIds={selectedChildIds}
+    />
+    </>
   );
 }
 
@@ -1324,6 +1458,8 @@ const styles = StyleSheet.create({
     maxHeight: '85vh',
     ...Platform.select({
       web: {
+        display: 'flex',
+        flexDirection: 'column',
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
       },
       default: {
@@ -1338,12 +1474,24 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   scrollContainer: {
-    flex: 1,
     backgroundColor: '#ffffff',
+    ...Platform.select({
+      web: {
+        flexGrow: 0,
+        flexShrink: 1,
+        minHeight: 0,
+        // Modal is max 85vh; reserve ~88px for footer + borders so short forms don’t stretch with dead space
+        maxHeight: 'calc(85vh - 88px)',
+      },
+      default: {
+        flex: 1,
+      },
+    }),
   },
   scrollContent: {
     padding: 32,
-    paddingBottom: 100, // Extra padding for fixed footer
+    // Small inset only — footer sits outside ScrollView, so large padding created a false “gap”
+    paddingBottom: 20,
   },
   header: {
     flexDirection: 'row',
@@ -1409,6 +1557,13 @@ const styles = StyleSheet.create({
   formGroup: {
     marginBottom: 20,
   },
+  /** Tighter vertical rhythm inside Planning Preferences accordion only */
+  planningDefaultsField: {
+    marginBottom: 8,
+  },
+  planningDefaultsStack: {
+    marginTop: 8,
+  },
   accordionSection: {
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -1416,6 +1571,10 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 10,
     backgroundColor: '#f9fafb',
+  },
+  /** Add-subject flow: planning is last before footer — keep gap minimal */
+  accordionSectionLastInForm: {
+    marginBottom: 4,
   },
   accordionHeader: {
     flexDirection: 'row',

@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 
 const DEFAULT_MODAL_Z = 9999;
 const ELEVATED_MODAL_Z = 10001;
+/** Open above modals that use ELEVATED_MODAL_Z (e.g. Add Material from Add Subject). */
+export const NESTED_MODAL_STACK_Z = 10050;
 
 /**
  * On web, elevates this modal's portal so it appears above other modals (e.g. Plan Year).

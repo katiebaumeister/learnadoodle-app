@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { Plus, FileText } from 'lucide-react';
+import { Plus, FileText, Check } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import ChildDotCluster from '../ui/ChildDotCluster';
+import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 
 export default function TodayScheduleCard({
   events = [],
@@ -15,7 +16,77 @@ export default function TodayScheduleCard({
   onAddSuggestedRhythm,
   noCard = false,
   onTabChange, // Optional: for direct tab navigation
+  /** When true, show attendance checkboxes (same backend as planner). */
+  showAttendanceToggle = true,
 }) {
+  /** Optimistic done state by event id until server props catch up */
+  const [attendanceOptimistic, setAttendanceOptimistic] = useState({});
+
+  useEffect(() => {
+    setAttendanceOptimistic((prev) => {
+      if (!events?.length || !Object.keys(prev).length) return prev;
+      const next = { ...prev };
+      let changed = false;
+      for (const ev of events) {
+        if (!ev?.id || next[ev.id] === undefined) continue;
+        const serverDone = ev.status === 'done';
+        if (serverDone === next[ev.id]) {
+          delete next[ev.id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [events]);
+
+  const isEventDone = useCallback(
+    (ev) => {
+      if (!ev?.id) return false;
+      if (attendanceOptimistic[ev.id] !== undefined) return attendanceOptimistic[ev.id];
+      return ev.status === 'done';
+    },
+    [attendanceOptimistic]
+  );
+
+  const handleAttendanceToggle = useCallback(
+    async (ev) => {
+      if (!showAttendanceToggle || !ev?.id) return;
+      const et = (ev.event_type || ev.type || '').toLowerCase();
+      if (et === 'holiday') return;
+
+      const wasDone = isEventDone(ev);
+      const nextDone = !wasDone;
+      setAttendanceOptimistic((p) => ({ ...p, [ev.id]: nextDone }));
+
+      try {
+        if (wasDone) {
+          const { error } = await updateEventStatus(ev.id, 'scheduled');
+          if (error) throw error;
+        } else {
+          const { error } = await completeEvent(ev.id);
+          if (error) throw error;
+        }
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('refreshCalendar', {
+              detail: { skipCacheClear: true },
+            })
+          );
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        }
+      } catch (err) {
+        setAttendanceOptimistic((p) => {
+          const n = { ...p };
+          delete n[ev.id];
+          return n;
+        });
+        if (Platform.OS === 'web') {
+          window.alert?.(`Could not update attendance: ${err?.message || err}`);
+        }
+      }
+    },
+    [showAttendanceToggle, isEventDone]
+  );
 
   const formatTime = (timeString) => {
     if (!timeString) return '';
@@ -126,61 +197,109 @@ export default function TodayScheduleCard({
             const endTime = event.end_ts || event.end_local ? formatTime(event.end_ts || event.end_local) : null;
             const timeRange = endTime ? `${startTime} - ${endTime}` : startTime;
             const isAssignment = (event.event_type || event.type || '').toLowerCase() === 'assignment';
-            
+            const isHoliday = (event.event_type || event.type || '').toLowerCase() === 'holiday';
+            const done = isEventDone(event);
+            const showCheck = showAttendanceToggle && !isHoliday;
+
             return (
-              <TouchableOpacity
-                key={event.id}
-                style={styles.eventRow}
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openEventModal', {
-                      detail: {
-                        eventId: event.id,
-                        initialEvent: event,
-                      }
-                    }));
-                  }
-                }}
-                activeOpacity={0.7}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.timeColumn}>
-                  <Text style={styles.timeText}>{timeRange}</Text>
-                </View>
-                <View style={styles.contentColumn}>
-                  <View style={styles.eventHeader}>
-                    {event.subject_id && (
-                      <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
-                    )}
-                    {isAssignment && (
-                      <FileText size={12} color={colors.textSecondary} />
-                    )}
+              <View key={event.id} style={styles.eventRow}>
+                <TouchableOpacity
+                  style={styles.eventRowMain}
+                  onPress={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('openEventModal', {
+                        detail: {
+                          eventId: event.id,
+                          initialEvent: event,
+                        }
+                      }));
+                    }
+                  }}
+                  activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.timeColumn}>
+                    <Text style={styles.timeText}>{timeRange}</Text>
                   </View>
-                  <Text style={styles.eventTitle}>{event.title}</Text>
-                  <View style={styles.pillsRow}>
-                    {eventChildIds.length > 0 && (
-                      <View style={styles.childLabel}>
-                        <ChildDotCluster
-                          childIds={eventChildIds}
-                          familyChildren={children}
-                          dotSize={12}
-                          overlap={-4}
-                        />
-                        <Text style={styles.childLabelText}>
-                          {formatChildNamesLine(eventChildIds)}
-                        </Text>
-                      </View>
-                    )}
-                    {event.subject_id && (
-                      <View style={[styles.pill, { backgroundColor: getSubjectColor(event.subject_id) + '20' }]}>
-                        <Text style={[styles.pillText, { color: getSubjectColor(event.subject_id) }]}>
-                          {getSubjectName(event.subject_id)}
-                        </Text>
-                      </View>
-                    )}
+                  <View style={styles.contentColumn}>
+                    <View style={styles.eventHeader}>
+                      {event.subject_id && (
+                        <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
+                      )}
+                      {isAssignment && (
+                        <FileText size={12} color={colors.textSecondary} />
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.eventTitle,
+                        done && styles.eventTitleDone,
+                      ]}
+                    >
+                      {event.title}
+                    </Text>
+                    <View style={styles.pillsRow}>
+                      {eventChildIds.length > 0 && (
+                        <View style={styles.childLabel}>
+                          <ChildDotCluster
+                            childIds={eventChildIds}
+                            familyChildren={children}
+                            dotSize={12}
+                            overlap={-4}
+                          />
+                          <Text style={[styles.childLabelText, done && styles.eventMetaDone]}>
+                            {formatChildNamesLine(eventChildIds)}
+                          </Text>
+                        </View>
+                      )}
+                      {event.subject_id && (
+                        <View style={[styles.pill, { backgroundColor: getSubjectColor(event.subject_id) + '20' }]}>
+                          <Text style={[styles.pillText, { color: getSubjectColor(event.subject_id) }]}>
+                            {getSubjectName(event.subject_id)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                </View>
-              </TouchableOpacity>
+                </TouchableOpacity>
+                {showAttendanceToggle ? (
+                  showCheck ? (
+                    <View
+                      {...(Platform.OS === 'web' && typeof window !== 'undefined'
+                        ? {
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleAttendanceToggle(event);
+                            },
+                            onMouseDown: (e) => e.stopPropagation(),
+                          }
+                        : {})}
+                      style={styles.attendanceHit}
+                    >
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          handleAttendanceToggle(event);
+                        }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        style={styles.attendanceInner}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        {done ? (
+                          <View style={styles.attendanceChecked}>
+                            <Check size={12} color="#10B981" strokeWidth={2.5} />
+                          </View>
+                        ) : (
+                          <View style={styles.attendanceUnchecked} />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.attendanceSpacer} />
+                  )
+                ) : null}
+              </View>
             );
           })}
         </ScrollView>
@@ -308,7 +427,8 @@ const styles = StyleSheet.create({
   },
   eventRow: {
     flexDirection: 'row',
-    gap: 16,
+    alignItems: 'flex-start',
+    gap: 8,
     paddingVertical: 8,
     ...(Platform.OS === 'web' && {
       transition: 'background-color 0.2s ease',
@@ -316,6 +436,56 @@ const styles = StyleSheet.create({
         backgroundColor: colors.bgSubtle,
       },
     }),
+  },
+  attendanceSpacer: {
+    width: 36,
+    flexShrink: 0,
+  },
+  attendanceHit: {
+    width: 36,
+    flexShrink: 0,
+    alignItems: 'center',
+    paddingTop: 2,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  attendanceInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attendanceUnchecked: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: 'rgba(156, 163, 175, 0.45)',
+    backgroundColor: 'transparent',
+  },
+  attendanceChecked: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eventRowMain: {
+    flexDirection: 'row',
+    flex: 1,
+    gap: 16,
+    minWidth: 0,
+  },
+  eventTitleDone: {
+    textDecorationLine: 'line-through',
+    opacity: 0.55,
+    ...(Platform.OS === 'web' && {
+      textDecorationThickness: '0.5px',
+      textDecorationColor: 'rgba(15, 23, 42, 0.35)',
+    }),
+  },
+  eventMetaDone: {
+    opacity: 0.55,
   },
   eventHeader: {
     flexDirection: 'row',

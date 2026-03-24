@@ -7,7 +7,7 @@
  * - Right rail: Notification Center, Rewards, Subscription
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Platform, ActivityIndicator, ScrollView, TouchableOpacity } from 'react-native';
 import { Plus, Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
@@ -221,6 +221,19 @@ export default function ParentHomeScreen({
       }
     }
   };
+
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const onRefreshCalendar = (e) => {
+      if (e?.detail?.skipHomeRefresh) return;
+      loadDataRef.current(true);
+    };
+    window.addEventListener('refreshCalendar', onRefreshCalendar);
+    return () => window.removeEventListener('refreshCalendar', onRefreshCalendar);
+  }, [familyId]);
 
   const loadNotificationCount = async () => {
     try {

@@ -45,6 +45,7 @@ import AIToolsModal from './AIToolsModal';
 import SyllabusUpload from './SyllabusUpload';
 import { ToastProvider } from './Toast';
 import { supabase } from '../lib/supabase';
+import { prefetchPlanEditListForFamily } from '../lib/services/plannerPrefetch';
 import { PlannerDiffProvider } from '../app/state/usePlannerDiffStore';
 import PlannerDiffModal from '../app/components/schedule/PlannerDiffModal';
 import { PlannerHealthProvider } from '../app/state/usePlannerHealthStore';
@@ -1442,6 +1443,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       fetchFamilyMembers(),
       fetchFamilyData(),
       fetchAcademicYears().catch(() => { if (mounted) setAcademicYearsLoaded(true); }),
+      prefetchPlanEditListForFamily(session.family_id).catch(() => {}),
     ])
       .then(() => { if (mounted) setFamilyDataLoaded(true); })
       .catch(() => { if (mounted) setFamilyDataLoaded(true); });

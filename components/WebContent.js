@@ -813,6 +813,23 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       onMaterialsLoadingChange?.(false);
     }
   }, [familyId, materialsCache, materialsCacheTimestamp, materialsCacheLoading, onMaterialsLoadingChange]);
+
+  // Invalidate materials cache when library changes (e.g. syllabus added from Edit Subject) so Library tab isn’t stale
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const onRefreshMaterials = (e) => {
+      const fid = e?.detail?.familyId;
+      if (fid && fid !== familyId) return;
+      getMaterials(familyId, {}, propSession)
+        .then((data) => {
+          setMaterialsCache(data);
+          setMaterialsCacheTimestamp(Date.now());
+        })
+        .catch(() => {});
+    };
+    window.addEventListener('refreshMaterials', onRefreshMaterials);
+    return () => window.removeEventListener('refreshMaterials', onRefreshMaterials);
+  }, [familyId, propSession]);
   
   // Initialize offline sync
   useOfflineSync(familyId);
@@ -7347,7 +7364,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('refreshCalendar', {
                 detail: {
-                  skipHomeRefresh: true,
                   skipCacheClear: true,
                   targetYear: plannerDate.getFullYear(),
                   targetMonth: plannerDate.getMonth(),

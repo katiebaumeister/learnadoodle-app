@@ -65,6 +65,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [showPdfViewer, setShowPdfViewer] = useState(false);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfTitle, setPdfTitle] = useState('');
+  const [materialViewerKind, setMaterialViewerKind] = useState('pdf');
   const [showDeletedBin, setShowDeletedBin] = useState(false);
   const [deletedMaterials, setDeletedMaterials] = useState([]);
   const [loadingDeleted, setLoadingDeleted] = useState(false);
@@ -283,6 +284,29 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     }
   };
 
+  const loadMaterialsRef = useRef(loadMaterials);
+  loadMaterialsRef.current = loadMaterials;
+
+  // Keep list + TOTAL count in sync when materials are added/updated elsewhere (Add Subject, etc.)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const onLibraryMaterialsRefresh = (e) => {
+      const fid = e?.detail?.familyId;
+      if (fid && fid !== familyId) return;
+      loadMaterialsRef.current?.();
+      (async () => {
+        try {
+          const data = await getMaterials(familyId, {}, session ?? null);
+          setAllMaterials(data);
+        } catch {
+          // ignore
+        }
+      })();
+    };
+    window.addEventListener('refreshMaterials', onLibraryMaterialsRefresh);
+    return () => window.removeEventListener('refreshMaterials', onLibraryMaterialsRefresh);
+  }, [familyId, session]);
+
   const loadDeletedMaterials = async () => {
     if (!familyId) return;
     
@@ -336,15 +360,18 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
   const handleItemClick = async (item) => {
     try {
-      const { url, title, error } = await resolveMaterialDocViewerUrl(item.data.id);
+      const { url, title, error, viewerKind } = await resolveMaterialDocViewerUrl(item.data.id);
       if (error) {
-        const isInfo = /cannot be viewed|does not have a viewable/i.test(error);
+        const isInfo = /cannot be viewed|does not have a viewable|isn’t available|isn't available|Preview isn’t/i.test(
+          error
+        );
         toast.push(error, isInfo ? 'info' : 'error');
         return;
       }
       if (url) {
         setPdfUrl(url);
         setPdfTitle(title || 'Attachment');
+        setMaterialViewerKind(viewerKind || 'pdf');
         setShowPdfViewer(true);
       }
     } catch (error) {
@@ -421,7 +448,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         window.dispatchEvent(new CustomEvent('materialDeleted', { 
           detail: { materialId: data.id, familyId } 
         }));
-        window.dispatchEvent(new CustomEvent('refreshMaterials'));
+        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         if (data.subject_id) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
@@ -817,7 +844,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         window.dispatchEvent(new CustomEvent('materialUpdated', { 
           detail: { materialId: data.id, familyId, action: 'restored' } 
         }));
-        window.dispatchEvent(new CustomEvent('refreshMaterials'));
+        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         if (data.subject_id) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
@@ -880,7 +907,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         window.dispatchEvent(new CustomEvent('materialDeleted', { 
           detail: { materialId: data.id, familyId, permanent: true } 
         }));
-        window.dispatchEvent(new CustomEvent('refreshMaterials'));
+        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         if (data.subject_id) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
@@ -1701,9 +1728,13 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
       <MaterialDocViewerModal
         visible={showPdfViewer && !!pdfUrl}
-        onClose={() => setShowPdfViewer(false)}
+        onClose={() => {
+          setShowPdfViewer(false);
+          setMaterialViewerKind('pdf');
+        }}
         url={pdfUrl}
         title={pdfTitle}
+        viewerKind={materialViewerKind}
       />
       <ConfirmDialog
         visible={confirmDialog.visible}

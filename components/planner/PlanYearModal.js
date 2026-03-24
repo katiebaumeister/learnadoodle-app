@@ -42,12 +42,15 @@ import {
   Upload,
   List,
   Sparkles,
+  ArrowLeft,
   ArrowRight,
   Paperclip,
   BookOpen,
   GripVertical,
   Edit,
   MoreVertical,
+  Pencil,
+  RotateCcw,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -67,6 +70,7 @@ import {
 } from '../../lib/services/academicYearClient';
 import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlannerSettings, addExclusion, saveExcludedPublicHolidayDates } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
+import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
 import { buildCurriculum, commitCurriculum, previewPacing, parsePlainText, generateCurriculumDraft, commitManualDraft, commitParsedDraft, commitGeneratedDraft } from '../../lib/services/curriculumClient';
 import { getMaterials } from '../../lib/services/materialsClient';
@@ -85,6 +89,8 @@ import {
   setAcademicYearsPickerCache,
   getPlanEditListTimesForPlans,
   mergePlanEditListTimesCache,
+  mergePlanYearFullDataCache,
+  getPlanYearFullDataFromCache,
   dropPlanEditListTimesCacheEntry,
   formatTimeRange,
   getPlanBlocksTimesSummary,
@@ -479,7 +485,6 @@ export default function PlanYearModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [yearLoadInProgress, setYearLoadInProgress] = useState(false);
   const [planCreatedAt, setPlanCreatedAt] = useState(null);
   const [planUpdatedAt, setPlanUpdatedAt] = useState(null);
   const [isHomeschool, setIsHomeschool] = useState(false);
@@ -570,8 +575,11 @@ export default function PlanYearModal({
   const [schedulePotential, setSchedulePotential] = useState(null);
   const [computingPotential, setComputingPotential] = useState(false);
   const schedulePotentialTimeoutRef = useRef(null);
+  const schedulePotentialSnapshotCacheRef = useRef(new Map()); // yearId -> { key, data } — stable revisit in edit mode
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
+  const academicYearIdRef = useRef(academicYearId);
+  academicYearIdRef.current = academicYearId;
 
   // Phase 4: Flex Learning suggestion when delta < 0
   const [flexSuggestion, setFlexSuggestion] = useState(null);
@@ -608,8 +616,11 @@ export default function PlanYearModal({
   const [planSummaryYearId, setPlanSummaryYearId] = useState(null); // when set, show plan summary view (like event summary) before editing
   const [editingFromSummary, setEditingFromSummary] = useState(false); // true when we opened logistics from "Edit Plan" on plan summary (header = Edit > Review, Back = to summary)
   const [planSummaryData, setPlanSummaryData] = useState(null);
-  const [planSummaryLoading, setPlanSummaryLoading] = useState(false);
   const [planSummaryError, setPlanSummaryError] = useState(null);
+  /** Slot keys (date|subject|start) struck through after delete; row stays visible until restored */
+  const [planSummaryStrikeKeys, setPlanSummaryStrikeKeys] = useState([]);
+  const planSummaryGhostLinesRef = useRef(new Map());
+  const planSummaryCalendarRefreshTimerRef = useRef(null);
   const [showPreviewScreen, setShowPreviewScreen] = useState(false);
   const [parsedContent, setParsedContent] = useState(null); // { unit, lessons, pacing } from buildCurriculum for upload/link/paste
   const [parsingContent, setParsingContent] = useState(false);
@@ -1014,6 +1025,45 @@ export default function PlanYearModal({
   // Effective subject targets for apply: always use merged result (plan override + subject defaults)
   const effectiveSubjectTargetsForApply = effectiveSubjectTargets;
 
+  /** Matches schedule_potential request inputs so we can reuse a snapshot when re-opening edit logistics. */
+  const schedulePotentialRequestKey = useMemo(
+    () =>
+      JSON.stringify({
+        sd: startDate,
+        ed: endDate,
+        bk: schedulePotentialBlocksStructureKey,
+        ck: schedulePotentialCadencePrimedKey,
+        ch: customHolidays,
+        cb: customBreaks,
+        fph: followGlobalHolidays,
+        cc: countryCode,
+        rc: regionCode,
+        cm: effectivePlanTarget.constraint_mode,
+        td: effectivePlanTarget.target_days,
+        th: effectivePlanTarget.target_hours,
+        st: effectiveSubjectTargetsForApply,
+        acIds: allFamilyChildIds,
+        fid: familyId,
+      }),
+    [
+      startDate,
+      endDate,
+      schedulePotentialBlocksStructureKey,
+      schedulePotentialCadencePrimedKey,
+      customHolidays,
+      customBreaks,
+      followGlobalHolidays,
+      countryCode,
+      regionCode,
+      effectivePlanTarget,
+      effectiveSubjectTargetsForApply,
+      allFamilyChildIds,
+      familyId,
+    ],
+  );
+  const schedulePotentialRequestKeyRef = useRef('');
+  schedulePotentialRequestKeyRef.current = schedulePotentialRequestKey;
+
   // Holidays/breaks: from settings vs plan-only (for UI separation)
   const exclusionsFromSettings = useMemo(() => {
     const ex = planningDefaultsData?.exclusions || [];
@@ -1101,12 +1151,10 @@ export default function PlanYearModal({
     }
   }, [visible, openForNewPlan, initialAcademicYearId]);
 
-  // When opening from banner (Edit plan), sync passed academic year id and clear stale data so we only show "Loading plan…" until load completes
+  // When opening from banner (Edit plan), sync passed academic year id and clear stale form fields before cache/network hydrate
   useEffect(() => {
     if (visible && initialAcademicYearId) {
       setAcademicYearId(initialAcademicYearId);
-      setSchedulePotential(null);
-      schedulePotentialFetchedRef.current = false;
       setStartDate('');
       setEndDate('');
       setBlocks([]);
@@ -1123,9 +1171,10 @@ export default function PlanYearModal({
     const c = familyId ? getAcademicYearsPickerCache(familyId) : null;
     return c !== null ? c : [];
   });
-  const [previousPlansLoading, setPreviousPlansLoading] = useState(() => {
-    if (!familyId) return true;
-    return getAcademicYearsPickerCache(familyId) === null;
+  /** True once we have a definitive picker row list (module cache or first fetch done). Never drives a spinner. */
+  const [previousPlansListFetched, setPreviousPlansListFetched] = useState(() => {
+    if (!familyId) return false;
+    return getAcademicYearsPickerCache(familyId) !== null;
   });
   const [planListRowTimesById, setPlanListRowTimesById] = useState(() => {
     const rows = familyId ? getAcademicYearsPickerCache(familyId) : null;
@@ -1134,13 +1183,25 @@ export default function PlanYearModal({
 
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;
+    const fromModule = getPlanYearFullDataFromCache(familyId, yearId);
+    if (fromModule) {
+      planSummaryCacheRef.current.set(yearId, fromModule);
+      const s0 = getPlanBlocksTimesSummary(fromModule);
+      if (s0) {
+        mergePlanEditListTimesCache(familyId, { [yearId]: s0 });
+        setPlanListRowTimesById((prev) => ({ ...prev, [yearId]: s0 }));
+      }
+    }
     if (planSummaryCacheRef.current.has(yearId) || summaryFetchInFlightRef.current.has(yearId)) return;
     summaryFetchInFlightRef.current.add(yearId);
     getAcademicYear(yearId)
       .then(({ data }) => {
         summaryFetchInFlightRef.current.delete(yearId);
         if (cancelledRef?.current) return;
-        if (data) planSummaryCacheRef.current.set(yearId, data);
+        if (data) {
+          mergePlanYearFullDataCache(familyId, yearId, data);
+          planSummaryCacheRef.current.set(yearId, data);
+        }
         const s = getPlanBlocksTimesSummary(data);
         if (s) {
           mergePlanEditListTimesCache(familyId, { [yearId]: s });
@@ -1153,14 +1214,29 @@ export default function PlanYearModal({
   }, [familyId]);
 
   useEffect(() => {
-    if (!visible || !openForNewPlan || !familyId) return;
+    if (!visible || !familyId) return;
+    const cachedRows = getAcademicYearsPickerCache(familyId);
+    if (cachedRows !== null) {
+      setPreviousPlans(cachedRows);
+      setPreviousPlansListFetched(true);
+      const fromModule = getPlanEditListTimesForPlans(familyId, cachedRows);
+      if (Object.keys(fromModule).length > 0) {
+        setPlanListRowTimesById((prev) => ({ ...fromModule, ...prev }));
+      }
+      let stale = false;
+      const cancelledRef = { get current() { return stale; } };
+      cachedRows
+        .map((r) => r.id)
+        .filter(Boolean)
+        .forEach((id) => prefetchYearSummaryForEditList(id, cancelledRef));
+      return () => {
+        stale = true;
+      };
+    }
     let cancelled = false;
     const cancelledRef = { get current() { return cancelled; } };
-    const hadCache = getAcademicYearsPickerCache(familyId) !== null;
-    if (!hadCache) {
-      setPreviousPlansLoading(true);
-      setPreviousPlans([]);
-    }
+    setPreviousPlansListFetched(false);
+    setPreviousPlans([]);
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('academic_years')
@@ -1168,7 +1244,7 @@ export default function PlanYearModal({
         .eq('family_id', familyId)
         .order('start_date', { ascending: false });
       if (cancelled) return;
-      setPreviousPlansLoading(false);
+      setPreviousPlansListFetched(true);
       if (err) {
         setPreviousPlans([]);
         setAcademicYearsPickerCache(familyId, []);
@@ -1182,12 +1258,37 @@ export default function PlanYearModal({
         .filter(Boolean)
         .forEach((id) => prefetchYearSummaryForEditList(id, cancelledRef));
     })();
-    return () => { cancelled = true; };
-  }, [visible, openForNewPlan, familyId, prefetchYearSummaryForEditList]);
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, familyId, prefetchYearSummaryForEditList]);
+
+  useEffect(() => {
+    if (!familyId || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const onPrefetch = (ev) => {
+      if (ev?.detail?.familyId !== familyId) return;
+      const rows = getAcademicYearsPickerCache(familyId);
+      if (rows == null) return;
+      setPreviousPlans(rows);
+      setPreviousPlansListFetched(true);
+      const times = getPlanEditListTimesForPlans(familyId, rows);
+      if (Object.keys(times).length > 0) {
+        setPlanListRowTimesById((prev) => ({ ...times, ...prev }));
+      }
+      rows.forEach((r) => {
+        const yid = r?.id;
+        if (!yid) return;
+        const full = getPlanYearFullDataFromCache(familyId, yid);
+        if (full) planSummaryCacheRef.current.set(yid, full);
+      });
+    };
+    window.addEventListener('planEditListPrefetchComplete', onPrefetch);
+    return () => window.removeEventListener('planEditListPrefetchComplete', onPrefetch);
+  }, [familyId]);
 
   // Fill time sublines from module cache when plans appear; fetch any missing summaries (deduped with list prefetch).
   useEffect(() => {
-    if (!familyId || !previousPlans.length || previousPlansLoading) return;
+    if (!familyId || !previousPlans.length || !previousPlansListFetched) return;
     let stale = false;
     const cancelledRef = { get current() { return stale; } };
     const fromModule = getPlanEditListTimesForPlans(familyId, previousPlans);
@@ -1201,7 +1302,7 @@ export default function PlanYearModal({
     return () => {
       stale = true;
     };
-  }, [familyId, previousPlans, previousPlansLoading, prefetchYearSummaryForEditList]);
+  }, [familyId, previousPlans, previousPlansListFetched, prefetchYearSummaryForEditList]);
 
   // When modal closes, defer clearing plan summary state until after close animation so we don't flash YOUR PLANS list
   useEffect(() => {
@@ -1235,18 +1336,19 @@ export default function PlanYearModal({
 
   // When opening from subject details and no plan exists, default to first step with one-subject preselected
   useEffect(() => {
-    if (visible && fromSubjectDetail && !previousPlansLoading && previousPlans.length === 0) {
+    if (visible && fromSubjectDetail && previousPlansListFetched && previousPlans.length === 0) {
       setStartCreatingNew(true);
       setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
       setPlanningScope('one_subject');
     }
-  }, [visible, fromSubjectDetail, previousPlansLoading, previousPlans]);
+  }, [visible, fromSubjectDetail, previousPlansListFetched, previousPlans]);
 
   // When opened from subject details with a subject, find a plan that includes this subject and open its summary if any
   useEffect(() => {
     if (!visible || !fromSubjectDetail || !initialSubjectId || !familyId) return;
-    if (previousPlansLoading || previousPlans.length === 0) {
-      if (!previousPlansLoading && previousPlans.length === 0) subjectPlanResolvedRef.current = true;
+    if (!previousPlansListFetched) return;
+    if (previousPlans.length === 0) {
+      subjectPlanResolvedRef.current = true;
       return;
     }
     if (subjectPlanResolvedRef.current) return;
@@ -1256,12 +1358,18 @@ export default function PlanYearModal({
       const subjectId = String(initialSubjectId);
       for (const ay of previousPlans) {
         if (!ay?.id || cancelled) break;
-        const cached = planSummaryCacheRef.current.get(ay.id);
+        let cached = planSummaryCacheRef.current.get(ay.id);
+        if (!cached) {
+          const fromMod = getPlanYearFullDataFromCache(familyId, ay.id);
+          if (fromMod) {
+            planSummaryCacheRef.current.set(ay.id, fromMod);
+            cached = fromMod;
+          }
+        }
         if (cached?.plan?.blocks?.some((b) => String(b?.subject_id) === subjectId)) {
           if (!cancelled) {
             planSummaryCacheRef.current.set(ay.id, cached);
             setPlanSummaryData(cached);
-            setPlanSummaryLoading(false);
             setPlanSummaryError(null);
             setPlanSummaryYearId(ay.id);
           }
@@ -1270,9 +1378,11 @@ export default function PlanYearModal({
         const { data } = await getAcademicYear(ay.id);
         if (cancelled) return;
         if (data?.plan?.blocks?.some((b) => String(b?.subject_id) === subjectId)) {
-          if (data) planSummaryCacheRef.current.set(ay.id, data);
+          if (data) {
+            mergePlanYearFullDataCache(familyId, ay.id, data);
+            planSummaryCacheRef.current.set(ay.id, data);
+          }
           setPlanSummaryData(data || null);
-          setPlanSummaryLoading(false);
           setPlanSummaryError(null);
           setPlanSummaryYearId(ay.id);
           return;
@@ -1280,7 +1390,7 @@ export default function PlanYearModal({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, fromSubjectDetail, initialSubjectId, familyId, previousPlans, previousPlansLoading]);
+  }, [visible, fromSubjectDetail, initialSubjectId, familyId, previousPlans, previousPlansListFetched]);
 
   // When opening from event details (Edit Plan) or plan health with a specific plan, go straight to plan summary view
   const openedToPlanSummaryRef = useRef(false);
@@ -1291,48 +1401,54 @@ export default function PlanYearModal({
     }
     if (initialAcademicYearId && !openForNewPlan && !openedToPlanSummaryRef.current) {
       openedToPlanSummaryRef.current = true;
-      if (initialPlanSummaryData) {
+      if (initialPlanSummaryData && familyId) {
+        mergePlanYearFullDataCache(familyId, initialAcademicYearId, initialPlanSummaryData);
         planSummaryCacheRef.current.set(initialAcademicYearId, initialPlanSummaryData);
         setPlanSummaryData(initialPlanSummaryData);
-        setPlanSummaryLoading(false);
         setPlanSummaryError(null);
       }
       setPlanSummaryYearId(initialAcademicYearId);
     }
-  }, [visible, initialAcademicYearId, initialPlanSummaryData, openForNewPlan]);
+  }, [visible, initialAcademicYearId, initialPlanSummaryData, openForNewPlan, familyId]);
 
-  // When user selects a plan from the list, show summary immediately from cache if available, then refresh in background
+  // When user selects a plan from the list, show summary from cache (ref or app-warmed module cache), then refresh in background
   useEffect(() => {
     if (!planSummaryYearId || !familyId) {
       setPlanSummaryData(null);
       setPlanSummaryError(null);
       return;
     }
-    const cached = planSummaryCacheRef.current.get(planSummaryYearId);
+    const fromRef = planSummaryCacheRef.current.get(planSummaryYearId);
+    const fromModule = getPlanYearFullDataFromCache(familyId, planSummaryYearId);
+    const cached = fromRef || fromModule;
+    if (fromModule && !fromRef) planSummaryCacheRef.current.set(planSummaryYearId, fromModule);
     if (cached) {
       setPlanSummaryData(cached);
       setPlanSummaryError(null);
-      setPlanSummaryLoading(false);
     } else {
-      setPlanSummaryLoading(true);
+      setPlanSummaryData(null);
       setPlanSummaryError(null);
     }
     let cancelled = false;
     getAcademicYear(planSummaryYearId).then(({ data, error }) => {
       if (cancelled) return;
-      setPlanSummaryLoading(false);
       if (error) {
         if (!cached) {
           setPlanSummaryData(null);
           setPlanSummaryError(error.message || 'Failed to load plan.');
         }
       } else {
-        if (data) planSummaryCacheRef.current.set(planSummaryYearId, data);
+        if (data) {
+          mergePlanYearFullDataCache(familyId, planSummaryYearId, data);
+          planSummaryCacheRef.current.set(planSummaryYearId, data);
+        }
         setPlanSummaryData(data || null);
         setPlanSummaryError(null);
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [planSummaryYearId, familyId]);
 
   // When an event is deleted and plan summary is open, refetch so "Dates with events" updates immediately
@@ -1351,6 +1467,97 @@ export default function PlanYearModal({
     return () => window.removeEventListener('eventDeleted', handler);
   }, [planSummaryYearId, familyId]);
 
+  useEffect(() => {
+    if (!planSummaryYearId) {
+      setPlanSummaryStrikeKeys([]);
+      planSummaryGhostLinesRef.current = new Map();
+    }
+  }, [planSummaryYearId]);
+
+  // After event save/edit elsewhere, refresh plan summary so titles and slot lines stay in sync
+  useEffect(() => {
+    if (typeof window === 'undefined' || !planSummaryYearId || !familyId) return;
+    const refetchSummary = () => {
+      planSummaryCacheRef.current.delete(planSummaryYearId);
+      getAcademicYear(planSummaryYearId).then(({ data, error }) => {
+        if (!error && data) {
+          planSummaryCacheRef.current.set(planSummaryYearId, data);
+          setPlanSummaryData({ ...data });
+        }
+      });
+    };
+    const handler = () => {
+      clearTimeout(planSummaryCalendarRefreshTimerRef.current);
+      planSummaryCalendarRefreshTimerRef.current = setTimeout(refetchSummary, 450);
+    };
+    window.addEventListener('refreshCalendar', handler);
+    return () => {
+      window.removeEventListener('refreshCalendar', handler);
+      clearTimeout(planSummaryCalendarRefreshTimerRef.current);
+    };
+  }, [planSummaryYearId, familyId]);
+
+  const goBackPlanSummaryToList = useCallback(() => {
+    setPlanSummaryYearId(null);
+    setPlanSummaryData(null);
+    setPlanSummaryError(null);
+    setAcademicYearId(null);
+    setEditingFromSummary(false);
+    setPlanSummaryStrikeKeys([]);
+    planSummaryGhostLinesRef.current = new Map();
+  }, []);
+
+  const goBackFromLogisticsToPlanList = useCallback(() => {
+    if (!academicYearId) return;
+    if (openForNewPlan) {
+      setPlanSummaryYearId(academicYearId);
+      setPlanSummaryData(planSummaryCacheRef.current.get(academicYearId) || null);
+      setShowPlanManagerView(true);
+      setEditingFromSummary(false);
+    } else {
+      onClose();
+    }
+  }, [academicYearId, openForNewPlan, onClose]);
+
+  const handlePlanSummaryRowDelete = useCallback(
+    async (line, slotKey) => {
+      planSummaryGhostLinesRef.current.set(slotKey, { ...line });
+      setPlanSummaryStrikeKeys((prev) => [...new Set([...prev, slotKey])]);
+      if (line.eventId && familyId) {
+        const { error } = await deletePlannerEventSoft(line.eventId, familyId);
+        if (error) {
+          toast.push(error.message || 'Could not remove this event.', 'error');
+          setPlanSummaryStrikeKeys((prev) => prev.filter((k) => k !== slotKey));
+          planSummaryGhostLinesRef.current.delete(slotKey);
+          return;
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+          window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: line.eventId } }));
+        }
+      }
+    },
+    [familyId, toast]
+  );
+
+  const handlePlanSummaryRowRestore = useCallback(
+    async (line, slotKey) => {
+      if (line.eventId && familyId) {
+        const { error } = await restoreEventFromTrash(line.eventId, familyId);
+        if (error) {
+          toast.push(error.message || 'Could not restore this event.', 'error');
+          return;
+        }
+      }
+      setPlanSummaryStrikeKeys((prev) => prev.filter((k) => k !== slotKey));
+      planSummaryGhostLinesRef.current.delete(slotKey);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+      }
+    },
+    [familyId, toast]
+  );
+
   // When we have academicYearId, load full year + plan to populate form (for "Edit plan" from banner)
   const loadedYearIdRef = useRef(null);
   const savedTargetsAppliedRef = useRef(false);
@@ -1365,23 +1572,8 @@ export default function PlanYearModal({
     if (!visible || !yearIdToLoad || !familyId) return;
     if (loadedYearIdRef.current === yearIdToLoad) return;
     let cancelled = false;
-    setYearLoadInProgress(true);
-    (async () => {
-      const { data, error } = await getAcademicYear(yearIdToLoad);
-      if (!cancelled) setYearLoadInProgress(false);
-      if (cancelled) return;
-      if (error) {
-        const isAuth = error.status === 401 || (error.message && /token|auth|login/i.test(error.message));
-        if (isAuth) {
-          setLoadError('Please log in to view this plan. If you’re already logged in, try refreshing the page.');
-        } else if (error.message && /invalid response format/i.test(error.message)) {
-          const preview = error.preview ? ` Response: "${String(error.preview).slice(0, 100)}${String(error.preview).length > 100 ? '…' : ''}"` : '';
-          setLoadError(`Could not load plan (server returned invalid data).${preview} Restart the backend and try again.`);
-        } else {
-          setLoadError(error.message || 'Failed to load plan.');
-        }
-        return;
-      }
+
+    const applyYearPayload = (data) => {
       if (!data) return;
       setLoadError(null);
       loadedYearIdRef.current = yearIdToLoad;
@@ -1420,7 +1612,6 @@ export default function PlanYearModal({
           setPlanSubjectTargetsOverride(overrides);
         }
         const planBlocks = Array.isArray(p.blocks) ? p.blocks : [];
-        // Derive subject + child selection from plan blocks
         if (planBlocks.length > 0) {
           const subjectIdsFromPlan = Array.from(
             new Set(
@@ -1445,7 +1636,6 @@ export default function PlanYearModal({
           })));
         }
       }
-      // Load custom holidays (API returns merged list; we need only CUSTOM_HOLIDAY for editing)
       const customHols = Array.isArray(data.holidays)
         ? data.holidays
             .filter((h) => (h.type || 'CUSTOM_HOLIDAY') === 'CUSTOM_HOLIDAY')
@@ -1456,20 +1646,62 @@ export default function PlanYearModal({
             }))
         : [];
       setCustomHolidays(customHols);
-      // Load custom breaks from planner_exclusions (academic_year scope)
+    };
+
+    const loadExclusions = async () => {
       const { data: exclusions } = await getAcademicYearExclusions(yearIdToLoad);
-      if (!cancelled && exclusions && exclusions.length > 0) {
+      if (cancelled) return;
+      if (exclusions && exclusions.length > 0) {
         const breaks = exclusions.filter((e) => e.exclusion_type === 'break').map((e) => ({
           start: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : (e.start_date?.isoformat?.() || String(e.start_date || '').slice(0, 10)),
           end: typeof e.end_date === 'string' ? e.end_date.slice(0, 10) : (e.end_date?.isoformat?.() || String(e.end_date || '').slice(0, 10)),
           name: e.label || '',
         }));
         setCustomBreaks(breaks);
-      } else if (!cancelled) {
+      } else {
         setCustomBreaks([]);
       }
+    };
+
+    (async () => {
+      const cachedLocal =
+        planSummaryCacheRef.current.get(yearIdToLoad) || getPlanYearFullDataFromCache(familyId, yearIdToLoad);
+      if (cachedLocal) {
+        planSummaryCacheRef.current.set(yearIdToLoad, cachedLocal);
+        mergePlanYearFullDataCache(familyId, yearIdToLoad, cachedLocal);
+        applyYearPayload(cachedLocal);
+      }
+
+      const { data, error } = await getAcademicYear(yearIdToLoad);
+      if (cancelled) return;
+      if (error) {
+        if (!cachedLocal) {
+          const isAuth = error.status === 401 || (error.message && /token|auth|login/i.test(error.message));
+          if (isAuth) {
+            setLoadError('Please log in to view this plan. If you’re already logged in, try refreshing the page.');
+          } else if (error.message && /invalid response format/i.test(error.message)) {
+            const preview = error.preview ? ` Response: "${String(error.preview).slice(0, 100)}${String(error.preview).length > 100 ? '…' : ''}"` : '';
+            setLoadError(`Could not load plan (server returned invalid data).${preview} Restart the backend and try again.`);
+          } else {
+            setLoadError(error.message || 'Failed to load plan.');
+          }
+        } else {
+          await loadExclusions();
+        }
+        return;
+      }
+      if (!data) {
+        if (cachedLocal) await loadExclusions();
+        return;
+      }
+      planSummaryCacheRef.current.set(yearIdToLoad, data);
+      mergePlanYearFullDataCache(familyId, yearIdToLoad, data);
+      applyYearPayload(data);
+      await loadExclusions();
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [visible, initialAcademicYearId, academicYearId, familyId]);
   useEffect(() => {
     if (!visible) {
@@ -1478,7 +1710,6 @@ export default function PlanYearModal({
       setLoadError(null);
       setPlanCreatedAt(null);
       setPlanUpdatedAt(null);
-      setYearLoadInProgress(false);
       // Defer so we don't flash "Create new plan" first screen during close animation
       const t = setTimeout(() => {
         setStartCreatingNew(false);
@@ -2011,6 +2242,19 @@ export default function PlanYearModal({
     return () => clearTimeout(t);
   }, [visible, academicYearId, syncBlocksFromEffectiveSubjects]);
 
+  const isEditingExistingPlanFlow = useMemo(
+    () =>
+      editingFromSummary ||
+      !!initialAcademicYearId ||
+      (!openForNewPlan && !!academicYearId),
+    [editingFromSummary, initialAcademicYearId, openForNewPlan, academicYearId],
+  );
+
+  const hideStructuredClassPlansIntro = isEditingExistingPlanFlow;
+
+  const showPlanEditingModeBanner =
+    PLAN_MY_YEAR_LOGISTICS_FIRST && hideStructuredClassPlansIntro && planStep === 'logistics';
+
   // Compute schedule potential when block structure / dates / exclusions / targets change — not when only cadence (weekdays, times) changes
   const triggerSchedulePotential = useCallback((immediate = false) => {
     if (schedulePotentialTimeoutRef.current) clearTimeout(schedulePotentialTimeoutRef.current);
@@ -2028,6 +2272,17 @@ export default function PlanYearModal({
         setSchedulePotential(null);
         setComputingPotential(false);
         return;
+      }
+      const yearId = academicYearIdRef.current;
+      const reqKey = schedulePotentialRequestKeyRef.current;
+      if (isEditingExistingPlanFlow && yearId) {
+        const cached = schedulePotentialSnapshotCacheRef.current.get(yearId);
+        if (cached && cached.key === reqKey) {
+          setSchedulePotential(cached.data);
+          schedulePotentialFetchedRef.current = true;
+          setComputingPotential(false);
+          return;
+        }
       }
       setComputingPotential(true);
       try {
@@ -2057,6 +2312,13 @@ export default function PlanYearModal({
         if (!error && data) {
           setSchedulePotential(data);
           schedulePotentialFetchedRef.current = true;
+          const yid = academicYearIdRef.current;
+          if (yid) {
+            schedulePotentialSnapshotCacheRef.current.set(yid, {
+              key: schedulePotentialRequestKeyRef.current,
+              data,
+            });
+          }
         } else {
           setSchedulePotential(null);
         }
@@ -2066,7 +2328,23 @@ export default function PlanYearModal({
         setComputingPotential(false);
       }
     }, delay);
-  }, [familyId, startDate, endDate, schedulePotentialBlocksStructureKey, schedulePotentialCadencePrimedKey, customHolidays, customBreaks, followGlobalHolidays, countryCode, regionCode, effectivePlanTarget, allFamilyChildIds, effectiveSubjectTargets, effectiveSubjectTargetsForApply]);
+  }, [
+    familyId,
+    startDate,
+    endDate,
+    schedulePotentialBlocksStructureKey,
+    schedulePotentialCadencePrimedKey,
+    customHolidays,
+    customBreaks,
+    followGlobalHolidays,
+    countryCode,
+    regionCode,
+    effectivePlanTarget,
+    allFamilyChildIds,
+    effectiveSubjectTargets,
+    effectiveSubjectTargetsForApply,
+    isEditingExistingPlanFlow,
+  ]);
 
   useEffect(() => {
     if (!visible) {
@@ -2081,6 +2359,24 @@ export default function PlanYearModal({
       if (schedulePotentialTimeoutRef.current) clearTimeout(schedulePotentialTimeoutRef.current);
     };
   }, [visible, blocks.length, schedulePotentialBlocksStructureKey, schedulePotentialCadencePrimedKey, startDate, endDate, customHolidays, customBreaks, triggerSchedulePotential]);
+
+  // Apply cached schedule_potential before paint when re-entering edit logistics (avoids empty/loading flash).
+  useLayoutEffect(() => {
+    if (!visible || !isEditingExistingPlanFlow || !academicYearId) return;
+    if (!startDate || !endDate || blocks.length === 0) return;
+    const cached = schedulePotentialSnapshotCacheRef.current.get(academicYearId);
+    if (!cached || cached.key !== schedulePotentialRequestKey) return;
+    setSchedulePotential(cached.data);
+    schedulePotentialFetchedRef.current = true;
+  }, [
+    visible,
+    isEditingExistingPlanFlow,
+    academicYearId,
+    startDate,
+    endDate,
+    blocks.length,
+    schedulePotentialRequestKey,
+  ]);
 
   // Phase 4 / Phase 5: Flex Learning suggestion when delta < 0 (Strategy A from DESIGN_PLAN_YEAR)
   const isUnderTarget = schedulePotential && (
@@ -2908,9 +3204,14 @@ export default function PlanYearModal({
     }
   }, [error, startDate, endDate, mode, targetDays, targetHours, hoursPerDay]);
 
-  const editPlanLoading = isHomeschool && (initialAcademicYearId || academicYearId) && loadedYearIdRef.current !== (initialAcademicYearId || academicYearId);
+  const yearIdForHeaderLoad = initialAcademicYearId || academicYearId;
+  const editPlanLoading =
+    isHomeschool &&
+    yearIdForHeaderLoad &&
+    loadedYearIdRef.current !== yearIdForHeaderLoad &&
+    !getPlanYearFullDataFromCache(familyId, yearIdForHeaderLoad);
   const headerMetaRaw = editPlanLoading
-    ? 'Loading…'
+    ? null
     : [startDate && endDate ? `${formatDateDisplay(startDate)} – ${formatDateDisplay(endDate)}` : null, (() => {
         const idSet = new Set();
         (blocks || []).forEach((b) => (b.child_ids || []).forEach((cid) => { if (cid) idSet.add(String(cid)); }));
@@ -4267,6 +4568,7 @@ export default function PlanYearModal({
         (pickerOnly || showYourPlansList) &&
           !(renderInline && showYourPlansList) &&
           (Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.05)' } : { shadowOpacity: 0.08, elevation: 4 }),
+        planSummaryYearId && renderInline && showYourPlansList && styles.modalPlanSummaryColumn,
       ]}
       activeOpacity={1}
       onPress={() => {}}
@@ -4307,22 +4609,16 @@ export default function PlanYearModal({
           </View>
           ) : null}
           {planSummaryYearId ? (
-            <ScrollView style={styles.content} contentContainerStyle={styles.planSummaryContentContainer} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={[styles.content, renderInline && showYourPlansList && styles.planSummaryScrollFlex]}
+              contentContainerStyle={[
+                styles.planSummaryContentContainer,
+                renderInline && showYourPlansList && styles.planSummaryContentGrow,
+              ]}
+              showsVerticalScrollIndicator={false}
+            >
               <View style={styles.pickerBody}>
-                {planSummaryLoading ? (
-                  <>
-                    <View style={[styles.pickerHeader, styles.planSummaryHeaderRow, styles.planSummaryPadded]}>
-                      <Text style={styles.planSummaryModalTitle}>Plan summary</Text>
-                    </View>
-                    <View style={styles.planSummaryDividerFullWrap}>
-                      <View style={styles.planSummaryDividerFull} />
-                    </View>
-                    <View style={[styles.pickerLoading, styles.planSummaryPadded]}>
-                      <ActivityIndicator size="small" color={ACCENT} />
-                      <Text style={[styles.mutedText, { marginTop: 8 }]}>Loading plan…</Text>
-                    </View>
-                  </>
-                ) : planSummaryError ? (
+                {planSummaryError ? (
                   <>
                     <View style={[styles.pickerHeader, styles.planSummaryHeaderRow, styles.planSummaryPadded]}>
                       <Text style={styles.planSummaryModalTitle}>Plan summary</Text>
@@ -4332,7 +4628,7 @@ export default function PlanYearModal({
                     </View>
                     <View style={[styles.errorBox, styles.planSummaryPadded]}>
                       <Text style={styles.errorText}>{planSummaryError}</Text>
-                      <TouchableOpacity onPress={() => { setPlanSummaryYearId(null); setPlanSummaryData(null); setPlanSummaryError(null); setAcademicYearId(null); setEditingFromSummary(false); }} style={{ marginTop: 12 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                      <TouchableOpacity onPress={goBackPlanSummaryToList} style={{ marginTop: 12 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                         <Text style={{ fontSize: 14, color: ACCENT, fontWeight: '600' }}>Back to list</Text>
                       </TouchableOpacity>
                     </View>
@@ -4406,28 +4702,93 @@ export default function PlanYearModal({
                         if (label && (label.unit || '').trim()) line.unitTopic = (label.unit || '').trim();
                         const matchingEvent = planEventDates.find((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local) === key);
                         if (matchingEvent && matchingEvent.has_attachment) line.hasAttachment = true;
+                        const evId = matchingEvent?.event_id ?? matchingEvent?.id;
+                        if (evId) line.eventId = evId;
                         lines.push(line);
                       });
                     });
                     lines.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
                     return lines;
                   })();
+                  const strikeSet = new Set(planSummaryStrikeKeys);
+                  const ghostMap = planSummaryGhostLinesRef.current;
+                  const mergedSlotLines = (() => {
+                    const mergedMap = new Map();
+                    for (const l of summarySlotLines) {
+                      const k = eventExistsKey(l.date, l.subjectId, l.startLocal);
+                      mergedMap.set(k, { ...l, _struck: strikeSet.has(k) });
+                    }
+                    for (const k of strikeSet) {
+                      if (!mergedMap.has(k)) {
+                        const g = ghostMap.get(k);
+                        if (g) mergedMap.set(k, { ...g, _struck: true });
+                      }
+                    }
+                    const out = Array.from(mergedMap.values());
+                    out.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
+                    return out;
+                  })();
                   return (
                     <>
-                      <View style={[styles.pickerHeader, styles.planSummaryHeaderRow, styles.planSummaryPadded]}>
-                        <Text style={styles.planSummaryModalTitle} numberOfLines={2}>{summaryTitle}</Text>
+                      <View style={[styles.planSummaryHeaderOuter, styles.planSummaryPadded]}>
+                        <View style={styles.planSummaryTopRow}>
+                        <TouchableOpacity
+                          onPress={goBackPlanSummaryToList}
+                          style={styles.planSummaryBackButton}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          accessibilityLabel="Back to plan list"
+                        >
+                          <ArrowLeft size={22} color={FG} strokeWidth={2.25} />
+                        </TouchableOpacity>
+                        <Text style={[styles.planSummaryModalTitle, styles.planSummaryTitleInRow]} numberOfLines={2}>
+                          {summaryTitle}
+                        </Text>
+                        <View style={styles.planSummaryTopBarRight}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setAcademicYearId(planSummaryYearId);
+                              setPlanSummaryYearId(null);
+                              setPlanSummaryData(null);
+                              setPlanSummaryError(null);
+                              setShowPlanManagerView(false);
+                              setPlanStep('logistics');
+                              setEditingFromSummary(true);
+                            }}
+                            style={styles.planSummaryPlainButton}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Pencil size={18} color="#6B7280" strokeWidth={2} />
+                            <Text style={styles.planSummaryPlainButtonText}>Edit Plan</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowDeletePlanConfirm(true)}
+                            disabled={deletingPlan}
+                            style={[styles.planSummaryPlainButton, deletingPlan && styles.planSummaryPlainButtonDisabled]}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: deletingPlan ? 'default' : 'pointer' })}
+                          >
+                            <Trash2 size={18} color="#6B7280" strokeWidth={2} />
+                            <Text style={styles.planSummaryPlainButtonText}>Delete Plan</Text>
+                          </TouchableOpacity>
+                        </View>
+                        </View>
                       </View>
                       <View style={styles.planSummaryDividerFullWrap}>
                         <View style={styles.planSummaryDividerFull} />
                       </View>
-                      {summarySlotLines.length > 0 ? (
+                      {mergedSlotLines.length > 0 ? (
                         <>
                           <View style={[styles.planSummaryPadded, { marginTop: 4, marginBottom: 8 }]}>
                             <Text style={styles.planSummaryDatesSectionLabel}>Dates with events</Text>
                           </View>
                           <View style={styles.planSummaryDatesList}>
-                            {summarySlotLines.map((line, idx) => {
+                            {mergedSlotLines.map((line) => {
+                              const slotKey = eventExistsKey(line.date, line.subjectId, line.startLocal);
+                              const struck = !!line._struck;
                               const dispatchOpenSlot = () => {
+                                if (struck) return;
                                 if (typeof window !== 'undefined') {
                                   const detail = {
                                     dateYmd: line.date,
@@ -4441,55 +4802,106 @@ export default function PlanYearModal({
                                 }
                               };
                               return (
-                              <TouchableOpacity
-                                key={`${line.date}-${line.subjectName}-${idx}`}
-                                style={styles.planSummaryDateRow}
-                                onPress={dispatchOpenSlot}
-                                activeOpacity={0.7}
-                                hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }}
-                                {...(Platform.OS === 'web' && {
-                                  cursor: 'pointer',
-                                  onClick: (e) => { e.stopPropagation(); e.preventDefault(); dispatchOpenSlot(); },
-                                })}
-                              >
-                                <View style={styles.planSummaryDateRowInner}>
-                                  <Text style={styles.planSummaryDateRowText} numberOfLines={1}>
-                                    {line.dateLabel}{line.timeLabel ? ` · ${line.timeLabel}` : ''}{line.subjectName ? ` · ${line.subjectName}` : ''}{line.unitTopic ? ` · ${line.unitTopic}` : ''}
-                                  </Text>
-                                  {line.hasAttachment ? (
-                                    <View style={styles.planSummaryDateRowAttachment}>
-                                      <Paperclip size={14} color={MUTED} strokeWidth={2} />
+                                <View key={slotKey} style={styles.planSummaryDateRow}>
+                                  <View style={styles.planSummaryDateRowInner}>
+                                    <TouchableOpacity
+                                      style={styles.planSummaryDateRowTextWrap}
+                                      onPress={dispatchOpenSlot}
+                                      disabled={struck}
+                                      activeOpacity={0.7}
+                                      {...(Platform.OS === 'web' && {
+                                        cursor: struck ? 'default' : 'pointer',
+                                      })}
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.planSummaryDateRowText,
+                                          struck && styles.planSummaryDateRowTextStruck,
+                                        ]}
+                                        numberOfLines={2}
+                                      >
+                                        {line.dateLabel}
+                                        {line.timeLabel ? ` · ${line.timeLabel}` : ''}
+                                        {line.subjectName ? ` · ${line.subjectName}` : ''}
+                                        {line.unitTopic ? ` · ${line.unitTopic}` : ''}
+                                      </Text>
+                                    </TouchableOpacity>
+                                    <View style={styles.planSummaryDateRowActions}>
+                                      {line.hasAttachment ? (
+                                        <View style={styles.planSummaryDateRowAttachment}>
+                                          <Paperclip size={14} color={struck ? PICKER_OR_COLOR : MUTED} strokeWidth={2} />
+                                        </View>
+                                      ) : null}
+                                      {!struck ? (
+                                        <>
+                                          <TouchableOpacity
+                                            style={styles.planSummaryRowActionBtn}
+                                            onPress={(e) => {
+                                              e?.stopPropagation?.();
+                                              dispatchOpenSlot();
+                                            }}
+                                            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                                            {...(Platform.OS === 'web' && {
+                                              cursor: 'pointer',
+                                              onClick: (ev) => {
+                                                ev.stopPropagation();
+                                                ev.preventDefault();
+                                                dispatchOpenSlot();
+                                              },
+                                            })}
+                                            accessibilityLabel="Edit event"
+                                          >
+                                            <Pencil size={16} color="#475569" strokeWidth={2} />
+                                          </TouchableOpacity>
+                                          <TouchableOpacity
+                                            style={styles.planSummaryRowActionBtn}
+                                            onPress={(e) => {
+                                              e?.stopPropagation?.();
+                                              handlePlanSummaryRowDelete(line, slotKey);
+                                            }}
+                                            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                                            {...(Platform.OS === 'web' && {
+                                              cursor: 'pointer',
+                                              onClick: (ev) => {
+                                                ev.stopPropagation();
+                                                ev.preventDefault();
+                                                handlePlanSummaryRowDelete(line, slotKey);
+                                              },
+                                            })}
+                                            accessibilityLabel="Remove from calendar"
+                                          >
+                                            <Trash2 size={16} color="#475569" strokeWidth={2} />
+                                          </TouchableOpacity>
+                                        </>
+                                      ) : (
+                                        <TouchableOpacity
+                                          style={styles.planSummaryRowActionBtn}
+                                          onPress={(e) => {
+                                            e?.stopPropagation?.();
+                                            handlePlanSummaryRowRestore(line, slotKey);
+                                          }}
+                                          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                                          {...(Platform.OS === 'web' && {
+                                            cursor: 'pointer',
+                                            onClick: (ev) => {
+                                              ev.stopPropagation();
+                                              ev.preventDefault();
+                                              handlePlanSummaryRowRestore(line, slotKey);
+                                            },
+                                          })}
+                                          accessibilityLabel="Restore event"
+                                        >
+                                          <RotateCcw size={16} color="#64748B" strokeWidth={2} />
+                                        </TouchableOpacity>
+                                      )}
                                     </View>
-                                  ) : null}
+                                  </View>
                                 </View>
-                              </TouchableOpacity>
-                            );
+                              );
                             })}
                           </View>
                         </>
                       ) : null}
-                      <View style={styles.planSummaryFooterStrip}>
-                        <TouchableOpacity onPress={() => { setPlanSummaryYearId(null); setPlanSummaryData(null); setPlanSummaryError(null); setAcademicYearId(null); setEditingFromSummary(false); }} style={styles.cancelButton} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Text style={[styles.cancelText, styles.pickerCancelText]}>Back to list</Text>
-                        </TouchableOpacity>
-                        <View style={styles.planSummaryFooterRight}>
-                          <TouchableOpacity
-                            onPress={() => setShowDeletePlanConfirm(true)}
-                            style={styles.cancelButton}
-                            disabled={deletingPlan}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={[styles.cancelText, styles.pickerCancelText]}>Delete Plan</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => { setAcademicYearId(planSummaryYearId); setPlanSummaryYearId(null); setPlanSummaryData(null); setPlanSummaryError(null); setShowPlanManagerView(false); setPlanStep('logistics'); setEditingFromSummary(true); }}
-                            style={styles.primaryButton}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={styles.primaryButtonText}>Edit Plan</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
                     </>
                   );
                 })() : null}
@@ -4600,11 +5012,8 @@ export default function PlanYearModal({
                 </View>
               )}
               <View style={styles.pickerBody}>
-                {previousPlansLoading ? (
-                  <View style={styles.pickerLoading}>
-                    <ActivityIndicator size="small" color={ACCENT} />
-                    <Text style={[styles.mutedText, { marginTop: 8 }]}>Loading previous plans…</Text>
-                  </View>
+                {!previousPlansListFetched && previousPlans.length === 0 ? (
+                  <View style={{ minHeight: 80 }} />
                 ) : previousPlans.length > 0 ? (
                   <>
                     <ScrollView
@@ -4950,7 +5359,33 @@ export default function PlanYearModal({
                 <Text style={styles.errorText}>{error}</Text>
               </View>
             )}
-            {PLAN_MY_YEAR_LOGISTICS_FIRST && (
+            {showPlanEditingModeBanner && (
+              <View style={styles.planEditingModeBanner}>
+                <View style={styles.planEditingModeBannerInner}>
+                  <View style={styles.planEditingModeBannerLeft}>
+                    {academicYearId ? (
+                      <TouchableOpacity
+                        onPress={goBackFromLogisticsToPlanList}
+                        activeOpacity={0.85}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.planEditingModeBannerLink}>
+                          {openForNewPlan ? '← Back to plan list' : '← Back'}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View />
+                    )}
+                  </View>
+                  <View style={styles.planEditingModeBannerCenter} pointerEvents="none">
+                    <Text style={styles.planEditingModeBannerLabel}>Editing mode</Text>
+                  </View>
+                  <View style={styles.planEditingModeBannerRight} />
+                </View>
+              </View>
+            )}
+            {PLAN_MY_YEAR_LOGISTICS_FIRST && !hideStructuredClassPlansIntro && (
               <View style={styles.planYearGlanceHeaderWrap}>
                 <Text style={styles.planYearGlanceTitle}>{t('planMyYear.modal.structuredClassPlansTitle')}</Text>
                 <Text style={styles.planYearGlanceHelp}>{t('planMyYear.modal.structuredClassPlansHelp')}</Text>
@@ -4991,20 +5426,6 @@ export default function PlanYearModal({
             ) : (
               // Homeschool Constraint Solver
               <View>
-                {PLAN_MY_YEAR_LOGISTICS_FIRST && editingFromSummary && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setPlanSummaryYearId(academicYearId);
-                      setPlanSummaryData(planSummaryCacheRef.current.get(academicYearId) || null);
-                      setShowPlanManagerView(true);
-                      setEditingFromSummary(false);
-                    }}
-                    style={{ alignSelf: 'flex-start', marginBottom: 12 }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={{ fontSize: 14, color: ACCENT, fontWeight: '600' }}>← Back to plan list</Text>
-                  </TouchableOpacity>
-                )}
                 <View style={{ marginBottom: 10 }}>
                 <View style={[styles.inputGroup, { marginBottom: 0 }]}>
                   <Text style={[styles.logisticsLabel]}>Subjects <Text style={{ color: ERROR }}>*</Text></Text>
@@ -7316,9 +7737,108 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   planSummaryContentContainer: {
-    paddingTop: 12,
+    paddingTop: 4,
     paddingBottom: 0,
     paddingHorizontal: 0,
+  },
+  modalPlanSummaryColumn: {
+    flex: 1,
+    flexDirection: 'column',
+    minHeight: 0,
+    ...(Platform.OS === 'web' && { display: 'flex' }),
+  },
+  planSummaryScrollFlex: {
+    flex: 1,
+    minHeight: 0,
+  },
+  planSummaryContentGrow: {
+    flexGrow: 1,
+    paddingBottom: 32,
+  },
+  planSummaryHeaderOuter: {
+    paddingTop: 12,
+    paddingBottom: 12,
+    alignSelf: 'stretch',
+  },
+  /** Back + title + actions on one row (no stacked gap under the arrow) */
+  planSummaryTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+  },
+  planSummaryBackButton: {
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+    marginRight: 2,
+    borderRadius: 8,
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  planSummaryTitleInRow: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: 0,
+  },
+  planSummaryTopBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    flexShrink: 0,
+    justifyContent: 'flex-end',
+  },
+  /** Match subject empty-state pills (Add Lesson / Plan my year) */
+  planSummaryPlainButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  planSummaryPlainButtonDisabled: {
+    opacity: 0.5,
+  },
+  planSummaryPlainButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planSummaryDateRowTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 4,
+  },
+  planSummaryDateRowTextStruck: {
+    opacity: 0.52,
+    color: MUTED,
+    textDecorationLine: 'line-through',
+    ...(Platform.OS === 'web' && {
+      textDecorationThickness: '0.08em',
+      textDecorationColor: 'rgba(100,116,139,0.85)',
+    }),
+  },
+  planSummaryDateRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+    flexShrink: 0,
+  },
+  planSummaryRowActionBtn: {
+    padding: 6,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   planSummaryPadded: {
     paddingHorizontal: 40,
@@ -7340,7 +7860,8 @@ const styles = StyleSheet.create({
   },
   planSummaryDatesList: {
     paddingHorizontal: 40,
-    paddingBottom: 12,
+    paddingBottom: 24,
+    flexGrow: 1,
   },
   planSummaryDateRow: {
     paddingVertical: 10,
@@ -7349,7 +7870,7 @@ const styles = StyleSheet.create({
   },
   planSummaryDateRowInner: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 8,
   },
@@ -7718,6 +8239,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(15, 23, 42, 0.62)',
     lineHeight: 18,
+  },
+  planEditingModeBanner: {
+    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: ELIGIBILITY_CARD_BG,
+    borderWidth: 1,
+    borderColor: ELIGIBILITY_CARD_BORDER,
+  },
+  planEditingModeBannerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 24,
+    position: 'relative',
+  },
+  planEditingModeBannerLeft: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  planEditingModeBannerCenter: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  planEditingModeBannerRight: {
+    flex: 1,
+    minWidth: 0,
+  },
+  planEditingModeBannerLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: FG,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planEditingModeBannerLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: ACCENT,
   },
   planListContentContainer: {
     paddingTop: 24,
