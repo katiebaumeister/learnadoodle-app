@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image, Animated, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image, Modal } from 'react-native';
 import ReactDOM from 'react-dom';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Check, X } from 'lucide-react';
+import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
 
 const AVATAR_SIZE = 64;
 const AVATAR_PREVIEW_SIZE = 72;
@@ -128,8 +129,6 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [hoveredAvatar, setHoveredAvatar] = useState(null);
-  const continueScale = useRef(new Animated.Value(1)).current;
-
   const formValid = Boolean(name.trim() && age && grade && avatar);
   const formEmpty = !name.trim() && !age && !grade;
   // If user has added at least one child and current form has any content (partial second child), they must finish or clear before continuing
@@ -142,18 +141,6 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
     !grade && 'Grade',
   ].filter(Boolean);
   const showMissingHint = !canContinue && missingRequired.length > 0;
-
-  useEffect(() => {
-    if (canContinue) {
-      Animated.sequence([
-        Animated.timing(continueScale, { toValue: 1.03, duration: 120, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.delay(150),
-        Animated.timing(continueScale, { toValue: 1, duration: 100, useNativeDriver: Platform.OS !== 'web' }),
-      ]).start();
-    } else {
-      continueScale.setValue(1);
-    }
-  }, [canContinue]);
 
   const toggleFromList = (value, list, setList) => {
     if (list.includes(value)) setList(list.filter((v) => v !== value));
@@ -313,32 +300,32 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           />
         </View>
         <Text style={styles.label}>Age <Text style={styles.requiredAsterisk}>*</Text></Text>
-        <View style={styles.row}>
+        <View style={styles.chipsWrap}>
           {(isStudentOnboarding ? Array.from({ length: 6 }, (_, i) => i + 13) : Array.from({ length: 16 }, (_, i) => i + 3)).map((n) => {
             const val = String(n);
             const selected = age === val;
             return (
               <TouchableOpacity
                 key={n}
-                style={[styles.chipAgeGrade, selected && styles.chipAgeGradeSelected]}
+                style={[styles.formChip, selected && styles.formChipSelected]}
                 onPress={() => { setAge(val); setError(null); }}
               >
-                <Text style={[styles.chipAgeGradeText, selected && styles.chipAgeGradeTextSelected]}>{val}</Text>
+                <Text style={[styles.formChipText, selected && styles.formChipTextSelected]}>{val}</Text>
               </TouchableOpacity>
             );
           })}
         </View>
         <Text style={styles.label}>Grade <Text style={styles.requiredAsterisk}>*</Text></Text>
-        <View style={styles.row}>
+        <View style={styles.chipsWrap}>
           {GRADES.map((g) => {
             const selected = grade === g;
             return (
               <TouchableOpacity
                 key={g}
-                style={[styles.chipAgeGrade, selected && styles.chipAgeGradeSelected]}
+                style={[styles.formChip, selected && styles.formChipSelected]}
                 onPress={() => { setGrade(g); setError(null); }}
               >
-                <Text style={[styles.chipAgeGradeText, selected && styles.chipAgeGradeTextSelected]}>{g}</Text>
+                <Text style={[styles.formChipText, selected && styles.formChipTextSelected]}>{g}</Text>
               </TouchableOpacity>
             );
           })}
@@ -356,6 +343,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
                 onMouseLeave={Platform.OS === 'web' ? () => setHoveredAvatar(null) : undefined}
                 style={[
                   styles.avatarCell,
+                  { backgroundColor: hexToRgba(getChildColorFromAvatar(key), 0.55) },
                   selected && styles.avatarCellSelected,
                   Platform.OS === 'web' && !selected && hovered && styles.avatarCellHovered,
                 ]}
@@ -367,7 +355,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           })}
         </View>
         <Text style={styles.label}>Follow State Standards?</Text>
-        <View style={styles.row}>
+        <View style={styles.chipsWrap}>
           {STATES.map((s) => (
             <TouchableOpacity
               key={s}
@@ -396,7 +384,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
       {showAdditional && (
         <View style={styles.additionalSectionInner}>
           <Text style={styles.label}>Interests</Text>
-          <View style={styles.row}>
+          <View style={styles.chipsWrap}>
             {INTERESTS.map((it) => (
               <TouchableOpacity
                 key={it}
@@ -450,7 +438,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           )}
 
           <Text style={styles.label}>Learning & processing needs</Text>
-          <View style={styles.row}>
+          <View style={styles.chipsWrap}>
             {DIAGNOSES.map((d) => (
               <TouchableOpacity
                 key={d}
@@ -502,7 +490,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           )}
 
           <Text style={styles.label}>Executive function needs</Text>
-          <View style={styles.row}>
+          <View style={styles.chipsWrap}>
             {EXECUTIVE_FUNCTION.map((ef) => (
               <TouchableOpacity
                 key={ef}
@@ -515,7 +503,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           </View>
 
           <Text style={styles.label}>Preferred learning modalities</Text>
-          <View style={styles.row}>
+          <View style={styles.chipsWrap}>
             {LEARNING_MODALITIES.map((mod) => (
               <TouchableOpacity
                 key={mod}
@@ -528,7 +516,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           </View>
 
           <Text style={styles.label}>Support needs</Text>
-          <View style={styles.row}>
+          <View style={styles.chipsWrap}>
             {SUPPORT_NEEDS.map((need) => (
               <TouchableOpacity
                 key={need}
@@ -543,7 +531,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           <Text style={styles.subsectionTitle}>School year (family default)</Text>
           <Text style={[styles.label, { marginBottom: 4 }]}>Optional. One setting for the whole family — pre-fills new plans in Plan My Year.</Text>
           <Text style={styles.label}>Target</Text>
-          <View style={styles.row}>
+          <View style={styles.chipsWrap}>
             <TouchableOpacity
               style={[styles.chip, targetMode === 'days' && styles.chipSelected]}
               onPress={() => { setTargetMode('days'); setError(null); }}
@@ -778,24 +766,6 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           ) : null}
         </View>
       )}
-      {!isStudentOnboarding && (
-        <View style={styles.addAnotherRow}>
-          <TouchableOpacity
-              style={[
-                styles.addBtn,
-                formValid && !isSaving && !adding && styles.addBtnFilled,
-                (!formValid || isSaving || adding) && styles.addBtnOutline,
-              ]}
-              onPress={handleAddAnother}
-              disabled={!formValid || isSaving || adding}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.addBtnText, formValid && !isSaving && !adding && styles.addBtnTextFilled, (!formValid || isSaving || adding) && styles.addBtnTextOutline]}>
-                {adding || isSaving ? 'Adding...' : 'Add another child'}
-              </Text>
-            </TouchableOpacity>
-        </View>
-      )}
       </View>
       {showMissingHint && (
         <View style={styles.missingHint}>
@@ -808,26 +778,55 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
       )}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      <Animated.View style={[styles.continueWrap, { transform: [{ scale: continueScale }] }]}>
+
+      {/* Match AddChildModal footer: secondary text action + primary sky button */}
+      <View style={styles.footer}>
+        {!isStudentOnboarding ? (
+          <TouchableOpacity
+            style={styles.footerSecondaryBtn}
+            onPress={handleAddAnother}
+            disabled={!formValid || isSaving || adding}
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && {
+              cursor: !formValid || isSaving || adding ? 'not-allowed' : 'pointer',
+            })}
+          >
+            <Text
+              style={[
+                styles.footerSecondaryBtnText,
+                (!formValid || isSaving || adding) && styles.footerSecondaryBtnTextDisabled,
+              ]}
+            >
+              {adding || isSaving ? 'Adding…' : 'Add another child'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.footerSpacer} />
+        )}
         <TouchableOpacity
           style={[
-            styles.continueBtn,
-            (!canContinue || isSaving || adding) && styles.continueBtnDisabled,
+            styles.footerPrimaryBtn,
+            (!canContinue || isSaving || adding) && styles.footerPrimaryBtnDisabled,
           ]}
           onPress={handleContinue}
           disabled={!canContinue || isSaving || adding}
           activeOpacity={0.9}
+          {...(Platform.OS === 'web' && {
+            cursor: !canContinue || isSaving || adding ? 'not-allowed' : 'pointer',
+          })}
         >
           <Text
             style={[
-              styles.continueBtnText,
-              (!canContinue || isSaving || adding) && styles.continueBtnTextDisabled,
+              styles.footerPrimaryBtnText,
+              (!canContinue || isSaving || adding) && styles.footerPrimaryBtnTextDisabled,
             ]}
           >
-            {isSaving || adding ? 'Saving…' : `Next: ${(createdChildren.length >= 1 ? createdChildren[0].name : (name.trim() || 'learner'))}'s subjects`}
+            {isSaving || adding
+              ? 'Saving…'
+              : `Next: ${(createdChildren.length >= 1 ? createdChildren[0].name : (name.trim() || 'Learner'))}'s subjects`}
           </Text>
         </TouchableOpacity>
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -986,86 +985,69 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 180,
   },
-  chip: {
-    paddingVertical: 8,
+  // Match AddChildForm chip styling (in-app Add Child modal)
+  chipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  formChip: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.15)',
-    backgroundColor: '#FFFFFF',
-  },
-  chipSelected: {
-    borderColor: '#2563eb',
-    backgroundColor: 'rgba(37, 99, 235, 0.1)',
-  },
-  chipText: {
-    fontSize: 14,
-    color: '#374151',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
-  },
-  chipTextSelected: {
-    color: '#1d4ed8',
-    fontWeight: '600',
-  },
-  chipAgeGrade: {
-    minHeight: 36,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    minHeight: 32,
     justifyContent: 'center',
   },
-  chipAgeGradeSelected: {
-    borderColor: '#2563eb',
-    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+  formChipSelected: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
-  chipAgeGradeText: {
-    fontSize: 14,
-    color: '#374151',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+  formChipText: {
+    color: '#6b7280',
+    fontSize: 12,
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  chipAgeGradeTextSelected: {
-    color: '#1d4ed8',
-    fontWeight: '600',
-  },
-  addAnotherRow: {
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: 12,
-    marginTop: 24,
-  },
-  addBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignSelf: 'flex-start',
-  },
-  addBtnFilled: {
-    borderStyle: 'solid',
-    borderColor: '#85C4F2',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  addBtnOutline: {
-    borderStyle: 'dashed',
-    borderColor: '#C7D2FE',
-    backgroundColor: '#FAFBFF',
-    opacity: 0.85,
-    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
-  },
-  addBtnText: {
-    fontSize: 16,
+  formChipTextSelected: {
+    color: '#6BB3E8',
     fontWeight: '700',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  addBtnTextFilled: {
-    color: '#85C4F2',
+  chip: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    minHeight: 32,
+    justifyContent: 'center',
   },
-  addBtnTextOutline: {
-    color: '#85C4F2',
+  chipSelected: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
+  },
+  chipText: {
+    color: '#6b7280',
+    fontSize: 12,
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  chipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   missingHint: {
     marginTop: 16,
@@ -1093,44 +1075,71 @@ const styles = StyleSheet.create({
     marginTop: 8,
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
-  continueWrap: {
-    alignSelf: 'flex-end',
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     marginTop: 24,
-    marginBottom: 0,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    gap: 12,
   },
-  continueBtn: {
+  footerSpacer: {
+    flex: 1,
+  },
+  footerSecondaryBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  footerSecondaryBtnText: {
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  footerSecondaryBtnTextDisabled: {
+    color: '#9ca3af',
+  },
+  footerPrimaryBtn: {
     backgroundColor: '#85C4F2',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 14px rgba(133,196,242,0.3)',
+      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
       cursor: 'pointer',
-      fontFamily: '"League Spartan", sans-serif',
     }),
   },
-  continueBtnDisabled: {
-    backgroundColor: '#E5E7EB',
+  footerPrimaryBtnDisabled: {
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
     ...(Platform.OS === 'web' && {
       boxShadow: 'none',
       cursor: 'not-allowed',
     }),
   },
-  continueBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
+  footerPrimaryBtnText: {
     color: '#FFFFFF',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    fontSize: 16,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
-  continueBtnTextDisabled: {
-    color: '#9CA3AF',
+  footerPrimaryBtnTextDisabled: {
+    color: 'rgba(255,255,255,0.85)',
   },
   avatarsWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 12,
     marginTop: 0,
     paddingVertical: 8,
     paddingHorizontal: 4,
@@ -1139,36 +1148,26 @@ const styles = StyleSheet.create({
   avatarCell: {
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.12)',
-    backgroundColor: '#FFFFFF',
+    borderRadius: AVATAR_SIZE / 2,
+    borderWidth: 2,
+    borderColor: '#d1d5db',
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { overflow: 'visible' }),
   },
   avatarCellHovered: {
     ...(Platform.OS === 'web' && {
-      transform: [{ translateY: -2 }],
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.08,
-      shadowRadius: 14,
-      elevation: 4,
+      transform: [{ translateY: -1 }],
+      opacity: 0.95,
     }),
   },
   avatarCellSelected: {
-    borderWidth: 2,
-    borderColor: '#85C4F2',
-    backgroundColor: '#F4F7FF',
-    transform: [{ scale: 1.05 }],
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 0 0 3px rgba(133,196,242,0.2), 0 6px 16px rgba(133,196,242,0.2)',
-    }),
+    borderWidth: 3,
+    borderColor: '#6BB3E8',
   },
   avatarImg: {
-    width: AVATAR_SIZE - 4,
-    height: AVATAR_SIZE - 4,
+    width: 48,
+    height: 48,
   },
   additionalToggle: {
     marginTop: 0,

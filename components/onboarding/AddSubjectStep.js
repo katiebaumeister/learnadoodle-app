@@ -179,7 +179,7 @@ export default function AddSubjectStep({
         </View>
       )}
       <Text style={styles.subjectsTitle}>Subjects <Text style={styles.requiredAsterisk}>*</Text></Text>
-      <View style={styles.presets}>
+      <View style={styles.presetsRow}>
         {PRESETS.map((preset) => {
           const selected = selectedPreset === preset;
           const hovered = hoveredPreset === preset;
@@ -188,9 +188,9 @@ export default function AddSubjectStep({
             <TouchableOpacity
               key={preset}
               style={[
-                styles.chip,
-                selected && styles.chipSelected,
-                Platform.OS === 'web' && !selected && hovered && styles.chipHovered,
+                styles.presetChip,
+                selected && styles.presetChipSelected,
+                Platform.OS === 'web' && !selected && hovered && styles.presetChipHovered,
                 (isSaving || adding) && styles.chipDisabled,
               ]}
               onPress={() => handlePresetPress(preset)}
@@ -199,8 +199,10 @@ export default function AddSubjectStep({
               disabled={isSaving || adding}
               activeOpacity={0.8}
             >
-              {Icon ? <Icon size={18} color={selected ? '#1F2A44' : '#6B7280'} style={styles.chipIcon} /> : null}
-              <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+              {Icon ? (
+                <Icon size={16} color={selected ? '#6BB3E8' : '#6b7280'} style={styles.chipIcon} />
+              ) : null}
+              <Text style={[styles.presetChipText, selected && styles.presetChipTextSelected]}>
                 {preset}
               </Text>
             </TouchableOpacity>
@@ -210,7 +212,7 @@ export default function AddSubjectStep({
       {selectedPreset === 'Other' && (
         <View style={styles.customSubjectRow}>
           <TextInput
-            style={[styles.input, styles.customSubjectInput]}
+            style={[styles.subjectNameInput, styles.customSubjectInput]}
             value={customName}
             onChangeText={(t) => { setCustomName(t); setError(null); }}
             placeholder="Add a custom subject (Art, Piano, Robotics…)"
@@ -249,33 +251,37 @@ export default function AddSubjectStep({
 
       {showAdditional && (
         <View style={styles.additionalSection}>
-          <Text style={styles.label}>Summary</Text>
+          <Text style={styles.fieldLabel}>Summary</Text>
           <TextInput
-            style={styles.input}
+            style={styles.modalInput}
             value={summary}
             onChangeText={(t) => { setSummary(t); setError(null); }}
             placeholder="E.g., Building foundational knowledge on fractions."
             placeholderTextColor="#9CA3AF"
           />
 
-          <Text style={styles.label}>Grade level</Text>
-          <View style={styles.presets}>
+          <Text style={styles.fieldLabel}>Grade level</Text>
+          <View style={styles.chipsWrap}>
             {GRADE_OPTIONS.map((g) => (
               <TouchableOpacity
                 key={g}
-                style={[styles.chip, grade === g && styles.chipSelected, (isSaving || adding) && styles.chipDisabled]}
+                style={[
+                  styles.gradeChip,
+                  grade === g && styles.gradeChipSelected,
+                  (isSaving || adding) && styles.chipDisabled,
+                ]}
                 onPress={() => { setGrade(grade === g ? '' : g); setError(null); }}
                 disabled={isSaving || adding}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.chipText, grade === g && styles.chipTextSelected]}>{g}</Text>
+                <Text style={[styles.gradeChipText, grade === g && styles.gradeChipTextSelected]}>{g}</Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <Text style={styles.label}>Credits</Text>
+          <Text style={styles.fieldLabel}>Credits</Text>
           <TextInput
-            style={styles.input}
+            style={styles.modalInput}
             value={credits}
             onChangeText={(t) => { setCredits(t.replace(/[^\d.]/g, '').slice(0, 6)); setError(null); }}
             placeholder="e.g. 0.5, 1.0"
@@ -283,9 +289,9 @@ export default function AddSubjectStep({
             keyboardType="decimal-pad"
           />
 
-          <Text style={styles.label}>Notes</Text>
+          <Text style={styles.fieldLabel}>Notes</Text>
           <TextInput
-            style={[styles.input, styles.textArea]}
+            style={[styles.modalInput, styles.textArea]}
             value={notes}
             onChangeText={(t) => { setNotes(t); setError(null); }}
             placeholder="Add any additional notes about this subject"
@@ -296,7 +302,7 @@ export default function AddSubjectStep({
 
           {familyId && (
             <>
-              <Text style={styles.label}>Material (optional)</Text>
+              <Text style={styles.fieldLabel}>Material (optional)</Text>
               <View style={styles.materialRow}>
                 <View style={styles.materialSelectedWrap}>
                   {attachedMaterialIds.length === 0 ? (
@@ -326,7 +332,7 @@ export default function AddSubjectStep({
                   onPress={() => setShowAddMaterialModal(true)}
                   disabled={isSaving || adding}
                 >
-                  <Plus size={14} color="#85C4F2" />
+                  <Plus size={14} color="#6BB3E8" />
                   <Text style={styles.addMaterialBtnText}>Add material</Text>
                 </TouchableOpacity>
               </View>
@@ -342,11 +348,11 @@ export default function AddSubjectStep({
                       .map((m) => (
                         <TouchableOpacity
                           key={m.id}
-                          style={[styles.chip, (isSaving || adding) && styles.chipDisabled]}
+                          style={[styles.libraryChip, (isSaving || adding) && styles.chipDisabled]}
                           onPress={() => setAttachedMaterialIds((prev) => [...prev, m.id])}
                           disabled={isSaving || adding}
                         >
-                          <Text style={styles.chipText} numberOfLines={1}>
+                          <Text style={styles.libraryChipText} numberOfLines={1}>
                             {m.title || m.provider_name || 'Material'}
                           </Text>
                         </TouchableOpacity>
@@ -378,25 +384,53 @@ export default function AddSubjectStep({
           children={currentChild ? [{ id: currentChild.id, first_name: currentChild.name }] : []}
         />
       )}
-      <TouchableOpacity
-        style={[styles.addBtn, (!canAdd || isSaving || adding) && styles.addBtnDisabled]}
-        onPress={handleAddAnother}
-        disabled={!canAdd || isSaving || adding}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.addBtnText}>{adding || isSaving ? 'Adding...' : 'Add another'}</Text>
-      </TouchableOpacity>
-      {error ? <Text style={styles.friendlyErrorText}>{friendlyErrorMessage}</Text> : null}
-      <TouchableOpacity
-        style={[styles.continueBtn, (!canContinue || isSaving || adding) && styles.continueBtnDisabled]}
-        onPress={handleContinue}
-        disabled={!canContinue || isSaving || adding}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.continueBtnText}>
-          {isSaving || adding ? 'Saving…' : isLastChild ? 'Finish' : `Next: ${nextChildName}'s subjects`}
-        </Text>
-      </TouchableOpacity>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={styles.footerSecondaryBtn}
+          onPress={handleAddAnother}
+          disabled={!canAdd || isSaving || adding}
+          activeOpacity={0.85}
+          {...(Platform.OS === 'web' && {
+            cursor: !canAdd || isSaving || adding ? 'not-allowed' : 'pointer',
+          })}
+        >
+          <Text
+            style={[
+              styles.footerSecondaryBtnText,
+              (!canAdd || isSaving || adding) && styles.footerSecondaryBtnTextDisabled,
+            ]}
+          >
+            {adding || isSaving ? 'Adding…' : 'Add another'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.footerPrimaryBtn,
+            (!canContinue || isSaving || adding) && styles.footerPrimaryBtnDisabled,
+          ]}
+          onPress={handleContinue}
+          disabled={!canContinue || isSaving || adding}
+          activeOpacity={0.9}
+          {...(Platform.OS === 'web' && {
+            cursor: !canContinue || isSaving || adding ? 'not-allowed' : 'pointer',
+          })}
+        >
+          <Text
+            style={[
+              styles.footerPrimaryBtnText,
+              (!canContinue || isSaving || adding) && styles.footerPrimaryBtnTextDisabled,
+            ]}
+          >
+            {isSaving || adding
+              ? 'Saving…'
+              : isLastChild
+                ? 'Finish'
+                : `Next: ${nextChildName}'s subjects`}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -421,14 +455,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: 'rgba(15,23,42,0.8)',
-    marginBottom: 8,
-    marginTop: 16,
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
   subjectsTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -450,75 +476,157 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
-    paddingLeft: 12,
-    paddingRight: 6,
-    borderRadius: 8,
-    backgroundColor: 'rgba(37, 99, 235, 0.12)',
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderWidth: 1,
+    borderColor: '#6BB3E8',
   },
   chipRemoveBtn: {
     marginLeft: 4,
     padding: 2,
   },
   chipReadOnlyText: {
-    fontSize: 14,
-    color: '#1d4ed8',
-    fontWeight: '500',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+    fontSize: 12,
+    color: '#0f172a',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  presets: {
+  presetsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
     marginBottom: 16,
   },
-  chip: {
+  presetChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.15)',
-    backgroundColor: '#FFFFFF',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
   },
-  chipHovered: {
-    backgroundColor: '#F8FAFF',
-    borderColor: '#C7D2FE',
+  presetChipHovered: {
+    borderColor: '#d1d5db',
+    backgroundColor: '#f9fafb',
   },
-  chipSelected: {
-    backgroundColor: '#EEF2FF',
-    borderWidth: 2,
-    borderColor: '#85C4F2',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(91,127,255,0.15)',
-    }),
+  presetChipSelected: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   chipDisabled: {
     opacity: 0.6,
   },
   chipIcon: {
-    marginRight: 8,
+    marginRight: 6,
   },
-  chipText: {
+  presetChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  presetChipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  fieldLabel: {
     fontSize: 14,
-    color: '#374151',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
-  },
-  chipTextSelected: {
-    color: '#1F2A44',
     fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 4,
+    marginTop: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  input: {
+  subjectNameInput: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.12)',
-    borderRadius: 12,
+    borderColor: '#e5e7eb',
+    borderRadius: 6,
     paddingVertical: 12,
     paddingHorizontal: 14,
     minHeight: 48,
-    fontSize: 15,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+    }),
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    minHeight: 44,
+    fontSize: 14,
+    color: '#0f172a',
+    backgroundColor: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  chipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
+  },
+  gradeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  gradeChipSelected: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
+  },
+  gradeChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  gradeChipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  libraryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+    maxWidth: '100%',
+  },
+  libraryChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   customSubjectRow: {
     flexDirection: 'row',
@@ -558,39 +666,22 @@ const styles = StyleSheet.create({
   otherConfirmButtonTextDisabled: {
     color: '#9CA3AF',
   },
-  addBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#C7D2FE',
-    backgroundColor: '#FAFBFF',
-    alignSelf: 'flex-start',
-    marginTop: 20,
-  },
-  addBtnDisabled: {
-    opacity: 0.6,
-  },
-  addBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#85C4F2',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
-  },
   errorText: {
     fontSize: 13,
     color: '#DC2626',
-    marginTop: 8,
+    marginTop: 16,
+    marginBottom: 4,
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", sans-serif' }),
   },
   friendlyErrorText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginTop: 8,
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'center',
+    paddingVertical: 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   additionalToggle: {
     marginTop: 22,
@@ -636,10 +727,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingLeft: 10,
     paddingRight: 6,
-    borderRadius: 8,
-    backgroundColor: '#EEF2FF',
+    borderRadius: 20,
+    backgroundColor: 'rgba(133,196,242,0.2)',
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: '#6BB3E8',
     maxWidth: '100%',
   },
   materialChipText: {
@@ -660,14 +751,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
-    backgroundColor: '#FAFBFF',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMaterialBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#85C4F2',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+    color: '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   materialLibraryWrap: {
     marginTop: 12,
@@ -681,35 +775,69 @@ const styles = StyleSheet.create({
   materialLibraryList: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   textArea: {
-    minHeight: 84,
-    paddingTop: 10,
+    minHeight: 80,
+    paddingTop: 12,
     textAlignVertical: 'top',
   },
-  continueBtn: {
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 24,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    gap: 12,
+  },
+  footerSecondaryBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  footerSecondaryBtnText: {
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  footerSecondaryBtnTextDisabled: {
+    color: '#9ca3af',
+  },
+  footerPrimaryBtn: {
     backgroundColor: '#85C4F2',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
-    alignSelf: 'flex-end',
-    marginTop: 28,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      cursor: 'pointer',
+    }),
+  },
+  footerPrimaryBtnDisabled: {
+    backgroundColor: '#9CA3AF',
+    opacity: 0.8,
+    ...(Platform.OS === 'web' && {
+      boxShadow: 'none',
+      cursor: 'not-allowed',
+    }),
+  },
+  footerPrimaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", sans-serif',
     }),
   },
-  continueBtnDisabled: {
-    backgroundColor: '#9CA3AF',
-    opacity: 0.8,
-  },
-  continueBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
-    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
+  footerPrimaryBtnTextDisabled: {
+    color: 'rgba(255,255,255,0.85)',
   },
 });
