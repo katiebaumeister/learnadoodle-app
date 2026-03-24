@@ -205,6 +205,27 @@ export default function AddSubjectStep({
 
   const buildPayload = () => {
     const creditsVal = credits.trim() ? parseFloat(credits.trim()) : null;
+    // Match AddSubjectModal per-subject row: only persist constraint + targets when a numeric value is set.
+    // (Avoid saving default_constraint_mode 'days'|'hours' with null targets — that does not match "overall" /
+    // empty subject planning and confused the edit-subject UI.)
+    const daysTrim = targetMode === 'days' ? defaultTargetDays.trim() : '';
+    const hoursTrim = targetMode === 'hours' ? defaultTargetHours.trim() : '';
+    let default_constraint_mode = null;
+    let default_target_days = null;
+    let default_target_hours = null;
+    if (daysTrim) {
+      const n = parseInt(daysTrim, 10);
+      if (!Number.isNaN(n)) {
+        default_constraint_mode = 'days';
+        default_target_days = n;
+      }
+    } else if (hoursTrim) {
+      const n = parseFloat(hoursTrim);
+      if (!Number.isNaN(n)) {
+        default_constraint_mode = 'hours';
+        default_target_hours = n;
+      }
+    }
     return {
       name: nameTrim,
       child_id: currentChild.id,
@@ -213,11 +234,9 @@ export default function AddSubjectStep({
       credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
       notes: additionalNotes.trim() || null,
       school_year: schoolYear || getDefaultSchoolYear(),
-      default_constraint_mode: targetMode,
-      default_target_days:
-        targetMode === 'days' && defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
-      default_target_hours:
-        targetMode === 'hours' && defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
+      default_constraint_mode,
+      default_target_days,
+      default_target_hours,
       syllabus_material_id: selectedSyllabusMaterialId,
       lesson_plan_material_id: selectedLessonPlanMaterialId,
     };

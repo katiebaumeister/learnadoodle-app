@@ -539,12 +539,6 @@ export default function WebAuthScreen() {
       });
     };
 
-    const openEmailInbox = () => {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.open('https://mail.google.com/mail/u/0/#inbox', '_blank', 'noopener,noreferrer');
-      }
-    };
-
     const checkVerificationAndRedirect = async () => {
       setResendFeedback('');
       try {
@@ -574,10 +568,12 @@ export default function WebAuthScreen() {
     };
 
     const handleChangeEmailFromVerify = () => {
-      setShowAccountCreatedConfirmation(false);
-      setVerifyEmailForConfirmation('');
-      setResendFeedback('');
+      clearMessages();
       setEmail('');
+      setPassword('');
+      setConfirmPassword('');
+      setResendLoading(false);
+      setLoading(false);
       setShowWelcome(false);
       setIsSignUp(true);
       setIsResetPassword(false);
@@ -636,14 +632,6 @@ export default function WebAuthScreen() {
                   {resendFeedback}
                 </Text>
               ) : null}
-
-              <TouchableOpacity
-                style={styles.verifyPrimaryButton}
-                onPress={openEmailInbox}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.verifyPrimaryButtonText}>Open Gmail</Text>
-              </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.verifySecondaryButton}
@@ -1238,21 +1226,6 @@ const styles = StyleSheet.create({
   },
   verifyFeedbackWarn: {
     color: '#b45309',
-  },
-  verifyPrimaryButton: {
-    backgroundColor: '#60a5fa',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  verifyPrimaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   verifySecondaryButton: {
     paddingVertical: 12,

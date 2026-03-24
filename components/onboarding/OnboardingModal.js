@@ -11,6 +11,7 @@ import {
   getFamilyMembers,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
+import { parseChildIds } from '../../lib/services/subjectsClient';
 import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
 import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
@@ -20,6 +21,55 @@ import AddSubjectStep from './AddSubjectStep';
 import CompleteStep from './CompleteStep';
 
 const STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_child', 'add_subject', 'complete'];
+
+function extractCreatedSubjectId(res) {
+  const d = res?.data;
+  if (d == null) return null;
+  if (typeof d === 'string' && /^[0-9a-f-]{36}$/i.test(d.trim())) return d.trim();
+  if (typeof d !== 'object') return null;
+  const nested = d.data;
+  return (
+    d.subject_id ??
+    d.subjectId ??
+    d.id ??
+    (typeof nested === 'object' && nested != null ? nested.subject_id ?? nested.subjectId ?? nested.id : null) ??
+    (d.subject && typeof d.subject === 'object' ? d.subject.id : null) ??
+    (d.result && typeof d.result === 'object'
+      ? d.result.subject_id ?? d.result.subjectId ?? d.result.id
+      : null) ??
+    null
+  );
+}
+
+async function resolveSubjectIdAfterCreate(res, fid, subject) {
+  let id = extractCreatedSubjectId(res);
+  if (id) return id;
+  const lookup = async () => {
+    const { data: rows, error } = await supabase
+      .from('subject')
+      .select('id, child_id, created_at')
+      .eq('family_id', fid)
+      .eq('name', subject.name)
+      .order('created_at', { ascending: false })
+      .limit(12);
+    if (error || !rows?.length) return null;
+    const want = String(subject.child_id);
+    const match = rows.find((r) => {
+      const ids = parseChildIds(r.child_id ?? '');
+      if (ids.length === 0) return true;
+      return ids.includes(want);
+    });
+    return match?.id ?? rows[0]?.id ?? null;
+  };
+  try {
+    id = await lookup();
+    if (id) return id;
+    await new Promise((r) => setTimeout(r, 350));
+    return await lookup();
+  } catch (_) {
+    return null;
+  }
+}
 
 export default function OnboardingModal({
   visible,
@@ -347,9 +397,8 @@ export default function OnboardingModal({
         credits: subject.credits ?? null,
         notes: subject.notes ?? null,
       });
-      const data = res?.data ?? res;
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to create subject.');
-      const id = data?.subject_id ?? data?.id;
+      let id = await resolveSubjectIdAfterCreate(res, fid, subject);
       if (id) {
         setCreatedSubjectsByChild((prev) => {
           const list = prev[subject.child_id] || [];
@@ -359,14 +408,26 @@ export default function OnboardingModal({
         if (subject.school_year != null && subject.school_year !== '') {
           subjectPatch.school_year = subject.school_year;
         }
-        if (subject.default_constraint_mode !== undefined && subject.default_constraint_mode !== null) {
+        if (subject.default_constraint_mode !== undefined) {
           subjectPatch.default_constraint_mode = subject.default_constraint_mode;
         }
         if (subject.default_target_days !== undefined) {
-          subjectPatch.default_target_days = subject.default_target_days;
+          const v = subject.default_target_days;
+          if (v != null && v !== '') {
+            const n = parseInt(v, 10);
+            subjectPatch.default_target_days = Number.isNaN(n) ? null : n;
+          } else {
+            subjectPatch.default_target_days = null;
+          }
         }
         if (subject.default_target_hours !== undefined) {
-          subjectPatch.default_target_hours = subject.default_target_hours;
+          const v = subject.default_target_hours;
+          if (v != null && v !== '') {
+            const n = parseFloat(v);
+            subjectPatch.default_target_hours = Number.isNaN(n) ? null : n;
+          } else {
+            subjectPatch.default_target_hours = null;
+          }
         }
         if (Object.keys(subjectPatch).length > 0) {
           try {
@@ -374,7 +435,9 @@ export default function OnboardingModal({
               .from('subject')
               .update(subjectPatch)
               .eq('id', id)
-              .eq('family_id', fid);
+              .eq('family_id', fid)
+              .select('id')
+              .maybeSingle();
             if (patchErr) console.warn('[OnboardingModal] Subject planning fields update:', patchErr);
           } catch (e) {
             console.warn('[OnboardingModal] Subject planning fields update failed:', e);
@@ -398,6 +461,11 @@ export default function OnboardingModal({
           } catch (materialError) {
             console.warn('Error linking materials to subject:', materialError);
           }
+        }
+      } else {
+        console.warn('[OnboardingModal] Could not resolve new subject id; planning patch skipped.');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
         }
       }
     } catch (e) {
