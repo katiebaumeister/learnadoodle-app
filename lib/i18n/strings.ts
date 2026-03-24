@@ -190,7 +190,7 @@ export const STRINGS = {
         },
       },
       breaks: {
-        title: "Breaks & holidays",
+        title: "Planning Preferences",
         subtitle:
           "Exclude dates where slots should not be created.",
         actions: {
@@ -254,7 +254,7 @@ export const STRINGS = {
     },
 
     primaryActions: {
-      generateSlots: "Generate instructional slots",
+      generateSlots: "Apply to Calendar",
       updateSlots: "Update instructional slots",
       replaceEmptySlots: "Replace empty slots",
       keepFilledSlots: "Keep scheduled lessons",

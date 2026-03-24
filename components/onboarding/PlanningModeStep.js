@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
+import { ONBOARDING_SKY, ONBOARDING_TEXT_PURPLE } from '../../lib/constants/onboardingTheme';
 
 const WHO_OPTIONS = [
   { id: 'parent', label: 'My family (I\'m a parent)' },
@@ -135,7 +136,7 @@ const styles = StyleSheet.create({
   prompt: {
     fontSize: 30,
     fontWeight: '600',
-    color: 'rgba(15,23,42,0.95)',
+    color: ONBOARDING_TEXT_PURPLE,
     marginBottom: 36,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
@@ -164,8 +165,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkboxChecked: {
-    borderColor: '#4A5FEB',
-    backgroundColor: '#4A5FEB',
+    borderColor: ONBOARDING_SKY,
+    backgroundColor: ONBOARDING_SKY,
   },
   checkboxCheck: {
     color: '#FFFFFF',
@@ -175,7 +176,7 @@ const styles = StyleSheet.create({
   confirmLabel: {
     flex: 1,
     fontSize: 16,
-    color: 'rgba(15,23,42,0.9)',
+    color: ONBOARDING_TEXT_PURPLE,
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardWrapper: {
@@ -202,10 +203,10 @@ const styles = StyleSheet.create({
   },
   cardSelected: {
     borderWidth: 2,
-    borderColor: '#85C4F2',
+    borderColor: ONBOARDING_SKY,
     backgroundColor: '#F4F7FF',
     ...(Platform.OS === 'web' && {
-      shadowColor: '#85C4F2',
+      shadowColor: ONBOARDING_SKY,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.12,
       shadowRadius: 12,
@@ -215,15 +216,15 @@ const styles = StyleSheet.create({
   cardLabel: {
     fontSize: 20,
     fontWeight: '700',
-    color: 'rgba(15,23,42,0.9)',
+    color: ONBOARDING_TEXT_PURPLE,
     textAlign: 'center',
     ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
   cardLabelSelected: {
-    color: '#4A5FEB',
+    color: ONBOARDING_TEXT_PURPLE,
   },
   continueBtn: {
-    backgroundColor: '#85C4F2',
+    backgroundColor: ONBOARDING_SKY,
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,

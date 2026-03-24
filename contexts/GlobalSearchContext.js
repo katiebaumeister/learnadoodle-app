@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import { Platform } from 'react-native';
-import GlobalSearchModal from '../components/GlobalSearchModal';
+
+const GlobalSearchModal = lazy(() => import('../components/GlobalSearchModal'));
 
 const GlobalSearchContext = createContext(null);
 
@@ -44,7 +45,11 @@ export const GlobalSearchProvider = ({ children, onNavigate }) => {
   return (
     <GlobalSearchContext.Provider value={{ openSearch, closeSearch, onNavigate }}>
       {children}
-      {isOpen && <GlobalSearchModal onClose={closeSearch} onNavigate={onNavigate} />}
+      {isOpen && (
+        <Suspense fallback={null}>
+          <GlobalSearchModal onClose={closeSearch} onNavigate={onNavigate} />
+        </Suspense>
+      )}
     </GlobalSearchContext.Provider>
   );
 };

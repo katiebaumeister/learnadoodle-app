@@ -1,19 +1,17 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { View, StyleSheet, Platform } from 'react-native';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { GlobalSearchProvider } from './contexts/GlobalSearchContext';
-import AuthScreen from './screens/AuthScreen';
-import HomeScreen from './screens/HomeScreen';
-import EditChildScreen from './screens/EditChildScreen';
 import SupabaseReady from './components/SupabaseReady';
 import WebInitializer from './components/WebInitializer';
-import WebLayout from './components/WebLayout';
-import WebAuthScreen from './components/WebAuthScreen';
-import PasswordResetPage from './components/PasswordResetPage';
-import WebRouter from './components/WebRouter';
+
+const WebRouter = lazy(() => import('./components/WebRouter'));
+const AuthScreen = lazy(() => import('./screens/AuthScreen'));
+const HomeScreen = lazy(() => import('./screens/HomeScreen'));
+const EditChildScreen = lazy(() => import('./screens/EditChildScreen'));
 
 const Stack = createStackNavigator();
 
@@ -23,7 +21,18 @@ function AppContent() {
   // On web, render immediately so landing page shows without waiting for auth (no blank screen)
   // Auth loading is handled inside WebRouter (shows landing/auth until session is ready)
   if (Platform.OS === 'web') {
-    return <WebRouter />;
+    return (
+      <Suspense
+        fallback={
+          <View
+            style={styles.webBootstrapFallback}
+            accessibilityLabel="Loading"
+          />
+        }
+      >
+        <WebRouter />
+      </Suspense>
+    );
   }
 
   // On native, don't render until auth is ready
@@ -31,10 +40,46 @@ function AppContent() {
     return null;
   }
 
-  // Mobile layout with React Navigation
-  // Show auth screen if user is not logged in
+  // Mobile layout with React Navigation (screens lazy-loaded so web export stays smaller)
+  const nativeFallback = <View style={styles.loadingContainer} />;
+
   if (!user) {
     return (
+      <Suspense fallback={nativeFallback}>
+        <NavigationContainer>
+          <Stack.Navigator
+            screenOptions={{
+              headerShown: false,
+              cardStyleInterpolator: () => ({
+                cardStyle: {
+                  transform: [{ translateX: 0 }],
+                },
+              }),
+              transitionSpec: {
+                open: {
+                  animation: 'timing',
+                  config: {
+                    duration: 0,
+                  },
+                },
+                close: {
+                  animation: 'timing',
+                  config: {
+                    duration: 0,
+                  },
+                },
+              },
+            }}
+          >
+            <Stack.Screen name="Auth" component={AuthScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </Suspense>
+    );
+  }
+
+  return (
+    <Suspense fallback={nativeFallback}>
       <NavigationContainer>
         <Stack.Navigator
           screenOptions={{
@@ -60,79 +105,45 @@ function AppContent() {
             },
           }}
         >
-          <Stack.Screen name="Auth" component={AuthScreen} />
+          <Stack.Screen name="Home" component={HomeScreen} />
+          <Stack.Screen
+            name="EditChild"
+            component={EditChildScreen}
+            options={{
+              headerShown: true,
+              title: 'Edit Child',
+              headerStyle: {
+                backgroundColor: '#f8f9fa',
+              },
+              headerTintColor: '#333',
+              headerTitleStyle: {
+                fontWeight: '600',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+              },
+              cardStyleInterpolator: () => ({
+                cardStyle: {
+                  transform: [{ translateX: 0 }],
+                },
+              }),
+              transitionSpec: {
+                open: {
+                  animation: 'timing',
+                  config: {
+                    duration: 0,
+                  },
+                },
+                close: {
+                  animation: 'timing',
+                  config: {
+                    duration: 0,
+                  },
+                },
+              },
+            }}
+          />
         </Stack.Navigator>
       </NavigationContainer>
-    );
-  }
-
-  // User is logged in, show main app screens
-  return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerShown: false,
-          // Remove all transitions
-          cardStyleInterpolator: () => ({
-            cardStyle: {
-              transform: [{ translateX: 0 }],
-            },
-          }),
-          transitionSpec: {
-            open: {
-              animation: 'timing',
-              config: {
-                duration: 0,
-              },
-            },
-            close: {
-              animation: 'timing',
-              config: {
-                duration: 0,
-              },
-            },
-          },
-        }}
-      >
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen
-          name="EditChild"
-          component={EditChildScreen}
-          options={{
-            headerShown: true,
-            title: 'Edit Child',
-            headerStyle: {
-              backgroundColor: '#f8f9fa',
-            },
-            headerTintColor: '#333',
-            headerTitleStyle: {
-              fontWeight: '600',
-              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-            },
-            // Remove transitions for this screen too
-            cardStyleInterpolator: () => ({
-              cardStyle: {
-                transform: [{ translateX: 0 }],
-              },
-            }),
-            transitionSpec: {
-              open: {
-                animation: 'timing',
-                config: {
-                  duration: 0,
-                },
-              },
-              close: {
-                animation: 'timing',
-                config: {
-                  duration: 0,
-                },
-              },
-            },
-          }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    </Suspense>
   );
 }
 
@@ -156,5 +167,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#ffffff',
+  },
+  webBootstrapFallback: {
+    flex: 1,
+    ...(Platform.OS === 'web' ? { minHeight: '100vh' } : {}),
+    backgroundColor: '#F6F7FB',
   },
 });

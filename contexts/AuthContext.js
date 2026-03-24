@@ -73,8 +73,8 @@ export const AuthProvider = ({ children }) => {
       } catch (error) {
         if (retryCount < maxRetries && mounted) {
           retryCount++;
-          
-          setTimeout(getInitialSession, 1000);
+          const delayMs = 250 * retryCount;
+          setTimeout(getInitialSession, delayMs);
         } else if (mounted) {
           setLoading(false);
           

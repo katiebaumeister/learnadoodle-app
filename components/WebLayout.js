@@ -1510,7 +1510,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (fid) return fid;
       // 404 = route missing; 500 = backend/db error (e.g. missing GRANT). Retry once after delay.
       if (status === 404 || status === 500) {
-        await new Promise(r => setTimeout(r, 2500));
+        await new Promise(r => setTimeout(r, 800));
         const retry = await tryOnce();
         if (retry.fid) return retry.fid;
       }

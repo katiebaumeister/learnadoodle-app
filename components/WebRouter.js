@@ -1,34 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import WebAuthScreen from './WebAuthScreen';
 import PasswordResetPage from './PasswordResetPage';
 import SetPasswordPage from './SetPasswordPage';
-import WebLayout from './WebLayout';
-import InviteAcceptancePage from './InviteAcceptancePage';
-import InviteLandingPage from './InviteLandingPage';
-import InviteAcceptPasswordPage from './InviteAcceptPasswordPage';
-import ChildInvitePage from './auth/ChildInvitePage';
-import ContinueLearningPage from './ContinueLearningPage';
-import TermsPage from './TermsPage';
-import PrivacyPage from './PrivacyPage';
-import AboutPage from './AboutPage';
-import FAQPage from './FAQPage';
-import ContactPage from './ContactPage';
-import SubscriptionPage from './SubscriptionPage';
-import BlogIndexPage from './blog/BlogIndexPage';
-import BlogPostPage from './blog/BlogPostPage';
-import BlogAllPage from './blog/BlogAllPage';
-import { useAuth } from '../contexts/AuthContext';
-import { SessionProvider } from '../contexts/SessionContext';
-import RoleGate from './navigation/RoleGate';
 import AppLoader from './AppLoader';
+import { useAuth } from '../contexts/AuthContext';
+
+const AuthenticatedApp = lazy(() => import('./AuthenticatedApp'));
+const InviteAcceptancePage = lazy(() => import('./InviteAcceptancePage'));
+const InviteLandingPage = lazy(() => import('./InviteLandingPage'));
+const InviteAcceptPasswordPage = lazy(() => import('./InviteAcceptPasswordPage'));
+const ChildInvitePage = lazy(() => import('./auth/ChildInvitePage'));
+const ContinueLearningPage = lazy(() => import('./ContinueLearningPage'));
+const TermsPage = lazy(() => import('./TermsPage'));
+const PrivacyPage = lazy(() => import('./PrivacyPage'));
+const AboutPage = lazy(() => import('./AboutPage'));
+const FAQPage = lazy(() => import('./FAQPage'));
+const ContactPage = lazy(() => import('./ContactPage'));
+const SubscriptionPage = lazy(() => import('./SubscriptionPage'));
+const BlogIndexPage = lazy(() => import('./blog/BlogIndexPage'));
+const BlogPostPage = lazy(() => import('./blog/BlogPostPage'));
+const BlogAllPage = lazy(() => import('./blog/BlogAllPage'));
 
 function getPath() {
   if (typeof window === 'undefined') return '/';
   return (window.location.pathname || '/').replace(/\/$/, '') || '/';
 }
 
-export default function WebRouter() {
+function WebRouterContent() {
   const { user, loading: authLoading, session } = useAuth();
   const [currentPath, setCurrentPath] = useState(getPath);
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
@@ -158,7 +157,7 @@ export default function WebRouter() {
     if (user) {
       setIsPasswordResetFlow(false);
       setResetFlowStartTime(null);
-      return <WebLayout user={user} />;
+      return <AuthenticatedApp />;
     }
     
     // Check if we have expired/invalid tokens by looking at the current URL
@@ -465,13 +464,15 @@ export default function WebRouter() {
     } catch (_) {}
   }
 
-  // User is authenticated, show main app
-  // Wrap with SessionProvider for role-based access control
-  // RoleGate will choose the appropriate navigator based on role
+  // User is authenticated — main app (code-split from this router)
+  return <AuthenticatedApp />;
+}
+
+export default function WebRouter() {
   return (
-    <SessionProvider>
-      <RoleGate user={user} />
-    </SessionProvider>
+    <Suspense fallback={<AppLoader spinnerOnly />}>
+      <WebRouterContent />
+    </Suspense>
   );
 }
 
@@ -495,5 +496,18 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
     lineHeight: 24,
+    marginBottom: 24,
+  },
+  backToLoginButton: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  backToLoginText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

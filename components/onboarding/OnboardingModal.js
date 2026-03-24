@@ -11,6 +11,7 @@ import {
   getFamilyMembers,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
+import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
 import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
 import LearningContextStep from './LearningContextStep';
@@ -472,7 +473,10 @@ export default function OnboardingModal({
                   <View
                     style={[
                       styles.progressFill,
-                      { width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%` },
+                      {
+                        width: `${((STEPS.indexOf(step) + 1) / STEPS.length) * 100}%`,
+                        backgroundColor: ONBOARDING_SKY,
+                      },
                     ]}
                   />
                 </View>
@@ -492,7 +496,7 @@ export default function OnboardingModal({
             ) : null}
             {resuming ? (
               <View style={styles.loadingWrap}>
-                <ActivityIndicator size="large" color="#2563eb" />
+                <ActivityIndicator size="large" color={ONBOARDING_SKY} />
                 <Text style={styles.loadingText}>Loading…</Text>
               </View>
             ) : (
@@ -643,7 +647,7 @@ const styles = StyleSheet.create({
     top: 0,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#2563eb',
+    backgroundColor: ONBOARDING_SKY,
   },
   stepHidden: {
     position: 'absolute',

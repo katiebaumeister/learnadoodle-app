@@ -270,7 +270,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
         showSaved();
         loadDefaults(); // refresh to get new exclusion ids
         onSave?.();
-        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        }
       } catch (err) {
         setError(err?.message || 'Failed to save');
         toast.push(err?.message || 'Failed to save', 'error');
@@ -288,8 +292,13 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   const handleTargetScopeChange = async (scope) => {
     setTargetScope(scope);
     const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope });
-    if (!error) showSaved();
-    else toast.push(error?.message || 'Failed to save', 'error');
+    if (!error) {
+      showSaved();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } else toast.push(error?.message || 'Failed to save', 'error');
     if (scope === 'per_subject') {
       // Prefill each subject with overall value in UI (nice UX)
       const s = stateRef.current;
@@ -436,7 +445,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
           .eq('id', subjectId);
         if (error) throw error;
         showSaved();
-        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        }
       } catch (err) {
         toast.push(err?.message || 'Failed to save', 'error');
       } finally {
@@ -761,7 +773,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     if (saveErr) toast?.push?.(saveErr?.message || 'Failed to save', 'error');
                     else {
                       toast?.push?.('Saved', 'success');
-                      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+                        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                      }
                     }
                     setShowPublicHolidaysPicker(false);
                   }}

@@ -106,9 +106,11 @@ export default function SubjectDetailPage({
       if (e.detail?.subjectId === subjectId) loadSubjectDetail();
     };
     window.addEventListener('refreshSubjects', handleRefresh);
+    window.addEventListener('refreshPlanDefaults', handleRefresh);
     window.addEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
     return () => {
       window.removeEventListener('refreshSubjects', handleRefresh);
+      window.removeEventListener('refreshPlanDefaults', handleRefresh);
       window.removeEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
     };
   }, [subjectId, loadSubjectDetail]);

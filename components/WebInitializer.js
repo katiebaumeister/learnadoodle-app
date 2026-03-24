@@ -341,16 +341,9 @@ export default function WebInitializer({ children }) {
       }
     };
 
-    // Load Cooper Hewitt font family (all weights), League Spartan for sidebar, and JetBrains Mono for code
-    const loadFonts = () => {
-      // Guard against mobile environments
+    // League Spartan first (landing/auth headings). Defer other Google Fonts so first paint competes less.
+    const loadPrimaryFonts = () => {
       if (typeof document === 'undefined') return;
-      
-      // Note: Cooper Hewitt is loaded via @font-face in CSS or from local files
-      // The font-family references in designTokens.js will use Cooper Hewitt
-      // No need to load from Google Fonts as Cooper Hewitt is not available there
-      
-      // Load League Spartan for sidebar navigation
       if (!document.getElementById('league-spartan-link')) {
         const leagueSpartanLink = document.createElement('link');
         leagueSpartanLink.id = 'league-spartan-link';
@@ -358,8 +351,10 @@ export default function WebInitializer({ children }) {
         leagueSpartanLink.href = 'https://fonts.googleapis.com/css2?family=League+Spartan:wght@100;200;300;400;500;600;700;800;900&display=swap';
         document.head.appendChild(leagueSpartanLink);
       }
-      
-      // Load Libre Baskerville for button text
+    };
+
+    const loadSecondaryFonts = () => {
+      if (typeof document === 'undefined') return;
       if (!document.getElementById('libre-baskerville-link')) {
         const libreBaskervilleLink = document.createElement('link');
         libreBaskervilleLink.id = 'libre-baskerville-link';
@@ -367,14 +362,21 @@ export default function WebInitializer({ children }) {
         libreBaskervilleLink.href = 'https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap';
         document.head.appendChild(libreBaskervilleLink);
       }
-      
-      // Load JetBrains Mono for code/metadata (optional, keep for monospace needs)
       if (!document.getElementById('mono-link')) {
         const monoLink = document.createElement('link');
         monoLink.id = 'mono-link';
         monoLink.rel = 'stylesheet';
         monoLink.href = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap';
         document.head.appendChild(monoLink);
+      }
+    };
+
+    const loadFonts = () => {
+      loadPrimaryFonts();
+      if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(() => loadSecondaryFonts(), { timeout: 6000 });
+      } else {
+        setTimeout(loadSecondaryFonts, 1800);
       }
     };
 

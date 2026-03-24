@@ -68,7 +68,7 @@ import {
   computeSchedulePotential,
   getPublicHolidaysForRange,
 } from '../../lib/services/academicYearClient';
-import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlannerSettings, addExclusion, saveExcludedPublicHolidayDates } from '../../lib/services/plannerSettingsClient';
+import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlannerSettings, addExclusion, saveExcludedPublicHolidayDates, saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
@@ -562,8 +562,6 @@ export default function PlanYearModal({
   const [showDeletePlanConfirm, setShowDeletePlanConfirm] = useState(false);
   const [deletingPlan, setDeletingPlan] = useState(false);
   const [suggestionAccepted, setSuggestionAccepted] = useState(false);
-  const [extendSuggestionAccepted, setExtendSuggestionAccepted] = useState(false);
-  const [acceptedExtendDate, setAcceptedExtendDate] = useState(null); // freeze suggested date when user accepts
 
   // Phase 3: constraint mode + target (I need X days | X hours)
   const [planConstraintMode, setPlanConstraintMode] = useState('none');
@@ -580,11 +578,6 @@ export default function PlanYearModal({
   blocksRef.current = blocks;
   const academicYearIdRef = useRef(academicYearId);
   academicYearIdRef.current = academicYearId;
-
-  // Phase 4: Flex Learning suggestion when delta < 0
-  const [flexSuggestion, setFlexSuggestion] = useState(null);
-  const [computingFlexSuggestion, setComputingFlexSuggestion] = useState(false);
-  const flexSuggestionTimeoutRef = useRef(null);
 
   // Plan health (includes manual counted events for "Manual instructional events counted" panel)
   const [planHealth, setPlanHealth] = useState(null);
@@ -872,6 +865,14 @@ export default function PlanYearModal({
   const planSummaryCacheRef = useRef(new Map()); // yearId -> full academic year data for instant summary display
   const summaryFetchInFlightRef = useRef(new Set());
   const subjectPlanResolvedRef = useRef(false); // when from subject details, avoid re-running plan-for-subject search
+  const planPrefsSnapRef = useRef({
+    planConstraintMode: 'none',
+    planTargetDays: '180',
+    planTargetHours: '1000',
+    hoursPerDay: '5',
+  });
+  const planPrefsFamilySaveTimerRef = useRef(null);
+  const planPrefsSubjectTimersRef = useRef({});
 
   const baseSubjectList = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
   /** All family subjects; plan slots attach to children via each subject's `child_id` (see getChildIdsForSubject). */
@@ -1727,6 +1728,20 @@ export default function PlanYearModal({
     });
   }, [visible, familyId]);
 
+  // While open, pick up Learning goals / target changes saved from Family → Planning Preferences or Edit subject.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!visible || !familyId) return;
+    const onRefresh = () => {
+      getFamilyPlannerSettings(familyId).then(({ data }) => {
+        if (data?.target_scope) setTargetScopeFromSettings(data.target_scope);
+        else setTargetScopeFromSettings('overall');
+      });
+    };
+    window.addEventListener('refreshPlanDefaults', onRefresh);
+    return () => window.removeEventListener('refreshPlanDefaults', onRefresh);
+  }, [visible, familyId]);
+
   // Keep per-subject cadence draft in sync with instructional blocks (for future API / validation).
   useEffect(() => {
     if (!PLAN_MY_YEAR_MULTI_SUBJECT_CADENCE) return;
@@ -1897,8 +1912,6 @@ export default function PlanYearModal({
       // Defer view resets so we don't flash "Plan Manager / Create New Plan" during close animation
       const t = setTimeout(() => {
         setSuggestionAccepted(false);
-        setExtendSuggestionAccepted(false);
-        setAcceptedExtendDate(null);
         setHighlightBlockIndex(null);
         setUnitFocusSubjectId(null);
         setLastSavedUnitSubjectId(null);
@@ -2378,117 +2391,6 @@ export default function PlanYearModal({
     schedulePotentialRequestKey,
   ]);
 
-  // Phase 4 / Phase 5: Flex Learning suggestion when delta < 0 (Strategy A from DESIGN_PLAN_YEAR)
-  const isUnderTarget = schedulePotential && (
-    (effectivePlanTarget.constraint_mode === 'days' && schedulePotential.delta_days != null && schedulePotential.delta_days < 0) ||
-    (effectivePlanTarget.constraint_mode === 'hours' && schedulePotential.delta_hours != null && schedulePotential.delta_hours < 0)
-  );
-
-  // Compute Flex Learning suggestion: one block on least-loaded weekday, show +N days improvement
-  useEffect(() => {
-    if (!visible) {
-      setFlexSuggestion(null);
-      return;
-    }
-    if (!isUnderTarget || !schedulePotential || !startDate || !endDate || !familyId || blocks.length === 0) {
-      setFlexSuggestion(null);
-      return;
-    }
-    const planChildrenIds = allFamilyChildIds;
-    if (planChildrenIds.length === 0) {
-      setFlexSuggestion(null);
-      return;
-    }
-    if (flexSuggestionTimeoutRef.current) clearTimeout(flexSuggestionTimeoutRef.current);
-    flexSuggestionTimeoutRef.current = setTimeout(async () => {
-      setComputingFlexSuggestion(true);
-      try {
-        // Count block occurrences per weekday (1=Mon .. 5=Fri)
-        const countByWeekday = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-        blocks.forEach((b) => {
-          (b.weekdays || []).forEach((w) => {
-            if (w >= 1 && w <= 5) countByWeekday[w] = (countByWeekday[w] || 0) + 1;
-          });
-        });
-        const minCount = Math.min(...[1, 2, 3, 4, 5].map((w) => countByWeekday[w] ?? 0));
-        const leastLoaded = [1, 2, 3, 4, 5].find((w) => (countByWeekday[w] ?? 0) === minCount) || 1;
-        const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        const flexBlockId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `flex-${Date.now()}`;
-        const candidateBlock = {
-          block_id: flexBlockId,
-          subject_id: null,
-          child_ids: planChildrenIds,
-          weekdays: [leastLoaded],
-          start_time: '10:00',
-          end_time: '11:00',
-          all_day: false,
-        };
-        const blocksWithFlex = [
-          ...blocks.map((b) => ({
-            block_id: b.block_id,
-            subject_id: b.subject_id,
-            child_ids: b.child_ids || [],
-            weekdays: b.weekdays || [],
-            start_time: b.start_time || '09:00',
-            end_time: b.end_time || '10:00',
-            all_day: b.all_day || false,
-          })),
-          candidateBlock,
-        ];
-        const { data, error } = await computeSchedulePotential({
-          family_id: familyId,
-          start_date: startDate,
-          end_date: endDate,
-          blocks: blocksWithFlex,
-          custom_holidays: customHolidays.map((h) => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
-          custom_breaks: (customBreaks || []).map((b) => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
-          follow_public_holidays: followGlobalHolidays ?? false,
-          holiday_region: regionCode ? `${countryCode}:${regionCode}` : countryCode,
-          target_days: effectivePlanTarget.target_days ?? null,
-          target_hours: effectivePlanTarget.target_hours ?? null,
-          plan_children_ids: planChildrenIds,
-          subject_targets: effectiveSubjectTargetsForApply ?? effectiveSubjectTargets ?? undefined,
-        });
-        if (error || !data) {
-          setFlexSuggestion(null);
-          return;
-        }
-        const improvementDays = (data.projected_days ?? 0) - (schedulePotential.projected_days ?? 0);
-        const improvementHours = (data.projected_hours ?? 0) - (schedulePotential.projected_hours ?? 0);
-        const hasImprovement = (effectivePlanTarget.constraint_mode === 'days' && improvementDays > 0) || (effectivePlanTarget.constraint_mode === 'hours' && improvementHours > 0);
-        if (hasImprovement) {
-          setFlexSuggestion({
-            proposedBlock: { ...candidateBlock, block_id: flexBlockId },
-            improvement_days: improvementDays,
-            improvement_hours: improvementHours,
-            weekdayLabel: weekdayLabels[leastLoaded],
-          });
-        } else {
-          setFlexSuggestion(null);
-        }
-      } catch {
-        setFlexSuggestion(null);
-      } finally {
-        setComputingFlexSuggestion(false);
-      }
-    }, 400);
-    return () => {
-      if (flexSuggestionTimeoutRef.current) clearTimeout(flexSuggestionTimeoutRef.current);
-    };
-  }, [visible, isUnderTarget, schedulePotential, blocks, startDate, endDate, familyId, allFamilyChildIds, customHolidays, customBreaks, followGlobalHolidays, countryCode, regionCode, effectivePlanTarget, effectiveSubjectTargets, effectiveSubjectTargetsForApply]);
-
-  useEffect(() => {
-    if (!visible) setFlexSuggestion(null);
-  }, [visible]);
-
-  const handleApplyFlexSuggestion = useCallback(() => {
-    if (flexSuggestion?.proposedBlock) {
-      const { block_id, subject_id, child_ids, weekdays, start_time, end_time, all_day } = flexSuggestion.proposedBlock;
-      setBlocks((prev) => [...prev, { block_id, subject_id, child_ids, weekdays, start_time, end_time, all_day }]);
-      setFlexSuggestion(null);
-    }
-  }, [flexSuggestion]);
-
   // Plan id for health: use state or initial prop so we scope correctly on first render (before sync effect)
   const planIdForHealth = academicYearId ?? initialAcademicYearId ?? undefined;
 
@@ -2636,13 +2538,34 @@ export default function PlanYearModal({
     ? (effectivePlanTarget.target_days ?? TARGET_INSTRUCTIONAL_DAYS_DEFAULT)
     : TARGET_INSTRUCTIONAL_DAYS_DEFAULT;
   const hasAnyWeekdayInBlocks = blocks.some((b) => (b.weekdays || []).length > 0);
+  /** Generate stays disabled until every selected subject has ≥1 weekday, or (placeholder-only) every block does. */
+  const cadenceWeekdaysSatisfied =
+    blocks.length > 0 &&
+    (effectiveSubjectIds.length === 0
+      ? isPlaceholderOnlyScope && blocks.every((b) => (b.weekdays || []).length > 0)
+      : effectiveSubjectIds.every((subjectId) =>
+          blocks.some(
+            (b) =>
+              b.subject_id != null &&
+              String(b.subject_id) === String(subjectId) &&
+              (b.weekdays || []).length > 0
+          )
+        ));
   const feasible = blocks.length > 0
-    ? (effectivePlanTarget.constraint_mode === 'none'
+    ? cadenceWeekdaysSatisfied &&
+      (effectivePlanTarget.constraint_mode === 'none'
         ? !!(startDate && endDate)
         : hasAnyWeekdayInBlocks && schedulePotential
           ? schedulePotential.projected_days > 0
           : false)
     : eligibleCount >= targetDaysNum;
+
+  planPrefsSnapRef.current = {
+    planConstraintMode,
+    planTargetDays,
+    planTargetHours,
+    hoursPerDay: hoursPerDay || '5',
+  };
 
   const runApplyToCalendar = async (replacePlaceholdersChoice) => {
     setSaving(true);
@@ -2788,6 +2711,103 @@ export default function PlanYearModal({
     }, 150);
   }, []);
 
+  /** Keep Family settings, subject modals, and subject detail in sync after planner saves. */
+  const dispatchPlanningPrefsSynced = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+  }, []);
+
+  const persistFamilyPlannerTargetsDebounced = useCallback(() => {
+    if (!familyId) return;
+    if (planPrefsFamilySaveTimerRef.current) clearTimeout(planPrefsFamilySaveTimerRef.current);
+    planPrefsFamilySaveTimerRef.current = setTimeout(async () => {
+      planPrefsFamilySaveTimerRef.current = null;
+      const snap = planPrefsSnapRef.current;
+      try {
+        const { error } = await saveFamilyPlannerSettings(familyId, {
+          default_constraint_mode: snap.planConstraintMode,
+          default_target_days: snap.planConstraintMode === 'days' ? (parseInt(snap.planTargetDays, 10) || null) : null,
+          default_target_hours: snap.planConstraintMode === 'hours' ? (parseFloat(snap.planTargetHours) || null) : null,
+          default_planned_hours_per_day:
+            snap.planConstraintMode === 'hours' ? (parseFloat(snap.hoursPerDay) || null) : null,
+        });
+        if (error) throw error;
+        dispatchPlanningPrefsSynced();
+      } catch (e) {
+        toast?.push?.(e?.message || 'Failed to save planning preferences', 'error');
+      }
+    }, 400);
+  }, [familyId, toast, dispatchPlanningPrefsSynced]);
+
+  const handlePlanningPrefsTargetScopeChange = useCallback(
+    async (scope) => {
+      setTargetScopeFromSettings(scope);
+      if (!familyId) return;
+      try {
+        const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope });
+        if (error) throw error;
+        dispatchPlanningPrefsSynced();
+      } catch (e) {
+        toast?.push?.(e?.message || 'Failed to save', 'error');
+      }
+    },
+    [familyId, toast, dispatchPlanningPrefsSynced],
+  );
+
+  const schedulePersistSubjectPlanningTarget = useCallback(
+    (subjectId, row) => {
+      const timers = planPrefsSubjectTimersRef.current;
+      if (timers[subjectId]) clearTimeout(timers[subjectId]);
+      timers[subjectId] = setTimeout(async () => {
+        delete timers[subjectId];
+        const mode = row.mode || 'none';
+        const days = mode === 'days' && row.days?.trim() ? parseInt(row.days, 10) : null;
+        const hours = mode === 'hours' && row.hours?.trim() ? parseFloat(row.hours) : null;
+        try {
+          const { error } = await supabase
+            .from('subject')
+            .update({
+              default_constraint_mode: mode,
+              default_target_days: days,
+              default_target_hours: hours,
+            })
+            .eq('id', subjectId);
+          if (error) throw error;
+          dispatchPlanningPrefsSynced();
+        } catch (e) {
+          toast?.push?.(e?.message || 'Failed to save subject target', 'error');
+        }
+      }, 450);
+    },
+    [toast, dispatchPlanningPrefsSynced],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (planPrefsFamilySaveTimerRef.current) clearTimeout(planPrefsFamilySaveTimerRef.current);
+      Object.keys(planPrefsSubjectTimersRef.current).forEach((k) => {
+        const t = planPrefsSubjectTimersRef.current[k];
+        if (t) clearTimeout(t);
+      });
+      planPrefsSubjectTimersRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      if (planPrefsFamilySaveTimerRef.current) {
+        clearTimeout(planPrefsFamilySaveTimerRef.current);
+        planPrefsFamilySaveTimerRef.current = null;
+      }
+      Object.keys(planPrefsSubjectTimersRef.current).forEach((k) => {
+        const t = planPrefsSubjectTimersRef.current[k];
+        if (t) clearTimeout(t);
+        delete planPrefsSubjectTimersRef.current[k];
+      });
+    }
+  }, [visible]);
+
   const handleApplyToCalendar = async () => {
     if (!preconditionsMet) {
       setError(isPlaceholderOnlyScope ? 'Add at least 1 child and at least one learning block.' : 'Add at least 1 child and 1 subject to generate a year plan.');
@@ -2823,6 +2843,14 @@ export default function PlanYearModal({
     }
     if (blocks.length > 0 && !isPlaceholderOnlyScope && blocks.some((b) => !b.subject_id)) {
       setError('Each scheduled class day needs a subject. Remove or fix any empty rows in Scheduled Class Days.');
+      return;
+    }
+    if (blocks.length > 0 && !cadenceWeekdaysSatisfied) {
+      setError(
+        effectiveSubjectIds.length > 0
+          ? 'Choose at least one day of the week in Cadence for each selected subject.'
+          : 'Choose at least one day of the week for each learning block.'
+      );
       return;
     }
 
@@ -4910,27 +4938,10 @@ export default function PlanYearModal({
           ) : planStep === 'preview' && !(PLAN_MY_YEAR_LOGISTICS_FIRST && isHomeschool) ? (
             <View style={{ flex: 1, minHeight: 0 }}>
               <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={true}>
-                <Text style={[styles.sectionTitle, { marginBottom: 4 }]}>Preview instructional slots</Text>
+                <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>Preview selected days/times</Text>
                 <Text style={[styles.mutedText, { marginBottom: 16 }]}>
                   {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
                 </Text>
-                {PLAN_MY_YEAR_LOGISTICS_FIRST && effectiveSubjectIds.length > 1 && (
-                  <View
-                    style={{
-                      marginBottom: 16,
-                      padding: 12,
-                      backgroundColor: '#f8fafc',
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: BORDER,
-                    }}
-                  >
-                    <Text style={{ fontSize: 13, color: FG, lineHeight: 19 }}>
-                      <Text style={{ fontWeight: '600' }}>{s('planMyYear.multiSubjectUnits.previewMultiSubjectLead')} </Text>
-                      {s('planMyYear.multiSubjectUnits.previewMultiSubjectHint')}
-                    </Text>
-                  </View>
-                )}
                 {previewSlotLines.map((line, idx) => (
                   <View key={`${line.date}-${line.subjectName}-${idx}`} style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}>
                     <Text style={[styles.label, { marginBottom: 2 }]}>{line.dateLabel} · {line.timeLabel}</Text>
@@ -5573,19 +5584,214 @@ export default function PlanYearModal({
                   </>
                 )}
 
-                {/* Card 3: Holidays & breaks — summary-first, From Planning Preferences vs Added for this plan */}
-                <View style={[styles.fieldSection, { marginTop: 16, marginBottom: 0 }]}>
+                {/* Card 3: Planning Preferences — holidays/breaks summary-first, from settings vs added for this plan */}
+                <View style={[styles.fieldSection, { marginTop: 8, marginBottom: 0 }]}>
                   <TouchableOpacity
                     style={styles.collapsibleSectionHeader}
                     onPress={() => setHolidaysCollapsed(!holidaysCollapsed)}
                     activeOpacity={0.7}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={[styles.fieldSectionLabel, { marginBottom: 0, fontSize: 12 }]}>Holidays & breaks</Text>
+                    <Text style={[styles.fieldSectionLabel, { marginBottom: 0, fontSize: 12 }]}>{STRINGS.planMyYear?.sections?.breaks?.title ?? 'Planning Preferences'}</Text>
                     {holidaysCollapsed ? <ChevronDown size={20} color={MUTED} /> : <ChevronUp size={20} color={MUTED} />}
                   </TouchableOpacity>
                   {!holidaysCollapsed && (
                   <>
+                  <View style={{ marginBottom: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: BORDER_SUBTLE }}>
+                    <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Learning goals</Text>
+                    <View style={[styles.radioRow, { flexWrap: 'wrap', marginBottom: 12 }]}>
+                      <TouchableOpacity
+                        style={[styles.radioOption, targetScopeFromSettings === 'overall' && styles.radioOptionActive]}
+                        onPress={() => handlePlanningPrefsTargetScopeChange('overall')}
+                        activeOpacity={0.85}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={[styles.radioLabel, { fontSize: 13 }, targetScopeFromSettings === 'overall' && styles.radioLabelActive]}>Overall</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.radioOption, targetScopeFromSettings === 'per_subject' && styles.radioOptionActive]}
+                        onPress={() => handlePlanningPrefsTargetScopeChange('per_subject')}
+                        activeOpacity={0.85}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={[styles.radioLabel, { fontSize: 13 }, targetScopeFromSettings === 'per_subject' && styles.radioLabelActive]}>Per subject</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {targetScopeFromSettings === 'overall' && (
+                      <View>
+                        <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Target</Text>
+                        <View style={[styles.radioRow, { flexWrap: 'wrap', alignItems: 'center', gap: 8 }]}>
+                          <TouchableOpacity
+                            style={[styles.radioOption, planConstraintMode === 'none' && styles.radioOptionActive]}
+                            onPress={() => {
+                              setPlanConstraintMode('none');
+                              persistFamilyPlannerTargetsDebounced();
+                            }}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.radioLabel, { fontSize: 13 }, planConstraintMode === 'none' && styles.radioLabelActive]}>None</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.radioOption, planConstraintMode === 'days' && styles.radioOptionActive]}
+                            onPress={() => {
+                              setPlanConstraintMode('days');
+                              persistFamilyPlannerTargetsDebounced();
+                            }}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.radioLabel, { fontSize: 13 }, planConstraintMode === 'days' && styles.radioLabelActive]}>
+                              {STRINGS.planMyYear?.sections?.targets?.fields?.days ?? 'Days'}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.radioOption, planConstraintMode === 'hours' && styles.radioOptionActive]}
+                            onPress={() => {
+                              setPlanConstraintMode('hours');
+                              persistFamilyPlannerTargetsDebounced();
+                            }}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.radioLabel, { fontSize: 13 }, planConstraintMode === 'hours' && styles.radioLabelActive]}>
+                              {STRINGS.planMyYear?.sections?.targets?.fields?.hours ?? 'Hours'}
+                            </Text>
+                          </TouchableOpacity>
+                          {planConstraintMode === 'days' && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                              <TextInput
+                                style={[styles.input, { width: 64, paddingVertical: 8, marginBottom: 0 }]}
+                                value={planTargetDays}
+                                onChangeText={(v) => {
+                                  setPlanTargetDays(v);
+                                  persistFamilyPlannerTargetsDebounced();
+                                }}
+                                keyboardType="number-pad"
+                                placeholder="180"
+                                placeholderTextColor={MUTED}
+                              />
+                              <Text style={{ fontSize: 12, color: MUTED }}>instructional days</Text>
+                            </View>
+                          )}
+                          {planConstraintMode === 'hours' && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                              <TextInput
+                                style={[styles.input, { width: 64, paddingVertical: 8, marginBottom: 0 }]}
+                                value={planTargetHours}
+                                onChangeText={(v) => {
+                                  setPlanTargetHours(v);
+                                  persistFamilyPlannerTargetsDebounced();
+                                }}
+                                keyboardType="decimal-pad"
+                                placeholder="1000"
+                                placeholderTextColor={MUTED}
+                              />
+                              <Text style={{ fontSize: 12, color: MUTED }}>hours</Text>
+                              <Text style={{ fontSize: 12, color: MUTED }}>·</Text>
+                              <TextInput
+                                style={[styles.input, { width: 52, paddingVertical: 8, marginBottom: 0 }]}
+                                value={hoursPerDay}
+                                onChangeText={(v) => {
+                                  setHoursPerDay(v);
+                                  persistFamilyPlannerTargetsDebounced();
+                                }}
+                                keyboardType="decimal-pad"
+                                placeholder="5"
+                                placeholderTextColor={MUTED}
+                              />
+                              <Text style={{ fontSize: 12, color: MUTED }}>/ day</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
+                    {targetScopeFromSettings === 'per_subject' && (
+                      <View style={{ marginTop: 4 }}>
+                        <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Subject targets</Text>
+                        {effectiveSubjectIds.length === 0 ? (
+                          <Text style={[styles.mutedText, { fontSize: 12, lineHeight: 18 }]}>
+                            Select one or more subjects above to set targets per subject.
+                          </Text>
+                        ) : (
+                          effectiveSubjectIds.map((subjectId) => {
+                            const subj = baseSubjectList.find((s) => String(s.id) === String(subjectId));
+                            const o = planSubjectTargetsOverride[subjectId];
+                            const rowMode =
+                              o?.mode ??
+                              (subj?.default_constraint_mode ||
+                                (subj?.default_target_days != null ? 'days' : subj?.default_target_hours != null ? 'hours' : 'none'));
+                            const daysStr = o?.days ?? (subj?.default_target_days != null ? String(subj.default_target_days) : '');
+                            const hoursStr = o?.hours ?? (subj?.default_target_hours != null ? String(subj.default_target_hours) : '');
+                            const name = subj?.name || 'Subject';
+                            const setRow = (merged) => {
+                              setPlanSubjectTargetsOverride((p) => ({ ...p, [subjectId]: merged }));
+                              schedulePersistSubjectPlanningTarget(subjectId, merged);
+                            };
+                            return (
+                              <View
+                                key={String(subjectId)}
+                                style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}
+                              >
+                                <Text style={{ fontSize: 13, fontWeight: '600', color: FG, minWidth: 88 }} numberOfLines={1}>
+                                  {name}
+                                </Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <TouchableOpacity
+                                    style={[styles.radioOption, { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32, height: undefined }, rowMode === 'none' && styles.radioOptionActive]}
+                                    onPress={() => setRow({ mode: 'none', days: '', hours: '' })}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={[styles.radioLabel, { fontSize: 12 }, rowMode === 'none' && styles.radioLabelActive]}>None</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={[styles.radioOption, { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32, height: undefined }, rowMode === 'days' && styles.radioOptionActive]}
+                                    onPress={() => setRow({ mode: 'days', days: daysStr || '90', hours: '' })}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={[styles.radioLabel, { fontSize: 12 }, rowMode === 'days' && styles.radioLabelActive]}>Days</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={[styles.radioOption, { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32, height: undefined }, rowMode === 'hours' && styles.radioOptionActive]}
+                                    onPress={() => setRow({ mode: 'hours', days: '', hours: hoursStr || '120' })}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={[styles.radioLabel, { fontSize: 12 }, rowMode === 'hours' && styles.radioLabelActive]}>Hours</Text>
+                                  </TouchableOpacity>
+                                </View>
+                                {rowMode === 'days' && (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <TextInput
+                                      style={[styles.input, { width: 56, paddingVertical: 6, marginBottom: 0 }]}
+                                      value={daysStr}
+                                      onChangeText={(v) => setRow({ mode: 'days', days: v, hours: '' })}
+                                      keyboardType="number-pad"
+                                      placeholder="90"
+                                      placeholderTextColor={MUTED}
+                                    />
+                                    <Text style={{ fontSize: 12, color: MUTED }}>days</Text>
+                                  </View>
+                                )}
+                                {rowMode === 'hours' && (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <TextInput
+                                      style={[styles.input, { width: 64, paddingVertical: 6, marginBottom: 0 }]}
+                                      value={hoursStr}
+                                      onChangeText={(v) => setRow({ mode: 'hours', days: '', hours: v })}
+                                      keyboardType="decimal-pad"
+                                      placeholder="120"
+                                      placeholderTextColor={MUTED}
+                                    />
+                                    <Text style={{ fontSize: 12, color: MUTED }}>hours</Text>
+                                  </View>
+                                )}
+                              </View>
+                            );
+                          })
+                        )}
+                      </View>
+                    )}
+                  </View>
                   <View style={[styles.settingRowInline, { flexDirection: 'row', alignItems: 'center', marginTop: 10, marginBottom: 10, flexWrap: 'wrap', gap: 10 }]}>
                     <TouchableOpacity
                       style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
@@ -5721,285 +5927,6 @@ export default function PlanYearModal({
                   </>
                   )}
                 </View>
-                <View style={[styles.eligibilityCard, { marginTop: 16 }, blocks.length > 0 && schedulePotential && !computingPotential && !recalculating && styles.eligibilityCardTinted]}>
-                    {blocks.length === 0 && (
-                      <View style={styles.eligibilityCardEmpty}>
-                        <View style={styles.eligibilityChipRow}>
-                          <Info size={14} color={MUTED} />
-                          <Text style={styles.eligibilityChipText}>Waiting for schedule</Text>
-                        </View>
-                        <Text style={styles.eligibilityCardTitle}>{STRINGS.planMyYear.sections.preview.title}</Text>
-                        <Text style={styles.eligibilityCardMain}>
-                          {isPlaceholderOnlyScope ? 'Add a learning block and set weekdays in Cadence below to see your balance.' : 'Add a subject and class days to calculate your balance.'}
-                        </Text>
-                        <Text style={styles.eligibilityCardSecondary}>Once schedule days are set, we'll show if you meet your target.</Text>
-                      </View>
-                    )}
-                    {blocks.length > 0 && (!startDate || !endDate) && !schedulePotential && !computingPotential && !recalculating && (
-                      <View style={styles.eligibilityCardEmpty}>
-                        <View style={styles.eligibilityChipRow}>
-                          <Info size={14} color={MUTED} />
-                          <Text style={styles.eligibilityChipText}>Waiting for schedule</Text>
-                        </View>
-                        <Text style={styles.eligibilityCardTitle}>{STRINGS.planMyYear.sections.preview.title}</Text>
-                        <Text style={styles.eligibilityCardMain}>Add a subject and class days to calculate your balance.</Text>
-                        <Text style={styles.eligibilityCardSecondary}>Once schedule days are set, we'll show if you meet your target.</Text>
-                      </View>
-                    )}
-                    {blocks.length > 0 && (computingPotential || recalculating || (startDate && endDate && !schedulePotential)) && (
-                      <View style={[styles.eligibilityCardEmpty, { flexDirection: 'row', alignItems: 'center' }]}>
-                        <ActivityIndicator size="small" color={ACCENT} />
-                        <Text style={[styles.previewText, { marginLeft: 8 }]}>Calculating...</Text>
-                      </View>
-                    )}
-                    {blocks.length > 0 && schedulePotential && !computingPotential && !recalculating && (
-                      <View style={styles.eligibilityCardFilled}>
-                        <View style={styles.eligibilitySummaryRow}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Check size={16} color={ACCENT} strokeWidth={2.5} />
-                            <Text style={styles.eligibilitySummaryNumber}>{eligibleCount ?? schedulePotential.projected_days ?? 0} eligible instructional days</Text>
-                          </View>
-                          {(effectivePlanTarget.constraint_mode === 'days' && (schedulePotential.target_days ?? effectivePlanTarget.target_days) != null) && (
-                            <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_days ?? effectivePlanTarget.target_days} days</Text>
-                          )}
-                          {(effectivePlanTarget.constraint_mode === 'hours' && (schedulePotential.target_hours ?? effectivePlanTarget.target_hours) != null) && (
-                            <Text style={styles.eligibilityTargetMuted}>Target: {schedulePotential.target_hours ?? effectivePlanTarget.target_hours} hours</Text>
-                          )}
-                        </View>
-                        <Text style={[styles.eligibilityCardSecondary, { marginTop: 2, fontSize: 12 }]}>
-                          Based on date range and holidays & breaks. Cadence changes don’t update this count.
-                        </Text>
-                        {/* Phase 4: Suggest best weekly cadence when target days set */}
-                        {schedulePotential.cadence_suggestion?.message && effectivePlanTarget.constraint_mode === 'days' && (schedulePotential.target_days ?? effectivePlanTarget.target_days) != null && (
-                          <Text style={[styles.eligibilityCardSecondary, { marginTop: 6, fontStyle: 'italic', color: SUB }]}>
-                            {schedulePotential.cadence_suggestion.message}
-                          </Text>
-                        )}
-                        {followGlobalHolidays && (schedulePotential.days_excluded_holidays ?? 0) > 0 && (
-                          <Text style={[styles.eligibilityCardSecondary, { marginTop: 4 }]}>
-                            {schedulePotential.days_excluded_holidays === 1
-                              ? '1 day excluded due to holiday'
-                              : `${schedulePotential.days_excluded_holidays} days excluded due to holidays`}
-                          </Text>
-                        )}
-                        {/* No requirement: baseline / deleted lesson message — only when health is for this plan and there are still some placeholders (so "removed one" makes sense) */}
-                        {planIdForHealth &&
-                          existingPlaceholdersCount > 0 &&
-                          planHealth?.academic_year_id === planIdForHealth &&
-                          (!endDate || (planHealth?.end_date && planHealth.end_date.slice(0, 10) === endDate.slice(0, 10))) &&
-                          effectivePlanTarget.constraint_mode === 'none' &&
-                          planHealth?.baseline_scheduled_days != null &&
-                          planHealth.current_scheduled_days < planHealth.baseline_scheduled_days &&
-                          planHealth.deleted_dates?.length > 0 && (
-                          <Text style={[styles.eligibilityCardSecondary, { color: ERROR, marginTop: 6 }]}>
-                            You removed an instructional slot on {new Date(planHealth.deleted_dates[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}. Schedule one to achieve your original total school days.
-                          </Text>
-                        )}
-                        {/* Row B — Status pill + supporting (days mode) */}
-                        {effectivePlanTarget.constraint_mode === 'days' && schedulePotential.delta_days != null && (
-                          <>
-                            <View style={styles.eligibilityStatusRow}>
-                              <View style={[
-                                styles.eligibilityPill,
-                                schedulePotential.delta_days > 0 && styles.eligibilityPillOver,
-                                schedulePotential.delta_days < 0 && styles.eligibilityPillUnder,
-                                schedulePotential.delta_days === 0 && styles.eligibilityPillOnTarget,
-                              ]}>
-                                <Text style={[
-                                  styles.eligibilityPillText,
-                                  schedulePotential.delta_days === 0 && { color: SUCCESS },
-                                  schedulePotential.delta_days > 0 && { color: WARNING },
-                                  schedulePotential.delta_days < 0 && { color: WARNING },
-                                ]}>
-                                  {schedulePotential.delta_days > 0
-                                    ? `${schedulePotential.delta_days} days over target`
-                                    : schedulePotential.delta_days < 0
-                                    ? `${-schedulePotential.delta_days} days short`
-                                    : 'On target'}
-                                </Text>
-                              </View>
-                              {(schedulePotential.delta_days > 0 || schedulePotential.delta_days < 0) && (
-                                <Text style={styles.eligibilityCardSecondary}>Add class days, or accept an extension.</Text>
-                              )}
-                            </View>
-                            {/* Row C — Recommendation + Accept (secondary button) */}
-                            {schedulePotential.delta_days !== 0 && startDate && endDate && (() => {
-                              const isOver = schedulePotential.delta_days > 0;
-                              const perChild = schedulePotential.per_child || {};
-                              const projected = schedulePotential.projected_days ?? 0;
-                              const start = new Date(startDate + 'T12:00:00');
-                              const end = new Date(endDate + 'T12:00:00');
-                              const weeksSoFar = Math.max(0.1, (end - start) / (7 * 24 * 60 * 60 * 1000));
-                              const daysPerWeek = projected > 0 ? projected / weeksSoFar : 0;
-                              let suggestedDate = schedulePotential.suggested_end_date || null;
-                              if (!suggestedDate && isOver) {
-                                if (Object.keys(perChild).length > 0) {
-                                  const dates = Object.values(perChild)
-                                    .map((c) => c?.suggested_end_date)
-                                    .filter(Boolean)
-                                    .filter((d) => d <= endDate);
-                                  suggestedDate = dates.length > 0 ? dates.sort()[dates.length - 1] : null;
-                                }
-                                if (!suggestedDate && daysPerWeek > 0 && schedulePotential.delta_days > 0) {
-                                  const excessWeeks = schedulePotential.delta_days / daysPerWeek;
-                                  const suggested = new Date(end);
-                                  suggested.setDate(suggested.getDate() - Math.ceil(excessWeeks * 7));
-                                  suggestedDate = toLocalYYYYMMDD(suggested);
-                                }
-                              }
-                              const acceptedIsShorten = acceptedExtendDate && endDate && acceptedExtendDate < endDate;
-                              const showAcceptedState = extendSuggestionAccepted && acceptedExtendDate && (isOver ? acceptedIsShorten : !acceptedIsShorten);
-                              const displayDate = showAcceptedState ? acceptedExtendDate : suggestedDate;
-                              if (!displayDate && !showAcceptedState) return null;
-                              const daysLabel = schedulePotential.delta_days != null && schedulePotential.delta_days !== 0
-                                ? `Adds ${Math.abs(schedulePotential.delta_days)} eligible days`
-                                : null;
-                              return (
-                                <View style={styles.eligibilityRecommendationRow}>
-                                  {showAcceptedState ? (
-                                    <View style={styles.eligibilityOptionRow}>
-                                      <View>
-                                        <Text style={styles.eligibilityOptionTitle}>
-                                          {acceptedIsShorten ? 'Shorten' : 'Extend'} to {new Date(acceptedExtendDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                        </Text>
-                                        <Text style={styles.eligibilityOptionSubtext}>Change made!</Text>
-                                      </View>
-                                      <View style={styles.suggestionAcceptButton}>
-                                        <Check size={14} color={BG} />
-                                        <Text style={styles.suggestionAcceptButtonText}>Change made!</Text>
-                                      </View>
-                                    </View>
-                                  ) : (
-                                    <View style={[styles.eligibilityOptionRow, Platform.OS === 'web' && styles.eligibilityOptionRowHover]}>
-                                      <View style={{ flex: 1, minWidth: 0 }}>
-                                        <Text style={styles.eligibilityOptionTitle}>
-                                          Suggested extension: {new Date(suggestedDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                        </Text>
-                                        {daysLabel ? <Text style={styles.eligibilityOptionSubtext}>{daysLabel}</Text> : null}
-                                      </View>
-                                      <TouchableOpacity
-                                        onPress={() => {
-                                          setEndDate(suggestedDate);
-                                          setEndDateCalendarMonth(suggestedDate ? new Date(suggestedDate + 'T12:00:00') : new Date());
-                                          setAcceptedExtendDate(suggestedDate);
-                                          setExtendSuggestionAccepted(true);
-                                        }}
-                                        style={styles.eligibilityAcceptButton}
-                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                      >
-                                        <Text style={styles.eligibilityAcceptButtonText}>Accept</Text>
-                                      </TouchableOpacity>
-                                    </View>
-                                  )}
-                                </View>
-                              );
-                            })()}
-                          </>
-                        )}
-                        {/* Phase 5: Flex Learning suggestion — add one block on least-loaded day when under target */}
-                        {isUnderTarget && (computingFlexSuggestion || flexSuggestion) && (
-                          <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: ELIGIBILITY_CARD_BORDER }}>
-                            {computingFlexSuggestion ? (
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                <ActivityIndicator size="small" color={ACCENT} />
-                                <Text style={[styles.eligibilityCardSecondary, { marginBottom: 0 }]}>Suggesting Flex Learning block…</Text>
-                              </View>
-                            ) : flexSuggestion?.proposedBlock ? (
-                              <View>
-                                <Text style={[styles.eligibilityCardSecondary, { marginBottom: 6 }]}>
-                                  Add Flex Learning ({flexSuggestion.weekdayLabel} 10–11) →{' '}
-                                  {effectivePlanTarget.constraint_mode === 'days' && flexSuggestion.improvement_days > 0
-                                    ? `+${flexSuggestion.improvement_days} days`
-                                    : effectivePlanTarget.constraint_mode === 'hours' && flexSuggestion.improvement_hours > 0
-                                    ? `+${flexSuggestion.improvement_hours.toFixed(0)} hours`
-                                    : ''}
-                                </Text>
-                                <TouchableOpacity
-                                  onPress={handleApplyFlexSuggestion}
-                                  style={[styles.eligibilityAcceptButton, { alignSelf: 'flex-start' }]}
-                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                >
-                                  <Text style={styles.eligibilityAcceptButtonText}>Apply suggestion</Text>
-                                </TouchableOpacity>
-                              </View>
-                            ) : null}
-                          </View>
-                        )}
-                        {/* Hours mode: status pill + copy */}
-                        {effectivePlanTarget.constraint_mode === 'hours' && schedulePotential.delta_hours != null && (
-                          <View style={styles.eligibilityStatusRow}>
-                            <View style={[
-                              styles.eligibilityPill,
-                              schedulePotential.delta_hours > 0 && styles.eligibilityPillOver,
-                              schedulePotential.delta_hours < 0 && styles.eligibilityPillUnder,
-                              schedulePotential.delta_hours === 0 && styles.eligibilityPillOnTarget,
-                            ]}>
-                              <Text style={[
-                                styles.eligibilityPillText,
-                                schedulePotential.delta_hours === 0 && { color: SUCCESS },
-                                (schedulePotential.delta_hours > 0 || schedulePotential.delta_hours < 0) && { color: WARNING },
-                              ]}>
-                                {schedulePotential.delta_hours > 0
-                                  ? `${schedulePotential.delta_hours.toFixed(0)} hours over target`
-                                  : schedulePotential.delta_hours < 0
-                                  ? `${(-schedulePotential.delta_hours).toFixed(0)} hours short`
-                                  : 'On target'}
-                              </Text>
-                            </View>
-                            {(schedulePotential.delta_hours > 0 || schedulePotential.delta_hours < 0) && (
-                              <Text style={styles.eligibilityCardSecondary}>Add class days, or accept an extension.</Text>
-                            )}
-                          </View>
-                        )}
-                        {/* Manual instructional events counted — only when health is for this plan (id + date range match) */}
-                        {planIdForHealth &&
-                        planHealth?.academic_year_id === planIdForHealth &&
-                        (!endDate || (planHealth?.end_date && planHealth.end_date.slice(0, 10) === endDate.slice(0, 10))) &&
-                        ((planHealth?.manual_events_days != null && planHealth.manual_events_days > 0) ||
-                         (planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0)) ? (
-                          <View style={[styles.inputGroup, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: ELIGIBILITY_CARD_BORDER }]}>
-                            <Text style={[styles.mutedText, { marginBottom: 6 }]}>
-                              Manual instructional events counted this term: {planHealth.manual_events_days ?? 0} days
-                              {(planHealth?.manual_events_hours != null && planHealth.manual_events_hours > 0)
-                                ? `, ${Number(planHealth.manual_events_hours).toFixed(0)} hours`
-                                : ''}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {/* Apply block changes from: only when editing existing plan with blocks */}
-                        {academicYearId && blocks.length > 0 && (
-                          <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: ELIGIBILITY_CARD_BORDER }}>
-                            <Text style={[styles.eligibilityCardSecondary, { fontWeight: '600', marginBottom: 8 }]}>{STRINGS.planMyYear.applyFrom?.title ?? 'Apply block changes'}</Text>
-                            <View style={styles.radioRow}>
-                              <TouchableOpacity
-                                onPress={() => setApplyFromMode('entire')}
-                                style={[styles.radioOption, applyFromMode === 'entire' && styles.radioOptionActive]}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.radioLabel, applyFromMode === 'entire' && styles.radioLabelActive]}>{STRINGS.planMyYear.applyFrom?.entirePlan ?? 'Entire plan'}</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => setApplyFromMode('today')}
-                                style={[styles.radioOption, applyFromMode === 'today' && styles.radioOptionActive]}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.radioLabel, applyFromMode === 'today' && styles.radioLabelActive]}>{STRINGS.planMyYear.applyFrom?.fromToday ?? 'From today forward'}</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => { setApplyFromMode('date'); if (!applyFromDate && startDate) setApplyFromDate(startDate); setApplyFromDateCalendarMonth((applyFromDate || startDate) ? new Date((applyFromDate || startDate) + 'T12:00:00') : new Date()); setShowApplyFromDatePicker(true); }}
-                                style={[styles.radioOption, applyFromMode === 'date' && styles.radioOptionActive]}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.radioLabel, applyFromMode === 'date' && styles.radioLabelActive]} numberOfLines={1}>
-                                  {STRINGS.planMyYear.applyFrom?.fromDate ?? 'From date'}: {applyFromDate ? new Date(applyFromDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : (STRINGS.planMyYear.applyFrom?.pickDate ?? 'Pick')}
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        )}
-                      </View>
-                    )}
-                  </View>
 
                 {/* Scheduled class days / cadence — show when subjects selected OR placeholder-only scope */}
                 {(effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
@@ -6273,27 +6200,10 @@ export default function PlanYearModal({
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && (
                   <View style={{ marginTop: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: BORDER_SUBTLE }}>
-                    <Text style={[styles.sectionTitle, { marginBottom: 4 }]}>Preview instructional slots</Text>
+                    <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>Preview selected days/times</Text>
                     <Text style={[styles.mutedText, { marginBottom: 16 }]}>
                       {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
                     </Text>
-                    {effectiveSubjectIds.length > 1 && (
-                      <View
-                        style={{
-                          marginBottom: 16,
-                          padding: 12,
-                          backgroundColor: '#f8fafc',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: BORDER,
-                        }}
-                      >
-                        <Text style={{ fontSize: 13, color: FG, lineHeight: 19 }}>
-                          <Text style={{ fontWeight: '600' }}>{s('planMyYear.multiSubjectUnits.previewMultiSubjectLead')} </Text>
-                          {s('planMyYear.multiSubjectUnits.previewMultiSubjectHint')}
-                        </Text>
-                      </View>
-                    )}
                     {previewSlotLines.map((line, idx) => (
                       <View key={`inline-${line.date}-${line.subjectName}-${idx}`} style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}>
                         <Text style={[styles.label, { marginBottom: 2 }]}>{line.dateLabel} · {line.timeLabel}</Text>
@@ -6897,7 +6807,7 @@ export default function PlanYearModal({
                         return { date: d, name: h?.name || 'Holiday' };
                       });
                       await saveExcludedPublicHolidayDates(familyId, datesWithNames);
-                      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+                      dispatchPlanningPrefsSynced();
                       setShowPublicHolidaysPicker(false);
                     }}
                     style={[styles.primaryButton, { marginTop: 16 }]}
@@ -7309,7 +7219,7 @@ export default function PlanYearModal({
                 onPress={() => setPlanStep('preview')}
                 disabled={saving || loading || !preconditionsMet || !feasible}
               >
-                <Text style={styles.primaryButtonText}>Preview instructional slots</Text>
+                <Text style={styles.primaryButtonText}>Preview selected days/times</Text>
               </TouchableOpacity>
               )
             ) : PLAN_MY_YEAR_LOGISTICS_FIRST ? (
@@ -8528,7 +8438,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER_SUBTLE,
     marginTop: 8,
-    marginBottom: 14,
+    marginBottom: 4,
   },
   dateRangeRow: {
     flexDirection: 'row',
@@ -9400,71 +9310,12 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
-  suggestionAcceptButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: SUCCESS,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  suggestionAcceptButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: BG,
-  },
-  suggestionAcceptButtonPending: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: BORDER,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  suggestionAcceptButtonTextPending: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: FG,
-  },
-  suggestionAcceptHint: {
-    fontSize: 11,
-    color: MUTED,
-  },
   eligibilityCard: {
     padding: 14,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: BORDER_SUBTLE,
     backgroundColor: '#f9fafb',
-  },
-  eligibilityCardTinted: {
-    backgroundColor: '#f9fafb',
-    borderColor: BORDER_SUBTLE,
-  },
-  eligibilityCardEmpty: {
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: 4,
-  },
-  eligibilityChipRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  eligibilityChipText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: MUTED,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   eligibilityCardTitle: {
     fontSize: 12,
@@ -9474,15 +9325,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     width: '100%',
     marginBottom: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  eligibilityCardMain: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: FG,
-    width: '100%',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -9498,98 +9340,6 @@ const styles = StyleSheet.create({
   },
   eligibilityCardFilled: {
     gap: 8,
-  },
-  eligibilitySummaryRow: {
-    marginBottom: 4,
-  },
-  eligibilitySummaryNumber: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: FG,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  eligibilityTargetMuted: {
-    fontSize: 13,
-    color: MUTED,
-    marginTop: 10,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  eligibilityStatusRow: {
-    marginTop: 0,
-    gap: 6,
-  },
-  eligibilityPill: {
-    alignSelf: 'flex-start',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 20,
-  },
-  eligibilityPillOver: {
-    backgroundColor: 'rgba(217,119,6,0.15)',
-  },
-  eligibilityPillUnder: {
-    backgroundColor: 'rgba(217,119,6,0.15)',
-  },
-  eligibilityPillOnTarget: {
-    backgroundColor: 'rgba(16,185,129,0.15)',
-  },
-  eligibilityPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  eligibilityRecommendationRow: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: ELIGIBILITY_CARD_BORDER,
-  },
-  eligibilityOptionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: BG,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  eligibilityOptionRowHover: {
-    cursor: 'pointer',
-  },
-  eligibilityOptionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: FG,
-  },
-  eligibilityOptionSubtext: {
-    fontSize: 12,
-    color: MUTED,
-    marginTop: 2,
-  },
-  eligibilityAcceptButton: {
-    height: 36,
-    minHeight: 36,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: SECONDARY_BTN_BORDER,
-    backgroundColor: BG,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  eligibilityAcceptButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: FG,
   },
   loadingText: {
     marginTop: 12,

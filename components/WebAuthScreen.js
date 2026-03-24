@@ -10,9 +10,10 @@ import {
   Image,
   Animated,
 } from 'react-native';
-import { Eye, EyeOff, X } from 'lucide-react';
+import { Eye, EyeOff, X, Mail, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getAPIBase } from '../lib/apiClient';
+import { auth as supabaseAuth } from '../lib/supabase';
 import LandingPage from './LandingPage';
 
 function formatConfirmationSentAt(isoString) {
@@ -43,6 +44,9 @@ export default function WebAuthScreen() {
   const [successMessage, setSuccessMessage] = useState('');
   const [existingEmailOfferReset, setExistingEmailOfferReset] = useState(false);
   const [showAccountCreatedConfirmation, setShowAccountCreatedConfirmation] = useState(false);
+  const [verifyEmailForConfirmation, setVerifyEmailForConfirmation] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendFeedback, setResendFeedback] = useState('');
   const [justClosedModal, setJustClosedModal] = useState(false);
 
   const { signIn, signUp, resetPassword } = useAuth();
@@ -149,11 +153,32 @@ export default function WebAuthScreen() {
     };
   }, []);
 
+  // While waiting for email confirmation, poll for session (e.g. user verified in another tab).
+  useEffect(() => {
+    if (!showAccountCreatedConfirmation || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    let cancelled = false;
+    const redirectIfSession = async () => {
+      try {
+        const { data: { session } } = await supabaseAuth.getCurrentSession();
+        if (cancelled || !session?.user) return;
+        window.location.href = '/?signup=true';
+      } catch (_) {}
+    };
+    redirectIfSession();
+    const id = setInterval(redirectIfSession, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [showAccountCreatedConfirmation]);
+
   const clearMessages = () => {
     setErrorMessage('');
     setSuccessMessage('');
     setExistingEmailOfferReset(false);
     setShowAccountCreatedConfirmation(false);
+    setVerifyEmailForConfirmation('');
+    setResendFeedback('');
   };
 
   const hasSpecialCharRe = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/;
@@ -277,6 +302,8 @@ export default function WebAuthScreen() {
           return;
         }
         if (data?.user && !data?.session) {
+          setVerifyEmailForConfirmation(email.trim());
+          setResendFeedback('');
           setShowAccountCreatedConfirmation(true);
           try {
             const base = getAPIBase();
@@ -492,6 +519,8 @@ export default function WebAuthScreen() {
   }
 
   if (showAccountCreatedConfirmation) {
+    const confirmationEmail = verifyEmailForConfirmation || email.trim();
+
     const closeAccountCreated = () => {
       setJustClosedModal(true);
       Animated.timing(pageFadeAnim, {
@@ -500,6 +529,8 @@ export default function WebAuthScreen() {
         useNativeDriver: Platform.OS !== 'web',
       }).start(() => {
         setShowAccountCreatedConfirmation(false);
+        setVerifyEmailForConfirmation('');
+        setResendFeedback('');
         setShowWelcome(true);
         pageFadeAnim.setValue(1);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -507,6 +538,52 @@ export default function WebAuthScreen() {
         }
       });
     };
+
+    const openEmailInbox = () => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.open('https://mail.google.com/mail/u/0/#inbox', '_blank', 'noopener,noreferrer');
+      }
+    };
+
+    const checkVerificationAndRedirect = async () => {
+      setResendFeedback('');
+      try {
+        const { data: { session } } = await supabaseAuth.getCurrentSession();
+        if (session?.user && typeof window !== 'undefined') {
+          window.location.href = '/?signup=true';
+          return;
+        }
+        setResendFeedback('We don’t see a verified session yet. Open the link in your email, then try again.');
+      } catch (_) {
+        setResendFeedback('Something went wrong checking your status. Please try again.');
+      }
+    };
+
+    const handleResendConfirmation = async () => {
+      const em = confirmationEmail;
+      if (!em) return;
+      setResendLoading(true);
+      setResendFeedback('');
+      const { error } = await supabaseAuth.resendSignupEmail(em);
+      setResendLoading(false);
+      if (error) {
+        setResendFeedback(error.message || 'Could not resend right now. Try again in a minute.');
+      } else {
+        setResendFeedback('Another confirmation email is on its way.');
+      }
+    };
+
+    const handleChangeEmailFromVerify = () => {
+      setShowAccountCreatedConfirmation(false);
+      setVerifyEmailForConfirmation('');
+      setResendFeedback('');
+      setEmail('');
+      setShowWelcome(false);
+      setIsSignUp(true);
+      setIsResetPassword(false);
+      updateURL('signup');
+    };
+
     return (
       <Animated.View style={[styles.container, { opacity: pageFadeAnim }]}>
         {Platform.OS === 'web' && <View style={styles.backgroundPattern} />}
@@ -518,11 +595,82 @@ export default function WebAuthScreen() {
           <X size={24} color="#64748b" />
         </TouchableOpacity>
         <ScrollView contentContainerStyle={styles.contentContainer}>
-          <View style={styles.authCardWrapper}>
+          <View style={[styles.authCardWrapper, styles.verifyEmailCardWrapper]}>
             <View style={styles.authCard}>
-              <Text style={styles.accountCreatedText}>
-                Account created! Please check your email and click the confirmation link to verify your account. This may take 5-10 minutes. You can then sign in.
+              <View style={styles.verifyLogoRow}>
+                <Image
+                  source={require('../assets/icon.png')}
+                  style={styles.verifyLogoImage}
+                  resizeMode="contain"
+                />
+                <Text style={styles.verifyLogoText}>learnadoodle</Text>
+              </View>
+
+              <View style={styles.verifyIconCircle}>
+                <Mail size={28} color="#0d9488" strokeWidth={2} />
+                <View style={styles.verifyCheckBadge}>
+                  <CheckCircle2 size={22} color="#10b981" fill="#ecfdf5" />
+                </View>
+              </View>
+
+              <Text style={styles.verifyTitle}>Check your email to continue</Text>
+              <Text style={styles.verifyBody}>
+                We sent you a confirmation link. Once you verify your email, you can sign in and start planning.
               </Text>
+              {confirmationEmail ? (
+                <Text style={styles.verifyEmailLine}>
+                  Sent to: <Text style={styles.verifyEmailAddress}>{confirmationEmail}</Text>
+                </Text>
+              ) : null}
+              <Text style={styles.verifyTimingHint}>Takes about 1–2 minutes to arrive.</Text>
+
+              {resendFeedback ? (
+                <Text
+                  style={[
+                    styles.verifyFeedbackText,
+                    resendFeedback.includes('don’t see') || resendFeedback.includes('Could not') || resendFeedback.includes('went wrong')
+                      ? styles.verifyFeedbackWarn
+                      : styles.verifyFeedbackOk,
+                  ]}
+                >
+                  {resendFeedback}
+                </Text>
+              ) : null}
+
+              <TouchableOpacity
+                style={styles.verifyPrimaryButton}
+                onPress={openEmailInbox}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.verifyPrimaryButtonText}>Open Gmail</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.verifySecondaryButton}
+                onPress={checkVerificationAndRedirect}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.verifySecondaryButtonText}>I’ve verified my email</Text>
+              </TouchableOpacity>
+
+              <View style={styles.verifyFooterLinks}>
+                <TouchableOpacity
+                  onPress={handleResendConfirmation}
+                  disabled={resendLoading || !confirmationEmail}
+                  {...(Platform.OS === 'web' && { cursor: resendLoading || !confirmationEmail ? 'not-allowed' : 'pointer' })}
+                >
+                  <Text style={[styles.verifyFooterLink, (resendLoading || !confirmationEmail) && styles.verifyFooterLinkDisabled]}>
+                    {resendLoading ? 'Sending…' : 'Resend email'}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={styles.verifyFooterDot}>·</Text>
+                <TouchableOpacity
+                  onPress={handleChangeEmailFromVerify}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.verifyFooterLink}>Change email</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </ScrollView>
@@ -997,10 +1145,155 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  accountCreatedText: {
-    color: '#000',
+  verifyEmailCardWrapper: {
+    maxWidth: 420,
+  },
+  verifyLogoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 24,
+  },
+  verifyLogoImage: {
+    width: 48,
+    height: 48,
+  },
+  verifyLogoText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#0f172a',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#ccfbf1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 22,
+    position: 'relative',
+  },
+  verifyCheckBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+  },
+  verifyTitle: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    textAlign: 'center',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyBody: {
+    fontSize: 16,
+    color: '#4b5563',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyEmailLine: {
+    fontSize: 15,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyEmailAddress: {
+    color: '#1f2937',
+    fontWeight: '600',
+  },
+  verifyTimingHint: {
+    fontSize: 13,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginBottom: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyFeedbackText: {
     fontSize: 14,
     textAlign: 'center',
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyFeedbackOk: {
+    color: '#15803d',
+  },
+  verifyFeedbackWarn: {
+    color: '#b45309',
+  },
+  verifyPrimaryButton: {
+    backgroundColor: '#60a5fa',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  verifyPrimaryButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifySecondaryButton: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
+  verifySecondaryButtonText: {
+    color: '#374151',
+    fontSize: 15,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  verifyFooterLinks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  verifyFooterLink: {
+    color: '#60a5fa',
+    fontSize: 14,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      cursor: 'pointer',
+    }),
+  },
+  verifyFooterLinkDisabled: {
+    color: '#9ca3af',
+  },
+  verifyFooterDot: {
+    color: '#9ca3af',
+    fontSize: 14,
+    paddingHorizontal: 4,
   },
   divider: {
     height: 1,

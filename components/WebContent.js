@@ -2778,14 +2778,23 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (!user) return;
       try {
         const { getMe } = await import('../lib/apiClient');
-        const { data: meData, error: meError } = await getMe();
-        
+        const [meResult, profileResult] = await Promise.all([
+          getMe(),
+          supabase
+            .from('profiles')
+            .select('role, family_id')
+            .eq('id', user.id)
+            .maybeSingle(),
+        ]);
+        const { data: meData, error: meError } = meResult;
+        const profileData = profileResult?.data;
+
         // Handle 401 errors gracefully (backend might not be running or auth not ready)
         const isAuthError = meError?.status === 401 || meError?.response?.status === 401;
-        const isNetworkError = meError?.message?.includes('Cannot connect') || 
+        const isNetworkError = meError?.message?.includes('Cannot connect') ||
                               meError?.message?.includes('Failed to fetch') ||
                               meError?.message?.includes('Load failed');
-        
+
         if (!meError && meData) {
           setUserRole(meData.role || 'parent');
           setAccessibleChildren(meData.accessible_children || []);
@@ -2793,24 +2802,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           // Only log non-auth, non-network errors
           console.warn('[WebContent] getMe error (non-critical):', meError);
         }
-        
-        // Always fallback to profile table (works even if backend is down or returns 401)
-        try {
-          const { data: profileData } = await supabase
-            .from('profiles')
-            .select('role, family_id')
-            .eq('id', user.id)
-            .maybeSingle();
-          if (profileData) {
-            setUserRole(profileData.role || 'parent');
-          } else {
-            setUserRole('parent'); // Default fallback
-          }
-        } catch (profileError) {
-          // Silent fallback
+
+        // Profile table (authoritative when present; matches prior sequential behavior)
+        if (profileData) {
+          setUserRole(profileData.role || 'parent');
+        } else {
           setUserRole('parent');
         }
-        
+
         // Set empty accessible children if we couldn't get them from API
         if (!meData?.accessible_children) {
           setAccessibleChildren([]);

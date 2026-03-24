@@ -154,9 +154,10 @@ export default function SetPasswordPage() {
       } catch (_) {}
       const homeUrl = window.location.origin + '/home';
       window.history.replaceState({}, document.title || '', homeUrl);
-      setTimeout(() => {
+      // Defer one frame so the success message can paint; avoid multi-second wait before full navigation
+      requestAnimationFrame(() => {
         window.location.href = homeUrl;
-      }, 1200);
+      });
     } catch (e) {
       setErrorMessage(e?.message || 'Something went wrong.');
     } finally {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
 import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -215,6 +215,59 @@ export default function AddSubjectModal({
     });
     return () => { cancelled = true; };
   }, [visible, familyId]);
+
+  // Stay in sync when Plan Year, Family → Planning Preferences, or another client updates planner settings / subject targets.
+  const reloadPlannerSyncData = useCallback(async () => {
+    if (!familyId) return;
+    const { data: s } = await getFamilyPlannerSettings(familyId);
+    if (s) {
+      const scope = s.target_scope || 'overall';
+      const mode =
+        s.default_constraint_mode ||
+        (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
+      const days = s.default_target_days != null ? String(s.default_target_days) : '';
+      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
+    } else {
+      setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
+    }
+    if (subject?.id) {
+      const { data, error } = await supabase
+        .from('subject')
+        .select('default_constraint_mode, default_target_days, default_target_hours')
+        .eq('id', subject.id)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (error || !data) return;
+      setDefaultTargetDays(data.default_target_days != null ? String(data.default_target_days) : '');
+      setDefaultTargetHours(data.default_target_hours != null ? String(data.default_target_hours) : '');
+      const hasSubjectValues =
+        data.default_constraint_mode != null ||
+        data.default_target_days != null ||
+        data.default_target_hours != null;
+      setGoalModeForSubject(hasSubjectValues ? 'per_subject' : 'overall');
+      const tm =
+        data.default_constraint_mode ||
+        (data.default_target_days != null ? 'days' : data.default_target_hours != null ? 'hours' : 'none');
+      setTargetMode(tm);
+      setPlanningPrefilledFromFamily(!hasSubjectValues);
+    }
+  }, [familyId, subject?.id]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!visible || !familyId) return;
+    const onSync = () => {
+      if (isSubmitting) return;
+      reloadPlannerSyncData();
+    };
+    window.addEventListener('refreshPlanDefaults', onSync);
+    window.addEventListener('refreshSubjects', onSync);
+    return () => {
+      window.removeEventListener('refreshPlanDefaults', onSync);
+      window.removeEventListener('refreshSubjects', onSync);
+    };
+  }, [visible, familyId, isSubmitting, reloadPlannerSyncData]);
 
   // Pre-select syllabus / lesson plan materials when editing (linked by subject_id + role tag)
   useEffect(() => {

@@ -45,7 +45,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     }
 
     try {
-      // Step 1: Try backend /api/me first (uses service role, avoids 500 from Supabase family_members)
+      // Step 1: Load /api/me and profiles row in parallel (saves a round-trip on first sign-in after signup)
       let activeFamilyId = familyIdToUse || propFamilyId;
       let memberRole = null;
       let childScope = [];
@@ -53,16 +53,19 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       let isLegacy = false;
       let accessibleChildren = [];
 
-      // getMe may return 401 if backend requires verified email; we still resolve role from family_members/profiles below
-      const meRes = await getMe();
-      // If backend says 401 (e.g. user deleted), check if profile still exists; if not or error, sign out so user sees landing page
+      const profilePromise = supabase
+        .from('profiles')
+        .select('id, family_id, role')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const [meRes, profileResult] = await Promise.all([getMe(), profilePromise]);
+      const profileRow = profileResult?.data ?? null;
+      const profileFetchErr = profileResult?.error ?? null;
+
+      // If backend says 401 (e.g. user deleted), use the profile row we already fetched
       if (meRes?.error?.status === 401) {
-        const { data: profileCheck, error: profileErr } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (!profileCheck || profileErr) {
+        if (!profileRow?.id || profileFetchErr) {
           await supabase.auth.signOut({ scope: 'local' });
           setSession(null);
           setLoading(false);
@@ -77,14 +80,9 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         }
       }
 
-      // Step 2: If no family_id yet, get from profiles
+      // Step 2: If no family_id yet, use profiles row from parallel fetch
       if (!activeFamilyId) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('family_id')
-          .eq('id', user.id)
-          .maybeSingle();
-        activeFamilyId = profile?.family_id || null;
+        activeFamilyId = profileRow?.family_id || null;
       }
 
       if (!activeFamilyId) {
@@ -129,12 +127,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
           // Supabase 500 or missing table - ignore, use profiles fallback (no log to avoid console noise)
         }
         if (memberRole == null) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', user.id)
-            .maybeSingle();
-          memberRole = profile?.role || 'parent';
+          memberRole = profileRow?.role || 'parent';
           isLegacy = true;
           // Only log in development, and at debug level (family_members may 500 if table/RLS not ready)
           if (process.env.NODE_ENV === 'development' && typeof console.debug === 'function') {

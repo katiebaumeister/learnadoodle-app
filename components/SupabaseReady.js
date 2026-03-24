@@ -11,7 +11,6 @@ export default function SupabaseReady({ children }) {
     let mounted = true;
     let retryCount = 0;
     const maxRetries = 3;
-    let timeoutId = null;
 
     const checkSupabase = async () => {
       try {
@@ -49,15 +48,34 @@ export default function SupabaseReady({ children }) {
       }
     };
 
-    // Add a small delay to ensure Supabase client is fully initialized
-    const timer = setTimeout(() => {
-      checkSupabase();
-    }, 500);
-
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
+    const scheduleCheck = () => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const run = () => {
+          if (mounted) checkSupabase();
+        };
+        if (typeof window.requestIdleCallback === 'function') {
+          const id = window.requestIdleCallback(run, { timeout: 5000 });
+          return () => {
+            mounted = false;
+            window.cancelIdleCallback(id);
+          };
+        }
+        const t = setTimeout(run, 2500);
+        return () => {
+          mounted = false;
+          clearTimeout(t);
+        };
+      }
+      const timer = setTimeout(() => {
+        checkSupabase();
+      }, 500);
+      return () => {
+        mounted = false;
+        clearTimeout(timer);
+      };
     };
+
+    return scheduleCheck();
   }, []);
 
   if (error) {
