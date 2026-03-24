@@ -80,8 +80,8 @@ export default function AddSubjectStep({
 
   const [schoolYear, setSchoolYear] = useState(() => getDefaultSchoolYear());
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
-  const [goalModeForSubject, setGoalModeForSubject] = useState('overall');
-  const [targetMode, setTargetMode] = useState('none');
+  /** Onboarding: targets always apply to the subject being added — days or hours only */
+  const [targetMode, setTargetMode] = useState('days');
   const [defaultTargetDays, setDefaultTargetDays] = useState('');
   const [defaultTargetHours, setDefaultTargetHours] = useState('');
   const [familyPlannerContext, setFamilyPlannerContext] = useState(null);
@@ -112,22 +112,13 @@ export default function AddSubjectStep({
     setSelectedLessonPlanMaterialId(null);
     setSchoolYear(getDefaultSchoolYear());
     setShowSchoolYearDropdown(false);
-    setGoalModeForSubject(
-      familyPlannerContext?.targetScope === 'per_subject' ? 'per_subject' : 'overall'
-    );
-    setTargetMode('none');
+    setTargetMode('days');
     setDefaultTargetDays('');
     setDefaultTargetHours('');
     setPlanningPrefilledFromFamily(false);
     hasPrefilledFromFamilyRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset form when learner step changes; read latest planner context from closure
   }, [subjectStepChildIndex]);
-
-  useEffect(() => {
-    if (!familyPlannerContext) return;
-    setGoalModeForSubject(familyPlannerContext.targetScope === 'per_subject' ? 'per_subject' : 'overall');
-    setPlanningPrefilledFromFamily(true);
-  }, [familyPlannerContext]);
 
   useEffect(() => {
     if (!familyId) return;
@@ -172,14 +163,31 @@ export default function AddSubjectStep({
 
   useEffect(() => {
     if (!familyPlannerContext) return;
-    if (goalModeForSubject !== 'per_subject' && goalModeForSubject !== 'overall') return;
     if (defaultTargetDays !== '' || defaultTargetHours !== '') return;
     if (hasPrefilledFromFamilyRef.current) return;
     hasPrefilledFromFamilyRef.current = true;
-    setTargetMode(familyPlannerContext.mode);
-    setDefaultTargetDays(familyPlannerContext.days);
-    setDefaultTargetHours(familyPlannerContext.hours);
-  }, [familyPlannerContext, goalModeForSubject, defaultTargetDays, defaultTargetHours]);
+    const mode = familyPlannerContext.mode;
+    const daysStr =
+      familyPlannerContext.days != null && familyPlannerContext.days !== ''
+        ? String(familyPlannerContext.days).trim()
+        : '';
+    const hoursStr =
+      familyPlannerContext.hours != null && familyPlannerContext.hours !== ''
+        ? String(familyPlannerContext.hours).trim()
+        : '';
+    const hasHours = Boolean(hoursStr);
+    const hasDays = Boolean(daysStr);
+    if (mode === 'hours' || (hasHours && !hasDays)) {
+      setTargetMode('hours');
+      setDefaultTargetHours(hoursStr);
+      setDefaultTargetDays('');
+    } else {
+      setTargetMode('days');
+      setDefaultTargetDays(daysStr);
+      setDefaultTargetHours('');
+    }
+    setPlanningPrefilledFromFamily(Boolean(hasDays || hasHours));
+  }, [familyPlannerContext, defaultTargetDays, defaultTargetHours]);
 
   const nameTrim = subjectName.trim();
   const canAdd = nameTrim.length > 0 && currentChild?.id;
@@ -205,30 +213,11 @@ export default function AddSubjectStep({
       credits: creditsVal != null && !Number.isNaN(creditsVal) ? creditsVal : null,
       notes: additionalNotes.trim() || null,
       school_year: schoolYear || getDefaultSchoolYear(),
-      default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
+      default_constraint_mode: targetMode,
       default_target_days:
-        goalModeForSubject === 'per_subject' && targetMode === 'days' && defaultTargetDays.trim()
-          ? parseInt(defaultTargetDays, 10) || null
-          : null,
+        targetMode === 'days' && defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
       default_target_hours:
-        goalModeForSubject === 'per_subject' && targetMode === 'hours' && defaultTargetHours.trim()
-          ? parseFloat(defaultTargetHours) || null
-          : null,
-      familyPlannerTargets:
-        goalModeForSubject === 'overall'
-          ? {
-              target_scope: 'overall',
-              default_constraint_mode: targetMode,
-              default_target_days:
-                targetMode === 'days' && defaultTargetDays.trim()
-                  ? parseInt(defaultTargetDays, 10) || null
-                  : null,
-              default_target_hours:
-                targetMode === 'hours' && defaultTargetHours.trim()
-                  ? parseFloat(defaultTargetHours) || null
-                  : null,
-            }
-          : null,
+        targetMode === 'hours' && defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
       syllabus_material_id: selectedSyllabusMaterialId,
       lesson_plan_material_id: selectedLessonPlanMaterialId,
     };
@@ -246,11 +235,10 @@ export default function AddSubjectStep({
     setShowPlanningAccordion(false);
     setShowAdditionalNotesAccordion(false);
     setSchoolYear(getDefaultSchoolYear());
-    setGoalModeForSubject(familyPlannerContext?.targetScope === 'per_subject' ? 'per_subject' : 'overall');
-    setTargetMode('none');
+    setTargetMode('days');
     setDefaultTargetDays('');
     setDefaultTargetHours('');
-    setPlanningPrefilledFromFamily(true);
+    setPlanningPrefilledFromFamily(false);
     hasPrefilledFromFamilyRef.current = false;
   };
 
@@ -594,71 +582,17 @@ export default function AddSubjectStep({
             </View>
 
             <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
-              <Text style={[styles.modalLabel, { marginBottom: 6 }]}>Learning goals</Text>
-              <View style={styles.learningGoalsRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.goalPill,
-                    goalModeForSubject === 'overall' ? styles.goalPillSelected : styles.goalPillIdle,
-                  ]}
-                  onPress={() => {
-                    setGoalModeForSubject('overall');
-                    setPlanningPrefilledFromFamily(false);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.goalPillText,
-                      { color: goalModeForSubject === 'overall' ? '#3b82f6' : '#9ca3af' },
-                    ]}
-                  >
-                    Overall
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.goalPill,
-                    goalModeForSubject === 'per_subject' ? styles.goalPillSelected : styles.goalPillIdle,
-                  ]}
-                  onPress={() => {
-                    setGoalModeForSubject('per_subject');
-                    setPlanningPrefilledFromFamily(false);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.goalPillText,
-                      { color: goalModeForSubject === 'per_subject' ? '#3b82f6' : '#9ca3af' },
-                    ]}
-                  >
-                    Per subject
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              {goalModeForSubject === 'per_subject' && (
-                <View style={styles.perSubjectPreview}>
-                  <Text style={styles.modalLabel}>Subject</Text>
-                  <View style={styles.subjectNamePreviewChip}>
-                    <Text style={styles.subjectNamePreviewText} numberOfLines={2}>
-                      {nameTrim || 'Type in Subject name above'}
-                    </Text>
-                  </View>
-                </View>
-              )}
-            </View>
-
-            <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
               <Text style={[styles.modalLabel, { marginBottom: 6 }]}>Target</Text>
               <View style={styles.targetRow}>
-                {['none', 'days', 'hours'].map((m) => (
+                {['days', 'hours'].map((m) => (
                   <TouchableOpacity
                     key={m}
                     style={[styles.targetPill, targetMode === m ? styles.targetPillSelected : styles.targetPillIdle]}
                     onPress={() => {
                       setTargetMode(m);
                       setPlanningPrefilledFromFamily(false);
+                      if (m === 'days') setDefaultTargetHours('');
+                      else setDefaultTargetDays('');
                     }}
                     activeOpacity={0.8}
                     disabled={isSaving || adding}
@@ -669,7 +603,7 @@ export default function AddSubjectStep({
                         { color: targetMode === m ? '#3b82f6' : '#6b7280' },
                       ]}
                     >
-                      {m === 'none' ? 'None' : m === 'days' ? 'Days' : 'Hours'}
+                      {m === 'days' ? 'Days' : 'Hours'}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -759,10 +693,10 @@ export default function AddSubjectStep({
             setAddMaterialDefaultRole(null);
           }}
           onSaved={async (detail) => {
-            if (detail?.materialId && addMaterialDefaultRole) {
+            if (detail?.id && addMaterialDefaultRole) {
               const slot =
                 addMaterialDefaultRole === 'syllabus' ? MATERIAL_SLOT.SYLLABUS : MATERIAL_SLOT.LESSON_PLAN;
-              setSlotSelection(slot, detail.materialId);
+              setSlotSelection(slot, detail.id);
             }
             if (familyId) {
               try {
@@ -777,6 +711,11 @@ export default function AddSubjectStep({
           children={createdChildren.map((c) => ({ id: c.id, first_name: c.name, name: c.name }))}
           defaultRole={addMaterialDefaultRole ?? null}
           defaultChildIds={currentChild ? [currentChild.id] : []}
+          draftSubjectForMaterial={
+            nameTrim && currentChild?.id
+              ? { name: nameTrim, childIds: [currentChild.id] }
+              : null
+          }
         />
       )}
 
@@ -1196,48 +1135,9 @@ const styles = StyleSheet.create({
     color: '#4F46E5',
     fontWeight: '600',
   },
-  learningGoalsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  goalPill: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  goalPillSelected: {
-    borderColor: '#3b82f6',
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-  },
-  goalPillIdle: {
-    borderColor: CHIP_BORDER,
-    backgroundColor: '#fff',
-  },
   goalPillText: {
     fontSize: 14,
     fontWeight: '500',
-  },
-  perSubjectPreview: {
-    marginTop: 12,
-  },
-  subjectNamePreviewChip: {
-    marginTop: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: CHIP_BORDER,
-    backgroundColor: '#f9fafb',
-  },
-  subjectNamePreviewText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: FG,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   prefillNote: {
     fontSize: 12,

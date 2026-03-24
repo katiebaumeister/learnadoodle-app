@@ -1498,6 +1498,11 @@ export default function AddSubjectModal({
       defaultRole={addMaterialDefaultRole ?? null}
       defaultSubjectId={subject?.id ?? null}
       defaultChildIds={selectedChildIds}
+      draftSubjectForMaterial={
+        !subject && subjectName.trim() && selectedChildIds.length > 0
+          ? { name: subjectName.trim(), childIds: selectedChildIds }
+          : null
+      }
     />
     </>
   );

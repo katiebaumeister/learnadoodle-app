@@ -56,6 +56,16 @@ const ACCENT = '#d4a256';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 
+/** Synthetic id when attaching materials to a subject name before the subject row exists */
+const DRAFT_SUBJECT_MATERIAL_ID = '__draft_subject__';
+
+function normalizeDraftChildIds(draft) {
+  if (!draft) return [];
+  if (Array.isArray(draft.childIds) && draft.childIds.length > 0) return draft.childIds;
+  if (draft.childId) return [draft.childId];
+  return [];
+}
+
 // Helper functions
 function addDays(d, n) {
   const nd = new Date(d);
@@ -78,6 +88,8 @@ export default function AddMaterialModal({
   defaultRole = null, // Default role to set when opening modal (e.g., 'syllabus')
   defaultSubjectId = null, // Default subject ID to set when opening modal
   defaultSubjectName = null, // Optional subject name for defaultSubjectId (used when subject not in filtered list)
+  /** Subject row not saved yet — show this name in the picker and save as subject_key */
+  draftSubjectForMaterial = null, // { name: string, childIds?: string[], childId?: string }
   defaultChildId = null, // Default child ID to set when opening modal
   defaultChildIds = [], // Optional array of child IDs to default-select (for multi-child subjects)
 }) {
@@ -137,6 +149,62 @@ export default function AddMaterialModal({
     });
     return Array.from(subjectMap.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [allSubjects, selectedChildIds.join(',')]);
+
+  const draftSubjectNameTrim = (draftSubjectForMaterial?.name || '').trim();
+  const draftChildIdsKey = normalizeDraftChildIds(draftSubjectForMaterial).join(',');
+
+  /* draftSubjectForMaterial reflected via draftSubjectNameTrim + draftChildIdsKey */
+  const subjectsForPicker = useMemo(() => {
+    if (material) return filteredSubjects;
+    const base = filteredSubjects;
+    if (!draftSubjectNameTrim) return base;
+    if (base.some((s) => (s.name || '').trim() === draftSubjectNameTrim)) return base;
+
+    const draftChildIds = normalizeDraftChildIds(draftSubjectForMaterial);
+    const norm = (id) => String(id ?? '').trim();
+    const draftChildIdStr = draftChildIds.map(norm).filter(Boolean).join(';') || null;
+    const draftRow = {
+      id: DRAFT_SUBJECT_MATERIAL_ID,
+      name: draftSubjectNameTrim,
+      child_id: draftChildIdStr,
+    };
+
+    const childIds = selectedChildIds;
+    if (!childIds || childIds.length === 0) {
+      if (draftChildIds.length === 0) {
+        return [...base, draftRow].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      }
+      return base;
+    }
+    const subjectChildIds = parseChildIds(draftRow.child_id ?? '');
+    const isFamilyWide = subjectChildIds.length === 0;
+    const subjectIdSet = new Set(subjectChildIds.map(norm).filter(Boolean));
+    const isForAllSelectedChildren = childIds.every((cid) => subjectIdSet.has(norm(cid)));
+    if (!isFamilyWide && !isForAllSelectedChildren) return base;
+
+    return [...base, draftRow].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [material, filteredSubjects, draftSubjectNameTrim, draftChildIdsKey, selectedChildIds.join(',')]);
+
+  // If DB gains a real subject with the same name, move selection off the draft sentinel
+  useEffect(() => {
+    if (!visible || material) return;
+    if (selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID) return;
+    if (subjectsForPicker.some((s) => s.id === DRAFT_SUBJECT_MATERIAL_ID)) return;
+    if (!draftSubjectNameTrim) {
+      setSelectedSubjectId(null);
+      return;
+    }
+    const match = filteredSubjects.find((s) => (s.name || '').trim() === draftSubjectNameTrim);
+    if (match) setSelectedSubjectId(match.id);
+    else setSelectedSubjectId(null);
+  }, [
+    visible,
+    material,
+    selectedSubjectId,
+    subjectsForPicker,
+    filteredSubjects,
+    draftSubjectNameTrim,
+  ]);
 
   // Calendar picker state
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
@@ -321,7 +389,9 @@ export default function AddMaterialModal({
     if (visible && !material) {
       setTitle('');
       setRole(defaultRole ? String(defaultRole) : '');
-      setSelectedSubjectId(defaultSubjectId || null);
+      const useDraft =
+        !defaultSubjectId && Boolean((draftSubjectForMaterial?.name || '').trim());
+      setSelectedSubjectId(useDraft ? DRAFT_SUBJECT_MATERIAL_ID : defaultSubjectId || null);
       const initialChildIds =
         Array.isArray(defaultChildIds) && defaultChildIds.length > 0
           ? defaultChildIds
@@ -346,7 +416,15 @@ export default function AddMaterialModal({
       setReviewNotes('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, !!material, defaultRole, defaultSubjectId, defaultChildId, defaultChildIdsKey]);
+  }, [
+    visible,
+    !!material,
+    defaultRole,
+    defaultSubjectId,
+    defaultChildId,
+    defaultChildIdsKey,
+    (draftSubjectForMaterial?.name || '').trim(),
+  ]);
 
   const handleFileSelect = () => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -597,12 +675,20 @@ export default function AddMaterialModal({
 
       if (material) {
         // Edit mode: update existing material
-        const subjectName = selectedSubjectId ? allSubjects.find(s => s.id === selectedSubjectId)?.name || null : null;
+        const subjectName =
+          selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+            ? allSubjects.find((s) => s.id === selectedSubjectId)?.name || null
+            : selectedSubjectId === DRAFT_SUBJECT_MATERIAL_ID
+              ? draftSubjectNameTrim || null
+              : null;
         
         const updates = {
           title: title.trim(),
           subject_key: subjectName,
-          subject_id: selectedSubjectId || null,
+          subject_id:
+            selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+              ? selectedSubjectId
+              : null,
           is_subscription: isSubscription,
           provider_name: providerName.trim() || null,
           provider_url: providerUrl.trim() || null,
@@ -727,7 +813,17 @@ export default function AddMaterialModal({
         // If we have an uploaded file, use createFileMaterial (handles storage_path properly)
         if (uploadedFile && uploadedFile.path) {
           const { createFileMaterial } = await import('../../lib/services/materialsClient');
-          
+          const subjectIdForSave =
+            selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+              ? selectedSubjectId
+              : null;
+          const subjectKeyForSave =
+            selectedSubjectId === DRAFT_SUBJECT_MATERIAL_ID
+              ? draftSubjectNameTrim || null
+              : subjectIdForSave
+                ? allSubjects.find((s) => s.id === subjectIdForSave)?.name || null
+                : null;
+
           created = await createFileMaterial({
             familyId,
             storagePath: uploadedFile.path,
@@ -736,19 +832,30 @@ export default function AddMaterialModal({
             bytes: uploadedFile.size || 0,
             tags: tags,
             notes: null,
-            subjectId: selectedSubjectId || null,
+            subjectId: subjectIdForSave,
+            subjectKey: subjectKeyForSave,
             url: uploadedFileUrl || providerUrl.trim() || null,
           });
         } else {
           // For URL-based materials (no file upload), use createMaterial
           const finalProviderUrl = providerUrl.trim() || null;
+          const subjectIdForSave =
+            selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+              ? selectedSubjectId
+              : null;
+          const subjectKeyForSave =
+            selectedSubjectId === DRAFT_SUBJECT_MATERIAL_ID
+              ? draftSubjectNameTrim || null
+              : subjectIdForSave
+                ? allSubjects.find((s) => s.id === subjectIdForSave)?.name || null
+                : null;
 
           const materialData = {
             family_id: familyId,
             title: title.trim(),
             type: isSubscription ? 'subscription' : 'other',
-            subject_id: selectedSubjectId || null,
-            subject_key: selectedSubjectId ? allSubjects.find(s => s.id === selectedSubjectId)?.name || null : null,
+            subject_id: subjectIdForSave,
+            subject_key: subjectKeyForSave,
             is_subscription: isSubscription,
             provider_name: providerName.trim() || null,
             provider_url: finalProviderUrl,
@@ -805,7 +912,11 @@ export default function AddMaterialModal({
           }));
           window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
-          const subId = material ? (selectedSubjectId || material?.subject_id) : (selectedSubjectId || created?.subject_id);
+          const subId = material
+            ? selectedSubjectId || material?.subject_id
+            : selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+              ? selectedSubjectId
+              : created?.subject_id;
           if (subId) {
             window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } }));
           }
@@ -978,10 +1089,10 @@ export default function AddMaterialModal({
                 <Text style={styles.fieldLabel}>Subject (optional)</Text>
                 {loadingSubjects ? (
                   <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
-                ) : filteredSubjects.length > 0 ? (
+                ) : subjectsForPicker.length > 0 ? (
                   <View style={styles.dropdownContainer}>
                     <View style={styles.dropdownRow}>
-                      {filteredSubjects.map((subject) => {
+                      {subjectsForPicker.map((subject) => {
                         const isSelected = selectedSubjectId === subject.id;
                         return (
                           <TouchableOpacity
