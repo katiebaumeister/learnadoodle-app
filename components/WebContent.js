@@ -7568,41 +7568,44 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'search':
         return renderSearchContent()
       case 'home': {
-        // Route by role; use session first so we don't flash parent before role is loaded
+        // Route by role; use session first so we don't flash parent before role is loaded.
+        // WebContent's familyId state can lag one frame behind SessionContext — always merge with session.
+        const homeFamilyId = familyId || propSession?.family_id || null;
         const isChild = roleForHome === 'child' || roleForHome === 'student';
         const isTutor = roleForHome === 'tutor';
         const hasAccessibleChildren = accessibleForHome.length > 0;
-        // When we have user but role still unknown: show loading only if we have no familyId; otherwise assume parent
-        if (user && roleForHome == null && !familyId) {
-          return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-              <ActivityIndicator size="large" color="#887DEE" />
-              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
-            </View>
-          );
-        }
-        // Role unknown but have familyId: show parent home (it fetches its own data) so we don't get stuck on loading
-        if (user && roleForHome == null && familyId) {
-          return (
-            <ParentHomeScreen
-              familyId={familyId}
-              onNavigate={onTabChange}
-              onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
-              onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
-              onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
-              onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
-              onAddChild={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openAddChildModal'));
-                }
-              }}
-            />
-          );
-        }
+        const sessionHintsChild =
+          propSession?.role_flags?.isChild === true ||
+          ['child', 'student'].includes(String(propSession?.effective_role || '').toLowerCase()) ||
+          ['child', 'student'].includes(String(propSession?.member_role || '').toLowerCase());
+        const sessionHintsTutor =
+          propSession?.role_flags?.isTutor === true ||
+          String(propSession?.effective_role || '').toLowerCase() === 'tutor';
+
+        const parentHome = (
+          <ParentHomeScreen
+            familyId={homeFamilyId}
+            onNavigate={onTabChange}
+            onAddEvent={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
+              }
+            }}
+            onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
+            onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
+            onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
+            onAddChild={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openAddChildModal'));
+              }
+            }}
+          />
+        );
+
         if (isChild && hasAccessibleChildren) {
           return (
             <ChildHomeScreen
-              familyId={familyId}
+              familyId={homeFamilyId}
               onNavigate={onTabChange}
             />
           );
@@ -7610,75 +7613,24 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (isTutor) {
           return <TutorDashboard accessibleChildren={accessibleForHome} />;
         }
-        // Parent (or fallback)
-        if (propSession && (propSession.role_flags?.isParent || (!propSession.role_flags?.isChild && !propSession.role_flags?.isTutor)) && !propSession.loading) {
-          return (
-              <ParentHomeScreen
-                familyId={familyId}
+        // Role not yet in WebContent state: use session flags so child/tutor never see parent shell
+        if (user && roleForHome == null) {
+          if (sessionHintsChild && hasAccessibleChildren) {
+            return (
+              <ChildHomeScreen
+                familyId={homeFamilyId}
                 onNavigate={onTabChange}
-                onAddEvent={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openTaskModal', {
-                      detail: { date: new Date() }
-                    }));
-                  }
-                }}
-                onAddGrade={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openAddGradeModal'));
-                  }
-                }}
-                onAddMaterial={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openAddMaterialModal'));
-                  }
-                }}
-                onAddSubject={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
-                  }
-                }}
-                onAddChild={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openAddChildModal'));
-                  }
-                }}
               />
             );
           }
-          // Fallback: if we have familyId show ParentHomeScreen (it handles its own loading); otherwise show loading
-          if (familyId) {
-            return (
-              <ParentHomeScreen
-                familyId={familyId}
-                onNavigate={onTabChange}
-                onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
-                onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
-                onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
-                onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
-                onAddChild={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openAddChildModal'));
-                  }
-                }}
-              />
-            );
+          if (sessionHintsTutor) {
+            return <TutorDashboard accessibleChildren={accessibleForHome} />;
           }
-          if (homeLoading || !homeData) {
-            return (
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-                <ActivityIndicator size="large" color="#887DEE" />
-                <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
-              </View>
-            );
-          }
-          return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-              <ActivityIndicator size="large" color="#887DEE" />
-              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
-            </View>
-          );
+          return parentHome;
         }
+        // Default: parent home (handles cache + RPC; no full-page loader while WebContent homeData catches up)
+        return parentHome;
+      }
       case 'child-dashboard':
         if (activeSubtab) {
           const child = accessibleChildren.find(c => c.id === activeSubtab);

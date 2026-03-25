@@ -301,13 +301,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     session?.member_role === 'student' ||
     session?.effective_role === 'child' ||
     session?.effective_role === 'student';
-  // When on home, keep loader until we have familyId (so we never show inner "Loading...") and home data is ready.
-  // Child/student home uses ChildHomeScreen + its own fetches — do not block shell on parent get_home_data.
-  // If session is done and has no family_id, allow ready so we don't block forever for users without a family.
+  // When on home: child/student shell is ready without WebContent's home RPC. Parents use ParentHomeScreen which
+  // loads from cache/RPC itself — do not block the app shell on WebContent homeLoading (get_home_data).
+  // If session is done and has no family_id, still require homeLoading settled so we don't flash wrong pane.
   const homeReady =
     activeTab !== 'home' ||
     isChildOrStudentSession ||
-    (familyId && !homeLoading) ||
+    (familyId && !isChildOrStudentSession) ||
     (session && !session.loading && session.family_id == null && !homeLoading);
   const showLoader = !!(
     user &&

@@ -86,8 +86,9 @@ export default function ParentHomeScreen({
   };
 
   useEffect(() => {
-    // Wait for session to be ready and familyId to be available
-    if (session && !session.loading && familyId && !session.error) {
+    // familyId from props (WebLayout) is enough for get_home_data; don't wait on session.loading
+    // or first paint stays empty while SessionContext finishes.
+    if (familyId && !session?.error) {
       // Check cache first - if available, use it immediately without loading state
       const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
         ? selectedDate
@@ -132,7 +133,7 @@ export default function ParentHomeScreen({
         subjects: [],
       });
     } else if (session && !session.loading && !familyId) {
-      // Session loaded but no familyId - show error
+      // Session resolved but no familyId anywhere — onboarding / new account
       setLoading(false);
       setError(new Error('No family ID available'));
       setHomeData({
@@ -142,7 +143,7 @@ export default function ParentHomeScreen({
         subjects: [],
       });
     }
-  }, [session, familyId, selectedDate]);
+  }, [session, session?.loading, session?.error, familyId, selectedDate]);
 
   const loadData = async (silent = false) => {
     if (!familyId) return;

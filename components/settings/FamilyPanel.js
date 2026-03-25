@@ -1316,13 +1316,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
     try {
       const apiBase = getAPIBase();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        await supabase.auth.refreshSession().catch(() => {});
+        await new Promise((r) => setTimeout(r, 120));
+        ({ data: { session } } = await supabase.auth.getSession());
+      }
+      if (!session?.access_token) return;
 
       // Get integration status
       const statusRes = await fetch(`${apiBase}/api/integrations/status`, {
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
+          'Accept': 'application/json',
         },
       });
 
@@ -1398,8 +1404,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     
     try {
       const apiBase = getAPIBase();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        await supabase.auth.refreshSession().catch(() => {});
+        await new Promise((r) => setTimeout(r, 120));
+        ({ data: { session } } = await supabase.auth.getSession());
+      }
+      if (!session?.access_token) {
         toast.push('Please sign in to connect accounts', 'error');
         setConnectingProvider(null);
         return;
@@ -1481,8 +1492,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const handleDisconnectProvider = async (providerKey) => {
     try {
       const apiBase = getAPIBase();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        await supabase.auth.refreshSession().catch(() => {});
+        await new Promise((r) => setTimeout(r, 120));
+        ({ data: { session } } = await supabase.auth.getSession());
+      }
+      if (!session?.access_token) {
         toast.push('Please sign in to disconnect accounts', 'error');
         return;
       }
