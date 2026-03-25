@@ -220,44 +220,64 @@ def _child_invite_summaries_map(supabase, family_id: str, child_ids: List[str]) 
     pending_by_child: Dict[str, tuple] = {}
     accepted_by_child: Dict[str, tuple] = {}
     try:
+        # Child invites often store the target id only in child_scope (RPC/direct insert);
+        # filtering by child_id alone misses pending rows.
         inv_res = (
             supabase.table("invites")
-            .select("child_id, email, accepted_at, created_at, updated_at, expires_at")
+            .select("child_id, child_scope, email, accepted_at, created_at, updated_at, expires_at")
             .eq("family_id", family_id)
             .eq("role", "child")
-            .in_("child_id", ids)
             .execute()
         )
+        id_set = set(out.keys())
         for inv in inv_res.data or []:
-            key = str(inv.get("child_id") or "").strip()
-            if not key or key not in out:
-                continue
-            if inv.get("accepted_at"):
-                em = str(inv.get("email") or "").strip() or None
-                acc = _iso_or_none(inv.get("accepted_at")) or ""
-                prev = accepted_by_child.get(key)
-                prev_t = prev[1] if prev else ""
-                if not prev or acc >= prev_t:
-                    accepted_by_child[key] = (em, acc)
-                continue
-            exp = inv.get("expires_at")
-            if exp:
+            raw_scope = inv.get("child_scope") or []
+            if isinstance(raw_scope, str):
                 try:
-                    exp_s = str(exp).replace("Z", "+00:00")
-                    exp_dt = datetime.fromisoformat(exp_s)
-                    if exp_dt.tzinfo is None:
-                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-                    if exp_dt < datetime.now(timezone.utc):
-                        continue
+                    raw_scope = json.loads(raw_scope)
                 except Exception:
-                    pass
-            sent = inv.get("updated_at") or inv.get("created_at")
-            t = _iso_or_none(sent) or ""
-            prev = pending_by_child.get(key)
-            prev_t = prev[1] if prev else ""
-            em = str(inv.get("email") or "").strip() or None
-            if not prev or t > prev_t:
-                pending_by_child[key] = (em, t, sent)
+                    raw_scope = []
+            targets: List[str] = []
+            cid = inv.get("child_id")
+            if cid is not None and str(cid).strip():
+                targets.append(str(cid).strip())
+            if isinstance(raw_scope, list):
+                for x in raw_scope:
+                    if x is None:
+                        continue
+                    sx = str(x).strip()
+                    if sx:
+                        targets.append(sx)
+            keys = sorted({t for t in targets if t in id_set})
+            if not keys:
+                continue
+            for key in keys:
+                if inv.get("accepted_at"):
+                    em = str(inv.get("email") or "").strip() or None
+                    acc = _iso_or_none(inv.get("accepted_at")) or ""
+                    prev = accepted_by_child.get(key)
+                    prev_t = prev[1] if prev else ""
+                    if not prev or acc >= prev_t:
+                        accepted_by_child[key] = (em, acc)
+                    continue
+                exp = inv.get("expires_at")
+                if exp:
+                    try:
+                        exp_s = str(exp).replace("Z", "+00:00")
+                        exp_dt = datetime.fromisoformat(exp_s)
+                        if exp_dt.tzinfo is None:
+                            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                        if exp_dt < datetime.now(timezone.utc):
+                            continue
+                    except Exception:
+                        pass
+                sent = inv.get("updated_at") or inv.get("created_at")
+                t = _iso_or_none(sent) or ""
+                prev = pending_by_child.get(key)
+                prev_t = prev[1] if prev else ""
+                em = str(inv.get("email") or "").strip() or None
+                if not prev or t > prev_t:
+                    pending_by_child[key] = (em, t, sent)
     except Exception as e:
         log_event("family.child_invite_summaries.invites_error", error=str(e))
 
@@ -1300,7 +1320,7 @@ async def invite_tutor(
             # Try direct insert as fallback
             log_event("family.invite_tutor.direct_insert_fallback", user_id=user["id"])
             try:
-                invite_res = supabase.table("invites").insert({
+                insert_invite = {
                     "family_id": family_id,
                     "email": body.email,
                     "token": token,
@@ -1308,7 +1328,10 @@ async def invite_tutor(
                     "child_scope": body.child_ids or [],
                     "expires_at": expires_at,
                     "invited_by": user["id"],
-                }).execute()
+                }
+                if body.role == "child" and body.child_ids and len(body.child_ids) == 1:
+                    insert_invite["child_id"] = body.child_ids[0]
+                invite_res = supabase.table("invites").insert(insert_invite).execute()
                 
                 log_event("family.invite_tutor.direct_insert_response",
                          user_id=user["id"],

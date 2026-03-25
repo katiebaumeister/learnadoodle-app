@@ -312,7 +312,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Update local state when prop changes
   useEffect(() => {
     if (propFamily) {
-      setFamily(propFamily);
+      setFamily((prev) => {
+        const sameFamily =
+          prev?.id != null && String(prev.id) === String(propFamily.id);
+        const propSummaries = propFamily.child_invite_summaries;
+        const propHasSummaries =
+          propSummaries &&
+          typeof propSummaries === 'object' &&
+          Object.keys(propSummaries).length > 0;
+        if (!sameFamily || propHasSummaries) {
+          return propFamily;
+        }
+        return {
+          ...propFamily,
+          child_invite_summaries: prev?.child_invite_summaries,
+        };
+      });
     } else if (!propFamily && user) {
       // Fallback: load family data if not provided as prop (e.g., in SettingsModal)
       const loadFamily = async () => {
