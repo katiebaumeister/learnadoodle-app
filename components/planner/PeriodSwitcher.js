@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { colors } from '../../theme/colors';
+import { designTokens } from '../../theme/designTokens';
 
 export default function PeriodSwitcher({ 
   currentPeriod, 
@@ -104,22 +105,22 @@ const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: colors.radiusMd,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
   },
   chipActive: {
-    backgroundColor: colors.indigoSoft,
-    borderColor: colors.indigoBold,
+    backgroundColor: designTokens.softAccents.core,
+    borderColor: designTokens.colors.primary,
   },
   chipText: {
     fontSize: 14,
     color: colors.text,
   },
   chipTextActive: {
-    fontWeight: '500',
-    color: colors.indigoBold,
+    fontWeight: '600',
+    color: designTokens.colors.primary,
   },
 });
 

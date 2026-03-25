@@ -12,6 +12,7 @@ import {
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { parseChildIds } from '../../lib/services/subjectsClient';
+import { saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
 import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
@@ -39,6 +40,50 @@ function extractCreatedSubjectId(res) {
       : null) ??
     null
   );
+}
+
+/**
+ * Planning Preferences + subject "Overall" prefill read family_planner_settings.
+ * Onboarding only patched `subject` before, so family-level targets stayed None.
+ */
+async function syncOnboardingSubjectPlanningToFamilyPlanner(fid, subject) {
+  if (!fid || !subject) return;
+  let mode = subject.default_constraint_mode;
+  let days = null;
+  let hours = null;
+  const dv = subject.default_target_days;
+  const hv = subject.default_target_hours;
+  if (dv != null && dv !== '') {
+    const n = parseInt(dv, 10);
+    if (!Number.isNaN(n)) {
+      days = n;
+      mode = 'days';
+    }
+  } else if (hv != null && hv !== '') {
+    const n = parseFloat(hv);
+    if (!Number.isNaN(n)) {
+      hours = n;
+      mode = 'hours';
+    }
+  }
+  if (mode !== 'days' && mode !== 'hours') return;
+  if (mode === 'days' && days == null) return;
+  if (mode === 'hours' && hours == null) return;
+
+  const { error } = await saveFamilyPlannerSettings(fid, {
+    target_scope: 'overall',
+    default_constraint_mode: mode,
+    default_target_days: mode === 'days' ? days : null,
+    default_target_hours: mode === 'hours' ? hours : null,
+  });
+  if (error) {
+    console.warn('[OnboardingModal] Family planner settings sync failed:', error);
+    return;
+  }
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+  }
 }
 
 async function resolveSubjectIdAfterCreate(res, fid, subject) {
@@ -443,6 +488,7 @@ export default function OnboardingModal({
             console.warn('[OnboardingModal] Subject planning fields update failed:', e);
           }
         }
+        await syncOnboardingSubjectPlanningToFamilyPlanner(fid, subject);
         const pickIds = [
           subject.syllabus_material_id,
           subject.lesson_plan_material_id,
@@ -464,6 +510,7 @@ export default function OnboardingModal({
         }
       } else {
         console.warn('[OnboardingModal] Could not resolve new subject id; planning patch skipped.');
+        await syncOnboardingSubjectPlanningToFamilyPlanner(fid, subject);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
         }

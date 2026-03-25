@@ -7,7 +7,7 @@
  * - Right rail: Notification Center, Rewards, Subscription
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, Platform, ActivityIndicator, ScrollView, TouchableOpacity } from 'react-native';
 import { Plus, Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
@@ -26,8 +26,6 @@ import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 export default function ParentHomeScreen({
   familyId: propFamilyId,
-  /** Family name (Parents row) or profile name — shown after time-based greeting */
-  greetingName = '',
   onNavigate,
   onAddEvent,
   onAddGrade,
@@ -235,6 +233,17 @@ export default function ParentHomeScreen({
     return () => window.removeEventListener('refreshCalendar', onRefreshCalendar);
   }, [familyId]);
 
+  /** Must stay above any early return (Rules of Hooks). */
+  const handleInviteChildFromRail = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const n = Array.isArray(homeData?.children) ? homeData.children.length : 0;
+    if (n === 0) {
+      window.dispatchEvent(new CustomEvent('openAddChildModal'));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('openInviteChildModal'));
+  }, [homeData?.children]);
+
   const loadNotificationCount = async () => {
     try {
       // Get actual count of assignments needing attention
@@ -366,10 +375,6 @@ export default function ParentHomeScreen({
     }
   };
 
-  const greetingWho = (typeof greetingName === 'string' && greetingName.trim())
-    ? greetingName.trim()
-    : 'Doodle Family';
-
   const formatDate = (date) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -379,6 +384,24 @@ export default function ParentHomeScreen({
     const year = date.getFullYear();
     return `${dayName}, ${month} ${day}, ${year}`;
   };
+
+  const isViewingToday = (() => {
+    const d = new Date(selectedDate);
+    if (Number.isNaN(d.getTime())) return true;
+    d.setHours(0, 0, 0, 0);
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return d.getTime() === t.getTime();
+  })();
+
+  const scheduleSummaryLine =
+    blockCount === 0
+      ? isViewingToday
+        ? 'No events today'
+        : 'Nothing scheduled this day'
+      : blockCount === 1
+        ? '1 thing planned'
+        : `${blockCount} things planned`;
 
   const handleViewTodaysTodo = () => {
     // Navigate to planner → To-do lists → Today (client-side, no reload)
@@ -400,37 +423,41 @@ export default function ParentHomeScreen({
 
   const mainContent = (
     <View style={styles.mainSurface}>
-      {/* Header Row */}
-      <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.greetingText}>{getTimeBasedGreeting()}, {greetingWho}!</Text>
-          <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.viewTodosButton}
-          onPress={handleViewTodaysTodo}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Calendar size={16} color="#6B7280" />
-          <Text style={styles.viewTodosButtonText}>View To-Dos</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Divider */}
-      <View style={styles.divider} />
-
-      {/* Today's Schedule Section */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionLabel}>Today's schedule</Text>
+      {/* Dashboard header anchor */}
+      <View style={styles.headerCard}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.greetingText}>{getTimeBasedGreeting()}</Text>
+            <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
+            <Text style={styles.scheduleSummaryText}>{scheduleSummaryLine}</Text>
+          </View>
           <TouchableOpacity
-            style={styles.addButton}
-            onPress={onAddEvent}
+            style={styles.viewTodosButton}
+            onPress={handleViewTodaysTodo}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Plus size={16} color="#6B7280" />
-            <Text style={styles.addButtonText}>Add event</Text>
+            <Calendar size={16} color="#5B6B7A" />
+            <Text style={styles.viewTodosButtonText}>View To-Dos</Text>
           </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.divider} />
+
+      {/* Today's schedule — primary “Add event” lives in card empty state; header CTA when there are events */}
+      <View style={styles.scheduleSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionLabel}>Today's schedule</Text>
+          {blockCount > 0 ? (
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={onAddEvent}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color="#64748b" />
+              <Text style={styles.addButtonText}>Add event</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
         <TodayScheduleCard
           events={filteredLearning}
@@ -453,6 +480,8 @@ export default function ParentHomeScreen({
         familyId={familyId}
         limit={5}
         onViewAll={() => onNavigate?.('review-inbox')}
+        onInviteChild={handleInviteChildFromRail}
+        onGoToPlanner={() => onNavigate?.('planner')}
       />
     </View>
   );
@@ -523,61 +552,95 @@ const styles = StyleSheet.create({
   },
   mainSurface: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 24,
+    borderColor: 'rgba(15, 23, 42, 0.1)',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
       flex: 1,
       height: '100%',
       minHeight: 0,
+      /* Single white column comes from RoleHomeShell.leftSection — avoid double card chrome */
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      borderRadius: 0,
+      boxShadow: 'none',
+    }),
+  },
+  headerCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.12)',
+    backgroundColor: colors.bgSubtle,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    marginBottom: 2,
+    ...(Platform.OS === 'web' && {
+      backgroundImage: 'linear-gradient(135deg, #f4f2ff 0%, #eef6ff 48%, #f0fdf6 100%)',
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }),
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 16,
+    flexWrap: 'wrap',
+    gap: 14,
   },
   headerLeft: {
     flexDirection: 'column',
-    gap: 4,
-  },
-  headerLeft: {
-    flexDirection: 'column',
-    gap: 4,
+    gap: 6,
+    flex: 1,
+    minWidth: 200,
+    ...(Platform.OS === 'web' && {
+      minWidth: 220,
+    }),
   },
   greetingText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#0f172a',
+    letterSpacing: -0.3,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   dateText: {
-    fontSize: 13,
-    color: '#6B7280',
+    fontSize: 14,
+    color: '#475569',
     fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  scheduleSummaryText: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '400',
+    marginTop: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   viewTodosButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
+    borderColor: 'rgba(148, 163, 184, 0.35)',
+    alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease',
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
     }),
   },
   viewTodosButtonText: {
@@ -590,11 +653,20 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
-    marginBottom: 16,
+    backgroundColor: 'rgba(148, 163, 184, 0.2)',
+    marginTop: 12,
+    marginBottom: 12,
   },
-  section: {
+  scheduleSection: {
     flex: 1,
+    marginTop: 2,
+    paddingTop: 6,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.12)',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
@@ -604,16 +676,22 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    alignItems: 'flex-start',
+    paddingTop: 6,
+    marginBottom: 10,
+    marginHorizontal: -16,
+    paddingHorizontal: 16,
   },
+  /** Section title tier (600) — readable vs rail card; still below page hero */
   sectionLabel: {
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#6B7280',
+    color: '#1e293b',
+    letterSpacing: -0.2,
     textTransform: 'none',
+    marginTop: 4,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   addButton: {
@@ -632,9 +710,9 @@ const styles = StyleSheet.create({
     }),
   },
   addButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
-    color: '#374151',
+    color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

@@ -639,6 +639,9 @@ import PlanHealthBanner from './planner/PlanHealthBanner'
 import ParentHomeScreen from './home/ParentHomeScreen';
 
 export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, onPlannerLoadingChange, onSubjectsLoadingChange, onMaterialsLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
+  /** Same user across Supabase token refresh; avoids re-running home/family effects on every tab focus. */
+  const authUserId = user?.id ?? null;
+
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -2397,9 +2400,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
         }
-        if (user && !event?.detail?.skipHomeRefresh) {
+        if (authUserId && !event?.detail?.skipHomeRefresh) {
           try {
-            const { data: profileData } = await supabase.from('profiles').select('family_id').eq('id', user.id).maybeSingle();
+            const { data: profileData } = await supabase.from('profiles').select('family_id').eq('id', authUserId).maybeSingle();
             if (profileData?.family_id) invalidateHomeDataCache(profileData.family_id);
           } catch (_) {}
         }
@@ -2469,12 +2472,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
       
       // Invalidate home data cache when calendar refreshes (unless we're skipping home refresh)
-      if (user && !skipHomeRefresh) {
+      if (authUserId && !skipHomeRefresh) {
         try {
           const { data: profileData } = await supabase
             .from('profiles')
             .select('family_id')
-            .eq('id', user.id)
+            .eq('id', authUserId)
             .maybeSingle();
           
           if (profileData?.family_id) {
@@ -2573,13 +2576,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
       }
-      if (activeTab === 'home' && user) {
+      if (activeTab === 'home' && authUserId) {
         console.log('[WebContent] Event created, refreshing home page');
         try {
           const { data: profileData } = await supabase
             .from('profiles')
             .select('family_id')
-            .eq('id', user.id)
+            .eq('id', authUserId)
             .maybeSingle();
           
           if (profileData?.family_id) {
@@ -2630,7 +2633,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     
     const handleEventDeletedForHome = async (event) => {
-      if (activeTab === 'home' && user) {
+      if (activeTab === 'home' && authUserId) {
         const deletedId = event.detail?.eventId || event.detail?.id;
         console.log('[WebContent] Event deleted, refreshing home page, deletedId:', deletedId);
         
@@ -2650,7 +2653,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           const { data: profileData } = await supabase
             .from('profiles')
             .select('family_id')
-            .eq('id', user.id)
+            .eq('id', authUserId)
             .maybeSingle();
           
           if (profileData?.family_id) {
@@ -2731,7 +2734,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         window.removeEventListener('eventDeleted', handleEventDeletedForHome);
       }
     };
-  }, [activeTab, homeData, user, homeSelectedDate, refreshCalendarData]);
+  }, [activeTab, homeData, authUserId, homeSelectedDate, refreshCalendarData, onHomeLoadingChange]);
 
   // Listen for rebalance modal events from PlannerWeek
   useEffect(() => {
@@ -2775,7 +2778,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   useEffect(() => {
     const fetchUserInfo = async () => {
-      if (!user) return;
+      if (!authUserId) return;
       try {
         const { getMe } = await import('../lib/apiClient');
         const [meResult, profileResult] = await Promise.all([
@@ -2783,7 +2786,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           supabase
             .from('profiles')
             .select('role, family_id')
-            .eq('id', user.id)
+            .eq('id', authUserId)
             .maybeSingle(),
         ]);
         const { data: meData, error: meError } = meResult;
@@ -2828,22 +2831,20 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
     };
     fetchUserInfo();
-  }, [user]);
+  }, [authUserId]);
 
   useEffect(() => {
     const fetchHomeData = async () => {
-      if (!user) {
+      if (!authUserId) {
         setHomeLoading(false);
         if (onHomeLoadingChange) onHomeLoadingChange(false);
         return;
       }
       try {
-        setHomeLoading(true);
-        if (onHomeLoadingChange) onHomeLoadingChange(true);
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('family_id')
-          .eq('id', user.id)
+          .eq('id', authUserId)
           .maybeSingle();
 
         if (profileError) {
@@ -2921,7 +2922,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             return;
           }
 
-          // No cache or expired - fetch fresh data
+          // No cache or expired - fetch fresh data (show shell loader only when we actually need network)
+          setHomeLoading(true);
+          if (onHomeLoadingChange) onHomeLoadingChange(true);
           // Fetch home data first (critical), conversation starters can be non-blocking
           console.log('[WebContent] Fetching home data for date:', selectedDateStr, 'family_id:', profileData.family_id);
           const homeDataResult = await supabase.rpc('get_home_data', {
@@ -3052,11 +3055,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
 
     fetchHomeData();
-  }, [user, homeSelectedDate, homeSelectedChildren]);
+  }, [authUserId, homeSelectedDate, homeSelectedChildren]);
 
   // Listen for calendar events and refresh home data when events change
   useEffect(() => {
-    if (!user || Platform.OS !== 'web') return;
+    if (!authUserId || Platform.OS !== 'web') return;
     
     const handleEventChange = async (event) => {
       // Get the event details to determine which dates to invalidate
@@ -3077,7 +3080,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         const { data: profileData } = await supabase
           .from('profiles')
           .select('family_id')
-          .eq('id', user.id)
+          .eq('id', authUserId)
           .maybeSingle();
         
         if (!profileData?.family_id) return;
@@ -3168,7 +3171,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       window.removeEventListener('eventDeleted', handleEventChange);
       window.removeEventListener('eventRescheduled', handleEventChange);
     };
-  }, [user, activeTab, homeSelectedDate]);
+  }, [authUserId, activeTab, homeSelectedDate]);
   
   // Add CSS animation for loading spinner and event chip hover (web only)
   React.useEffect(() => {
@@ -3340,18 +3343,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
   }
 
-  // Helper function to get time-based greeting
-  const getTimeBasedGreeting = () => {
-    const hour = new Date().getHours()
-    if (hour >= 5 && hour < 12) {
-      return 'Good morning'
-    } else if (hour >= 12 && hour < 17) {
-      return 'Good afternoon'
-    } else {
-      return 'Good evening'
-    }
-  }
-
   // State variables
   // Use propChildren if provided (preloaded from WebLayout), otherwise load them. Clean avatar/url UUIDs to prevent 404s.
   const [children, setChildren] = useState(() => (Array.isArray(propChildren) && propChildren.length > 0 ? cleanAvatarUrls(propChildren) : propChildren))
@@ -3501,17 +3492,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       setFamilyId(prev => (prev === nextId ? prev : nextId));
     }
   }, [propFamilyId, propSession?.family_id]);
-
-  /** Home greeting: family display name (Parents row) first, then profile name. */
-  const parentHomeGreetingName = useMemo(() => {
-    const familyName = typeof propFamily?.family_name === 'string' ? propFamily.family_name.trim() : '';
-    if (familyName) return familyName;
-    const profileName = typeof propProfile?.name === 'string' ? propProfile.name.trim() : '';
-    if (profileName) return profileName;
-    const first = typeof propProfile?.first_name === 'string' ? propProfile.first_name.trim() : '';
-    if (first) return first;
-    return '';
-  }, [propFamily?.family_name, propProfile?.name, propProfile?.first_name]);
 
   // Sync children from props
   useEffect(() => {
@@ -7588,13 +7568,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           return (
             <ParentHomeScreen
               familyId={familyId}
-              greetingName={parentHomeGreetingName}
               onNavigate={onTabChange}
               onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
               onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
               onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
               onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
-              onAddChild={() => onCloseAddChildModal && Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddChildModal'))}
+              onAddChild={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openAddChildModal'));
+                }
+              }}
             />
           );
         }
@@ -7614,7 +7597,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           return (
               <ParentHomeScreen
                 familyId={familyId}
-                greetingName={parentHomeGreetingName}
                 onNavigate={onTabChange}
                 onAddEvent={() => {
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -7639,10 +7621,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   }
                 }}
                 onAddChild={() => {
-                  if (onCloseAddChildModal) {
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('openAddChildModal'));
-                    }
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openAddChildModal'));
                   }
                 }}
               />
@@ -7653,13 +7633,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             return (
               <ParentHomeScreen
                 familyId={familyId}
-                greetingName={parentHomeGreetingName}
                 onNavigate={onTabChange}
                 onAddEvent={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }))}
                 onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
                 onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
                 onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
-                onAddChild={() => onCloseAddChildModal && Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddChildModal'))}
+                onAddChild={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openAddChildModal'));
+                  }
+                }}
               />
             );
           }

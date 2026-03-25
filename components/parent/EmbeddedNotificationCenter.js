@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FileText, HelpCircle, Calendar, User, Clock, ChevronRight, Plus } from 'lucide-react';
+import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
@@ -16,17 +16,26 @@ import { colors } from '../../theme/colors';
 
 
 const SECTIONS = [
-  { id: 'submissions', label: 'Submissions', icon: FileText },
-  { id: 'help_requests', label: 'Help', icon: HelpCircle },
-  { id: 'needs_revision', label: 'Coming up', icon: Calendar },
+  { id: 'submissions', label: 'Submissions' },
+  { id: 'help_requests', label: 'Help' },
+  { id: 'needs_revision', label: 'Coming up' },
 ];
 
-export default function EmbeddedNotificationCenter({ familyId, limit = 5, onViewAll }) {
+export default function EmbeddedNotificationCenter({
+  familyId,
+  limit = 5,
+  onViewAll,
+  onInviteChild,
+  onGoToPlanner,
+}) {
   const session = useSession();
   const [loading, setLoading] = useState(false); // Start as false - no loading state
   const [assignments, setAssignments] = useState([]);
   const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [children, setChildren] = useState([]);
+  /** Child profile rows (can exist before any login invite is accepted). */
+  const [hasLinkedChildAccount, setHasLinkedChildAccount] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -42,14 +51,20 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     if (!familyId) return;
 
     // Don't set loading state - load silently in background
+    let childRows = [];
     try {
       await Promise.all([
         loadAssignments(),
         loadUpcomingEvents(),
-        loadChildren(),
+        (async () => {
+          childRows = await loadChildren();
+        })(),
       ]);
+      await loadLinkedChildAccounts(childRows);
     } catch (error) {
       console.error('[EmbeddedNotificationCenter] Error loading data:', error);
+    } finally {
+      setDataReady(true);
     }
   };
 
@@ -168,6 +183,7 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     }
   };
 
+  /** @returns {Promise<Array>} rows for local count + setState */
   const loadChildren = async () => {
     try {
       const { data, error } = await supabase
@@ -177,10 +193,52 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
         .order('first_name');
 
       if (error) throw error;
-      setChildren(data || []);
+      const rows = data || [];
+      setChildren(rows);
+      return rows;
     } catch (error) {
       console.error('[EmbeddedNotificationCenter] Error loading children:', error);
       setChildren([]);
+      return [];
+    }
+  };
+
+  /**
+   * True only if a real child profile (this family’s `children` row) has a linked login:
+   * family_members.member_role = child, user_id set, and child_id matches that profile.
+   * Avoids treating query errors or orphan membership rows as “linked”.
+   */
+  const loadLinkedChildAccounts = async (childRows) => {
+    const validChildIds = new Set(
+      (childRows || [])
+        .map((c) => (c.id != null ? String(c.id) : null))
+        .filter(Boolean)
+    );
+    if (validChildIds.size === 0) {
+      setHasLinkedChildAccount(false);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('family_members')
+        .select('child_id, user_id')
+        .eq('family_id', familyId)
+        .eq('member_role', 'child')
+        .not('user_id', 'is', null);
+
+      if (error) throw error;
+      const linked = (data || []).some(
+        (row) =>
+          row.child_id != null &&
+          row.user_id != null &&
+          validChildIds.has(String(row.child_id))
+      );
+      setHasLinkedChildAccount(linked);
+    } catch (error) {
+      console.error('[EmbeddedNotificationCenter] Error loading family_members:', error);
+      // Do not fall back to “has child profiles” — that shows the wrong card when RLS fails
+      // or data is ambiguous; prefer invite until membership can be read reliably.
+      setHasLinkedChildAccount(false);
     }
   };
 
@@ -202,6 +260,31 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
   };
 
   const filteredItems = filterItems();
+
+  /** Inbox-only: calendar “Coming up” does not dismiss the planner CTA. */
+  const hasInboxActivity =
+    assignments.some(
+      (a) =>
+        a.status === 'submitted' &&
+        a.review_status !== 'needs_revision' &&
+        !a.need_help
+    ) || assignments.some((a) => a.need_help === true);
+
+  const primaryCardMode =
+    dataReady && !hasLinkedChildAccount
+      ? 'invite'
+      : dataReady && hasLinkedChildAccount && !hasInboxActivity
+        ? 'assign'
+        : 'none';
+  /** Tabs + list only after load and only when not showing an onboarding card. */
+  const showInboxTabs = dataReady && primaryCardMode === 'none';
+
+  const sectionLabel =
+    primaryCardMode === 'invite'
+      ? 'Get started'
+      : primaryCardMode === 'assign'
+        ? 'Next step'
+        : 'Needs attention';
 
   const getSectionCount = (sectionId) => {
     switch (sectionId) {
@@ -271,145 +354,198 @@ export default function EmbeddedNotificationCenter({ familyId, limit = 5, onView
     <>
       <View style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>Needs attention</Text>
+          <Text
+            style={
+              primaryCardMode === 'none' ? styles.titleInbox : styles.titleOnboarding
+            }
+          >
+            {sectionLabel}
+          </Text>
         </View>
 
-        {/* Tabs */}
-        <View style={styles.tabs}>
-          {SECTIONS.map(section => {
-            const isActive = selectedSection === section.id;
-            const count = getSectionCount(section.id);
-
-            const webProps = Platform.OS === 'web' ? {
-              cursor: 'pointer',
-            } : {};
-
-            return (
-              <TouchableOpacity
-                key={section.id}
-                style={[styles.tab, isActive && styles.tabActive]}
-                onPress={() => {
-                  setSelectedSection(section.id);
-                }}
-                {...webProps}
-              >
-                <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
-                  {section.label}
-                </Text>
-                {count > 0 && (
-                  <View style={styles.countBadge}>
-                    <Text style={styles.countText}>{count > 99 ? '99+' : count}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* List */}
-        {filteredItems.length === 0 ? (
-          <View style={styles.emptyState}>
-            {selectedSection === 'needs_revision' ? (
-              <Text style={styles.emptyText}>No upcoming events</Text>
-            ) : (
-              <>
-                <Text style={styles.emptyTitle}>All caught up</Text>
-                <Text style={styles.emptySubtext}>Assign new tasks for children to complete</Text>
-              </>
-            )}
+        {primaryCardMode === 'invite' ? (
+          <View style={styles.primaryCard}>
+            <Text style={styles.primaryCardTitle}>Invite a child</Text>
+            <Text style={styles.primaryCardSubtitle}>
+              Push schedule and assignments directly to children.
+            </Text>
+            <TouchableOpacity
+              style={styles.primaryCta}
+              onPress={() => onInviteChild?.()}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.primaryCtaText}>Invite Child</Text>
+            </TouchableOpacity>
           </View>
-        ) : (
-          <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-            {filteredItems.map((item) => {
-              if (selectedSection === 'needs_revision') {
-                // Render event
-                const event = item;
-                const childName = getChildName(event.child_id);
-                const childColor = getChildColor(event.child_id);
-                const subjectName = event.subject?.name || null;
-                const eventDate = formatEventDate(event.start_ts);
-                const eventTime = formatEventTime(event.start_ts);
+        ) : null}
+
+        {primaryCardMode === 'assign' ? (
+          <View style={styles.primaryCard}>
+            <Text style={styles.primaryCardTitle}>Start assigning events</Text>
+            <Text style={styles.primaryCardSubtitle}>
+              Assign lessons or activities to children to see updates here.
+            </Text>
+            <TouchableOpacity
+              style={styles.primaryCta}
+              onPress={() => onGoToPlanner?.()}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.primaryCtaText}>Go to Planner</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {showInboxTabs ? (
+          <>
+            <View style={styles.tabs}>
+              {SECTIONS.map(section => {
+                const isActive = selectedSection === section.id;
+                const count = getSectionCount(section.id);
+
+                const webProps = Platform.OS === 'web' ? {
+                  cursor: 'pointer',
+                } : {};
 
                 return (
                   <TouchableOpacity
-                    key={event.id}
-                    style={styles.item}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    key={section.id}
+                    style={[styles.tab, isActive && styles.tabActive]}
+                    onPress={() => {
+                      setSelectedSection(section.id);
+                    }}
+                    {...webProps}
                   >
-                    <View style={styles.itemLeft}>
-                      <View style={[styles.itemIconContainer, { backgroundColor: colors.blueBold + '15' }]}>
-                        <Calendar size={14} color={colors.blueBold} />
+                    <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                      {section.label}
+                    </Text>
+                    {count > 0 && (
+                      <View style={[styles.countBadge, isActive && styles.countBadgeActive]}>
+                        <Text style={styles.countText}>{count > 99 ? '99+' : count}</Text>
                       </View>
-                      <View style={styles.itemContent}>
-                        <View style={styles.itemHeader}>
-                          <View style={[styles.childDot, { backgroundColor: childColor }]} />
-                          <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
-                          {subjectName && (
-                            <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
-                          )}
-                        </View>
-                        <Text style={styles.itemTitle} numberOfLines={2}>{event.title}</Text>
-                        <View style={styles.itemFooter}>
-                          <Text style={styles.itemDate}>
-                            {eventDate} · {eventTime}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                    <ChevronRight size={14} color={colors.textSecondary} />
+                    )}
                   </TouchableOpacity>
                 );
-              } else {
-                // Render assignment
-                const assignment = item;
-                const childName = getChildName(assignment.child_id);
-                const childColor = getChildColor(assignment.child_id);
-                const subjectName = assignment.subject?.name || null;
-                
-                // Determine icon and type based on assignment
-                let IconComponent = FileText;
-                let iconColor = colors.primary;
-                if (assignment.need_help) {
-                  IconComponent = HelpCircle;
-                  iconColor = colors.orangeBold;
-                }
+              })}
+            </View>
 
-                return (
-                  <TouchableOpacity
-                    key={assignment.id}
-                    style={styles.item}
-                    onPress={() => handleReview(assignment)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.itemLeft}>
-                      <View style={[styles.itemIconContainer, { backgroundColor: iconColor + '15' }]}>
-                        <IconComponent size={14} color={iconColor} />
-                      </View>
-                      <View style={styles.itemContent}>
-                        <View style={styles.itemHeader}>
-                          <View style={[styles.childDot, { backgroundColor: childColor }]} />
-                          <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
-                          {subjectName && (
-                            <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
-                          )}
+            {filteredItems.length === 0 ? (
+              <View style={styles.emptyState}>
+                {selectedSection === 'submissions' ? (
+                  <View style={styles.emptyCaughtUp}>
+                    <Text style={styles.emptyCaughtUpTitle}>No submissions yet</Text>
+                    <Text style={styles.emptyCaughtUpHint}>
+                      Assignments will appear here once children start submitting work.
+                    </Text>
+                  </View>
+                ) : null}
+                {selectedSection === 'help_requests' ? (
+                  <View style={styles.emptyCaughtUp}>
+                    <Text style={styles.emptyCaughtUpTitle}>No help requests</Text>
+                    <Text style={styles.emptyCaughtUpHint}>
+                      When a child asks for help on their work, it will show here.
+                    </Text>
+                  </View>
+                ) : null}
+                {selectedSection === 'needs_revision' ? (
+                  <View style={styles.emptyCaughtUp}>
+                    <Text style={styles.emptyCaughtUpTitle}>Nothing scheduled</Text>
+                    <Text style={styles.emptyCaughtUpHint}>
+                      Assign events to children to populate this.
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : (
+              <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
+                {filteredItems.map((item) => {
+                  if (selectedSection === 'needs_revision') {
+                    const event = item;
+                    const childName = getChildName(event.child_id);
+                    const childColor = getChildColor(event.child_id);
+                    const subjectName = event.subject?.name || null;
+                    const eventDate = formatEventDate(event.start_ts);
+                    const eventTime = formatEventTime(event.start_ts);
+
+                    return (
+                      <TouchableOpacity
+                        key={event.id}
+                        style={styles.item}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <View style={styles.itemLeft}>
+                          <View style={[styles.itemIconContainer, { backgroundColor: colors.blueBold + '15' }]}>
+                            <Calendar size={14} color={colors.blueBold} />
+                          </View>
+                          <View style={styles.itemContent}>
+                            <View style={styles.itemHeader}>
+                              <View style={[styles.childDot, { backgroundColor: childColor }]} />
+                              <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
+                              {subjectName && (
+                                <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
+                              )}
+                            </View>
+                            <Text style={styles.itemTitle} numberOfLines={2}>{event.title}</Text>
+                            <View style={styles.itemFooter}>
+                              <Text style={styles.itemDate}>
+                                {eventDate} · {eventTime}
+                              </Text>
+                            </View>
+                          </View>
                         </View>
-                        <Text style={styles.itemTitle} numberOfLines={2}>{assignment.title}</Text>
-                        <View style={styles.itemFooter}>
-                          <Text style={styles.itemDate}>
-                            {assignment.updated_at 
-                              ? new Date(assignment.updated_at).toLocaleDateString()
-                              : 'Recently'}
-                          </Text>
+                        <ChevronRight size={14} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    );
+                  } else {
+                    const assignment = item;
+                    const childName = getChildName(assignment.child_id);
+                    const childColor = getChildColor(assignment.child_id);
+                    const subjectName = assignment.subject?.name || null;
+
+                    let IconComponent = FileText;
+                    let iconColor = colors.blueBold;
+                    if (assignment.need_help) {
+                      IconComponent = HelpCircle;
+                      iconColor = colors.orangeBold;
+                    }
+
+                    return (
+                      <TouchableOpacity
+                        key={assignment.id}
+                        style={styles.item}
+                        onPress={() => handleReview(assignment)}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <View style={styles.itemLeft}>
+                          <View style={[styles.itemIconContainer, { backgroundColor: iconColor + '15' }]}>
+                            <IconComponent size={14} color={iconColor} />
+                          </View>
+                          <View style={styles.itemContent}>
+                            <View style={styles.itemHeader}>
+                              <View style={[styles.childDot, { backgroundColor: childColor }]} />
+                              <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
+                              {subjectName && (
+                                <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
+                              )}
+                            </View>
+                            <Text style={styles.itemTitle} numberOfLines={2}>{assignment.title}</Text>
+                            <View style={styles.itemFooter}>
+                              <Text style={styles.itemDate}>
+                                {assignment.updated_at
+                                  ? new Date(assignment.updated_at).toLocaleDateString()
+                                  : 'Recently'}
+                              </Text>
+                            </View>
+                          </View>
                         </View>
-                      </View>
-                    </View>
-                    <ChevronRight size={14} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                );
-              }
-            })}
-          </ScrollView>
-        )}
+                        <ChevronRight size={14} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    );
+                  }
+                })}
+              </ScrollView>
+            )}
+          </>
+        ) : null}
       </View>
 
       {selectedAssignment && (
@@ -429,38 +565,108 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 16,
+    borderColor: 'rgba(148, 163, 184, 0.22)',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
       minHeight: 0,
       transition: 'all 0.2s ease',
+      boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
     }),
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
   viewAllRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
-  title: {
-    fontSize: 16,
+  /** Rail subheading: inbox mode — quiet label, does not compete with card titles */
+  titleInbox: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.02,
+    color: '#64748b',
+    textTransform: 'none',
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  /** Get started / Next step — sentence case, low tracking, secondary to card title */
+  titleOnboarding: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.02,
+    color: '#94a3b8',
+    textTransform: 'none',
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  primaryCard: {
+    marginBottom: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    backgroundColor: 'rgba(238, 242, 255, 0.95)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.18)',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.08)',
+    }),
+  },
+  /** Card title tier (600) — below page hero, clearly above description */
+  primaryCardTitle: {
+    fontSize: 19,
     fontWeight: '600',
-    color: colors.text,
+    color: '#0f172a',
+    marginBottom: 8,
+    letterSpacing: -0.25,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  primaryCardSubtitle: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#64748b',
+    lineHeight: 19,
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  primaryCta: {
+    alignSelf: 'flex-start',
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: 'rgba(79, 70, 229, 1)',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      boxShadow: '0 2px 6px rgba(79, 70, 229, 0.35)',
+    }),
+  },
+  primaryCtaText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   viewAllText: {
     fontSize: 13,
-    color: colors.primary,
+    color: colors.blueBold,
     fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -469,8 +675,8 @@ const styles = StyleSheet.create({
   },
   tabs: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
+    gap: 6,
+    marginBottom: 10,
   },
   tab: {
     flex: 1,
@@ -478,45 +684,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'rgba(148, 163, 184, 0.35)',
     position: 'relative',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      transition: 'all 0.2s ease-in-out',
+      transition: 'all 0.15s ease-in-out',
       '&:hover': {
-        backgroundColor: '#F9FAFB',
+        backgroundColor: 'rgba(248, 250, 252, 0.9)',
+        borderColor: 'rgba(148, 163, 184, 0.5)',
       },
     }),
   },
+  /* Match planner view chips (WebLayout): lavender fill + violet ring, indigo label */
   tabActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(99, 102, 241, 0.12)',
+    }),
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6b7280',
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748b',
+    textAlign: 'center',
+    flexShrink: 1,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   tabTextActive: {
-    color: '#6BB3E8',
-    fontWeight: '700',
+    color: 'rgba(99, 102, 241, 1)',
+    fontWeight: '600',
   },
   countBadge: {
-    minWidth: 18,
-    height: 18,
+    minWidth: 17,
+    height: 17,
     borderRadius: 9,
-    backgroundColor: colors.primary,
+    backgroundColor: 'rgba(99, 102, 241, 0.9)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
+  },
+  countBadgeActive: {
+    backgroundColor: 'rgba(79, 70, 229, 1)',
   },
   countText: {
     fontSize: 10,
@@ -527,9 +743,50 @@ const styles = StyleSheet.create({
     }),
   },
   emptyState: {
-    padding: 20,
+    paddingTop: 4,
+    paddingBottom: 8,
+    paddingHorizontal: 0,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+  },
+  emptyCompact: {
+    paddingTop: 2,
+    alignItems: 'center',
+    width: '100%',
+  },
+  emptyTextMuted: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#94a3b8',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyCaughtUp: {
+    alignItems: 'center',
+    paddingTop: 2,
+    gap: 4,
+    width: '100%',
+  },
+  emptyCaughtUpTitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyCaughtUpHint: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: '#94a3b8',
+    textAlign: 'center',
+    paddingHorizontal: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyTitle: {
     fontSize: 16,

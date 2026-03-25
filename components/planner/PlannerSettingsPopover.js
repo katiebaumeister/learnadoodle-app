@@ -15,22 +15,29 @@ import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 import { PLANNING_PREFERENCES_UI } from './planningPreferencesUiCopy';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
+import { designTokens } from '../../theme/designTokens';
 
 const MUTED = 'rgba(15,23,42,0.6)';
 const FG = 'rgba(15,23,42,0.9)';
 const ACCENT = '#3b82f6';
 const BORDER = '#E2E8F0';
+const CHIP_SELECTED_BORDER = designTokens.colors.primary;
+const CHIP_SELECTED_BG = designTokens.softAccents.core;
 
 const chip = (active) => ({
   paddingVertical: 6,
   paddingHorizontal: 12,
   borderRadius: 20,
   borderWidth: 1,
-  borderColor: active ? ACCENT : BORDER,
-  backgroundColor: active ? '#eff6ff' : '#fff',
+  borderColor: active ? CHIP_SELECTED_BORDER : BORDER,
+  backgroundColor: active ? CHIP_SELECTED_BG : '#fff',
   ...(Platform.OS === 'web' && { cursor: 'pointer' }),
 });
-const chipText = (active) => ({ fontSize: 12, fontWeight: '500', color: active ? ACCENT : MUTED });
+const chipText = (active) => ({
+  fontSize: 12,
+  fontWeight: active ? '600' : '500',
+  color: active ? CHIP_SELECTED_BORDER : MUTED,
+});
 
 const inputStyle = {
   borderWidth: 1,

@@ -18,7 +18,7 @@ export default function TasksView({
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
 }) {
-  const [activeSection, setActiveSection] = useState('backlog');
+  const [activeSection, setActiveSection] = useState('today');
   const [userLists, setUserLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const [backlogEvents, setBacklogEvents] = useState(() =>
@@ -700,21 +700,6 @@ export default function TasksView({
           {/* Primary Views */}
           <View style={styles.sidebarSection}>
             <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'backlog' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('backlog');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'backlog' && styles.sidebarItemTextActive
-              ]}>
-                Backlog
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
               style={[styles.sidebarItem, activeSection === 'today' && styles.sidebarItemActive]}
               onPress={() => {
                 setActiveSection('today');
@@ -756,6 +741,21 @@ export default function TasksView({
                 activeSection === 'next2weeks' && styles.sidebarItemTextActive
               ]}>
                 Next 2 Weeks
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sidebarItem, activeSection === 'backlog' && styles.sidebarItemActive]}
+              onPress={() => {
+                setActiveSection('backlog');
+                setSelectedList(null);
+              }}
+            >
+              <Text style={[
+                styles.sidebarItemText,
+                activeSection === 'backlog' && styles.sidebarItemTextActive
+              ]}>
+                Backlog
               </Text>
             </TouchableOpacity>
           </View>

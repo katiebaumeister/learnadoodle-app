@@ -659,54 +659,62 @@ export default function SubjectsPage({
       {!isChildView && (
         <View style={styles.filterRow}>
           <Text style={styles.filterLabel}>Children</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterChips}
-            contentContainerStyle={styles.filterChipsContent}
-          >
-            <TouchableOpacity
-              style={[
-                styles.filterChip,
-                selectedChildFilter === 'all' && styles.filterChipActive,
-              ]}
-              onPress={() => setSelectedChildFilter('all')}
+          <View style={styles.filterChipsWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChips}
+              contentContainerStyle={styles.filterChipsContent}
             >
-              <Text style={[
-                styles.filterChipText,
-                selectedChildFilter === 'all' && styles.filterChipTextActive,
-              ]}>
-                All Children
-              </Text>
-            </TouchableOpacity>
-            {safeChildren.map((child) => {
-              const childColor = getChildColorFromAvatar(child.avatar);
-              const isActive = selectedChildFilter === child.id;
-              return (
-                <TouchableOpacity
-                  key={child.id}
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  selectedChildFilter === 'all' && styles.filterChipActive,
+                ]}
+                onPress={() => setSelectedChildFilter('all')}
+              >
+                <Text
                   style={[
-                    styles.filterChip,
-                    isActive && styles.filterChipActive,
-                  ]}
-                  onPress={() => setSelectedChildFilter(child.id)}
-                >
-                  <View 
-                    style={[
-                      styles.childDotSmall, 
-                      { backgroundColor: childColor, marginRight: 6 }
-                    ]} 
-                  />
-                  <Text style={[
                     styles.filterChipText,
-                    isActive && styles.filterChipTextActive,
-                  ]}>
-                    {child.name || child.first_name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                    selectedChildFilter === 'all' && styles.filterChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  All Children
+                </Text>
+              </TouchableOpacity>
+              {safeChildren.map((child) => {
+                const childColor = getChildColorFromAvatar(child.avatar);
+                const isActive = selectedChildFilter === child.id;
+                return (
+                  <TouchableOpacity
+                    key={child.id}
+                    style={[
+                      styles.filterChip,
+                      isActive && styles.filterChipActive,
+                    ]}
+                    onPress={() => setSelectedChildFilter(child.id)}
+                  >
+                    <View
+                      style={[
+                        styles.childDotSmall,
+                        { backgroundColor: childColor, marginRight: 6 },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        isActive && styles.filterChipTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {child.name || child.first_name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
         </View>
       )}
 
@@ -719,47 +727,55 @@ export default function SubjectsPage({
           ]}
         >
           <Text style={styles.filterLabel}>Year</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterChips}
-            contentContainerStyle={styles.filterChipsContent}
-          >
-            <TouchableOpacity
-              style={[
-                styles.filterChip,
-                selectedYearFilter === 'all' && styles.filterChipActive,
-              ]}
-              onPress={() => setSelectedYearFilter('all')}
+          <View style={styles.filterChipsWrapYear}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChipsYear}
+              contentContainerStyle={styles.filterChipsContent}
             >
-              <Text style={[
-                styles.filterChipText,
-                selectedYearFilter === 'all' && styles.filterChipTextActive,
-              ]}>
-                All years
-              </Text>
-            </TouchableOpacity>
-            {registeredYears.map((year) => {
-              const isActive = selectedYearFilter === year;
-              return (
-                <TouchableOpacity
-                  key={year}
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  selectedYearFilter === 'all' && styles.filterChipActive,
+                ]}
+                onPress={() => setSelectedYearFilter('all')}
+              >
+                <Text
                   style={[
-                    styles.filterChip,
-                    isActive && styles.filterChipActive,
-                  ]}
-                  onPress={() => setSelectedYearFilter(year)}
-                >
-                  <Text style={[
                     styles.filterChipText,
-                    isActive && styles.filterChipTextActive,
-                  ]}>
-                    {year}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                    selectedYearFilter === 'all' && styles.filterChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  All years
+                </Text>
+              </TouchableOpacity>
+              {registeredYears.map((year) => {
+                const isActive = selectedYearFilter === year;
+                return (
+                  <TouchableOpacity
+                    key={year}
+                    style={[
+                      styles.filterChip,
+                      isActive && styles.filterChipActive,
+                    ]}
+                    onPress={() => setSelectedYearFilter(year)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        isActive && styles.filterChipTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {year}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
         </View>
       )}
 
@@ -1225,34 +1241,54 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 2,
   },
+  /** Match MaterialsLibrary `childrenFilterRow` / `subjectsFilterRow` */
   filterRow: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginTop: 24,
+    marginBottom: 16,
+    paddingHorizontal: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    // Match Materials Library spacing from divider to first chip row
-    marginTop: 24,
+    gap: 12,
     backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
-  /** Tighter gap when Year row follows Children (avoid double 24px margin) */
   filterRowBelowChildren: {
-    marginTop: 8,
+    marginTop: 0,
+    marginBottom: 16,
   },
   filterLabel: {
     fontSize: 15,
     fontWeight: '700',
     color: colors.text,
-    marginRight: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  filterChipsWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  filterChipsWrapYear: {
+    flex: 1,
+    minWidth: 0,
+  },
   filterChips: {
     flex: 1,
   },
-  filterChipsContent: {
-    gap: 8,
-    paddingRight: 16,
+  filterChipsYear: {
+    flexGrow: 0,
   },
+  filterChipsContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 8,
+  },
+  /** Match MaterialsLibrary `childrenFilterChip` */
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1263,13 +1299,13 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: '#ffffff',
     marginRight: 8,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
     }),
   },
   filterChipActive: {
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
   filterChipText: {
     fontSize: 12,

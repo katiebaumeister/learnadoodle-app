@@ -32,13 +32,15 @@ export const useSession = () => {
 
 export const SessionProvider = ({ children, familyId: propFamilyId = null }) => {
   const { user } = useAuth();
+  /** Stable across token refresh (same tab) so we don't re-fetch session on every focus. */
+  const authUserId = user?.id ?? null;
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [legacyMode, setLegacyMode] = useState(false);
 
   // Load session context
   const loadSession = useCallback(async (familyIdToUse) => {
-    if (!user) {
+    if (!authUserId) {
       setSession(null);
       setLoading(false);
       return;
@@ -56,7 +58,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       const profilePromise = supabase
         .from('profiles')
         .select('id, family_id, role')
-        .eq('id', user.id)
+        .eq('id', authUserId)
         .maybeSingle();
 
       const [meRes, profileResult] = await Promise.all([getMe(), profilePromise]);
@@ -114,7 +116,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
           const { data: familyMember, error: fmError } = await supabase
             .from('family_members')
             .select('member_role, child_scope, child_id')
-            .eq('user_id', user.id)
+            .eq('user_id', authUserId)
             .eq('family_id', activeFamilyId)
             .maybeSingle();
 
@@ -140,7 +142,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       if (accessibleChildren.length === 0) {
         try {
           const { data: accessibleData, error: rpcError } = await supabase
-            .rpc('get_accessible_children', { _user_id: user.id });
+            .rpc('get_accessible_children', { _user_id: authUserId });
           if (!rpcError && accessibleData) {
             accessibleChildren = accessibleData
               .filter(item => item.family_id === activeFamilyId)
@@ -212,7 +214,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     } finally {
       setLoading(false);
     }
-  }, [user, propFamilyId]);
+  }, [authUserId, propFamilyId]);
 
   // Preload home data in background
   const preloadHomeData = useCallback(async (familyId) => {
@@ -304,21 +306,21 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
 
   // Load session when user or familyId changes
   useEffect(() => {
-    if (user) {
+    if (authUserId) {
       loadSession(propFamilyId);
     } else {
       setSession(null);
       setLoading(false);
     }
-  }, [user, propFamilyId, loadSession]);
+  }, [authUserId, propFamilyId, loadSession]);
 
   // Refresh session (useful after role changes)
   const refreshSession = useCallback(() => {
-    if (user) {
+    if (authUserId) {
       setLoading(true);
       loadSession(session?.family_id || propFamilyId);
     }
-  }, [user, session, propFamilyId, loadSession]);
+  }, [authUserId, session, propFamilyId, loadSession]);
 
   const value = {
     ...session,

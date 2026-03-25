@@ -33,12 +33,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     width: '100%',
+    /* Match main app surface so gutters / column gap aren’t blue-gray */
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       maxWidth: 1200,
       alignSelf: 'center',
-      paddingHorizontal: 24,
-      paddingTop: 24,
-      paddingBottom: 40,
+      paddingHorizontal: 20,
+      paddingTop: 20,
+      paddingBottom: 36,
     }),
     ...(Platform.OS !== 'web' && {
       paddingHorizontal: 16,
@@ -49,24 +51,31 @@ const styles = StyleSheet.create({
   gridContainer: {
     flexDirection: 'column',
     flex: 1,
-    gap: 16,
+    gap: 14,
     ...(Platform.OS === 'web' && {
       flexDirection: 'row',
       alignItems: 'stretch',
       display: 'flex',
       minHeight: 0,
-      gap: 16,
+      gap: 14,
     }),
   },
   leftSection: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      flex: 2,
+      flex: 2.55,
       minWidth: 0,
-      maxWidth: 'calc(66.666% - 8px)',
+      maxWidth: 'calc(71.2% - 7px)',
+      minHeight: 0,
       display: 'flex',
       flexDirection: 'column',
       alignSelf: 'stretch',
+      borderRadius: 14,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: 'rgba(15, 23, 42, 0.08)',
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }),
   },
   leftSectionFullWidth: {
@@ -77,8 +86,8 @@ const styles = StyleSheet.create({
   railColumn: {
     ...(Platform.OS === 'web' && {
       flex: 1,
-      minWidth: 280,
-      maxWidth: 'calc(33.333% - 8px)',
+      minWidth: 236,
+      maxWidth: 'calc(28.8% - 7px)',
       display: 'flex',
       flexDirection: 'column',
       alignSelf: 'stretch',

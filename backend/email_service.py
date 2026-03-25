@@ -1,6 +1,7 @@
 """
 Email service using Postmark for sending transactional emails
 """
+import html
 import os
 from typing import Optional
 from postmarker.core import PostmarkClient
@@ -81,102 +82,226 @@ def send_invite_email(
             subject = f"You're invited to join {child_name}'s learning journey on Learnadoodle"
         else:
             subject = f"You're invited to join Learnadoodle as a {role_label}"
-        
-        # Build email body
-        greeting = f"Hi there,"
-        if role == "child" and child_name:
-            greeting = f"Hi {child_name},"
-        
-        intro = ""
-        if inviter_name:
-            intro = f"{inviter_name} has invited you to join their family on Learnadoodle."
+
+        safe_inviter = html.escape(inviter_name) if inviter_name else None
+        safe_child = html.escape(child_name) if child_name else None
+
+        # Headline (h2) — aligned with signup “Welcome to Learnadoodle!” placement
+        if role == "child" and safe_child:
+            headline = f"You're invited to join {safe_child} on Learnadoodle!"
         else:
-            intro = "You've been invited to join a family on Learnadoodle."
-        
+            headline = "You're invited to Learnadoodle!"
+
+        # Greeting + body (plain sentences; escape user-provided bits only)
+        if role == "child" and safe_child:
+            greeting = f"Hello {safe_child},"
+        else:
+            greeting = "Hello,"
+
+        if safe_inviter and role == "child" and safe_child:
+            body_p1 = f"{safe_inviter} has invited you to join Learnadoodle to help manage {safe_child}'s learning journey."
+        elif safe_inviter:
+            body_p1 = f"{safe_inviter} has invited you to join their family on Learnadoodle."
+        else:
+            body_p1 = "You've been invited to join a family on Learnadoodle."
+
         if role == "child":
-            intro += " This will give you your own account to track your learning and see your schedule."
+            body_p2 = "You'll get your own account to see your schedule and track your learning. Use the button below to accept your invite and get started."
         elif role == "tutor":
-            intro += " As a tutor, you'll be able to help track progress and support the children's learning."
+            body_p2 = "As a tutor, you can help track progress and support the children's learning. Use the button below to accept your invitation."
         elif role == "parent":
-            intro += " As a parent, you'll have full access to manage your family's learning journey."
-        
-        html_body = f"""
-<!DOCTYPE html>
+            body_p2 = "As a parent, you'll have full access to manage your family's learning journey. Use the button below to accept your invitation."
+        else:
+            body_p2 = "Use the button below to accept your invitation and get started."
+
+        accept_btn_url = accept_url or invite_url
+        btn_href_attr = html.escape(accept_btn_url, quote=True)
+        invite_href_attr = html.escape(invite_url, quote=True)
+        invite_url_visible = html.escape(invite_url, quote=False)
+
+        if role == "child" and child_name:
+            headline_plain = f"You're invited to join {child_name} on Learnadoodle!"
+        else:
+            headline_plain = "You're invited to Learnadoodle!"
+        greeting_plain = f"Hello {child_name}," if role == "child" and child_name else "Hello,"
+        if inviter_name and role == "child" and child_name:
+            body_p1_plain = (
+                f"{inviter_name} has invited you to join Learnadoodle to help manage "
+                f"{child_name}'s learning journey."
+            )
+        elif inviter_name:
+            body_p1_plain = f"{inviter_name} has invited you to join their family on Learnadoodle."
+        else:
+            body_p1_plain = "You've been invited to join a family on Learnadoodle."
+        if role == "child":
+            body_p2_plain = (
+                "You'll get your own account to see your schedule and track your learning. "
+                "Use the link below to accept your invite and get started."
+            )
+        elif role == "tutor":
+            body_p2_plain = (
+                "As a tutor, you can help track progress and support the children's learning. "
+                "Use the link below to accept your invitation."
+            )
+        elif role == "parent":
+            body_p2_plain = (
+                "As a parent, you'll have full access to manage your family's learning journey. "
+                "Use the link below to accept your invitation."
+            )
+        else:
+            body_p2_plain = "Use the link below to accept your invitation and get started."
+
+        # Same visual system as docs/SUPABASE_CONFIRM_SIGNUP_EMAIL_TEMPLATE.html (Postmark invite)
+        html_body = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: 'DM Sans', Arial, Helvetica, sans-serif;
             line-height: 1.6;
             color: #333;
+            background-color: #E6F4FC;
+            margin: 0;
+            padding: 0;
+        }}
+        .wrap {{
             max-width: 600px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 40px 20px;
         }}
         .container {{
             background-color: #ffffff;
-            border-radius: 8px;
-            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 40px 32px;
+        }}
+        .logo {{
+            text-align: center;
+            margin-bottom: 28px;
+        }}
+        .logo h1 {{
+            font-size: 28px;
+            font-weight: 700;
+            color: #000;
+            margin: 0;
+            letter-spacing: -0.02em;
+        }}
+        h2 {{
+            font-size: 22px;
+            font-weight: 700;
+            color: #000;
+            margin: 0 0 20px 0;
+            text-align: left;
+        }}
+        .body-text {{
+            font-size: 16px;
+            color: #333;
+            margin: 0 0 16px 0;
+            text-align: left;
+        }}
+        .cta-wrap {{
+            text-align: center;
+            margin: 28px 0 24px 0;
         }}
         .button {{
-            display: inline-block;
-            padding: 12px 24px;
-            background-color: #887DEE;
-            color: #ffffff;
+            background-color: #000;
+            color: #ffffff !important;
+            padding: 15px 32px;
             text-decoration: none;
-            border-radius: 6px;
+            border-radius: 999px;
+            display: inline-block;
             font-weight: 600;
-            margin: 20px 0;
+            font-size: 16px;
+            font-family: 'DM Sans', Arial, Helvetica, sans-serif;
         }}
-        .button:hover {{
-            background-color: #6B5FCF;
+        .secondary {{
+            font-size: 13px;
+            color: #666;
+            text-align: left;
+            margin: 0 0 8px 0;
+        }}
+        .link-fallback {{
+            word-break: break-all;
+            font-size: 13px;
+            color: #2563eb;
+            margin: 0 0 16px 0;
+        }}
+        .expiry {{
+            font-size: 14px;
+            color: #666;
+            margin: 0 0 0 0;
+            text-align: left;
         }}
         .footer {{
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-            font-size: 12px;
-            color: #6b7280;
+            margin-top: 36px;
+            font-size: 14px;
+            color: #666;
+            text-align: center;
+        }}
+        .footer-muted {{
+            margin-top: 16px;
+            font-size: 13px;
+            color: #888;
+            text-align: center;
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Welcome to Learnadoodle!</h1>
-        <p>{greeting}</p>
-        <p>{intro}</p>
-        <p>Click the button below to accept your invitation and get started:</p>
-        <a href="{accept_url or invite_url}" class="button">Accept Invitation</a>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; color: #6b7280; font-size: 14px;">{invite_url}</p>
-        <p>This invitation will expire in 30 days.</p>
-        <div class="footer">
-            <p>If you didn't expect this invitation, you can safely ignore this email.</p>
-            <p>© Learnadoodle - Helping families track their learning journey</p>
+    <div class="wrap">
+        <div class="container">
+            <div class="logo">
+                <h1>Learnadoodle</h1>
+            </div>
+            <h2>{headline}</h2>
+            <p class="body-text">{greeting}</p>
+            <p class="body-text">{body_p1}</p>
+            <p class="body-text">{body_p2}</p>
+            <div class="cta-wrap">
+                <a href="{btn_href_attr}" class="button">Accept Invite</a>
+            </div>
+            <p class="secondary">Or copy and paste this link into your browser:</p>
+            <p class="link-fallback"><a href="{invite_href_attr}" style="color: #2563eb;">{invite_url_visible}</a></p>
+            <p class="expiry">This invitation will expire in 30 days.</p>
+            <div class="footer">
+                <p>Best regards,<br>The Learnadoodle Team</p>
+                <p>Need help? Contact us at contact@learnadoodle.com</p>
+            </div>
+            <div class="footer-muted">
+                <p>If you didn't expect this invitation, you can safely ignore this email.</p>
+            </div>
         </div>
     </div>
 </body>
 </html>
-        """
-        
-        text_body = f"""
-Welcome to Learnadoodle!
+"""
 
-{greeting}
+        text_body = f"""Learnadoodle
 
-{intro}
+{headline_plain}
 
-Click the link below to accept your invitation and get started:
+{greeting_plain}
 
-{accept_url or invite_url}
+{body_p1_plain}
+
+{body_p2_plain}
+
+Accept your invite:
+{accept_btn_url}
+
+Or copy this link:
+{invite_url}
 
 This invitation will expire in 30 days.
 
-If you didn't expect this invitation, you can safely ignore this email.
+Best regards,
+The Learnadoodle Team
 
-© Learnadoodle - Helping families track their learning journey
-        """
+Need help? Contact us at contact@learnadoodle.com
+
+If you didn't expect this invitation, you can safely ignore this email.
+"""
         
         # Send email via Postmark
         # Note: Postmark requires the From email to match a verified sender signature

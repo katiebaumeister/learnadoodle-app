@@ -31,6 +31,7 @@ import { deriveRoleFromTags, DOCUMENT_ROLES } from '../../lib/docs/roles';
 import { useSession } from '../../contexts/SessionContext';
 import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from '../materials/MaterialDocViewerModal';
 import { useToast } from '../Toast';
+import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 const ATTENDANCE_LIST_LIMIT = 5;
 
 export default function SubjectDetailPage({
@@ -1046,10 +1047,10 @@ export default function SubjectDetailPage({
         animationType="fade"
         onRequestClose={() => setShowExportComingSoonModal(false)}
       >
-        <View style={styles.comingSoonModalOverlay}>
-          <View style={styles.comingSoonModalContent}>
+        <View style={comingSoonModalStyles.overlay}>
+          <View style={comingSoonModalStyles.content}>
             <TouchableOpacity
-              style={styles.comingSoonModalClose}
+              style={comingSoonModalStyles.close}
               onPress={() => setShowExportComingSoonModal(false)}
               activeOpacity={0.7}
               accessibilityRole="button"
@@ -1058,17 +1059,17 @@ export default function SubjectDetailPage({
             >
               <X size={24} color="#64748b" />
             </TouchableOpacity>
-            <Text style={styles.comingSoonModalTitle}>Coming soon</Text>
-            <Text style={styles.comingSoonModalText}>
+            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+            <Text style={comingSoonModalStyles.body}>
               This feature is in development. Stay tuned for updates!
             </Text>
             <TouchableOpacity
-              style={styles.comingSoonModalButton}
+              style={comingSoonModalStyles.button}
               onPress={() => setShowExportComingSoonModal(false)}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.comingSoonModalButtonText}>Got it</Text>
+              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1427,67 +1428,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  comingSoonModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  comingSoonModalContent: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
-    alignItems: 'center',
-  },
-  comingSoonModalClose: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    padding: 4,
-    zIndex: 1,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  comingSoonModalTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
-    marginTop: 8,
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  comingSoonModalText: {
-    fontSize: 15,
-    color: '#6b7280',
-    textAlign: 'center',
-    marginBottom: 20,
-    lineHeight: 22,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  comingSoonModalButton: {
-    backgroundColor: '#3b82f6',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 10,
-    minWidth: 100,
-    alignItems: 'center',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  comingSoonModalButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

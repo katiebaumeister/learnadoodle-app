@@ -24,6 +24,7 @@ import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
 import EventModal from './events/EventModal';
 import AddChildModal from './AddChildModal';
+import InviteChildModal from './InviteChildModal';
 import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
 import PlanYearWizard from './year/PlanYearWizard';
@@ -56,13 +57,13 @@ import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
-import PlannerWalkthrough from './planner/PlannerWalkthrough';
 import PlanHealthIcon from './planner/PlanHealthIcon';
 import HelpPopover from './planner/HelpPopover';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
 import AvatarPreloader from './onboarding/AvatarPreloader';
 import AppLoader from './AppLoader';
+import { comingSoonModalStyles } from '../theme/comingSoonModalTheme';
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function toLocalYYYYMMDD(d) {
@@ -109,6 +110,7 @@ function mergeUpdatedChildIntoList(prev, row) {
 
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
+  const authUserId = user?.id ?? null;
   // Try to get session from context if not provided as prop
   let session = propSession;
   try {
@@ -131,6 +133,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showPlanningModal, setShowPlanningModal] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
+  const [showInviteChildModal, setShowInviteChildModal] = useState(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -371,13 +374,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [exportEndCalendarMonth, setExportEndCalendarMonth] = useState(() => new Date());
   const [exportModalSubjectId, setExportModalSubjectId] = useState(null);
   const [exportModalSubjectName, setExportModalSubjectName] = useState(null);
-  
-  // Walkthrough refs
-  const newButtonRef = useRef(null);
-  const middleButtonsRef = useRef(null);
-  const sidebarRef = useRef(null);
-  const [showPlannerWalkthrough, setShowPlannerWalkthrough] = useState(false);
-  const [hasAnyEvents, setHasAnyEvents] = useState(null); // null = not checked yet
   
   // Get default view from localStorage
   const getDefaultView = () => {
@@ -1175,7 +1171,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Fetch user role and profile
   useEffect(() => {
     const fetchUserRole = async () => {
-      if (!user) return;
+      if (!authUserId) return;
       try {
         const { getMe } = await import('../lib/apiClient');
         const { data: meData, error: meError } = await getMe();
@@ -1187,7 +1183,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const { data: profileData } = await supabase
           .from('profiles')
           .select('role, email, name, first_name, phone, avatar_url')
-          .eq('id', user.id)
+          .eq('id', authUserId)
           .maybeSingle();
 
         if (!meError && meData) {
@@ -1240,11 +1236,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
     };
     fetchUserRole();
-  }, [user]);
+  }, [authUserId, user?.email]);
 
   // Refresh profile when settings updates it
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !user) return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !authUserId) return;
 
     const handleRefreshProfile = async () => {
       try {
@@ -1254,7 +1250,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const { data: profileData } = await supabase
           .from('profiles')
           .select('role, email, name, first_name, phone, avatar_url')
-          .eq('id', user.id)
+          .eq('id', authUserId)
           .maybeSingle();
 
         if (!meError && meData) {
@@ -1291,15 +1287,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener('refreshProfile', handleRefreshProfile);
     };
-  }, [user]);
+  }, [authUserId, user?.email]);
 
   const fetchFamilyMembers = useCallback(async () => {
-    if (!user || !session) return;
+    if (!authUserId || !session) return;
     try {
       const { data: profileData } = await supabase
         .from('profiles')
         .select('family_id')
-        .eq('id', user.id)
+        .eq('id', authUserId)
         .maybeSingle();
       if (profileData?.family_id) {
         setFamilyId(profileData.family_id);
@@ -1384,10 +1380,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       console.error('[WebLayout] Unable to load family children', error);
       setChildren([]);
     }
-  }, [user, session, subjectsLoaded, fullSubjectsLoaded]);
+  }, [authUserId, session, subjectsLoaded, fullSubjectsLoaded]);
 
   const fetchFamilyData = useCallback(async () => {
-    if (!user || !session) return;
+    if (!authUserId || !session) return;
     try {
       const { data, error } = await getFamilyMembers();
       if (!error && data) {
@@ -1399,10 +1395,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } catch (error) {
       console.error('[WebLayout] Unable to load family data', error);
     }
-  }, [user, session]);
+  }, [authUserId, session]);
 
   useEffect(() => {
-    if (!user || !session) {
+    if (!authUserId || !session) {
       setFamilyDataLoaded(true);
       setAcademicYearsLoaded(true);
       return;
@@ -1448,11 +1444,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       .then(() => { if (mounted) setFamilyDataLoaded(true); })
       .catch(() => { if (mounted) setFamilyDataLoaded(true); });
     return () => { mounted = false; };
-  }, [fetchFamilyData, fetchFamilyMembers, user, session]);
+  }, [fetchFamilyData, fetchFamilyMembers, authUserId, session]);
 
   // Resolve onboarding status before showing main content so we never flash landing without modal
   useEffect(() => {
-    if (!user || !session) {
+    if (!authUserId || !session) {
       setOnboardingCheckDone(true);
       setInitialOnboardingBlocked(false);
       return;
@@ -1473,7 +1469,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
     })();
     return () => { cancelled = true; };
-  }, [user, session]);
+  }, [authUserId, session]);
 
   // Onboarding path: brief delay so modal can mount under loader. Skipped when not blocked (faster shell).
   useEffect(() => {
@@ -1523,11 +1519,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [fetchFamilyData, fetchFamilyMembers]);
 
   useEffect(() => {
-    if (!user || !session?.role_flags?.isParent || familyId) return;
+    if (!authUserId || !session?.role_flags?.isParent || familyId) return;
     let cancelled = false;
     ensureFamilyAndSet().then(() => { if (!cancelled) {} });
     return () => { cancelled = true; };
-  }, [user, session?.role_flags?.isParent, familyId, ensureFamilyAndSet]);
+  }, [authUserId, session?.role_flags?.isParent, familyId, ensureFamilyAndSet]);
 
   // Listen for children refresh events
   useEffect(() => {
@@ -1804,6 +1800,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveSubtab(null);
     }
   }, []);
+
+  // Home rail "Invite Child" → global modal (stay on Home)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => {
+      fetchFamilyMembers();
+      setShowInviteChildModal(true);
+    };
+    window.addEventListener('openInviteChildModal', handler);
+    return () => window.removeEventListener('openInviteChildModal', handler);
+  }, [fetchFamilyMembers]);
 
   // Helper to navigate to Intelligence Hub with query params
   const navigateToIntelligence = useCallback((params = {}) => {
@@ -2127,54 +2134,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [activeTab]);
 
-
-  // Check if walkthrough has been completed
-  const getWalkthroughCompleted = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      return window.localStorage.getItem('plannerWalkthroughCompleted') === 'true';
-    }
-    return false;
-  };
-
-  const setWalkthroughCompleted = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem('plannerWalkthroughCompleted', 'true');
-    }
-  };
-
-  // Check for events when planner screen loads
-  useEffect(() => {
-    if (activeTab === 'planner' && familyId && hasAnyEvents === null) {
-      const checkEvents = async () => {
-        try {
-          const { count, error } = await supabase
-            .from('events')
-            .select('*', { count: 'exact', head: true })
-            .eq('family_id', familyId)
-            .is('deleted_at', null);
-          
-          if (!error) {
-            const hasEvents = count > 0;
-            setHasAnyEvents(hasEvents);
-            
-            // Show walkthrough if no events and not completed
-            if (!hasEvents && !getWalkthroughCompleted()) {
-              // Small delay to ensure DOM is ready
-              setTimeout(() => {
-                setShowPlannerWalkthrough(true);
-              }, 100);
-            }
-          }
-        } catch (err) {
-          console.warn('[PlannerWalkthrough] Error checking for events:', err);
-          setHasAnyEvents(true); // Default to true to not show walkthrough on error
-        }
-      };
-      
-      checkEvents();
-    }
-  }, [activeTab, familyId, hasAnyEvents]);
-
   // Determine if we're on a calendar screen
   const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';
 
@@ -2291,7 +2250,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
 
     return crumbs;
-  }, [user, activeTab, activeChildName, activeChildSection, handleTabChange]);
+  }, [authUserId, user?.email, activeTab, activeChildName, activeChildSection, handleTabChange, subjects]);
 
   // Handler for Feedback chip
   const handleOpenFeedback = useCallback(() => {
@@ -2468,7 +2427,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 
                 {/* Center: View State Controls (View Mode chips) */}
                 <View 
-                  ref={middleButtonsRef}
                   style={{ 
                     flexDirection: 'row', 
                     alignItems: 'center', 
@@ -3119,7 +3077,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
                   {/* New Event Button */}
                   <TouchableOpacity
-                    ref={newButtonRef}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -3486,14 +3443,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} onNavigate={handleDoodleNavigate} />
       )}
 
-      {/* Floating Ask AI button - circular icon, learnadoodle blue */}
-      {user && (
+      {/* Ask AI — hidden on Home so “Add event” is the only floating primary there */}
+      {user && activeTab !== 'home' && (
         <TouchableOpacity
           onPress={() => setShowDoodleSearchModal(true)}
           style={styles.fabAskAI}
           activeOpacity={0.85}
-          accessibilityLabel="Ask AI"
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          accessibilityLabel="Ask Learnadoodle"
+          {...(Platform.OS === 'web' && {
+            cursor: 'pointer',
+            title: 'Ask Learnadoodle',
+          })}
         >
           <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
         </TouchableOpacity>
@@ -3809,6 +3769,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
       />
 
+      <InviteChildModal
+        visible={showInviteChildModal}
+        onClose={() => setShowInviteChildModal(false)}
+        familyId={familyId}
+        familyChildren={children}
+        onInvited={() => {
+          fetchFamilyMembers();
+          fetchFamilyData();
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('refreshChildren'));
+        }}
+      />
+
       {/* Rebalance — coming soon */}
       <Modal
         visible={showRebalanceModal}
@@ -3821,7 +3793,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       >
         <TouchableOpacity
           activeOpacity={1}
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+          style={comingSoonModalStyles.overlay}
           onPress={() => {
             setShowRebalanceModal(false);
             setActiveRightTool(null);
@@ -3830,18 +3802,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           <TouchableOpacity
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 16,
-              padding: 24,
-              paddingTop: 48,
-              width: '90%',
-              maxWidth: 400,
-              alignItems: 'center',
-              position: 'relative',
-              borderWidth: 1,
-              borderColor: '#E6EBF2',
-            }}
+            style={comingSoonModalStyles.content}
           >
             <TouchableOpacity
               onPress={() => {
@@ -3849,41 +3810,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 setActiveRightTool(null);
               }}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              style={{ position: 'absolute', top: 16, right: 16 }}
+              style={comingSoonModalStyles.close}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <X size={24} color="#64748B" />
             </TouchableOpacity>
-            <Text style={{
-              fontSize: 22,
-              fontWeight: '700',
-              color: '#1E293B',
-              marginBottom: 12,
-              textAlign: 'center',
-              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>Coming soon</Text>
-            <Text style={{
-              fontSize: 15,
-              color: '#64748B',
-              textAlign: 'center',
-              lineHeight: 22,
-              marginBottom: 24,
-              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>This feature is in development. Stay tuned for updates!</Text>
+            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+            <Text style={comingSoonModalStyles.body}>
+              This feature is in development. Stay tuned for updates!
+            </Text>
             <TouchableOpacity
               onPress={() => {
                 setShowRebalanceModal(false);
                 setActiveRightTool(null);
               }}
-              style={{ paddingVertical: 12, paddingHorizontal: 24, backgroundColor: '#3b82f6', borderRadius: 10, minWidth: 100, alignItems: 'center' }}
+              style={comingSoonModalStyles.button}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={{
-                fontSize: 16,
-                fontWeight: '600',
-                color: '#FFFFFF',
-                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}>Got it</Text>
+              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
@@ -4450,26 +4394,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         onClose={() => {}}
       />
 
-      {/* Planner Walkthrough */}
-      {isCalendarScreen && (
-        <PlannerWalkthrough
-          visible={showPlannerWalkthrough}
-          onClose={() => {
-            setShowPlannerWalkthrough(false);
-            setWalkthroughCompleted();
-          }}
-          onComplete={() => {
-            setShowPlannerWalkthrough(false);
-            setWalkthroughCompleted();
-          }}
-          targetRefs={{
-            newButtonRef,
-            middleButtonsRef,
-            sidebarRef,
-          }}
-        />
-      )}
-
       {/* Edit Child Modal */}
       <EditChildModal
         visible={showEditChildModal}
@@ -4554,6 +4478,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#9ECFFB',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.85)',
     ...(Platform.OS === 'web' && {
       boxShadow: '0 4px 14px rgba(158, 207, 251, 0.4)',
       zIndex: 9998,

@@ -29,11 +29,18 @@ import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
+import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
+import { designTokens } from '../../theme/designTokens';
 
 const MUTED = 'rgba(15,23,42,0.6)';
-const FG = 'rgba(15,23,42,0.9)';
-const ACCENT = '#3b82f6';
+/** Body copy on this screen — solid black per design */
+const TEXT_BLACK = '#000000';
+/** Brand pastel blue (FAB, coming-soon CTAs) — borders, fills, toggles on this page */
+const ACCENT = LEARNADOODLE_LIGHT_BLUE;
 const BORDER = '#E2E8F0';
+/** Selected chips — planner violet border/text + soft lavender fill */
+const CHIP_SELECTED_BORDER = designTokens.colors.primary;
+const CHIP_SELECTED_BG = designTokens.softAccents.core;
 
 export default function PlannerSettingsContent({ familyId, onSave, initialData }) {
   const toast = useToast();
@@ -467,7 +474,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   const sectionTitleStyle = {
     fontSize: 18,
     fontWeight: '600',
-    color: FG,
+    color: TEXT_BLACK,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const pageTitleStyle = {
@@ -478,16 +485,16 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   const chip = (active) => ({
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: active ? ACCENT : BORDER,
-    backgroundColor: active ? 'rgba(59, 130, 246, 0.15)' : '#FFFFFF',
+    borderColor: active ? CHIP_SELECTED_BORDER : BORDER,
+    backgroundColor: active ? CHIP_SELECTED_BG : '#FFFFFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   });
   const chipText = (active) => ({
     fontSize: 14,
-    fontWeight: '500',
-    color: active ? ACCENT : MUTED,
+    fontWeight: active ? '600' : '500',
+    color: active ? CHIP_SELECTED_BORDER : TEXT_BLACK,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   });
   const inputStyle = {
@@ -497,7 +504,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
     paddingVertical: 8,
     paddingHorizontal: 12,
     fontSize: 14,
-    color: FG,
+    color: TEXT_BLACK,
     minWidth: 72,
   };
   const toggleTrackStyle = {
@@ -511,7 +518,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
     alignItems: 'center',
     justifyContent: 'flex-start',
   };
-  const toggleTrackOnStyle = { backgroundColor: '#AECBFA' };
+  const toggleTrackOnStyle = { backgroundColor: ACCENT };
   const toggleThumbStyle = {
     width: 26,
     height: 26,
@@ -537,7 +544,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
     return (
       <View style={{ padding: 32, alignItems: 'center' }}>
         <ActivityIndicator size="large" color={ACCENT} />
-        <Text style={{ marginTop: 12, fontSize: 14, color: MUTED }}>Loading...</Text>
+        <Text style={{ marginTop: 12, fontSize: 14, color: TEXT_BLACK }}>Loading...</Text>
       </View>
     );
   }
@@ -589,7 +596,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     placeholder="180"
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
-                  <Text style={{ fontSize: 14, color: MUTED }}>days</Text>
+                  <Text style={{ fontSize: 14, color: TEXT_BLACK }}>days</Text>
                 </View>
               )}
               {goalMode === 'hours' && (
@@ -602,8 +609,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     placeholder="1000"
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
-                  <Text style={{ fontSize: 14, color: MUTED }}>hours</Text>
-                  <Text style={{ fontSize: 14, color: MUTED, marginLeft: 4 }}>·</Text>
+                  <Text style={{ fontSize: 14, color: TEXT_BLACK }}>hours</Text>
+                  <Text style={{ fontSize: 14, color: TEXT_BLACK, marginLeft: 4 }}>·</Text>
                   <TextInput
                     value={hoursPerDay}
                     onChangeText={handleHoursPerDayChange}
@@ -612,7 +619,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     placeholder="5"
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
-                  <Text style={{ fontSize: 14, color: MUTED }}>/day</Text>
+                  <Text style={{ fontSize: 14, color: TEXT_BLACK }}>/day</Text>
                 </View>
               )}
             </View>
@@ -629,7 +636,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                 const t = subjectTargets[subj.id] || { mode: 'none', days: '', hours: '' };
                 return (
                   <View key={subj.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '500', color: FG, minWidth: 100 }}>{subj.name}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT_BLACK, minWidth: 100 }}>{subj.name}</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <TouchableOpacity style={chip(t.mode === 'none')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'none' })}>
                         <Text style={chipText(t.mode === 'none')}>None</Text>
@@ -651,7 +658,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                           placeholder="90"
                           placeholderTextColor="rgba(15,23,42,0.4)"
                         />
-                        <Text style={{ fontSize: 14, color: MUTED }}>days</Text>
+                        <Text style={{ fontSize: 14, color: TEXT_BLACK }}>days</Text>
                       </View>
                     )}
                     {t.mode === 'hours' && (
@@ -664,7 +671,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                           placeholder="120"
                           placeholderTextColor="rgba(15,23,42,0.4)"
                         />
-                        <Text style={{ fontSize: 14, color: MUTED }}>hours</Text>
+                        <Text style={{ fontSize: 14, color: TEXT_BLACK }}>hours</Text>
                       </View>
                     )}
                   </View>
@@ -688,7 +695,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
               <View style={[toggleThumbStyle, followGlobalHolidays && toggleThumbOnStyle]} />
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-              <Text style={{ fontSize: 15, color: MUTED, marginRight: 4 }}>Follow </Text>
+              <Text style={{ fontSize: 15, color: TEXT_BLACK, marginRight: 4 }}>Follow </Text>
               <TouchableOpacity
                 onPress={() => {
                   if (followGlobalHolidays) {
@@ -708,9 +715,9 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                 style={{ flexDirection: 'row', alignItems: 'center' }}
                 {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
               >
-                <Text style={{ fontSize: 15, color: followGlobalHolidays ? ACCENT : MUTED, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }}>U.S. public holidays</Text>
+                <Text style={{ fontSize: 15, color: TEXT_BLACK, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }}>U.S. public holidays</Text>
               </TouchableOpacity>
-              <Text style={{ fontSize: 15, color: MUTED, marginLeft: 4 }}>?</Text>
+              <Text style={{ fontSize: 15, color: TEXT_BLACK, marginLeft: 4 }}>?</Text>
             </View>
           </View>
         </View>
@@ -721,12 +728,12 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
             <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} activeOpacity={1} onPress={() => setShowPublicHolidaysPicker(false)}>
               <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, maxWidth: 420, width: '100%', maxHeight: '80%' }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: FG }}>U.S. PUBLIC HOLIDAYS</Text>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: TEXT_BLACK }}>U.S. PUBLIC HOLIDAYS</Text>
                   <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} hitSlop={12} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                     <X size={22} color={MUTED} />
                   </TouchableOpacity>
                 </View>
-                <Text style={{ fontSize: 13, color: MUTED, marginBottom: 12 }}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
+                <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 12 }}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
                 {publicHolidaysLoading ? (
                   <View style={{ padding: 24, alignItems: 'center' }}>
                     <ActivityIndicator size="small" color={ACCENT} />
@@ -753,13 +760,13 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                           <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isIncluded ? ACCENT : BORDER, backgroundColor: isIncluded ? ACCENT : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
                             {isIncluded ? <Check size={14} color="#fff" strokeWidth={3} /> : null}
                           </View>
-                          <Text style={{ flex: 1, fontSize: 14, color: FG }}>{h.name}</Text>
-                          <Text style={{ fontSize: 13, color: MUTED }}>{dateStr}</Text>
+                          <Text style={{ flex: 1, fontSize: 14, color: TEXT_BLACK }}>{h.name}</Text>
+                          <Text style={{ fontSize: 13, color: TEXT_BLACK }}>{dateStr}</Text>
                         </TouchableOpacity>
                       );
                     })}
                     {publicHolidaysList.length === 0 && !publicHolidaysLoading && (
-                      <Text style={{ fontSize: 13, color: MUTED, padding: 16 }}>No holidays in this date range. Extend range or add a custom day.</Text>
+                      <Text style={{ fontSize: 13, color: TEXT_BLACK, padding: 16 }}>No holidays in this date range. Extend range or add a custom day.</Text>
                     )}
                   </ScrollView>
                 )}
@@ -804,7 +811,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                         onChange={(v) => setEditingHolidayDraft((d) => ({ ...d, date: v }))}
                         placeholder="Select date"
                         borderColor={BORDER}
-                        textColor={FG}
+                        textColor={TEXT_BLACK}
                         mutedColor="rgba(15,23,42,0.4)"
                         style={inputStyle}
                         width={120}
@@ -829,7 +836,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     </View>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ fontSize: 14, color: FG }}>
+                      <Text style={{ fontSize: 14, color: TEXT_BLACK }}>
                         {h.date} — {h.name}
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 4 }}>
@@ -851,7 +858,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     onChange={setNewHolidayDate}
                     placeholder="Select date"
                     borderColor={BORDER}
-                    textColor={FG}
+                    textColor={TEXT_BLACK}
                     mutedColor="rgba(15,23,42,0.4)"
                     style={inputStyle}
                     width={120}
@@ -876,8 +883,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color={ACCENT} />
-                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>{PLANNING_PREFERENCES_UI.addDay}</Text>
+                  <Plus size={16} color={TEXT_BLACK} />
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT_BLACK }}>{PLANNING_PREFERENCES_UI.addDay}</Text>
                 </TouchableOpacity>
               )}
           </View>
@@ -896,7 +903,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                         onChange={(v) => setEditingBreakDraft((d) => ({ ...d, start: v }))}
                         placeholder="Start"
                         borderColor={BORDER}
-                        textColor={FG}
+                        textColor={TEXT_BLACK}
                         mutedColor="rgba(15,23,42,0.4)"
                         style={inputStyle}
                         width={100}
@@ -906,7 +913,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                         onChange={(v) => setEditingBreakDraft((d) => ({ ...d, end: v }))}
                         placeholder="End"
                         borderColor={BORDER}
-                        textColor={FG}
+                        textColor={TEXT_BLACK}
                         mutedColor="rgba(15,23,42,0.4)"
                         style={inputStyle}
                         width={100}
@@ -931,7 +938,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     </View>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ fontSize: 14, color: FG }}>
+                      <Text style={{ fontSize: 14, color: TEXT_BLACK }}>
                         {b.start}–{b.end} {b.name}
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 4 }}>
@@ -953,7 +960,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     onChange={setNewBreakStart}
                     placeholder="Start"
                     borderColor={BORDER}
-                    textColor={FG}
+                    textColor={TEXT_BLACK}
                     mutedColor="rgba(15,23,42,0.4)"
                     style={inputStyle}
                     width={100}
@@ -963,7 +970,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                     onChange={setNewBreakEnd}
                     placeholder="End"
                     borderColor={BORDER}
-                    textColor={FG}
+                    textColor={TEXT_BLACK}
                     mutedColor="rgba(15,23,42,0.4)"
                     style={inputStyle}
                     width={100}
@@ -997,8 +1004,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color={ACCENT} />
-                  <Text style={{ fontSize: 14, fontWeight: '500', color: ACCENT }}>{PLANNING_PREFERENCES_UI.addRange}</Text>
+                  <Plus size={16} color={TEXT_BLACK} />
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT_BLACK }}>{PLANNING_PREFERENCES_UI.addRange}</Text>
                 </TouchableOpacity>
               )}
           </View>

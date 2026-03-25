@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { Plus, FileText, Check } from 'lucide-react';
+import { Plus, FileText, Check, CalendarDays } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
-import ChildDotCluster from '../ui/ChildDotCluster';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 
 export default function TodayScheduleCard({
@@ -222,30 +222,34 @@ export default function TodayScheduleCard({
                     <Text style={styles.timeText}>{timeRange}</Text>
                   </View>
                   <View style={styles.contentColumn}>
-                    <View style={styles.eventHeader}>
-                      {event.subject_id && (
-                        <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
-                      )}
-                      {isAssignment && (
-                        <FileText size={12} color={colors.textSecondary} />
-                      )}
+                    <View style={styles.titleRow}>
+                      {(event.subject_id || isAssignment) ? (
+                        <View style={styles.eventHeader}>
+                          {event.subject_id && (
+                            <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
+                          )}
+                          {isAssignment && (
+                            <FileText size={12} color={colors.textSecondary} />
+                          )}
+                        </View>
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.eventTitle,
+                          done && styles.eventTitleDone,
+                        ]}
+                      >
+                        {event.title}
+                      </Text>
                     </View>
-                    <Text
-                      style={[
-                        styles.eventTitle,
-                        done && styles.eventTitleDone,
-                      ]}
-                    >
-                      {event.title}
-                    </Text>
                     <View style={styles.pillsRow}>
                       {eventChildIds.length > 0 && (
                         <View style={styles.childLabel}>
-                          <ChildDotCluster
+                          <ChildAvatarCluster
                             childIds={eventChildIds}
                             familyChildren={children}
-                            dotSize={12}
-                            overlap={-4}
+                            size={32}
+                            overlap={-8}
                           />
                           <Text style={[styles.childLabelText, done && styles.eventMetaDone]}>
                             {formatChildNamesLine(eventChildIds)}
@@ -304,10 +308,30 @@ export default function TodayScheduleCard({
           })}
         </ScrollView>
       ) : (
-        <View style={styles.emptyStateContainer}>
+        <View style={[styles.emptyStateContainer, noCard && styles.emptyStateContainerEmbedded]}>
           <View style={styles.emptyState}>
+            <View style={styles.emptyIllustration}>
+              <CalendarDays size={28} color="#94a3b8" strokeWidth={1.75} />
+            </View>
             <Text style={styles.emptyTitle}>Nothing scheduled</Text>
-            <Text style={styles.emptySubtext}>Add an event to get started</Text>
+            <TouchableOpacity
+              style={styles.emptyPrimaryCta}
+              onPress={() => {
+                if (onAddBlock) {
+                  onAddBlock();
+                } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(
+                    new CustomEvent('openTaskModal', {
+                      detail: { date: new Date(), placement: 'calendar' },
+                    })
+                  );
+                }
+              }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#fff" strokeWidth={2.5} />
+              <Text style={styles.emptyPrimaryCtaText}>Add event</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -316,12 +340,20 @@ export default function TodayScheduleCard({
 }
 
 const styles = StyleSheet.create({
+  contentOnly: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
   container: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 14,
+    padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.06)',
+    borderColor: 'rgba(15, 23, 42, 0.09)',
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
       transition: 'all 0.2s ease',
@@ -339,8 +371,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    alignItems: 'flex-start',
+    paddingTop: 6,
+    marginBottom: 12,
   },
   headerButtons: {
     flexDirection: 'row',
@@ -368,9 +401,11 @@ const styles = StyleSheet.create({
     }),
   },
   title: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#0f172a',
+    color: '#334155',
+    marginTop: 5,
+    letterSpacing: 0.1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -472,6 +507,7 @@ const styles = StyleSheet.create({
   },
   eventRowMain: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     flex: 1,
     gap: 16,
     minWidth: 0,
@@ -487,11 +523,20 @@ const styles = StyleSheet.create({
   eventMetaDone: {
     opacity: 0.55,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+    marginBottom: 6,
+  },
   eventHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 6,
+    paddingTop: 3,
+    flexShrink: 0,
   },
   subjectDot: {
     width: 8,
@@ -500,8 +545,8 @@ const styles = StyleSheet.create({
   },
   childLabel: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
+    alignItems: 'center',
+    gap: 10,
     flex: 1,
     minWidth: 0,
   },
@@ -517,6 +562,7 @@ const styles = StyleSheet.create({
   },
   timeColumn: {
     width: 80,
+    alignSelf: 'flex-start',
   },
   timeText: {
     fontSize: 13,
@@ -533,7 +579,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#0f172a',
-    marginBottom: 6,
+    flex: 1,
+    minWidth: 0,
+    marginBottom: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -561,37 +609,66 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     justifyContent: 'center',
     position: 'relative',
-    minHeight: 200, // Ensure minimum height for visibility
+    minHeight: 148,
     ...(Platform.OS === 'web' && {
-      minHeight: 200,
+      minHeight: 148,
+    }),
+  },
+  emptyStateContainerEmbedded: {
+    minHeight: 132,
+    ...(Platform.OS === 'web' && {
+      minHeight: 132,
     }),
   },
   emptyState: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
     }),
   },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 6,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  emptyIllustration: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
-  emptySubtext: {
-    fontSize: 13,
-    color: '#64748b',
+  /** Empty state — status message, not a headline */
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#94a3b8',
     marginBottom: 16,
     textAlign: 'center',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyPrimaryCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: '#111827',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.12)',
+    }),
+  },
+  emptyPrimaryCtaText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyAddButton: {

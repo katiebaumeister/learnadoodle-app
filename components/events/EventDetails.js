@@ -540,6 +540,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [tagInput, setTagInput] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
   const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
+  const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
   const [draftMaterialId, setDraftMaterialId] = useState(null);
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
   const [selectedMaterialId, setSelectedMaterialId] = useState(null);
@@ -1176,7 +1177,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
   }, [familyId, event?.id, assigneeIds]);
 
-  // Sync preloaded academic years when provided (avoids "Loading..." in Which plan? dropdown)
+  // Sync preloaded academic years when provided (avoids "Loading..." in Add to plan? chips)
   useEffect(() => {
     if (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0) {
       setAcademicYears(preloadedAcademicYears);
@@ -2723,10 +2724,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </SafeFieldRow>
           )}
 
-          {/* Count as instructional time - Which plan? at top (when lesson and counted) */}
+          {/* Count as instructional time - Add to plan? at top (when lesson and counted) */}
           {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && placement === 'calendar' && countsTowardPlan && academicYearId && (
             <View style={{ marginTop: 0, marginBottom: 4, paddingHorizontal: 2 }}>
-              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Which plan? (optional)</Text>
+              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Add to plan? (option)</Text>
               <View style={[styles.chipOption, styles.chipOptionActive, { alignSelf: 'flex-start' }]}>
                 <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
                   {(() => {
@@ -3186,81 +3187,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
         </View>
       </SafeFieldRow>
-
-      {/* Count this as instructional time - at top above Schedule on calendar/backlog (show even when no plans; plan choice is optional) */}
-      {placement === 'calendar' && (
-        <View style={{ marginTop: 0, marginBottom: 4 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
-            <Switch
-              value={countsTowardPlan}
-              onValueChange={setCountsTowardPlan}
-              trackColor={{ false: BORDER, true: '#AECBFA' }}
-              thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
-            />
-          </View>
-          {countsTowardPlan && (
-            <>
-              <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Which plan? (optional)</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setAcademicYearId(null);
-                    if (validationErrors.instructional) {
-                      setValidationErrors({ ...validationErrors, instructional: null });
-                    }
-                  }}
-                  style={[styles.chipOption, academicYearId === null && styles.chipOptionActive]}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[styles.chipOptionText, academicYearId === null && styles.chipOptionTextActive]}>No plan</Text>
-                </TouchableOpacity>
-                {(() => {
-                  const baseLabels = academicYears.map((ay) => {
-                    const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                    const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                    if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
-                    return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
-                  });
-                  const labelCounts = {};
-                  baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-                  return academicYears.map((ay) => {
-                    const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                    const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                    let base = ay.year_name && String(ay.year_name).trim()
-                      ? String(ay.year_name).trim()
-                      : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
-                    const needsDisambiguator = labelCounts[base] > 1;
-                    const monthRange = start && end
-                      ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
-                      : '';
-                    const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
-                    const isSelected = academicYearId === ay.id;
-                    return (
-                      <TouchableOpacity
-                        key={ay.id}
-                        onPress={() => {
-                          setAcademicYearId(ay.id);
-                          if (validationErrors.instructional) {
-                            setValidationErrors({ ...validationErrors, instructional: null });
-                          }
-                        }}
-                        style={[styles.chipOption, isSelected && styles.chipOptionActive]}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>{label}</Text>
-                      </TouchableOpacity>
-                    );
-                  });
-                })()}
-              </View>
-              {validationErrors.instructional && (
-                <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
-              )}
-            </>
-          )}
-        </View>
-      )}
 
       {/* Placement toggle */}
       <View style={styles.modeToggle}>
@@ -3939,6 +3865,80 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </TouchableOpacity>
           {showAcademicDetails && (
             <>
+          {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
+          {placement === 'calendar' && (
+            <View style={{ marginTop: 0, marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
+                <Switch
+                  value={countsTowardPlan}
+                  onValueChange={setCountsTowardPlan}
+                  trackColor={{ false: BORDER, true: '#AECBFA' }}
+                  thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
+                />
+              </View>
+              {countsTowardPlan && (
+                <>
+                  <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (option)</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setAcademicYearId(null);
+                        if (validationErrors.instructional) {
+                          setValidationErrors({ ...validationErrors, instructional: null });
+                        }
+                      }}
+                      style={[styles.chipOption, academicYearId === null && styles.chipOptionActive]}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={[styles.chipOptionText, academicYearId === null && styles.chipOptionTextActive]}>No plan</Text>
+                    </TouchableOpacity>
+                    {(() => {
+                      const baseLabels = academicYears.map((ay) => {
+                        const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                        const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                        if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
+                        return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
+                      });
+                      const labelCounts = {};
+                      baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+                      return academicYears.map((ay) => {
+                        const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+                        const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+                        let base = ay.year_name && String(ay.year_name).trim()
+                          ? String(ay.year_name).trim()
+                          : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
+                        const needsDisambiguator = labelCounts[base] > 1;
+                        const monthRange = start && end
+                          ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
+                          : '';
+                        const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
+                        const isSelected = academicYearId === ay.id;
+                        return (
+                          <TouchableOpacity
+                            key={ay.id}
+                            onPress={() => {
+                              setAcademicYearId(ay.id);
+                              if (validationErrors.instructional) {
+                                setValidationErrors({ ...validationErrors, instructional: null });
+                              }
+                            }}
+                            style={[styles.chipOption, isSelected && styles.chipOptionActive]}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>{label}</Text>
+                          </TouchableOpacity>
+                        );
+                      });
+                    })()}
+                  </View>
+                  {validationErrors.instructional && (
+                    <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
+                  )}
+                </>
+              )}
+            </View>
+          )}
           {/* Subject, Unit/Topic, Grade - always visible */}
           <SafeFieldRow style={styles.fieldRow}>
             <View style={styles.field}>
@@ -4187,13 +4187,47 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </>
           )}
         </SafeView>
-        <Text style={[styles.fieldHelpText, { marginTop: 4 }]}>
-          Note: Make edits or add/delete children/subjects from the Profile screen
-        </Text>
+
+        {/* Additional notes — collapsible, same pattern as Add Subject modal */}
+        <SafeView style={styles.academicSection}>
+          <TouchableOpacity
+            onPress={() => setShowNotesSection(!showNotesSection)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 4,
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.sectionLabel}>Additional notes</Text>
+            {showNotesSection ? (
+              <ChevronUp size={20} color={MUTED} />
+            ) : (
+              <ChevronDown size={20} color={MUTED} />
+            )}
+          </TouchableOpacity>
+          {showNotesSection && (
+            <View style={{ marginTop: 12, paddingTop: 8 }}>
+              <TextInput
+                placeholder="Add any additional notes about this event"
+                placeholderTextColor={MUTED}
+                value={notes}
+                onChangeText={(text) => {
+                  setNotes(text);
+                  setDraftNotes(text);
+                }}
+                style={[styles.input, styles.notesInput]}
+                multiline
+                textAlignVertical="top"
+              />
+            </View>
+          )}
+        </SafeView>
 
         {/* Attachments Selector - always visible */}
         {familyId && (
-          <SafeFieldRow style={[styles.fieldRow, { marginTop: 20 }]}>
+          <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Attachments (optional)</Text>
               <View style={styles.materialSelectorContainer}>
@@ -4341,21 +4375,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </SafeFieldRow>
         )}
 
-        {/* Notes */}
-      <TextInput
-          placeholder="Notes (optional)"
-          placeholderTextColor={MUTED}
-          value={notes}
-          onChangeText={(text) => {
-            setNotes(text);
-            setDraftNotes(text);
-          }}
-          style={[
-            styles.input,
-            styles.notesInput,
-          ]}
-          multiline
-        />
       </ScrollView>
 
       {/* Conflict Warning Banner */}

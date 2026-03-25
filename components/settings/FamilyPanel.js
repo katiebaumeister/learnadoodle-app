@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -9,17 +9,18 @@ import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { fetchChildInviteSummaries, formatInviteLastSent } from '../../lib/services/childInviteStatus';
 import ChildDotCluster from '../ui/ChildDotCluster';
 import EditChildModal from '../EditChildModal';
 import AddChildModal from '../AddChildModal';
+import InviteChildModal from '../InviteChildModal';
 import AddSubjectModal from '../AddSubjectModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
-import ConfirmDialog from '../ConfirmDialog';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
+import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
@@ -115,11 +116,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editSubjectName, setEditSubjectName] = useState('');
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
-  const [deleteSubjectConfirm, setDeleteSubjectConfirm] = useState({ visible: false, subject: null });
-  const [showDangerZoneCourses, setShowDangerZoneCourses] = useState(false);
-  const [courseToDelete, setCourseToDelete] = useState(null);
-  const [confirmDeleteCourseName, setConfirmDeleteCourseName] = useState('');
-  const [deletingCourse, setDeletingCourse] = useState(false);
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
   // Account deletion (Profile Danger Zone)
   const [showDangerZoneAccount, setShowDangerZoneAccount] = useState(false);
@@ -144,13 +140,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [inviteResultUrl, setInviteResultUrl] = useState(null);
   const [inviting, setInviting] = useState(false);
   
-  // Child invite state
-  const [childInviteEmail, setChildInviteEmail] = useState('');
-  const [selectedChildForInvite, setSelectedChildForInvite] = useState(null);
-  const [childInviteResultUrl, setChildInviteResultUrl] = useState(null);
-  const [invitingChild, setInvitingChild] = useState(false);
+  // Child invite — shared InviteChildModal (same as Home)
   const [showChildInviteModal, setShowChildInviteModal] = useState(false);
-  const [childInviteStep, setChildInviteStep] = useState('select'); // 'select' or 'email'
+  const [inviteModalPrefillChildId, setInviteModalPrefillChildId] = useState(null);
+  const [childInviteSummaries, setChildInviteSummaries] = useState({});
   
   // Parent invite state
   const [showParentInviteModal, setShowParentInviteModal] = useState(false);
@@ -186,6 +179,39 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Children list from DB (includes archived) so Family page shows all children even if API filters or fails
   const [childrenFromDb, setChildrenFromDb] = useState(null);
   const [childrenFetchKey, setChildrenFetchKey] = useState(0);
+
+  const childrenIdsKeyForInvites = useMemo(() => {
+    const src = childrenFromDb != null ? childrenFromDb : family?.children || [];
+    return src
+      .map((c) => String(c.id))
+      .sort()
+      .join(',');
+  }, [childrenFromDb, family?.children]);
+
+  useEffect(() => {
+    const fid = family?.id || familyId || propFamilyId;
+    if (!fid || !childrenIdsKeyForInvites) {
+      setChildInviteSummaries({});
+      return;
+    }
+    const rawIds = childrenIdsKeyForInvites.split(',').filter(Boolean);
+    if (rawIds.length === 0) {
+      setChildInviteSummaries({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const map = await fetchChildInviteSummaries(supabase, fid, rawIds);
+        if (!cancelled) setChildInviteSummaries(map);
+      } catch (_) {
+        if (!cancelled) setChildInviteSummaries({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [family?.id, familyId, propFamilyId, childrenIdsKeyForInvites, childrenFetchKey]);
 
   const styles = createStyles(tokens);
 
@@ -717,48 +743,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  const performDeleteSubject = async (subject) => {
-    if (!subject) return;
-    try {
-      await supabase.from('events').delete().eq('subject_id', subject.id);
-      await supabase.from('materials').delete().eq('subject_id', subject.id);
-      const { data: syllabi } = await supabase.from('syllabi').select('id').eq('subject_id', subject.id);
-      if (syllabi && syllabi.length > 0) {
-        const syllabusIds = syllabi.map(s => s.id);
-        await supabase.from('syllabus_sections').delete().in('syllabus_id', syllabusIds);
-        await supabase.from('syllabi').delete().eq('subject_id', subject.id);
-      }
-      const { error } = await supabase.from('subject').delete().eq('id', subject.id);
-      if (error) throw error;
-      toast.push(`"${subject.name}" has been deleted.`, 'success');
-      loadSubjects();
-    } catch (err) {
-      toast.push('Failed to delete subject: ' + err.message, 'error');
-    }
-  };
-
-  const handleDeleteSubject = async (subject) => {
-    if (Platform.OS === 'web') {
-      setDeleteSubjectConfirm({
-        visible: true,
-        subject,
-      });
-      return;
-    }
-    const confirmed = await new Promise((resolve) => {
-      Alert.alert(
-        'Delete Subject',
-        `Are you sure you want to delete "${subject.name}"? This will permanently remove the subject and all its related data.`,
-        [
-          { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
-          { text: 'Delete', onPress: () => resolve(true), style: 'destructive' }
-        ]
-      );
-    });
-    if (!confirmed) return;
-    await performDeleteSubject(subject);
-  };
-
   const familyChildrenForSubjectDots = childrenWithAvatars.length > 0 ? childrenWithAvatars : (family?.children || []);
 
   // Helper to get child names for a subject (child_id can be single UUID or semicolon-separated)
@@ -872,44 +856,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  const handleInviteChild = async () => {
-    if (!childInviteEmail.trim()) {
-      setError('Please enter an email for the child.');
-      return;
-    }
-    if (!selectedChildForInvite) {
-      setError('Please select which child record this invite is for.');
-      return;
-    }
-
-    setInvitingChild(true);
-    setError(null);
-    setChildInviteResultUrl(null);
-    try {
-      const { data, error: err } = await inviteTutor({
-        email: childInviteEmail.trim(),
-        role: 'child',
-        child_ids: [selectedChildForInvite],
-      });
-      if (err) throw err;
-      setChildInviteResultUrl(data.invite_url);
-      setChildInviteEmail('');
-      setSelectedChildForInvite(null);
-      setChildInviteStep('select');
-      toast.push('Child invite sent successfully!', 'success');
-      if (data.invite_url) {
-        showInviteSuccessModal(data.invite_url, 'child');
-      }
-      setShowChildInviteModal(false);
-      if (onFamilyUpdate) onFamilyUpdate();
-    } catch (err) {
-      setError(err.message || 'Failed to invite child');
-      toast.push('Failed to invite child', 'error');
-    } finally {
-      setInvitingChild(false);
-    }
-  };
-
   const handleInviteParent = async () => {
     if (!parentInviteEmail.trim()) {
       setError('Please enter an email for the parent.');
@@ -983,25 +929,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   };
 
 
-  const handleOpenChildInviteModal = () => {
+  const handleOpenChildInviteModal = (prefillChildId = null) => {
     if (children.length === 0) {
       toast.push('Please add a child first before inviting', 'error');
       return;
     }
-    setShowChildInviteModal(true);
-    setChildInviteStep(children.length === 1 ? 'email' : 'select');
-    if (children.length === 1) {
-      setSelectedChildForInvite(children[0].id);
-    } else {
-      setSelectedChildForInvite(null);
-    }
-    setChildInviteEmail('');
     setError(null);
-  };
-
-  const handleSelectChildForInvite = (childId) => {
-    setSelectedChildForInvite(childId);
-    setChildInviteStep('email');
+    setInviteModalPrefillChildId(prefillChildId || null);
+    setShowChildInviteModal(true);
   };
 
   const handleCopyInvite = async (url) => {
@@ -2157,7 +2092,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   </TouchableOpacity>
                   <TouchableOpacity 
                     style={styles.membersInviteButton} 
-                    onPress={handleOpenChildInviteModal}
+                    onPress={() => handleOpenChildInviteModal(null)}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Plus size={16} color="#374151" />
@@ -2183,8 +2118,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 child.age != null && String(child.age).trim() !== ''
                   ? `Age: ${child.age}`
                   : null;
-              const ageGradeLine = [agePart, gradePart].filter(Boolean).join(' - ');
-              const dotColor = getChildColorFromAvatar(child.avatar);
+              const ageGradeLine = [agePart, gradePart].filter(Boolean).join(' • ');
+              const inv = childInviteSummaries[String(child.id)];
+              const invSt = inv?.invite_status || 'none';
+              const statusDotColor =
+                invSt === 'accepted' ? '#22c55e' : invSt === 'pending' ? '#ca8a04' : '#94a3b8';
+              const lastSent = formatInviteLastSent(inv?.invite_sent_at);
               return (
                 <View 
                   key={child.id} 
@@ -2198,7 +2137,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     <View
                       style={[
                         styles.memberRowChildDot,
-                        { backgroundColor: dotColor },
+                        { backgroundColor: statusDotColor },
                       ]}
                     />
                     <View style={styles.memberRowChildTextCol}>
@@ -2213,6 +2152,35 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         >
                           {ageGradeLine}
                         </Text>
+                      ) : null}
+                      {!isChildMode && invSt === 'none' ? (
+                        <Text style={styles.memberRowChildInviteLine}>Not invited</Text>
+                      ) : null}
+                      {!isChildMode && invSt === 'pending' ? (
+                        <>
+                          <Text style={styles.memberRowChildInviteLine}>
+                            Invited • {inv?.invite_email || '—'}
+                          </Text>
+                          {lastSent ? (
+                            <Text style={styles.memberRowChildInviteSub}>last sent {lastSent}</Text>
+                          ) : null}
+                          <Text style={styles.memberRowChildInviteWait}>Waiting for confirmation</Text>
+                        </>
+                      ) : null}
+                      {!isChildMode && invSt === 'accepted' ? (
+                        <Text style={styles.memberRowChildInviteLine}>
+                          ✓ Linked • {inv?.invite_email || '—'}
+                        </Text>
+                      ) : null}
+                      {!isChildMode && invSt === 'pending' ? (
+                        <TouchableOpacity
+                          style={styles.memberRowResend}
+                          onPress={() => handleOpenChildInviteModal(child.id)}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <RotateCw size={12} color="#6366f1" />
+                          <Text style={styles.memberRowResendText}>Resend</Text>
+                        </TouchableOpacity>
                       ) : null}
                     </View>
                   </View>
@@ -2434,132 +2402,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     </React.Fragment>
                   );
                 })}
-              </View>
-            )}
-
-            {/* Danger Zone - delete course permanently (same pattern as Edit Child) */}
-            {!isChildMode && (
-              <View style={styles.dangerZone}>
-                <TouchableOpacity
-                  style={styles.dangerZoneToggle}
-                  onPress={() => {
-                    setShowDangerZoneCourses(!showDangerZoneCourses);
-                    if (showDangerZoneCourses) {
-                      setCourseToDelete(null);
-                      setConfirmDeleteCourseName('');
-                    }
-                  }}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                  <Text style={styles.dangerZoneTitle}>
-                    {showDangerZoneCourses ? 'Hide' : 'Show'} Danger Zone
-                  </Text>
-                </TouchableOpacity>
-
-                {showDangerZoneCourses && (
-                  <View style={styles.dangerZoneContent}>
-                    <View style={styles.dangerSection}>
-                      <Text style={styles.dangerSectionTitle}>Delete permanently</Text>
-                      <Text style={styles.dangerSectionDescription}>
-                        This removes the course and all its events, materials, and data for{' '}
-                        {courseToDelete ? (
-                          <Text style={styles.bold}>{courseToDelete.name}</Text>
-                        ) : (
-                          'the selected course'
-                        )}
-                        . This cannot be undone.
-                      </Text>
-
-                      {!courseToDelete ? (
-                        <Text style={styles.dangerSectionSubtext}>Choose a course to delete:</Text>
-                      ) : null}
-                      {!courseToDelete ? (
-                        <View style={styles.dangerCourseList}>
-                          {(coursesList || []).map((subj) => (
-                            <TouchableOpacity
-                              key={subj.id}
-                              style={styles.dangerCourseChip}
-                              onPress={() => {
-                                setCourseToDelete(subj);
-                                setConfirmDeleteCourseName('');
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Trash2 size={14} color="#6b7280" />
-                              <Text style={styles.dangerCourseChipText}>{subj.name}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      ) : (
-                        <>
-                          <TouchableOpacity
-                            style={styles.dangerCourseBack}
-                            onPress={() => {
-                              setCourseToDelete(null);
-                              setConfirmDeleteCourseName('');
-                            }}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <ChevronLeft size={14} color="#6b7280" />
-                            <Text style={styles.dangerCourseBackText}>Change course</Text>
-                          </TouchableOpacity>
-                          <Text style={styles.inputLabel}>
-                            Type the course name to confirm
-                          </Text>
-                          <TextInput
-                            style={styles.dangerInput}
-                            value={confirmDeleteCourseName}
-                            onChangeText={setConfirmDeleteCourseName}
-                            placeholder={courseToDelete.name}
-                            placeholderTextColor="#9ca3af"
-                            autoCapitalize="words"
-                          />
-                          <TouchableOpacity
-                            style={[
-                              styles.deleteButton,
-                              (confirmDeleteCourseName.trim().toLowerCase() !== courseToDelete.name.trim().toLowerCase() || deletingCourse) && styles.deleteButtonDisabled,
-                            ]}
-                            onPress={async () => {
-                              if (
-                                confirmDeleteCourseName.trim().toLowerCase() !==
-                                courseToDelete.name.trim().toLowerCase() ||
-                                deletingCourse
-                              )
-                                return;
-                              setDeletingCourse(true);
-                              try {
-                                await performDeleteSubject(courseToDelete);
-                                setCourseToDelete(null);
-                                setConfirmDeleteCourseName('');
-                                if (typeof window !== 'undefined') {
-                                  window.dispatchEvent(new CustomEvent('refreshSubjects'));
-                                }
-                              } finally {
-                                setDeletingCourse(false);
-                              }
-                            }}
-                            disabled={
-                              confirmDeleteCourseName.trim().toLowerCase() !==
-                                courseToDelete.name.trim().toLowerCase() || deletingCourse
-                            }
-                            {...(Platform.OS === 'web' && {
-                              cursor:
-                                confirmDeleteCourseName.trim().toLowerCase() ===
-                                  courseToDelete.name.trim().toLowerCase() && !deletingCourse
-                                  ? 'pointer'
-                                  : 'not-allowed',
-                            })}
-                          >
-                            <Text style={styles.deleteButtonText}>
-                              {deletingCourse ? 'Deleting...' : `Delete ${courseToDelete.name}`}
-                            </Text>
-                          </TouchableOpacity>
-                        </>
-                      )}
-                    </View>
-                  </View>
-                )}
               </View>
             )}
           </View>
@@ -3902,25 +3744,25 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         animationType="fade"
         onRequestClose={() => setShowComingSoonModal(false)}
       >
-        <View style={styles.comingSoonModalOverlay}>
-          <View style={styles.comingSoonModalContent}>
+        <View style={comingSoonModalStyles.overlay}>
+          <View style={comingSoonModalStyles.content}>
             <TouchableOpacity
-              style={styles.comingSoonModalClose}
+              style={comingSoonModalStyles.close}
               onPress={() => setShowComingSoonModal(false)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <X size={24} color="#64748b" />
             </TouchableOpacity>
-            <Text style={styles.comingSoonModalTitle}>Coming soon</Text>
-            <Text style={styles.comingSoonModalText}>
+            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+            <Text style={comingSoonModalStyles.body}>
               This feature is in development. Stay tuned for updates!
             </Text>
             <TouchableOpacity
-              style={styles.comingSoonModalButton}
+              style={comingSoonModalStyles.button}
               onPress={() => setShowComingSoonModal(false)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={styles.comingSoonModalButtonText}>Got it</Text>
+              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4129,121 +3971,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       <AddMaterialModal visible={showAddMaterialModal} onClose={() => setShowAddMaterialModal(false)} familyId={family?.id || familyId} />
       <TaskCreateModal visible={showTaskModal} onClose={() => setShowTaskModal(false)} familyId={family?.id || familyId} />
 
-      {/* Child Invite Modal */}
-      <Modal
+      <InviteChildModal
         visible={showChildInviteModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
+        onClose={() => {
           setShowChildInviteModal(false);
-          setChildInviteStep('select');
-          setSelectedChildForInvite(null);
-          setChildInviteEmail('');
+          setInviteModalPrefillChildId(null);
         }}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setShowChildInviteModal(false);
-            setChildInviteStep('select');
-            setSelectedChildForInvite(null);
-            setChildInviteEmail('');
-          }}
-        >
-          <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
-            <View style={styles.childInviteModalHeader}>
-              {childInviteStep === 'select' ? (
-                <View style={{ width: 36, height: 36 }} />
-              ) : (
-                <Text style={styles.childInviteModalTitle}>Enter Email</Text>
-              )}
-              <TouchableOpacity
-                onPress={() => {
-                  setShowChildInviteModal(false);
-                  setChildInviteStep('select');
-                  setSelectedChildForInvite(null);
-                  setChildInviteEmail('');
-                }}
-                style={styles.childInviteModalClose}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <X size={20} color="#6b7280" />
-              </TouchableOpacity>
-            </View>
-
-            {childInviteStep === 'select' ? (
-              <>
-                <Text style={styles.childInviteDescription}>
-                  Select which child to invite:
-                </Text>
-                <ScrollView style={styles.childInviteList} contentContainerStyle={styles.childInviteListContent}>
-                  {children.map((child) => (
-                    <TouchableOpacity
-                      key={child.id}
-                      style={styles.childInviteItem}
-                      onPress={() => handleSelectChildForInvite(child.id)}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text style={styles.childInviteItemName}>
-                        {child.name || child.first_name || 'Child'}
-                      </Text>
-                      <ChevronRight size={22} color="#6b7280" />
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </>
-            ) : (
-              <>
-                <Text style={styles.inviteUrlModalDescription}>
-                  Enter email address for {children.find(c => c.id === selectedChildForInvite)?.name || children.find(c => c.id === selectedChildForInvite)?.first_name || 'this child'}:
-                </Text>
-                <TextInput
-                  style={styles.childInviteEmailInput}
-                  placeholder="email@example.com"
-                  placeholderTextColor="#9ca3af"
-                  value={childInviteEmail}
-                  onChangeText={setChildInviteEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {error && (
-                  <Text style={styles.childInviteError}>{error}</Text>
-                )}
-                <View style={styles.inviteUrlModalActions}>
-                  <TouchableOpacity
-                    style={styles.inviteUrlDoneButton}
-                    onPress={() => {
-                      setChildInviteStep('select');
-                      setChildInviteEmail('');
-                      setError(null);
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.inviteUrlDoneButtonText}>Back</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.inviteUrlCopyButton, (invitingChild || !childInviteEmail.trim()) && styles.inviteUrlCopyButtonDisabled]}
-                    onPress={handleInviteChild}
-                    disabled={invitingChild || !childInviteEmail.trim()}
-                    {...(Platform.OS === 'web' && { cursor: (invitingChild || !childInviteEmail.trim()) ? 'not-allowed' : 'pointer' })}
-                  >
-                    {invitingChild ? (
-                      <ActivityIndicator size="small" color="#ffffff" />
-                    ) : (
-                      <>
-                        <Send size={16} color="#ffffff" />
-                        <Text style={styles.inviteUrlCopyButtonText}>Send Invite</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        familyId={family?.id || familyId}
+        familyChildren={children}
+        prefillChildId={inviteModalPrefillChildId}
+        onPrefillConsumed={() => setInviteModalPrefillChildId(null)}
+        onInvited={() => {
+          onFamilyUpdate?.();
+          setChildrenFetchKey((k) => k + 1);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshChildren'));
+          }
+        }}
+      />
 
       {/* Invite URL Success Modal */}
       <Modal
@@ -4453,20 +4198,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         </TouchableOpacity>
       </Modal>
 
-      <ConfirmDialog
-        visible={deleteSubjectConfirm.visible}
-        title="Delete Subject"
-        message={deleteSubjectConfirm.subject ? `Are you sure you want to delete "${deleteSubjectConfirm.subject.name}"? This will permanently remove the subject and all its related data.` : ''}
-        confirmLabel="OK"
-        cancelLabel="Cancel"
-        onConfirm={async () => {
-          if (deleteSubjectConfirm.subject) {
-            await performDeleteSubject(deleteSubjectConfirm.subject);
-          }
-          setDeleteSubjectConfirm({ visible: false, subject: null });
-        }}
-        onCancel={() => setDeleteSubjectConfirm({ visible: false, subject: null })}
-      />
     </View>
   );
 }
@@ -4641,6 +4372,47 @@ function createStyles(tokens) {
       color: '#6B7280',
       ...(Platform.OS === 'web' && {
         fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowChildInviteLine: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '400',
+      color: '#9ca3af',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowChildInviteSub: {
+      marginTop: 2,
+      fontSize: 11,
+      color: '#cbd5e1',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowChildInviteWait: {
+      marginTop: 2,
+      fontSize: 11,
+      color: '#94a3b8',
+      fontStyle: 'italic',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowResend: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 6,
+      alignSelf: 'flex-start',
+    },
+    memberRowResendText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#6366f1',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     familyNameEditInput: {
@@ -4892,52 +4664,6 @@ function createStyles(tokens) {
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
-    },
-    comingSoonModalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    comingSoonModalContent: {
-      backgroundColor: '#ffffff',
-      borderRadius: 16,
-      padding: 24,
-      width: '90%',
-      maxWidth: 400,
-      alignItems: 'center',
-    },
-    comingSoonModalClose: {
-      position: 'absolute',
-      top: 16,
-      right: 16,
-      padding: 4,
-    },
-    comingSoonModalTitle: {
-      fontSize: 22,
-      fontWeight: '700',
-      color: '#111827',
-      marginBottom: 12,
-      textAlign: 'center',
-    },
-    comingSoonModalText: {
-      fontSize: 15,
-      color: '#6b7280',
-      textAlign: 'center',
-      marginBottom: 20,
-    },
-    comingSoonModalButton: {
-      backgroundColor: tokens?.primary ?? '#3b82f6',
-      paddingHorizontal: 24,
-      paddingVertical: 12,
-      borderRadius: 10,
-      minWidth: 100,
-      alignItems: 'center',
-    },
-    comingSoonModalButtonText: {
-      color: '#ffffff',
-      fontSize: 16,
-      fontWeight: '600',
     },
     aboutPageContainer: {
       maxWidth: 800,

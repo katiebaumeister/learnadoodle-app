@@ -13,8 +13,14 @@ import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
 import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
 import { deriveRoleFromTags, DOCUMENT_ROLES } from '../lib/docs/roles';
+import { designTokens } from '../theme/designTokens';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
+const PLANNING_CHIP_SELECTED = {
+  border: designTokens.colors.primary,
+  background: designTokens.softAccents.core,
+};
 
 const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
 
@@ -1186,23 +1192,43 @@ export default function AddSubjectModal({
                     <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                       <TouchableOpacity
                         style={[
-                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
-                          goalModeForSubject === 'overall' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
+                          goalModeForSubject === 'overall'
+                            ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
+                            : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
                         ]}
                         onPress={() => { setGoalModeForSubject('overall'); setPlanningPrefilledFromFamily(false); }}
                         activeOpacity={0.8}
                       >
-                        <Text style={{ fontSize: 14, fontWeight: '500', color: goalModeForSubject === 'overall' ? '#3b82f6' : '#9ca3af' }}>Overall</Text>
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: goalModeForSubject === 'overall' ? '600' : '500',
+                            color: goalModeForSubject === 'overall' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
+                          }}
+                        >
+                          Overall
+                        </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[
-                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
-                          goalModeForSubject === 'per_subject' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
+                          goalModeForSubject === 'per_subject'
+                            ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
+                            : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
                         ]}
                         onPress={() => { setGoalModeForSubject('per_subject'); setPlanningPrefilledFromFamily(false); }}
                         activeOpacity={0.8}
                       >
-                        <Text style={{ fontSize: 14, fontWeight: '500', color: goalModeForSubject === 'per_subject' ? '#3b82f6' : '#9ca3af' }}>Per subject</Text>
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: goalModeForSubject === 'per_subject' ? '600' : '500',
+                            color: goalModeForSubject === 'per_subject' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
+                          }}
+                        >
+                          Per subject
+                        </Text>
                       </TouchableOpacity>
                     </View>
                     {goalModeForSubject === 'overall' && (
@@ -1233,33 +1259,63 @@ export default function AddSubjectModal({
                       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
                         <TouchableOpacity
                           style={[
-                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
-                            targetMode === 'none' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
+                            targetMode === 'none'
+                              ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
+                              : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
                           ]}
                           onPress={() => { setTargetMode('none'); setPlanningPrefilledFromFamily(false); }}
                           activeOpacity={0.8}
                         >
-                          <Text style={{ fontSize: 14, fontWeight: '500', color: targetMode === 'none' ? '#3b82f6' : '#6b7280' }}>None</Text>
+                          <Text
+                            style={{
+                              fontSize: 14,
+                              fontWeight: targetMode === 'none' ? '600' : '500',
+                              color: targetMode === 'none' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
+                            }}
+                          >
+                            None
+                          </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[
-                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
-                            targetMode === 'days' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
+                            targetMode === 'days'
+                              ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
+                              : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
                           ]}
                           onPress={() => { setTargetMode('days'); setPlanningPrefilledFromFamily(false); }}
                           activeOpacity={0.8}
                         >
-                          <Text style={{ fontSize: 14, fontWeight: '500', color: targetMode === 'days' ? '#3b82f6' : '#6b7280' }}>Days</Text>
+                          <Text
+                            style={{
+                              fontSize: 14,
+                              fontWeight: targetMode === 'days' ? '600' : '500',
+                              color: targetMode === 'days' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
+                            }}
+                          >
+                            Days
+                          </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[
-                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
-                            targetMode === 'hours' ? { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.15)' } : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
+                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
+                            targetMode === 'hours'
+                              ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
+                              : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
                           ]}
                           onPress={() => { setTargetMode('hours'); setPlanningPrefilledFromFamily(false); }}
                           activeOpacity={0.8}
                         >
-                          <Text style={{ fontSize: 14, fontWeight: '500', color: targetMode === 'hours' ? '#3b82f6' : '#6b7280' }}>Hours</Text>
+                          <Text
+                            style={{
+                              fontSize: 14,
+                              fontWeight: targetMode === 'hours' ? '600' : '500',
+                              color: targetMode === 'hours' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
+                            }}
+                          >
+                            Hours
+                          </Text>
                         </TouchableOpacity>
                       </View>
                       {targetMode === 'days' && (
