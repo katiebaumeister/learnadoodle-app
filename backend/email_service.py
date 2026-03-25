@@ -69,19 +69,8 @@ def send_invite_email(
                  note="Postmark may reject if account is pending approval")
     
     try:
-        # Determine role-specific content
-        role_labels = {
-            "parent": "Parent",
-            "tutor": "Tutor",
-            "child": "Child",
-        }
-        role_label = role_labels.get(role, role.capitalize())
-        
-        # Build subject
-        if role == "child" and child_name:
-            subject = f"You're invited to join {child_name}'s learning journey on Learnadoodle"
-        else:
-            subject = f"You're invited to join Learnadoodle as a {role_label}"
+        # Subject is the same for parent, tutor, and child invites (family-focused).
+        subject = "You're invited to join a family on Learnadoodle"
 
         safe_inviter = html.escape(inviter_name) if inviter_name else None
         safe_child = html.escape(child_name) if child_name else None
