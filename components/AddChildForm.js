@@ -1,4 +1,4 @@
-import React, { useState, useImperativeHandle, forwardRef, useEffect } from 'react';
+import React, { useState, useImperativeHandle, forwardRef, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Platform } from 'react-native';
 import { ChevronLeft, ChevronRight, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { getChildColorFromAvatar, hexToRgba } from '../utils/avatarColors';
@@ -48,7 +48,37 @@ const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 const MUTED = '#9ca3af';
 
-const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, onValidationChange }, ref) => {
+function listSignature(arr) {
+  return JSON.stringify([...(Array.isArray(arr) ? arr : [])].map(String).sort());
+}
+
+function effectiveDiagnosesForCompare(diagnoses, otherDiagnosis) {
+  const d = [...(diagnoses || [])];
+  if (d.includes('Other') && (otherDiagnosis || '').trim()) {
+    return d.filter((x) => x !== 'Other').concat(`Other: ${otherDiagnosis.trim()}`);
+  }
+  return d;
+}
+
+function effectiveInterestsForCompare(interests, otherInterest) {
+  const arr = [...(interests || [])];
+  if (arr.includes('Other') && (otherInterest || '').trim()) {
+    return arr.filter((x) => x !== 'Other').concat(`Other: ${otherInterest.trim()}`);
+  }
+  return arr;
+}
+
+const AddChildForm = forwardRef(
+  (
+    {
+      onSubmit,
+      initial = {},
+      submitting = false,
+      onValidationChange,
+      requireDirtyToSubmit = false,
+    },
+    ref
+  ) => {
   const [name, setName] = useState(initial.name || '');
   const [nickname, setNickname] = useState(initial.nickname || '');
   const [age, setAge] = useState(initial.age ? String(initial.age) : '');
@@ -85,7 +115,52 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
   const [targetHours, setTargetHours] = useState(initial.targetHours != null ? String(initial.targetHours) : '');
   const [schoolYearStart, setSchoolYearStart] = useState(initial.schoolYearStart || '');
   const [schoolYearEnd, setSchoolYearEnd] = useState(initial.schoolYearEnd || '');
-  // Update form when initial data changes (for edit mode)
+
+  const initialSyncKey = useMemo(() => {
+    const ini = initial || {};
+    return JSON.stringify({
+      name: ini.name ?? '',
+      nickname: ini.nickname ?? '',
+      age: ini.age ?? '',
+      grade: ini.grade ?? ini.grade_label ?? '',
+      standards: ini.standards_state ?? ini.standardsState ?? 'None',
+      interests: listSignature(ini.interests),
+      avatar: ini.avatar ?? ini.avatar_url ?? '',
+      diagnoses: listSignature(ini.diagnoses),
+      learning_modalities: listSignature(ini.learning_modalities),
+      support_needs: listSignature(ini.support_needs),
+      executive_function: listSignature(ini.executive_function),
+      support_notes: ini.support_notes ?? '',
+      targetMode: ini.targetMode ?? '',
+      targetDays: String(ini.targetDays ?? ''),
+      targetHours: String(ini.targetHours ?? ''),
+      schoolYearStart: ini.schoolYearStart ?? '',
+      schoolYearEnd: ini.schoolYearEnd ?? '',
+    });
+  }, [
+    initial?.name,
+    initial?.nickname,
+    initial?.age,
+    initial?.grade,
+    initial?.grade_label,
+    initial?.standards_state,
+    initial?.standardsState,
+    initial?.avatar,
+    initial?.avatar_url,
+    JSON.stringify([...(Array.isArray(initial?.interests) ? initial.interests : [])].map(String).sort()),
+    JSON.stringify([...(Array.isArray(initial?.diagnoses) ? initial.diagnoses : [])].map(String).sort()),
+    JSON.stringify([...(Array.isArray(initial?.learning_modalities) ? initial.learning_modalities : [])].map(String).sort()),
+    JSON.stringify([...(Array.isArray(initial?.support_needs) ? initial.support_needs : [])].map(String).sort()),
+    JSON.stringify([...(Array.isArray(initial?.executive_function) ? initial.executive_function : [])].map(String).sort()),
+    initial?.support_notes,
+    initial?.targetMode,
+    initial?.targetDays,
+    initial?.targetHours,
+    initial?.schoolYearStart,
+    initial?.schoolYearEnd,
+  ]);
+
+  // Update form when initial data changes (for edit mode) — key is stable across parent re-renders with same data
   useEffect(() => {
     if (initial.name !== undefined) setName(initial.name || '');
     if (initial.nickname !== undefined) setNickname(initial.nickname || '');
@@ -130,7 +205,7 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
     if (initial.targetHours !== undefined) setTargetHours(initial.targetHours != null ? String(initial.targetHours) : '');
     if (initial.schoolYearStart !== undefined) setSchoolYearStart(initial.schoolYearStart || '');
     if (initial.schoolYearEnd !== undefined) setSchoolYearEnd(initial.schoolYearEnd || '');
-  }, [initial]);
+  }, [initialSyncKey]);
 
   const avatarSources = {
     prof1: require('../assets/prof1.png'),
@@ -148,23 +223,85 @@ const AddChildForm = forwardRef(({ onSubmit, initial = {}, submitting = false, o
     else setList([...list, value]);
   };
 
-  const canSubmit = name.trim() && age && grade && avatar;
+  const canSubmit = Boolean(name.trim() && age && grade && avatar);
 
-  // Notify parent of validation changes
+  const isDirty = useMemo(() => {
+    if (!requireDirtyToSubmit) return true;
+    const ini = initial || {};
+    if ((name || '').trim() !== (ini.name || '').trim()) return true;
+    if ((nickname || '').trim() !== (ini.nickname || '').trim()) return true;
+    if ((age || '') !== (ini.age != null && ini.age !== '' ? String(ini.age) : '')) return true;
+    const gIn = ini.grade || ini.grade_label || '';
+    if (String(grade || '') !== String(gIn || '')) return true;
+    const aIn = ini.avatar || ini.avatar_url || 'prof1';
+    if (String(avatar || '') !== String(aIn)) return true;
+    const stIn = ini.standards_state || ini.standardsState || 'None';
+    if (standardsState !== stIn) return true;
+    if (
+      listSignature(effectiveInterestsForCompare(interests, otherInterest)) !==
+      listSignature(Array.isArray(ini.interests) ? ini.interests : [])
+    ) {
+      return true;
+    }
+    if (
+      listSignature(effectiveDiagnosesForCompare(diagnoses, otherDiagnosis)) !==
+      listSignature(Array.isArray(ini.diagnoses) ? ini.diagnoses : [])
+    ) {
+      return true;
+    }
+    if (listSignature(learningModalities) !== listSignature(ini.learning_modalities || [])) return true;
+    if (listSignature(supportNeeds) !== listSignature(ini.support_needs || [])) return true;
+    if (listSignature(executiveFunction) !== listSignature(ini.executive_function || [])) return true;
+    if ((supportNotes || '').trim() !== (ini.support_notes || '').trim()) return true;
+    if ((targetMode || '') !== (ini.targetMode || '')) return true;
+    const tdIn = ini.targetDays != null && ini.targetDays !== '' ? String(ini.targetDays) : '';
+    if (String(targetDays || '').trim() !== tdIn) return true;
+    const thIn = ini.targetHours != null && ini.targetHours !== '' ? String(ini.targetHours) : '';
+    if (String(targetHours || '').trim() !== thIn) return true;
+    if ((schoolYearStart || '').trim() !== (ini.schoolYearStart || '').trim()) return true;
+    if ((schoolYearEnd || '').trim() !== (ini.schoolYearEnd || '').trim()) return true;
+    return false;
+  }, [
+    requireDirtyToSubmit,
+    initial,
+    name,
+    nickname,
+    age,
+    grade,
+    avatar,
+    standardsState,
+    interests,
+    otherInterest,
+    diagnoses,
+    otherDiagnosis,
+    learningModalities,
+    supportNeeds,
+    executiveFunction,
+    supportNotes,
+    targetMode,
+    targetDays,
+    targetHours,
+    schoolYearStart,
+    schoolYearEnd,
+  ]);
+
+  const maySubmit = canSubmit && (!requireDirtyToSubmit || isDirty);
+
+  // Notify parent of validation + dirty state (Edit Child enables Save only when valid and changed)
   useEffect(() => {
     if (onValidationChange) {
-      onValidationChange(canSubmit);
+      onValidationChange(maySubmit);
     }
-  }, [canSubmit, onValidationChange]);
+  }, [maySubmit, onValidationChange]);
 
   // Expose submit handler to parent via ref
   useImperativeHandle(ref, () => ({
     submit: handleSubmit,
-    canSubmit: canSubmit,
+    canSubmit: maySubmit,
   }));
 
   const handleSubmit = () => {
-    if (!canSubmit || submitting) return;
+    if (!maySubmit || submitting) return;
     
     // Handle "Other" diagnosis
     let finalDiagnoses = [...diagnoses];
@@ -638,6 +775,23 @@ const styles = StyleSheet.create({
   avatarCellSelected: {
     borderWidth: 3,
     borderColor: '#6BB3E8',
+    ...Platform.select({
+      web: {
+        boxShadow:
+          '0 0 0 1px rgba(107, 179, 232, 0.35), 0 0 10px 2px rgba(107, 179, 232, 0.28)',
+      },
+      ios: {
+        shadowColor: '#6BB3E8',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.4,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 4,
+        shadowColor: '#6BB3E8',
+      },
+      default: {},
+    }),
   },
   avatarImg: {
     width: 48,

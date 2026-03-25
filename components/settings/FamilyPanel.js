@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw, Clock } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -11,6 +11,7 @@ import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchChildInviteSummaries,
+  formatInviteLastSent,
   linkedSummariesFromFamilyApiMembers,
   mergeChildInviteSummaryMaps,
 } from '../../lib/services/childInviteStatus';
@@ -2153,8 +2154,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               const ageGradeLine = [agePart, gradePart].filter(Boolean).join(' • ');
               const inv = childInviteSummaries[String(child.id)];
               const invSt = inv?.invite_status || 'none';
-              const statusDotColor =
-                invSt === 'accepted' ? '#22c55e' : invSt === 'pending' ? '#ca8a04' : '#94a3b8';
+              const lastSentRel = inv?.invite_sent_at ? formatInviteLastSent(inv.invite_sent_at) : null;
+              let pillLabel = 'Not invited';
+              let pillContainerStyle = styles.childStatusPillGray;
+              let pillTextStyle = styles.childStatusPillTextGray;
+              if (invSt === 'accepted') {
+                pillLabel = '✓ Connected';
+                pillContainerStyle = styles.childStatusPillGreen;
+                pillTextStyle = styles.childStatusPillTextGreen;
+              } else if (invSt === 'pending') {
+                pillLabel = 'Pending invite';
+                pillContainerStyle = styles.childStatusPillAmber;
+                pillTextStyle = styles.childStatusPillTextAmber;
+              }
               return (
                 <View 
                   key={child.id} 
@@ -2171,27 +2183,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         style={styles.memberRowChildAvatar}
                         resizeMode="cover"
                       />
-                      {!isChildMode ? (
-                        <View
-                          style={[
-                            styles.memberRowChildStatusBadge,
-                            { backgroundColor: statusDotColor },
-                          ]}
-                          accessibilityLabel={
-                            invSt === 'accepted'
-                              ? 'Account linked'
-                              : invSt === 'pending'
-                                ? 'Invite pending'
-                                : 'Not invited'
-                          }
-                        />
-                      ) : null}
                     </View>
                     <View style={styles.memberRowChildTextCol}>
-                      <Text style={styles.memberRowName}>
-                        {childName}
-                        {child.archived ? ' (Archived)' : ''}
-                      </Text>
+                      <View style={styles.memberRowChildNameRow}>
+                        <Text style={styles.memberRowName} numberOfLines={1}>
+                          {childName}
+                          {child.archived ? ' (Archived)' : ''}
+                        </Text>
+                        {!isChildMode ? (
+                          <View
+                            style={[styles.childStatusPill, pillContainerStyle]}
+                            accessible
+                            accessibilityLabel={pillLabel}
+                          >
+                            <Text style={[styles.childStatusPillText, pillTextStyle]}>{pillLabel}</Text>
+                          </View>
+                        ) : null}
+                      </View>
                       {ageGradeLine ? (
                         <Text
                           style={styles.memberRowChildMeta}
@@ -2200,31 +2208,33 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           {ageGradeLine}
                         </Text>
                       ) : null}
-                      {!isChildMode ? (
-                        <View style={styles.memberRowChildStatusLineRow}>
-                          {invSt === 'pending' ? (
-                            <View style={styles.memberRowChildStatusIconWrap}>
-                              <Clock size={12} color="#9ca3af" />
-                            </View>
-                          ) : null}
-                          <Text style={styles.memberRowChildInviteLine} numberOfLines={1}>
-                            {invSt === 'accepted'
-                              ? `✓ Linked${inv?.invite_email ? ` • ${inv.invite_email}` : ''}`
-                              : invSt === 'pending'
-                                ? `Pending invite${inv?.invite_email ? ` • ${inv.invite_email}` : ''}`
-                                : 'Not invited'}
-                          </Text>
-                        </View>
+                      {!isChildMode && invSt === 'accepted' && inv?.invite_email ? (
+                        <Text style={styles.memberRowChildEmailMuted} numberOfLines={1}>
+                          {inv.invite_email}
+                        </Text>
                       ) : null}
                       {!isChildMode && invSt === 'pending' ? (
-                        <TouchableOpacity
-                          style={styles.memberRowResend}
-                          onPress={() => handleOpenChildInviteModal(child.id)}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <RotateCw size={12} color="#6366f1" />
-                          <Text style={styles.memberRowResendText}>Resend</Text>
-                        </TouchableOpacity>
+                        <>
+                          {inv?.invite_email ? (
+                            <Text style={styles.memberRowChildEmailMuted} numberOfLines={1}>
+                              {inv.invite_email}
+                            </Text>
+                          ) : null}
+                          {lastSentRel ? (
+                            <Text style={styles.memberRowChildPendingMeta} numberOfLines={1}>
+                              Last sent · {lastSentRel}
+                            </Text>
+                          ) : null}
+                          <Text style={styles.memberRowChildPendingWait}>Waiting for acceptance</Text>
+                          <TouchableOpacity
+                            style={styles.memberRowResend}
+                            onPress={() => handleOpenChildInviteModal(child.id)}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <RotateCw size={12} color="#6366f1" />
+                            <Text style={styles.memberRowResendText}>Resend</Text>
+                          </TouchableOpacity>
+                        </>
                       ) : null}
                     </View>
                   </View>
@@ -2409,7 +2419,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             <View style={styles.subjectCardInfo}>
                               <Text style={styles.subjectCardName}>{subject.name}</Text>
                               <View style={[styles.subjectCardMeta, styles.subjectCardChildrenRow]}>
-                                <Text style={styles.subjectCardChildren}>Students: </Text>
                                 {studentChildIds.length > 0 ? (
                                   <ChildDotCluster
                                     childIds={studentChildIds}
@@ -4434,7 +4443,7 @@ function createStyles(tokens) {
     memberRowChildMain: {
       flex: 1,
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: 12,
       minWidth: 0,
       marginRight: 12,
@@ -4452,20 +4461,77 @@ function createStyles(tokens) {
       backgroundColor: '#e5e7eb',
       ...(Platform.OS === 'web' && { objectFit: 'cover' }),
     },
-    memberRowChildStatusBadge: {
-      position: 'absolute',
-      right: -1,
-      bottom: -1,
-      width: 12,
-      height: 12,
-      borderRadius: 6,
-      borderWidth: 2,
-      borderColor: '#ffffff',
-      ...(Platform.OS === 'web' && { boxSizing: 'border-box' }),
+    memberRowChildNameRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      minWidth: 0,
+    },
+    childStatusPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      flexShrink: 0,
+    },
+    childStatusPillGreen: {
+      backgroundColor: '#dcfce7',
+    },
+    childStatusPillAmber: {
+      backgroundColor: '#fef3c7',
+    },
+    childStatusPillGray: {
+      backgroundColor: '#f1f5f9',
+    },
+    childStatusPillText: {
+      fontSize: 11,
+      fontWeight: '600',
+      letterSpacing: 0.2,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    childStatusPillTextGreen: {
+      color: '#166534',
+    },
+    childStatusPillTextAmber: {
+      color: '#b45309',
+    },
+    childStatusPillTextGray: {
+      color: '#64748b',
     },
     memberRowChildTextCol: {
       flex: 1,
       minWidth: 0,
+    },
+    memberRowChildEmailMuted: {
+      marginTop: 4,
+      fontSize: 13,
+      fontWeight: '400',
+      color: '#9ca3af',
+      minWidth: 0,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowChildPendingMeta: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '400',
+      color: '#9ca3af',
+      minWidth: 0,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    memberRowChildPendingWait: {
+      marginTop: 2,
+      fontSize: 12,
+      fontWeight: '500',
+      color: '#6b7280',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
     },
     memberRowChildMeta: {
       marginTop: 2,
@@ -4474,26 +4540,6 @@ function createStyles(tokens) {
       color: '#6B7280',
       ...(Platform.OS === 'web' && {
         fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
-    },
-    memberRowChildStatusLineRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginTop: 4,
-      minWidth: 0,
-    },
-    memberRowChildStatusIconWrap: {
-      marginRight: 6,
-      justifyContent: 'center',
-    },
-    memberRowChildInviteLine: {
-      flexShrink: 1,
-      fontSize: 12,
-      fontWeight: '400',
-      color: '#9ca3af',
-      minWidth: 0,
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     memberRowResend: {

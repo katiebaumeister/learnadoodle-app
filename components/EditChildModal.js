@@ -82,11 +82,18 @@ export default function EditChildModal({
     return null;
   }, [connectedEmail, linkedLoginEmail, accountDisconnectedThisSession]);
 
-  // Use cached child immediately; fetch full data in background (support profile, academic year, connected email)
+  // Reset Save button only when opening the modal or switching child — not when familyId / linkedLoginEmail
+  // churn (that used to force formCanSubmit false while AddChildForm did not re-fire onValidationChange).
   useEffect(() => {
     if (visible && child?.id) {
       setFormCanSubmit(false);
       setAccountDisconnectedThisSession(false);
+    }
+  }, [visible, child?.id]);
+
+  // Fetch / refresh child payload when modal open; deps may change without clearing submit state.
+  useEffect(() => {
+    if (visible && child?.id) {
       fetchFullChildDataInBackground();
     } else if (!visible) {
       setError(null);
@@ -163,34 +170,86 @@ export default function EditChildModal({
     }
   };
 
-  // Build initial data from fullChildData when available, else from cached child prop
   const baseData = fullChildData || child;
-  const initialData = baseData ? {
-    name: baseData.first_name || baseData.name || '',
-    nickname: baseData.nickname || '',
-    age: baseData.age != null ? String(baseData.age) : '',
-    grade: baseData.grade || baseData.grade_level || baseData.grade_label || '',
-    standardsState: baseData.standards || baseData.standards_state || 'None',
-    interests: Array.isArray(baseData.interests)
-      ? baseData.interests
-      : (typeof baseData.interests === 'string' && baseData.interests
-          ? baseData.interests.split(',').map(i => i.trim()).filter(Boolean)
-          : []),
-    learningStyle: Array.isArray(baseData.learning_styles) && baseData.learning_styles.length > 0
-      ? baseData.learning_styles[0]
-      : baseData.learning_style || '',
-    avatar: baseData.avatar || baseData.avatar_url || 'prof1',
-    schoolYearStart: academicYear?.start_date || '',
-    schoolYearEnd: academicYear?.end_date || '',
-    targetMode: academicYear?.target_instructional_days != null ? 'days' : academicYear?.target_instructional_hours != null ? 'hours' : '',
-    targetDays: academicYear?.target_instructional_days != null ? String(academicYear.target_instructional_days) : '',
-    targetHours: academicYear?.target_instructional_hours != null ? String(academicYear.target_instructional_hours) : '',
-    diagnoses: supportProfile?.diagnoses ?? [],
-    learning_modalities: supportProfile?.learning_modalities ?? [],
-    support_needs: supportProfile?.support_needs ?? [],
-    executive_function: supportProfile?.executive_function ?? [],
-    support_notes: supportProfile?.notes ?? '',
-  } : {};
+
+  // Stable object identity unless real field values change (avoids AddChildForm resetting every parent render).
+  const initialData = useMemo(() => {
+    const b = fullChildData || child;
+    if (!b) return {};
+    const interestsRaw = Array.isArray(b.interests)
+      ? b.interests
+      : typeof b.interests === 'string' && b.interests
+        ? b.interests.split(',').map((i) => i.trim()).filter(Boolean)
+        : [];
+    return {
+      name: b.first_name || b.name || '',
+      nickname: b.nickname || '',
+      age: b.age != null ? String(b.age) : '',
+      grade: b.grade || b.grade_level || b.grade_label || '',
+      standardsState: b.standards || b.standards_state || 'None',
+      interests: interestsRaw,
+      learningStyle:
+        Array.isArray(b.learning_styles) && b.learning_styles.length > 0
+          ? b.learning_styles[0]
+          : b.learning_style || '',
+      avatar: b.avatar || b.avatar_url || 'prof1',
+      schoolYearStart: academicYear?.start_date || '',
+      schoolYearEnd: academicYear?.end_date || '',
+      targetMode:
+        academicYear?.target_instructional_days != null
+          ? 'days'
+          : academicYear?.target_instructional_hours != null
+            ? 'hours'
+            : '',
+      targetDays:
+        academicYear?.target_instructional_days != null
+          ? String(academicYear.target_instructional_days)
+          : '',
+      targetHours:
+        academicYear?.target_instructional_hours != null
+          ? String(academicYear.target_instructional_hours)
+          : '',
+      diagnoses: supportProfile?.diagnoses ?? [],
+      learning_modalities: supportProfile?.learning_modalities ?? [],
+      support_needs: supportProfile?.support_needs ?? [],
+      executive_function: supportProfile?.executive_function ?? [],
+      support_notes: supportProfile?.notes ?? '',
+    };
+  }, [
+    fullChildData?.id,
+    child?.id,
+    fullChildData?.first_name ?? child?.first_name,
+    fullChildData?.name ?? child?.name,
+    fullChildData?.nickname ?? child?.nickname,
+    fullChildData?.age ?? child?.age,
+    fullChildData?.grade ?? child?.grade,
+    fullChildData?.grade_level ?? child?.grade_level,
+    fullChildData?.grade_label ?? child?.grade_label,
+    fullChildData?.standards ?? child?.standards,
+    fullChildData?.standards_state ?? child?.standards_state,
+    fullChildData?.avatar ?? child?.avatar,
+    fullChildData?.avatar_url ?? child?.avatar_url,
+    JSON.stringify(
+      Array.isArray(fullChildData?.interests)
+        ? fullChildData.interests
+        : Array.isArray(child?.interests)
+          ? child.interests
+          : typeof (fullChildData?.interests || child?.interests) === 'string'
+            ? (fullChildData?.interests || child?.interests || '').split(',').map((i) => i.trim()).filter(Boolean)
+            : []
+    ),
+    fullChildData?.learning_style ?? child?.learning_style,
+    JSON.stringify(fullChildData?.learning_styles ?? child?.learning_styles ?? []),
+    academicYear?.start_date,
+    academicYear?.end_date,
+    academicYear?.target_instructional_days,
+    academicYear?.target_instructional_hours,
+    JSON.stringify(supportProfile?.diagnoses ?? []),
+    JSON.stringify(supportProfile?.learning_modalities ?? []),
+    JSON.stringify(supportProfile?.support_needs ?? []),
+    JSON.stringify(supportProfile?.executive_function ?? []),
+    supportProfile?.notes,
+  ]);
 
   const handleSubmit = async (formData) => {
     const effectiveFamilyId = familyId || fullChildData?.family_id || child?.family_id;
@@ -470,39 +529,22 @@ export default function EditChildModal({
             {baseData ? (
               <>
                 <AddChildForm
+                  key={child.id}
                   ref={formRef}
                   initial={initialData}
                   submitting={isSubmitting}
                   onSubmit={handleSubmit}
                   onValidationChange={setFormCanSubmit}
+                  requireDirtyToSubmit
                 />
 
                 <View style={styles.accountSection}>
                   <Text style={styles.accountSectionTitle}>Account</Text>
                   <View style={styles.accountRule} />
                   {displayLinkedEmail != null && displayLinkedEmail !== '' ? (
-                    <>
-                      <Text style={styles.accountConnectedLine1} numberOfLines={2}>
-                        ✓ Connected · {displayLinkedEmail}
-                      </Text>
-                      <Text style={styles.accountReassuranceLine}>
-                        Disconnect the account to delete the linked email, {displayLinkedEmail}, but to keep the child and their data in your account. Delete the child if you want to both delete the linked account as well as child data in both that account and this one.
-                      </Text>
-                      <TouchableOpacity
-                        style={[
-                          styles.disconnectOutlineButton,
-                          unlinkingLogin && styles.disconnectOutlineButtonDisabled,
-                        ]}
-                        onPress={handleDisconnectAccount}
-                        disabled={unlinkingLogin}
-                        activeOpacity={0.75}
-                        {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
-                      >
-                        <Text style={styles.disconnectOutlineButtonText}>
-                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
-                        </Text>
-                      </TouchableOpacity>
-                    </>
+                    <Text style={styles.accountConnectedLine1} numberOfLines={2}>
+                      ✓ Connected · {displayLinkedEmail}
+                    </Text>
                   ) : accountDisconnectedThisSession ? (
                     <>
                       <Text style={styles.accountDisconnectedHeadline}>Account disconnected</Text>
@@ -582,6 +624,29 @@ export default function EditChildModal({
                   </TouchableOpacity>
                   {showDangerZone && (
                 <View style={styles.dangerZoneContent}>
+                  {displayLinkedEmail != null && displayLinkedEmail !== '' && !accountDisconnectedThisSession ? (
+                    <View style={styles.dangerDisconnectSection}>
+                      <Text style={styles.dangerDisconnectTitle}>Disconnect linked account</Text>
+                      <Text style={styles.dangerDisconnectDescription}>
+                        Disconnect the account to delete the linked email, {displayLinkedEmail}, but to keep the child and their data in your account. Delete the child below if you want to both delete the linked account as well as child data in both that account and this one.
+                      </Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.disconnectOutlineButton,
+                          styles.disconnectOutlineButtonInDanger,
+                          unlinkingLogin && styles.disconnectOutlineButtonDisabled,
+                        ]}
+                        onPress={handleDisconnectAccount}
+                        disabled={unlinkingLogin}
+                        activeOpacity={0.75}
+                        {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
+                      >
+                        <Text style={styles.disconnectOutlineButtonText}>
+                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                   <View style={styles.dangerSection}>
                     <Text style={styles.dangerSectionTitle}>Delete child permanently</Text>
                     <Text style={styles.dangerSectionDescription}>
@@ -751,7 +816,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   accountSection: {
-    marginBottom: 20,
+    marginBottom: 10,
     paddingVertical: 14,
     paddingHorizontal: 16,
     backgroundColor: '#f8fafc',
@@ -778,11 +843,8 @@ const styles = StyleSheet.create({
     color: '#166534',
     lineHeight: 22,
   },
-  accountReassuranceLine: {
-    fontSize: 12,
-    color: '#64748b',
-    lineHeight: 17,
-    marginTop: 4,
+  disconnectOutlineButtonInDanger: {
+    marginTop: 0,
   },
   disconnectOutlineButton: {
     alignSelf: 'flex-start',
@@ -870,7 +932,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   dangerZoneAccordion: {
-    marginTop: 16,
+    marginTop: 0,
     borderWidth: 1,
     borderColor: 'rgba(220, 38, 38, 0.25)',
     borderRadius: 12,
@@ -896,6 +958,26 @@ const styles = StyleSheet.create({
   },
   dangerZoneContent: {
     marginTop: 16,
+  },
+  dangerDisconnectSection: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 16,
+    marginBottom: 12,
+  },
+  dangerDisconnectTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  dangerDisconnectDescription: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 18,
+    marginBottom: 14,
   },
   dangerSection: {
     backgroundColor: colors.redSoft || '#fef2f2',
