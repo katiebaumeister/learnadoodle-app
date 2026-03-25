@@ -10,9 +10,10 @@ import {
   ActivityIndicator,
   Image,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { X, Send, Check, RotateCw } from 'lucide-react';
-import { inviteTutor } from '../lib/apiClient';
+import { inviteTutor, unlinkChildLogin } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { sourceForChild } from './ui/ChildAvatarCluster';
 import { supabase } from '../lib/supabase';
@@ -64,6 +65,7 @@ export default function InviteChildModal({
   const [inviting, setInviting] = useState(false);
   const [successInfo, setSuccessInfo] = useState(null);
   const [emailFocused, setEmailFocused] = useState(false);
+  const [unlinkingLinked, setUnlinkingLinked] = useState(false);
 
   const list = useMemo(
     () => (familyChildren || []).filter((c) => c && c.id != null && !c.archived),
@@ -104,6 +106,7 @@ export default function InviteChildModal({
     setEmailFocused(false);
     setEmailDirty(false);
     setEmail('');
+    setUnlinkingLinked(false);
     if (list.length === 1) {
       setSelectedChildId(list[0].id);
     } else {
@@ -167,6 +170,7 @@ export default function InviteChildModal({
     !isAccepted &&
     emailOk &&
     !inviting &&
+    !unlinkingLinked &&
     !successInfo &&
     !!familyId;
 
@@ -180,6 +184,44 @@ export default function InviteChildModal({
     setSuccessInfo(null);
     onClose?.();
   }, [onClose]);
+
+  const handleUnlinkLinkedLogin = useCallback(() => {
+    if (!selectedChildId || !familyId || unlinkingLinked) return;
+    const name = childDisplayName(selectedChild);
+    const em =
+      selectedChild?.invite_email && String(selectedChild.invite_email).trim()
+        ? String(selectedChild.invite_email).trim()
+        : 'this account';
+    Alert.alert(
+      'Remove linked login?',
+      `${name}'s profile stays in your family. We'll remove ${em} from this child and delete that login so you can invite a different email.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove login',
+          style: 'destructive',
+          onPress: async () => {
+            setUnlinkingLinked(true);
+            setError(null);
+            try {
+              const { data, error: err } = await unlinkChildLogin({ childId: selectedChildId });
+              if (err) throw err;
+              if (!data?.ok) throw new Error('Failed to remove linked login');
+              await reloadSummaries();
+              onInvited?.();
+              toast.push('Linked login removed. You can send a new invite.', 'success');
+            } catch (e) {
+              const msg = e?.message || 'Failed to remove linked login';
+              setError(msg);
+              toast.push(msg, 'error');
+            } finally {
+              setUnlinkingLinked(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [selectedChildId, familyId, unlinkingLinked, selectedChild, reloadSummaries, onInvited, toast]);
 
   const handleSend = async () => {
     if (!emailOk) {
@@ -417,11 +459,30 @@ export default function InviteChildModal({
                   <TouchableOpacity
                     style={styles.btnSecondary}
                     onPress={resetAndClose}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    disabled={unlinkingLinked}
+                    {...(Platform.OS === 'web' && { cursor: unlinkingLinked ? 'not-allowed' : 'pointer' })}
                   >
                     <Text style={styles.btnSecondaryText}>Cancel</Text>
                   </TouchableOpacity>
-                  {!isAccepted ? (
+                  {isAccepted ? (
+                    <TouchableOpacity
+                      style={[
+                        styles.btnUnlinkOutline,
+                        unlinkingLinked && styles.btnPrimaryStrongDisabled,
+                      ]}
+                      onPress={handleUnlinkLinkedLogin}
+                      disabled={unlinkingLinked}
+                      {...(Platform.OS === 'web' && {
+                        cursor: unlinkingLinked ? 'not-allowed' : 'pointer',
+                      })}
+                    >
+                      {unlinkingLinked ? (
+                        <ActivityIndicator size="small" color="#b91c1c" />
+                      ) : (
+                        <Text style={styles.btnUnlinkOutlineText}>Remove linked login</Text>
+                      )}
+                    </TouchableOpacity>
+                  ) : (
                     <TouchableOpacity
                       style={[styles.btnPrimaryStrong, !canSend && styles.btnPrimaryStrongDisabled]}
                       onPress={handleSend}
@@ -439,7 +500,7 @@ export default function InviteChildModal({
                         </>
                       )}
                     </TouchableOpacity>
-                  ) : null}
+                  )}
                 </View>
               )}
             </>
@@ -744,6 +805,26 @@ const styles = StyleSheet.create({
   },
   btnSecondaryText: {
     color: '#374151',
+    fontSize: 14,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  btnUnlinkOutline: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#ffffff',
+    minWidth: 132,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  btnUnlinkOutlineText: {
+    color: '#b91c1c',
     fontSize: 14,
     fontWeight: '600',
     ...(Platform.OS === 'web' && {

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal,
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { supabase } from '../lib/supabase';
-import { permanentDeleteChild } from '../lib/apiClient';
+import { permanentDeleteChild, unlinkChildLogin } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 
@@ -59,6 +59,7 @@ export default function EditChildModal({
   const [academicYear, setAcademicYear] = useState(null);
   const [formCanSubmit, setFormCanSubmit] = useState(false);
   const [connectedEmail, setConnectedEmail] = useState(null);
+  const [unlinkingLogin, setUnlinkingLogin] = useState(false);
 
   const toast = useToast();
 
@@ -77,6 +78,7 @@ export default function EditChildModal({
       setSupportProfile(null);
       setFormCanSubmit(false);
       setConnectedEmail(null);
+      setUnlinkingLogin(false);
     }
   }, [visible, child?.id, familyId, linkedLoginEmail]);
 
@@ -392,6 +394,40 @@ export default function EditChildModal({
     }, 500);
   };
 
+  const handleUnlinkLinkedLogin = () => {
+    if (!child?.id || unlinkingLogin) return;
+    const childName = fullChildData?.first_name || fullChildData?.name || child?.first_name || child?.name || 'Child';
+    const em = connectedEmail && String(connectedEmail).trim() ? String(connectedEmail).trim() : 'this account';
+    Alert.alert(
+      'Remove linked login?',
+      `${childName}'s profile, planner, and progress stay in your family. We will remove ${em} from this child and delete that Learnadoodle login so you can invite a different email.\n\nThis cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove login',
+          style: 'destructive',
+          onPress: async () => {
+            setUnlinkingLogin(true);
+            const { data, error } = await unlinkChildLogin({ childId: child.id });
+            setUnlinkingLogin(false);
+            if (error) {
+              Alert.alert('Error', error.message || 'Failed to remove linked login');
+              return;
+            }
+            if (!data?.ok) {
+              Alert.alert('Error', 'Failed to remove linked login');
+              return;
+            }
+            setConnectedEmail(null);
+            if (toast?.push) toast.push('Linked login removed. You can invite a new email.', 'success');
+            else Alert.alert('Done', 'Linked login removed. You can invite a new email.');
+            if (onChildUpdated) onChildUpdated(child);
+          },
+        },
+      ]
+    );
+  };
+
   const handleDelete = async () => {
     const childName = child?.first_name || child?.name || 'Child';
     if (confirmName.trim().toLowerCase() !== childName.trim().toLowerCase()) {
@@ -488,6 +524,17 @@ export default function EditChildModal({
                   <View style={styles.connectedEmailRow}>
                     <Text style={styles.connectedEmailLabel}>Connected to email:</Text>
                     <Text style={styles.connectedEmailValue} numberOfLines={1}>{connectedEmail}</Text>
+                    <TouchableOpacity
+                      style={[styles.unlinkLoginButton, unlinkingLogin && styles.unlinkLoginButtonDisabled]}
+                      onPress={handleUnlinkLinkedLogin}
+                      disabled={unlinkingLogin}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
+                    >
+                      <Text style={styles.unlinkLoginButtonText}>
+                        {unlinkingLogin ? 'Removing…' : 'Remove linked login'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 )}
                 <AddChildForm
@@ -726,6 +773,24 @@ const styles = StyleSheet.create({
   connectedEmailValue: {
     fontSize: 15,
     color: '#0f172a',
+  },
+  unlinkLoginButton: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fff',
+  },
+  unlinkLoginButtonDisabled: {
+    opacity: 0.6,
+  },
+  unlinkLoginButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#b91c1c',
   },
   dangerZoneAccordion: {
     marginTop: 16,

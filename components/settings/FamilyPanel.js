@@ -4035,12 +4035,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         prefillChildId={inviteModalPrefillChildId}
         onPrefillConsumed={() => setInviteModalPrefillChildId(null)}
         onInvited={() => {
-          onFamilyUpdate?.();
           setChildrenFetchKey((k) => k + 1);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshChildren'));
             window.dispatchEvent(new CustomEvent('refreshFamily'));
           }
+          setTimeout(() => {
+            (async () => {
+              try {
+                const { data, error: err } = await getFamilyMembers();
+                if (!err && data) {
+                  setFamily(data);
+                  onFamilyUpdate?.(data);
+                } else {
+                  onFamilyUpdate?.();
+                }
+              } catch (_e) {
+                onFamilyUpdate?.();
+              }
+            })();
+          }, 400);
         }}
       />
 

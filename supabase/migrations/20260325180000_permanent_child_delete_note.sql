@@ -7,3 +7,5 @@
 --
 -- If you still have a legacy RPC public.delete_child_permanently, you can leave it for backward
 -- compatibility or drop it after all clients call the API above.
+--
+-- Unlink only (keep child row + data, remove linked login + invites): POST /api/family/child/unlink_login
