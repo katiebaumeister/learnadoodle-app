@@ -1,0 +1,9 @@
+-- Permanent deletion of a single child (sessions, goals, membership, linked logins) is implemented
+-- in the FastAPI backend: POST /api/family/child/permanent_delete
+--
+-- That route uses the Supabase service-role client and Supabase Auth Admin API
+-- (auth.admin.delete_user) to remove linked child/student accounts. Removing auth.users is not
+-- done from SQL in this project.
+--
+-- If you still have a legacy RPC public.delete_child_permanently, you can leave it for backward
+-- compatibility or drop it after all clients call the API above.

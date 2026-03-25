@@ -3,11 +3,12 @@ Family management routes for Settings modal
 - GET /api/family/members - Get family members and children
 - POST /api/family/invite - Invite a tutor (or other member)
 - PATCH /api/family/tutors/{member_id} - Update tutor's child_scope
+- POST /api/family/child/permanent_delete - Remove a child, their data, family membership, and linked auth users
 """
 import os
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Set
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from auth import get_current_user, rate_limiter
-from helpers import get_family_id_for_user, child_belongs_to_family
+from helpers import get_family_id_for_user, child_belongs_to_family, delete_signup_confirmation_sent_for_email
 from logger import log_event
 from supabase_client import get_admin_client
 from email_service import send_invite_email
@@ -42,6 +43,8 @@ class MemberOut(BaseModel):
     role: str
     member_role: Optional[str] = None
     child_scope: List[str] = Field(default_factory=list)
+    # Linked child/student row: which children.id this login is bound to (client uses for invite status + email)
+    child_id: Optional[str] = None
 
 class FamilyMembersOut(BaseModel):
     id: Optional[str] = None
@@ -68,6 +71,255 @@ class UpdateTutorScopeIn(BaseModel):
 
 class UpdateFamilyIn(BaseModel):
     family_name: Optional[str] = Field(None, description="Family display name (e.g. 'Doodle Family')")
+
+class PermanentDeleteChildIn(BaseModel):
+    child_id: str = Field(..., description="children.id to permanently remove")
+    confirm_name: str = Field(..., min_length=1, description="Must match child's first name (case-insensitive)")
+
+# --- Permanent child delete helpers ---
+
+
+def _norm_child_name(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return " ".join(str(value).strip().lower().split())
+
+
+def _user_is_parent_for_family(supabase, user_id: str, family_id: str) -> bool:
+    try:
+        current_member_res = (
+            supabase.table("family_members")
+            .select("member_role")
+            .eq("user_id", user_id)
+            .eq("family_id", family_id)
+            .maybe_single()
+            .execute()
+        )
+        if current_member_res.data and current_member_res.data.get("member_role") == "parent":
+            return True
+    except Exception:
+        pass
+    try:
+        profile_res = supabase.table("profiles").select("role").eq("id", user_id).maybe_single().execute()
+        if profile_res.data and profile_res.data.get("role") == "parent":
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _safe_delete_eq(supabase, table: str, filters: dict) -> None:
+    try:
+        q = supabase.table(table).delete()
+        for col, val in filters.items():
+            q = q.eq(col, val)
+        q.execute()
+    except Exception as e:
+        log_event("family.permanent_delete.skip_table", table=table, error=str(e))
+
+
+def _delete_event_cascade(supabase, event_id: str) -> None:
+    for tbl, col in (
+        ("attendance_records", "event_id"),
+        ("event_outcomes", "event_id"),
+        ("activity_instances", "event_id"),
+    ):
+        try:
+            supabase.table(tbl).delete().eq(col, event_id).execute()
+        except Exception:
+            pass
+    try:
+        supabase.table("events").delete().eq("id", event_id).execute()
+    except Exception:
+        pass
+
+
+def _purge_child_from_events(supabase, family_id: str, child_id: str) -> None:
+    cid = str(child_id)
+    try:
+        res = supabase.table("events").select("id").eq("family_id", family_id).eq("child_id", cid).execute()
+        for row in res.data or []:
+            eid = row.get("id")
+            if eid:
+                _delete_event_cascade(supabase, str(eid))
+    except Exception as e:
+        log_event("family.permanent_delete.events_primary", error=str(e))
+
+    try:
+        res = supabase.table("events").select("id, child_id, child_ids").eq("family_id", family_id).execute()
+        for row in res.data or []:
+            mult = row.get("child_ids")
+            if not mult or not isinstance(mult, list):
+                continue
+            if cid not in [str(x) for x in mult]:
+                continue
+            eid = row.get("id")
+            if not eid:
+                continue
+            new_mult = [x for x in mult if str(x) != cid]
+            primary = row.get("child_id")
+            if len(new_mult) == 0 and not primary:
+                _delete_event_cascade(supabase, str(eid))
+            else:
+                try:
+                    supabase.table("events").update({"child_ids": new_mult}).eq("id", str(eid)).execute()
+                except Exception as ex:
+                    log_event("family.permanent_delete.events_patch_child_ids", event_id=eid, error=str(ex))
+    except Exception as e:
+        log_event("family.permanent_delete.events_child_ids", error=str(e))
+
+
+def _delete_child_scoped_rows(supabase, family_id: str, child_id: str) -> None:
+    cid = str(child_id)
+    tables_family_child = [
+        "assignments",
+        "attendance_records",
+        "planner_exclusions",
+        "family_compliance_checklist",
+    ]
+    for tbl in tables_family_child:
+        _safe_delete_eq(supabase, tbl, {"family_id": family_id, "child_id": cid})
+
+    tables_child_only = [
+        "child_support_profiles",
+        "subject_goals",
+        "grades",
+        "learning_suggestions",
+        "plan_suggestions",
+        "material_children",
+        "subject_track",
+        "evidence",
+    ]
+    for tbl in tables_child_only:
+        _safe_delete_eq(supabase, tbl, {"child_id": cid})
+
+    try:
+        supabase.table("activity_instances").delete().eq("child_id", cid).execute()
+    except Exception:
+        pass
+
+
+def _apply_family_members_for_deleted_child(supabase, family_id: str, child_id: str) -> List[str]:
+    """
+    Remove tutors' scope, remove child/student rows, return auth user IDs to delete.
+    """
+    cid = str(child_id)
+    auth_ids_to_delete: List[str] = []
+    try:
+        res = (
+            supabase.table("family_members")
+            .select("id, user_id, member_role, child_id, child_scope")
+            .eq("family_id", family_id)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        log_event("family.permanent_delete.family_members_read", error=str(e))
+        return auth_ids_to_delete
+
+    for m in rows:
+        mid = m.get("id")
+        if not mid:
+            continue
+        role = (m.get("member_role") or "").lower()
+        uid = m.get("user_id")
+        m_child = m.get("child_id")
+        scope = list(m.get("child_scope") or [])
+        scope_strs = [str(x) for x in scope]
+
+        if role == "tutor":
+            if cid not in scope_strs:
+                continue
+            new_scope = [x for x in scope if str(x) != cid]
+            try:
+                if not new_scope:
+                    supabase.table("family_members").delete().eq("id", mid).execute()
+                else:
+                    supabase.table("family_members").update(
+                        {"child_scope": new_scope, "updated_at": datetime.now().isoformat()}
+                    ).eq("id", mid).execute()
+            except Exception as e:
+                log_event("family.permanent_delete.tutor_scope", member_id=mid, error=str(e))
+            continue
+
+        if role in ("child", "student"):
+            if m_child and str(m_child) == cid:
+                if uid:
+                    auth_ids_to_delete.append(str(uid))
+                try:
+                    supabase.table("family_members").delete().eq("id", mid).execute()
+                except Exception as e:
+                    log_event("family.permanent_delete.fm_child_row", member_id=mid, error=str(e))
+                continue
+            if cid in scope_strs:
+                new_scope = [x for x in scope if str(x) != cid]
+                try:
+                    if not new_scope:
+                        if uid:
+                            auth_ids_to_delete.append(str(uid))
+                        supabase.table("family_members").delete().eq("id", mid).execute()
+                    else:
+                        supabase.table("family_members").update(
+                            {"child_scope": new_scope, "updated_at": datetime.now().isoformat()}
+                        ).eq("id", mid).execute()
+                except Exception as e:
+                    log_event("family.permanent_delete.fm_student_scope", member_id=mid, error=str(e))
+
+    out: List[str] = []
+    seen: Set[str] = set()
+    for u in auth_ids_to_delete:
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _delete_linked_auth_users(supabase, user_ids: List[str]) -> None:
+    admin = getattr(getattr(supabase, "auth", None), "admin", None)
+    delete_user = getattr(admin, "delete_user", None) if admin else None
+    if not callable(delete_user):
+        log_event("family.permanent_delete.auth_admin_missing", hint="upgrade supabase-py or use service role client")
+        return
+    for uid in user_ids:
+        if not uid:
+            continue
+        try:
+            supabase.table("notification_preferences").delete().eq("user_id", uid).execute()
+        except Exception:
+            pass
+        try:
+            pr = supabase.table("profiles").select("email").eq("id", uid).maybe_single().execute()
+            em = (pr.data or {}).get("email")
+            if em:
+                delete_signup_confirmation_sent_for_email(str(em))
+        except Exception:
+            pass
+        try:
+            delete_user(uid)
+        except Exception as e:
+            log_event("family.permanent_delete.auth_delete_failed", user_id=uid, error=str(e))
+
+
+def _permanent_delete_child_data(supabase, family_id: str, child_id: str) -> List[str]:
+    cid = str(child_id)
+    try:
+        supabase.table("invites").delete().eq("family_id", family_id).eq("child_id", cid).execute()
+    except Exception as e:
+        log_event("family.permanent_delete.invites", error=str(e))
+
+    _delete_child_scoped_rows(supabase, family_id, cid)
+    _purge_child_from_events(supabase, family_id, cid)
+
+    auth_ids = _apply_family_members_for_deleted_child(supabase, family_id, cid)
+
+    try:
+        supabase.table("children").delete().eq("id", cid).eq("family_id", family_id).execute()
+    except Exception as e:
+        log_event("family.permanent_delete.children_row", error=str(e))
+        raise
+
+    return auth_ids
+
 
 # --- Routes ---
 
@@ -170,19 +422,37 @@ async def get_family_members(
             except Exception as e:
                 log_event("family.get_members.profiles_table_error", user_id=user["id"], error=str(e))
 
+        # Many accounts only have email on auth.users; profiles.email may be null
+        for uid in set(user_ids):
+            if profiles_map.get(uid):
+                continue
+            try:
+                auth_res = supabase.auth.admin.get_user_by_id(uid)
+                u = getattr(auth_res, "user", None)
+                em = getattr(u, "email", None) if u is not None else None
+                if em:
+                    profiles_map[uid] = em
+            except Exception as e:
+                log_event("family.get_members.auth_email_fallback_error", user_id=user["id"], target_uid=uid, error=str(e))
+
         for member in members_data:
             mid = member.get("id")
             if not mid:
                 continue
             email = profiles_map.get(member.get("user_id")) if member.get("user_id") else None
             name = email or None
+            raw_cid = member.get("child_id")
+            child_id_out = None
+            if raw_cid is not None and str(raw_cid).strip() != "":
+                child_id_out = str(raw_cid).strip()
             members.append(MemberOut(
                 id=mid,
                 name=name,
                 email=email,
                 role=member.get("member_role", "parent"),
                 member_role=member.get("member_role"),
-                child_scope=member.get("child_scope", []) or []
+                child_scope=member.get("child_scope", []) or [],
+                child_id=child_id_out,
             ))
 
         child_linked_via_accepted_invite = None
@@ -357,6 +627,72 @@ async def reset_family_data(
 
     log_event("family.reset_data.success", user_id=user["id"], family_id=family_id)
     return {"success": True, "message": "Family data reset. Refresh the page to see the onboarding flow."}
+
+
+@router.post("/child/permanent_delete")
+async def permanent_delete_child(
+    body: PermanentDeleteChildIn,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Permanently remove one child from the family: child-scoped rows, invites, family_members
+    (including linked child/student logins), and the children record. Deletes linked Supabase
+    Auth users via the Admin API so their login is removed.
+    """
+    log_event("family.permanent_delete.start", user_id=user["id"], child_id=body.child_id)
+
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Family not found")
+
+    if not child_belongs_to_family(body.child_id, family_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Child not found")
+
+    supabase = get_admin_client()
+    if not _user_is_parent_for_family(supabase, user["id"], family_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only parents can delete a child")
+
+    try:
+        ch = (
+            supabase.table("children")
+            .select("id, first_name")
+            .eq("id", body.child_id)
+            .eq("family_id", family_id)
+            .maybe_single()
+            .execute()
+        )
+        row = ch.data or {}
+        first_name = row.get("first_name") or ""
+    except Exception as e:
+        log_event("family.permanent_delete.load_child", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not load child record",
+        )
+
+    if _norm_child_name(body.confirm_name) != _norm_child_name(first_name):
+        return {"ok": False, "reason": "name_mismatch"}
+
+    try:
+        deleted_auth_ids = _permanent_delete_child_data(supabase, family_id, body.child_id)
+    except Exception as e:
+        log_event("family.permanent_delete.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete child: {str(e)}",
+        )
+
+    _delete_linked_auth_users(supabase, deleted_auth_ids)
+
+    log_event(
+        "family.permanent_delete.success",
+        user_id=user["id"],
+        family_id=family_id,
+        child_id=body.child_id,
+        auth_users=len(deleted_auth_ids),
+    )
+    return {"ok": True, "deleted_auth_user_ids": deleted_auth_ids}
 
 
 @router.post("/invite", response_model=InviteTutorOut)

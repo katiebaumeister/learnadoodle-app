@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal,
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { supabase } from '../lib/supabase';
+import { permanentDeleteChild } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 
@@ -375,9 +376,13 @@ export default function EditChildModal({
       return;
     }
 
+    const linkedAccountNote =
+      connectedEmail != null && connectedEmail !== ''
+        ? `\n\nTheir Learnadoodle login (${connectedEmail}) will be deleted and they will be removed from this family.`
+        : '';
     Alert.alert(
       'Delete Permanently',
-      `This will permanently delete ${childName} and ALL their data including sessions, goals, rules, and progress. This CANNOT be undone.\n\nAre you absolutely sure?`,
+      `This will permanently delete ${childName} and ALL their data including sessions, goals, rules, and progress. This CANNOT be undone.${linkedAccountNote}\n\nAre you absolutely sure?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -390,15 +395,18 @@ export default function EditChildModal({
               return;
             }
             setDeleting(true);
-            const { data, error } = await supabase.rpc('delete_child_permanently', {
-              _family: effectiveFamilyId,
-              _child: child.id,
-              _confirm_name: confirmName
+            const { data, error } = await permanentDeleteChild({
+              childId: child.id,
+              confirmName: confirmName.trim(),
             });
 
             setDeleting(false);
 
-            if (error || !data?.ok) {
+            if (error) {
+              Alert.alert('Error', error.message || 'Failed to delete child');
+              return;
+            }
+            if (!data?.ok) {
               const reason = data?.reason || 'unknown';
               Alert.alert(
                 'Error',
@@ -516,6 +524,13 @@ export default function EditChildModal({
                     <Text style={styles.dangerSectionDescription}>
                       This removes all sessions, goals, overrides, and cached days for{' '}
                       <Text style={styles.bold}>{childName}</Text>. This cannot be undone.
+                      {connectedEmail != null && connectedEmail !== '' ? (
+                        <>
+                          {' '}
+                          If they have a linked account ({connectedEmail}), that login will be deleted and they will be
+                          removed from this family.
+                        </>
+                      ) : null}
                     </Text>
                     
                     <Text style={styles.inputLabel}>

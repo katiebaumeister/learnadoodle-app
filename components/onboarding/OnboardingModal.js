@@ -9,6 +9,7 @@ import {
   completeOnboarding,
   getOnboardingStatus,
   getFamilyMembers,
+  permanentDeleteChild,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
 import { parseChildIds } from '../../lib/services/subjectsClient';
@@ -390,12 +391,17 @@ export default function OnboardingModal({
     }
     setError(null);
     try {
-      const { error: rpcError } = await supabase.rpc('delete_child_permanently', {
-        _family: fid,
-        _child: childId,
-        _confirm_name: childName || '',
+      const { data: delData, error: delErr } = await permanentDeleteChild({
+        childId,
+        confirmName: (childName || '').trim(),
       });
-      if (rpcError) throw new Error(rpcError.message || 'Failed to delete child.');
+      if (delErr) throw new Error(delErr.message || 'Failed to delete child.');
+      if (!delData?.ok) {
+        const r = delData?.reason;
+        throw new Error(
+          r === 'name_mismatch' ? 'Name does not match.' : 'Failed to delete child.'
+        );
+      }
       setCreatedChildren((prev) => {
         const next = prev.filter((c) => c.id !== childId);
         setSubjectStepChildIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
@@ -660,15 +666,14 @@ export default function OnboardingModal({
                         if (fid) {
                           await Promise.all(
                             createdChildren.map((c) =>
-                              supabase
-                                .rpc('delete_child_permanently', {
-                                  _family: fid,
-                                  _child: c.id,
-                                  _confirm_name: c.name,
-                                })
-                                .then(({ error }) => {
-                                  if (error) console.warn('Onboarding clear: failed to delete child', c.id, error);
-                                })
+                              permanentDeleteChild({
+                                childId: c.id,
+                                confirmName: (c.name || '').trim(),
+                              }).then(({ error, data }) => {
+                                if (error || !data?.ok) {
+                                  console.warn('Onboarding clear: failed to delete child', c.id, error || data);
+                                }
+                              })
                             )
                           );
                         }
