@@ -31,7 +31,8 @@ const SHELL_SOURCES = {
 };
 
 const TOTAL_PRELOAD = SHELL_IMAGE_IDS.length;
-const GATE_MIN_CYCLE_MS = 1600;
+/** No extra delay after images decode — gate opens as soon as shell assets are loaded. */
+const GATE_MIN_CYCLE_MS = 0;
 const STALL_FALLBACK_MS = 60000;
 /** App shell outer background — avoids white flash between landing and loader */
 const LOADER_BG = '#F6F7FB';

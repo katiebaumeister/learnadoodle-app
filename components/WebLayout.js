@@ -295,9 +295,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [shellAssetsReady, setShellAssetsReady] = useState(false);
   const onShellGateReady = useCallback(() => setShellAssetsReady(true), []);
   const criticalDataReady = familyDataLoaded && (academicYearsLoaded || !session?.family_id);
+  const isChildOrStudentSession =
+    session?.role_flags?.isChild === true ||
+    session?.member_role === 'child' ||
+    session?.member_role === 'student' ||
+    session?.effective_role === 'child' ||
+    session?.effective_role === 'student';
   // When on home, keep loader until we have familyId (so we never show inner "Loading...") and home data is ready.
+  // Child/student home uses ChildHomeScreen + its own fetches — do not block shell on parent get_home_data.
   // If session is done and has no family_id, allow ready so we don't block forever for users without a family.
-  const homeReady = activeTab !== 'home' ||
+  const homeReady =
+    activeTab !== 'home' ||
+    isChildOrStudentSession ||
     (familyId && !homeLoading) ||
     (session && !session.loading && session.family_id == null && !homeLoading);
   const showLoader = !!(
@@ -1505,7 +1514,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       let { fid, status } = await tryOnce();
       if (fid) return fid;
       // 404 = route missing; 500 = backend/db error (e.g. missing GRANT). Retry once after delay.
-      if (status === 404 || status === 500) {
+      if (status === 401 || status === 403 || status === 404 || status === 500) {
         await new Promise(r => setTimeout(r, 800));
         const retry = await tryOnce();
         if (retry.fid) return retry.fid;
@@ -2163,9 +2172,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   /** Purple Month/Week/To-do segment only when that row is the active context. */
   const showTopPlannerSegmentHighlight =
     ['month', 'board', 'tasks'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
-
-  // Show full-screen loading when home tab is loading
-  const showFullScreenLoading = activeTab === 'home' && homeLoading;
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {

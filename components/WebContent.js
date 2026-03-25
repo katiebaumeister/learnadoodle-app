@@ -2843,7 +2843,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       try {
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
-          .select('family_id')
+          .select('family_id, role')
           .eq('id', authUserId)
           .maybeSingle();
 
@@ -2851,6 +2851,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           console.error('Error fetching profile for home:', profileError);
           setHomeLoading(false);
         if (onHomeLoadingChange) onHomeLoadingChange(false);
+          return;
+        }
+
+        const profileRole = String(profileData?.role || '').toLowerCase();
+        const sessionIsChild =
+          propSession?.role_flags?.isChild === true ||
+          ['child', 'student'].includes(String(propSession?.effective_role || '').toLowerCase()) ||
+          ['child', 'student'].includes(String(propSession?.member_role || '').toLowerCase());
+        if (sessionIsChild || profileRole === 'child' || profileRole === 'student') {
+          setHomeLoading(false);
+          if (onHomeLoadingChange) onHomeLoadingChange(false);
           return;
         }
 
@@ -3055,7 +3066,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
 
     fetchHomeData();
-  }, [authUserId, homeSelectedDate, homeSelectedChildren]);
+  }, [
+    authUserId,
+    homeSelectedDate,
+    homeSelectedChildren,
+    propSession?.role_flags?.isChild,
+    propSession?.effective_role,
+    propSession?.member_role,
+  ]);
 
   // Listen for calendar events and refresh home data when events change
   useEffect(() => {
