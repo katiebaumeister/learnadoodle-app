@@ -12,7 +12,7 @@ import AssignmentDetailModal from '../../assignments/AssignmentDetailModal';
 import AssignmentReviewModal from '../../assignments/AssignmentReviewModal';
 import { submitAssignment, toggleNeedHelp, reviewAssignment } from '../../../lib/services/assignmentsClient';
 
-export default function AssignmentsCard({ childId, familyId, onNavigate }) {
+export default function AssignmentsCard({ childId, familyId, onNavigate, embedded = false }) {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAssignment, setSelectedAssignment] = useState(null);
@@ -87,9 +87,11 @@ export default function AssignmentsCard({ childId, familyId, onNavigate }) {
     setShowDetailModal(false);
   };
 
+  const cardStyle = embedded ? [styles.card, styles.cardEmbedded] : styles.card;
+
   if (loading) {
     return (
-      <View style={styles.card}>
+      <View style={cardStyle}>
         <Text style={styles.title}>Assignments</Text>
         <Text style={styles.loadingText}>Loading...</Text>
       </View>
@@ -98,7 +100,7 @@ export default function AssignmentsCard({ childId, familyId, onNavigate }) {
 
   return (
     <>
-      <View style={styles.card}>
+      <View style={cardStyle}>
         <View style={styles.header}>
           <FileText size={20} color={colors.text} />
           <Text style={styles.title}>Assignments</Text>
@@ -191,6 +193,12 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  cardEmbedded: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    padding: 0,
+    borderRadius: 0,
   },
   header: {
     flexDirection: 'row',

@@ -9,7 +9,12 @@ import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
-import { fetchChildInviteSummaries, formatInviteLastSent } from '../../lib/services/childInviteStatus';
+import {
+  fetchChildInviteSummaries,
+  formatInviteLastSent,
+  linkedSummariesFromFamilyApiMembers,
+  mergeChildInviteSummaryMaps,
+} from '../../lib/services/childInviteStatus';
 import ChildDotCluster from '../ui/ChildDotCluster';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import EditChildModal from '../EditChildModal';
@@ -93,13 +98,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Active section for sidebar navigation
   const [activeSection, setActiveSection] = useState(propInitialSection || 'profile');
 
+  /**
+   * Child accounts that joined via parent invite have an accepted row in `invites` for their child_id.
+   * Self-onboarding students ("I'm a student") do not — they should still see subscription in Family settings.
+   */
+  const [childInviteLinkResolved, setChildInviteLinkResolved] = useState(() => !isChildMode);
+  const [childJoinedViaAcceptedFamilyInvite, setChildJoinedViaAcceptedFamilyInvite] = useState(false);
+
   // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
   useEffect(() => {
     if (propInitialSection && propInitialSection !== activeSection) {
       setActiveSection(propInitialSection);
     }
   }, [propInitialSection]);
-  
+
   // Modal state
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
@@ -144,7 +156,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Child invite — shared InviteChildModal (same as Home)
   const [showChildInviteModal, setShowChildInviteModal] = useState(false);
   const [inviteModalPrefillChildId, setInviteModalPrefillChildId] = useState(null);
-  const [childInviteSummaries, setChildInviteSummaries] = useState({});
+  const [childInviteSupabase, setChildInviteSupabase] = useState({});
   
   // Parent invite state
   const [showParentInviteModal, setShowParentInviteModal] = useState(false);
@@ -192,27 +204,54 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   useEffect(() => {
     const fid = family?.id || familyId || propFamilyId;
     if (!fid || !childrenIdsKeyForInvites) {
-      setChildInviteSummaries({});
+      setChildInviteSupabase({});
       return;
     }
     const rawIds = childrenIdsKeyForInvites.split(',').filter(Boolean);
     if (rawIds.length === 0) {
-      setChildInviteSummaries({});
+      setChildInviteSupabase({});
       return;
     }
     let cancelled = false;
     (async () => {
       try {
         const map = await fetchChildInviteSummaries(supabase, fid, rawIds);
-        if (!cancelled) setChildInviteSummaries(map);
+        if (!cancelled) setChildInviteSupabase(map);
       } catch (_) {
-        if (!cancelled) setChildInviteSummaries({});
+        if (!cancelled) setChildInviteSupabase({});
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [family?.id, familyId, propFamilyId, childrenIdsKeyForInvites, childrenFetchKey]);
+
+  const childInviteSummaries = useMemo(() => {
+    const rawIds = childrenIdsKeyForInvites.split(',').filter(Boolean);
+    if (rawIds.length === 0) return {};
+    const apiLinked = linkedSummariesFromFamilyApiMembers(family?.members, rawIds);
+    return mergeChildInviteSummaryMaps(childInviteSupabase, apiLinked);
+  }, [childInviteSupabase, family?.members, childrenIdsKeyForInvites]);
+
+  // Full family payload (including members[]) — server sees linked children; props/RLS often do not
+  useEffect(() => {
+    if (activeSection !== 'members' || !user) return;
+    const fid = family?.id || familyId || propFamilyId;
+    if (!fid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: err } = await getFamilyMembers();
+        if (cancelled || err || !data?.id) return;
+        if (String(data.id) !== String(fid)) return;
+        setFamily(data);
+        if (data.id) setFamilyId(data.id);
+      } catch (_) {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, familyId, propFamilyId, user?.id, childrenFetchKey]);
 
   const styles = createStyles(tokens);
 
@@ -442,6 +481,45 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     })();
     return () => { cancelled = true; };
   }, [viewingAsChildId, familyId, propUserRole]);
+
+  useEffect(() => {
+    if (!isChildMode) {
+      setChildInviteLinkResolved(true);
+      setChildJoinedViaAcceptedFamilyInvite(false);
+      return;
+    }
+    if (!familyId || !currentChildId) {
+      setChildInviteLinkResolved(true);
+      setChildJoinedViaAcceptedFamilyInvite(false);
+      return;
+    }
+    let cancelled = false;
+    setChildInviteLinkResolved(false);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('invites')
+          .select('id')
+          .eq('family_id', familyId)
+          .eq('child_id', currentChildId)
+          .eq('role', 'child')
+          .not('accepted_at', 'is', null)
+          .limit(1);
+        if (cancelled) return;
+        setChildJoinedViaAcceptedFamilyInvite(Boolean(!error && data?.length));
+      } catch (_) {
+        if (!cancelled) setChildJoinedViaAcceptedFamilyInvite(false);
+      } finally {
+        if (!cancelled) setChildInviteLinkResolved(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isChildMode, familyId, currentChildId]);
+
+  const showSubscriptionInSidebar =
+    !isChildMode || (childInviteLinkResolved && !childJoinedViaAcceptedFamilyInvite);
 
   // Load preferences and notification preferences from DB (skip notification_preferences in child mode to avoid 403 RLS)
   useEffect(() => {
@@ -3658,26 +3736,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </TouchableOpacity>
           </View>
 
-          {/* Subscription Card */}
-          <View style={styles.sidebarCard}>
-            <Text style={styles.sidebarCardTitle}>Subscription</Text>
-            <View style={styles.sidebarSubscriptionContent}>
-              <View style={styles.sidebarSubscriptionInfo}>
-                <TouchableOpacity 
-                  onPress={() => setShowComingSoonModal(true)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
-                </TouchableOpacity>
-                <View style={styles.sidebarSubscriptionStatusRow}>
-                  <View style={styles.sidebarSubscriptionStatusChip}>
-                    <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+          {/* Subscription: hide for children who joined via parent invite (subscription is the household's) */}
+          {showSubscriptionInSidebar ? (
+            <View style={styles.sidebarCard}>
+              <Text style={styles.sidebarCardTitle}>Subscription</Text>
+              <View style={styles.sidebarSubscriptionContent}>
+                <View style={styles.sidebarSubscriptionInfo}>
+                  <TouchableOpacity 
+                    onPress={() => setShowComingSoonModal(true)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
+                  </TouchableOpacity>
+                  <View style={styles.sidebarSubscriptionStatusRow}>
+                    <View style={styles.sidebarSubscriptionStatusChip}>
+                      <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+                    </View>
+                    <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
                   </View>
-                  <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
                 </View>
               </View>
             </View>
-          </View>
+          ) : null}
 
           {/* Support Card */}
           <View style={styles.sidebarCard}>
@@ -3994,6 +4074,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }}
         familyId={family?.id || familyId}
         familyChildren={children}
+        familyMembersFromApi={family?.members ?? null}
         prefillChildId={inviteModalPrefillChildId}
         onPrefillConsumed={() => setInviteModalPrefillChildId(null)}
         onInvited={() => {
@@ -4001,6 +4082,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setChildrenFetchKey((k) => k + 1);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshChildren'));
+            window.dispatchEvent(new CustomEvent('refreshFamily'));
           }
         }}
       />

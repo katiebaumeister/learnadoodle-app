@@ -20,7 +20,13 @@ import {
   fetchChildInviteSummaries,
   mergeChildInviteSummary,
   formatInviteLastSent,
+  linkedSummariesFromFamilyApiMembers,
+  mergeChildInviteSummaryMaps,
 } from '../lib/services/childInviteStatus';
+import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
+
+/** Slightly deeper blue for links/icons on white (pairs with LEARNADOODLE_LIGHT_BLUE) */
+const LD_BLUE_ACCENT = '#4A9FD4';
 
 function isValidEmail(value) {
   const t = (value || '').trim();
@@ -44,6 +50,8 @@ export default function InviteChildModal({
   onInvited,
   prefillChildId = null,
   onPrefillConsumed,
+  /** From GET /api/family/members — fills linked status when Supabase RLS hides rows */
+  familyMembersFromApi = null,
 }) {
   const toast = useToast();
   const emailInputRef = useRef(null);
@@ -112,12 +120,20 @@ export default function InviteChildModal({
     }
   }, [visible, prefillChildId, list, onPrefillConsumed]);
 
+  const summariesWithApi = useMemo(() => {
+    const apiLinked = linkedSummariesFromFamilyApiMembers(
+      familyMembersFromApi,
+      list.map((c) => c.id)
+    );
+    return mergeChildInviteSummaryMaps(summaries, apiLinked);
+  }, [summaries, familyMembersFromApi, list]);
+
   const mergedList = useMemo(
     () =>
       list.map((c) =>
-        mergeChildInviteSummary(c, summaries[String(c.id)])
+        mergeChildInviteSummary(c, summariesWithApi[String(c.id)])
       ),
-    [list, summaries]
+    [list, summariesWithApi]
   );
 
   const selectedChild = useMemo(
@@ -320,7 +336,7 @@ export default function InviteChildModal({
                               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                             >
-                              <RotateCw size={12} color="#6366f1" />
+                              <RotateCw size={12} color={LD_BLUE_ACCENT} />
                               <Text style={styles.miniCardResendText}>Resend</Text>
                             </TouchableOpacity>
                           </>
@@ -580,8 +596,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   miniCardSelected: {
-    borderColor: '#6366f1',
-    backgroundColor: '#eef2ff',
+    borderColor: LEARNADOODLE_LIGHT_BLUE,
+    backgroundColor: 'rgba(158, 207, 251, 0.22)',
   },
   miniCardTop: {
     flexDirection: 'row',
@@ -606,7 +622,7 @@ const styles = StyleSheet.create({
     }),
   },
   miniCardNameSelected: {
-    color: '#4338ca',
+    color: '#1e5f8a',
   },
   miniCardMeta: {
     fontSize: 11,
@@ -634,7 +650,7 @@ const styles = StyleSheet.create({
   miniCardResendText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6366f1',
+    color: LD_BLUE_ACCENT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -699,9 +715,9 @@ const styles = StyleSheet.create({
     }),
   },
   inputPrimaryFocused: {
-    borderColor: '#6366f1',
+    borderColor: LEARNADOODLE_LIGHT_BLUE,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 0 0 3px rgba(99, 102, 241, 0.2)',
+      boxShadow: '0 0 0 3px rgba(158, 207, 251, 0.55)',
     }),
   },
   err: {
@@ -738,14 +754,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#6366f1',
+    backgroundColor: LEARNADOODLE_LIGHT_BLUE,
     paddingVertical: 12,
     paddingHorizontal: 22,
     borderRadius: 10,
     minWidth: 132,
     justifyContent: 'center',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.35)',
+      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
       cursor: 'pointer',
     }),
   },

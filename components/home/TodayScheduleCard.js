@@ -18,6 +18,9 @@ export default function TodayScheduleCard({
   onTabChange, // Optional: for direct tab navigation
   /** When true, show attendance checkboxes (same backend as planner). */
   showAttendanceToggle = true,
+  /** When false, empty state shows a hint instead of “Add event” (e.g. child home). */
+  showEmptyAddButton = true,
+  emptyStateHint = 'Ask your parent to add activities, or check back later.',
 }) {
   /** Optimistic done state by event id until server props catch up */
   const [attendanceOptimistic, setAttendanceOptimistic] = useState({});
@@ -314,24 +317,28 @@ export default function TodayScheduleCard({
               <CalendarDays size={28} color="#94a3b8" strokeWidth={1.75} />
             </View>
             <Text style={styles.emptyTitle}>Nothing scheduled</Text>
-            <TouchableOpacity
-              style={styles.emptyPrimaryCta}
-              onPress={() => {
-                if (onAddBlock) {
-                  onAddBlock();
-                } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(
-                    new CustomEvent('openTaskModal', {
-                      detail: { date: new Date(), placement: 'calendar' },
-                    })
-                  );
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#fff" strokeWidth={2.5} />
-              <Text style={styles.emptyPrimaryCtaText}>Add event</Text>
-            </TouchableOpacity>
+            {showEmptyAddButton ? (
+              <TouchableOpacity
+                style={styles.emptyPrimaryCta}
+                onPress={() => {
+                  if (onAddBlock) {
+                    onAddBlock();
+                  } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(
+                      new CustomEvent('openTaskModal', {
+                        detail: { date: new Date(), placement: 'calendar' },
+                      })
+                    );
+                  }
+                }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Plus size={18} color="#fff" strokeWidth={2.5} />
+                <Text style={styles.emptyPrimaryCtaText}>Add event</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.emptyHint}>{emptyStateHint}</Text>
+            )}
           </View>
         </View>
       )}
@@ -669,6 +676,17 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyHint: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 19,
+    maxWidth: 280,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyAddButton: {

@@ -3774,6 +3774,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         onClose={() => setShowInviteChildModal(false)}
         familyId={familyId}
         familyChildren={children}
+        familyMembersFromApi={family?.members ?? null}
         onInvited={() => {
           fetchFamilyMembers();
           fetchFamilyData();
