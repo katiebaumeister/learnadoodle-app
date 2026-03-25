@@ -7414,21 +7414,51 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   );
 
   const renderContent = (plannerTabsReturnNull = false) => {
+    const homeFamilyIdForContent = familyId || propSession?.family_id || null;
+    const renderParentHomeCommon = (fid) => (
+      <ParentHomeScreen
+        familyId={fid}
+        onNavigate={onTabChange}
+        onAddEvent={() => {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
+          }
+        }}
+        onAddGrade={() => {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openAddGradeModal'));
+          }
+        }}
+        onAddMaterial={() => {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openAddMaterialModal'));
+          }
+        }}
+        onAddSubject={() => {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+          }
+        }}
+        onAddChild={() => {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openAddChildModal'));
+          }
+        }}
+      />
+    );
+
     // Check if it's a subject detail tab (from routing)
     if (activeTab && activeTab.startsWith('subject-')) {
       const subjectId = activeTab.replace('subject-', '');
-      if (!familyId) {
-        return (
-          <View style={styles.content}>
-            <Text style={styles.title}>Loading...</Text>
-          </View>
-        )
+      const subjectFamilyId = familyId || propSession?.family_id;
+      if (!subjectFamilyId) {
+        return renderParentHomeCommon(homeFamilyIdForContent);
       }
       try {
         return (
           <SubjectDetailPage
             subjectId={subjectId}
-            familyId={familyId}
+            familyId={subjectFamilyId}
             children={children || []}
             preloadedSubjectData={subjectDetailCache[subjectId]}
             onSubjectDataUpdate={(data) => handleSubjectDetailUpdate(subjectId, data)}
@@ -7558,7 +7588,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         </View>
       )
     }
-    
+
     switch (activeTab) {
       case 'search':
         return renderSearchContent()
@@ -7567,39 +7597,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         const isChild = roleForHome === 'child' || roleForHome === 'student';
         const isTutor = roleForHome === 'tutor';
         const hasAccessibleChildren = accessibleForHome.length > 0;
-        const homeFamilyId = familyId || propSession?.family_id || null;
-
-        const renderParentHome = (fid) => (
-          <ParentHomeScreen
-            familyId={fid}
-            onNavigate={onTabChange}
-            onAddEvent={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
-              }
-            }}
-            onAddGrade={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openAddGradeModal'));
-              }
-            }}
-            onAddMaterial={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openAddMaterialModal'));
-              }
-            }}
-            onAddSubject={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
-              }
-            }}
-            onAddChild={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('openAddChildModal'));
-              }
-            }}
-          />
-        );
 
         // Role still resolving: never block on a centered "Loading..." — show real home shells
         if (user && roleForHome == null) {
@@ -7611,7 +7608,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               />
             );
           }
-          return renderParentHome(homeFamilyId);
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         if (isChild && hasAccessibleChildren) {
           return (
@@ -7630,13 +7627,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             (!propSession.role_flags?.isChild && !propSession.role_flags?.isTutor)) &&
           !propSession.loading
         ) {
-          return renderParentHome(homeFamilyId);
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
-        if (homeFamilyId) {
-          return renderParentHome(homeFamilyId);
+        if (homeFamilyIdForContent) {
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         if (user) {
-          return renderParentHome(null);
+          return renderParentHomeCommon(null);
         }
         return (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
@@ -7662,17 +7659,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       //   return <ExploreContent familyId={familyId} children={children} />
       case 'new':
         return renderNewContent()
-      case 'materials':
-        if (!familyId) {
-          return (
-            <View style={styles.content}>
-              <Text style={styles.title}>Loading...</Text>
-            </View>
-          )
+      case 'materials': {
+        const matsFamilyId = familyId || propSession?.family_id;
+        if (!matsFamilyId) {
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         try {
           return <MaterialsLibrary 
-            familyId={familyId} 
+            familyId={matsFamilyId} 
             children={children || []}
             preloadedSubjects={subjects || []}
             preloadedMaterials={materialsCache}
@@ -7690,18 +7684,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             </View>
           )
         }
-      case 'subjects':
-        if (!familyId) {
-          return (
-            <View style={styles.content}>
-              <Text style={styles.title}>Loading...</Text>
-            </View>
-          )
+      }
+      case 'intelligence':
+      case 'records':
+      case 'review':
+      case 'coach':
+      case 'subjects': {
+        const subjectsFamilyId = familyId || propSession?.family_id;
+        if (!subjectsFamilyId) {
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         try {
           return (
             <SubjectsPage
-              familyId={familyId}
+              familyId={subjectsFamilyId}
               children={children || []}
               preloadedSubjects={subjectsOverviewCache}
               preloadedSubjectDetailCache={subjectDetailCache}
@@ -7802,24 +7798,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             </View>
           );
         }
+      }
       case 'profile':
       case 'settings':
-      case 'children-list':
-        // Show loading until familyId is ready to avoid blank screen on first visit
-        if (user && !familyId) {
-          return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-              <ActivityIndicator size="large" color="#887DEE" />
-              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
-            </View>
-          );
+      case 'children-list': {
+        const panelFamilyId = familyId || propSession?.family_id;
+        if (user && !panelFamilyId) {
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         return (
           <View style={{ flex: 1, minHeight: 0 }}>
             <FamilyPanel
               user={user}
               family={propFamily}
-              familyId={familyId}
+              familyId={panelFamilyId}
               onFamilyUpdate={onFamilyUpdate}
               profile={propProfile}
               preloadedSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
@@ -7830,21 +7822,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             />
           </View>
         );
+      }
       default:
-        // Unknown tab: show home as fallback so we never render blank
-        if (activeTab === 'home' || !activeTab) {
+        if (!user) {
           return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-              <ActivityIndicator size="large" color="#887DEE" />
-              <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280' }}>Loading...</Text>
+              <Text style={{ fontSize: 14, color: '#6b7280' }}>Sign in to continue</Text>
             </View>
           );
         }
-        return (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
-            <Text style={{ fontSize: 14, color: '#6b7280' }}>Loading...</Text>
-          </View>
-        );
+        return renderParentHomeCommon(homeFamilyIdForContent);
     }
   };
 
@@ -7852,7 +7839,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     flex: 1,
     ...(Platform.OS === 'web' ? { minHeight: 360 } : { minHeight: 0 }),
   };
-  const persistPlannerWeb = Platform.OS === 'web' && !!familyId;
+  const persistPlannerWeb =
+    Platform.OS === 'web' && !!(familyId || propSession?.family_id);
   const isPlannerShellTab =
     activeTab === 'planner' || activeTab === 'calendar' || activeTab === 'ai-planner';
   const innerContent = renderContent(persistPlannerWeb);

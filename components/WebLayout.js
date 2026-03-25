@@ -280,8 +280,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [session, propUserRole]);
   const [homeLoading, setHomeLoading] = useState(false); // WebContent home fetch runs in background; shell must not wait on it
   const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
-  const [familyDataLoaded, setFamilyDataLoaded] = useState(false); // children, family, subjects from fetchFamilyMembers/fetchFamilyData
-  const [academicYearsLoaded, setAcademicYearsLoaded] = useState(false);
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState([]);
   const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
   const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
@@ -291,16 +289,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  // AppLoader until: onboarding resolved + modal ready if blocked + shell/rail images preloaded + critical data (family + academic years) + home data when on home tab.
+  // AppLoader until: onboarding resolved + modal ready if blocked + shell/rail images preloaded + home tab session ready (not family preload).
   const [shellAssetsReady, setShellAssetsReady] = useState(false);
   const onShellGateReady = useCallback(() => setShellAssetsReady(true), []);
-  const criticalDataReady = familyDataLoaded && (academicYearsLoaded || !session?.family_id);
-  // Home tab: never block the app shell on WebContent's legacy home fetch (ParentHomeScreen loads its own data).
-  // Only require familyId once session has settled, or allow through if user has no family.
+  const sessionFamilyId = familyId || session?.family_id || null;
+  // Home tab: never block on WebContent home fetch; allow session.family_id until familyId state syncs.
   const homeReady =
     activeTab !== 'home' ||
-    (familyId && session && !session.loading) ||
-    (session && !session.loading && session.family_id == null);
+    (sessionFamilyId && session && session.loading !== true) ||
+    (session && session.loading !== true && session.family_id == null);
   const showLoader = !!(
     user &&
     session &&
@@ -308,7 +305,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       (onboardingBlocked &&
         (!onboardingUiReady || !onboardingModalReady)) ||
       !shellAssetsReady ||
-      !criticalDataReady ||
       !homeReady)
   );
 
@@ -1399,17 +1395,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [authUserId, session]);
 
   useEffect(() => {
-    if (!authUserId || !session) {
-      setFamilyDataLoaded(true);
-      setAcademicYearsLoaded(true);
-      return;
-    }
-    // Skip family/members fetch when user has no family yet (new signup); avoids 404s until ensure_family runs
-    if (!session.family_id) {
-      setFamilyDataLoaded(true);
-      setAcademicYearsLoaded(true);
-      return;
-    }
+    if (!authUserId || !session) return;
+    if (!session.family_id) return;
     let mounted = true;
     const fetchAcademicYears = async () => {
       const { data, error } = await supabase
@@ -1421,7 +1408,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (!mounted) return;
       if (error) {
         setPreloadedAcademicYears([]);
-        setAcademicYearsLoaded(true);
         return;
       }
       const seen = new Set();
@@ -1434,16 +1420,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return true;
       });
       setPreloadedAcademicYears(list);
-      setAcademicYearsLoaded(true);
     };
     Promise.all([
       fetchFamilyMembers(),
       fetchFamilyData(),
-      fetchAcademicYears().catch(() => { if (mounted) setAcademicYearsLoaded(true); }),
+      fetchAcademicYears().catch(() => {}),
       prefetchPlanEditListForFamily(session.family_id).catch(() => {}),
-    ])
-      .then(() => { if (mounted) setFamilyDataLoaded(true); })
-      .catch(() => { if (mounted) setFamilyDataLoaded(true); });
+    ]).catch(() => {});
     return () => { mounted = false; };
   }, [fetchFamilyData, fetchFamilyMembers, authUserId, session]);
 
