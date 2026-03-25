@@ -16,7 +16,8 @@ const AVATAR_SOURCES = {
 };
 
 const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
-const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...AVATAR_KEYS];
+const HOME_POODLE_IDS = ['homePoodleLight', 'homePoodleNormal', 'homePoodleHeavy'];
+const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...HOME_POODLE_IDS, ...AVATAR_KEYS];
 
 const SHELL_SOURCES = {
   icon: require('../assets/icon.png'),
@@ -27,6 +28,10 @@ const SHELL_SOURCES = {
   library: require('../assets/library.png'),
   subject: require('../assets/subject.png'),
   more: require('../assets/more.png'),
+  /** Home hero / forecast poodles — decoded before shell gate opens */
+  homePoodleLight: require('../assets/light.png'),
+  homePoodleNormal: require('../assets/normal.png'),
+  homePoodleHeavy: require('../assets/heavy.png'),
   ...AVATAR_SOURCES,
 };
 

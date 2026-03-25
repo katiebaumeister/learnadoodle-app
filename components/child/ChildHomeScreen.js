@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Platform, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
 import { Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
@@ -25,7 +25,6 @@ export default function ChildHomeScreen({
   overrideChildren = null,
 }) {
   const session = useSession();
-  const [loading, setLoading] = useState(true);
   const [todayEvents, setTodayEvents] = useState([]);
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -55,7 +54,6 @@ export default function ChildHomeScreen({
       setChildren(overrideChildren);
     }
 
-    setLoading(true);
     try {
       const loaders = [
         loadTodayEvents(),
@@ -65,8 +63,6 @@ export default function ChildHomeScreen({
       await Promise.all(loaders);
     } catch (error) {
       console.error('[ChildHomeScreen] Error loading data:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -190,17 +186,8 @@ export default function ChildHomeScreen({
     }
   };
 
-  const waitingForSession = !isParentViewingChild && session?.loading;
-  if (waitingForSession || loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
-    );
-  }
-
-  if (!childId || (!child && !isParentViewingChild)) {
+  const sessionReady = isParentViewingChild || (session && !session.loading);
+  if (sessionReady && (!childId || (!child && !isParentViewingChild))) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Unable to load your account information.</Text>
@@ -309,12 +296,16 @@ export default function ChildHomeScreen({
   const railContent = (
     <View style={styles.railContent}>
       <View style={styles.railPanel}>
-        <AssignmentsCard
-          childId={childId}
-          familyId={familyId}
-          onNavigate={onNavigate ? () => onNavigate('assignments') : null}
-          embedded
-        />
+        {safeChildId ? (
+          <AssignmentsCard
+            childId={childId}
+            familyId={familyId}
+            onNavigate={onNavigate ? () => onNavigate('assignments') : null}
+            embedded
+          />
+        ) : (
+          <View style={{ minHeight: 120 }} />
+        )}
       </View>
     </View>
   );
@@ -325,20 +316,6 @@ export default function ChildHomeScreen({
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.bgSubtle,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 14,
-    color: colors.textSecondary,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',

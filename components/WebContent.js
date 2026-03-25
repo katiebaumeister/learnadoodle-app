@@ -694,7 +694,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   // Home data state (top-level to avoid hooks inside render helpers)
   const [homeData, setHomeData] = useState(null);
-  const [homeLoading, setHomeLoading] = useState(true);
+  const [homeLoading, setHomeLoading] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState(null);
   const [conversationStarters, setConversationStarters] = useState([]);
   const [weeklyProgress, setWeeklyProgress] = useState({});
@@ -2512,10 +2512,26 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               }).catch(err => {
                 console.error('[WebContent] Error refreshing home data:', err);
               });
-            } else if (activeTab === 'home') {
-              // If homeData is null and we're on home tab, trigger a full refresh with loading
-              setHomeLoading(true);
-              if (onHomeLoadingChange) onHomeLoadingChange(true);
+            } else if (activeTab === 'home' && profileData?.family_id) {
+              const validDate = homeSelectedDate instanceof Date && !isNaN(homeSelectedDate.getTime())
+                ? homeSelectedDate
+                : new Date();
+              validDate.setHours(0, 0, 0, 0);
+              const selectedDateStr = validDate.toISOString().split('T')[0];
+              supabase.rpc('get_home_data', {
+                _family_id: profileData.family_id,
+                _date: selectedDateStr,
+                _horizon_days: 14,
+              }).then(({ data: rawData, error }) => {
+                if (!error && rawData) {
+                  const data = cleanAvatarUrls(rawData);
+                  const stories = (data?.stories || []).filter(s =>
+                    s && s.title && s.body && s.title.trim() && s.body.trim()
+                  );
+                  setHomeData({ ...data, stories });
+                  saveHomeDataToCache(profileData.family_id, selectedDateStr, { ...data, stories });
+                }
+              }).catch((err) => console.error('[WebContent] Error refreshing home data:', err));
             }
           }
         } catch (err) {
@@ -2843,7 +2859,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       try {
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
-          .select('family_id, role')
+          .select('family_id')
           .eq('id', authUserId)
           .maybeSingle();
 
@@ -2851,17 +2867,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           console.error('Error fetching profile for home:', profileError);
           setHomeLoading(false);
         if (onHomeLoadingChange) onHomeLoadingChange(false);
-          return;
-        }
-
-        const profileRole = String(profileData?.role || '').toLowerCase();
-        const sessionIsChild =
-          propSession?.role_flags?.isChild === true ||
-          ['child', 'student'].includes(String(propSession?.effective_role || '').toLowerCase()) ||
-          ['child', 'student'].includes(String(propSession?.member_role || '').toLowerCase());
-        if (sessionIsChild || profileRole === 'child' || profileRole === 'student') {
-          setHomeLoading(false);
-          if (onHomeLoadingChange) onHomeLoadingChange(false);
           return;
         }
 
@@ -2933,10 +2938,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             return;
           }
 
-          // No cache or expired - fetch fresh data (show shell loader only when we actually need network)
-          setHomeLoading(true);
-          if (onHomeLoadingChange) onHomeLoadingChange(true);
-          // Fetch home data first (critical), conversation starters can be non-blocking
+          // No cache or expired - fetch in background (ParentHomeScreen owns visible home UX; never block shell)
           console.log('[WebContent] Fetching home data for date:', selectedDateStr, 'family_id:', profileData.family_id);
           const homeDataResult = await supabase.rpc('get_home_data', {
             _family_id: profileData.family_id,
@@ -3066,14 +3068,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
 
     fetchHomeData();
-  }, [
-    authUserId,
-    homeSelectedDate,
-    homeSelectedChildren,
-    propSession?.role_flags?.isChild,
-    propSession?.effective_role,
-    propSession?.member_role,
-  ]);
+  }, [authUserId, homeSelectedDate, homeSelectedChildren]);
 
   // Listen for calendar events and refresh home data when events change
   useEffect(() => {
@@ -7568,32 +7563,36 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'search':
         return renderSearchContent()
       case 'home': {
-        // Route by role; use session first so we don't flash parent before role is loaded.
-        // WebContent's familyId state can lag one frame behind SessionContext — always merge with session.
-        const homeFamilyId = familyId || propSession?.family_id || null;
+        // Route by role; use session first so we don't flash parent before role is loaded
         const isChild = roleForHome === 'child' || roleForHome === 'student';
         const isTutor = roleForHome === 'tutor';
         const hasAccessibleChildren = accessibleForHome.length > 0;
-        const sessionHintsChild =
-          propSession?.role_flags?.isChild === true ||
-          ['child', 'student'].includes(String(propSession?.effective_role || '').toLowerCase()) ||
-          ['child', 'student'].includes(String(propSession?.member_role || '').toLowerCase());
-        const sessionHintsTutor =
-          propSession?.role_flags?.isTutor === true ||
-          String(propSession?.effective_role || '').toLowerCase() === 'tutor';
+        const homeFamilyId = familyId || propSession?.family_id || null;
 
-        const parentHome = (
+        const renderParentHome = (fid) => (
           <ParentHomeScreen
-            familyId={homeFamilyId}
+            familyId={fid}
             onNavigate={onTabChange}
             onAddEvent={() => {
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
               }
             }}
-            onAddGrade={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddGradeModal'))}
-            onAddMaterial={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddMaterialModal'))}
-            onAddSubject={() => Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openAddSubjectModal'))}
+            onAddGrade={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openAddGradeModal'));
+              }
+            }}
+            onAddMaterial={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openAddMaterialModal'));
+              }
+            }}
+            onAddSubject={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+              }
+            }}
             onAddChild={() => {
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('openAddChildModal'));
@@ -7602,10 +7601,22 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           />
         );
 
+        // Role still resolving: never block on a centered "Loading..." — show real home shells
+        if (user && roleForHome == null) {
+          if (propSession?.role_flags?.isChild && hasAccessibleChildren) {
+            return (
+              <ChildHomeScreen
+                familyId={familyId}
+                onNavigate={onTabChange}
+              />
+            );
+          }
+          return renderParentHome(homeFamilyId);
+        }
         if (isChild && hasAccessibleChildren) {
           return (
             <ChildHomeScreen
-              familyId={homeFamilyId}
+              familyId={familyId}
               onNavigate={onTabChange}
             />
           );
@@ -7613,23 +7624,25 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (isTutor) {
           return <TutorDashboard accessibleChildren={accessibleForHome} />;
         }
-        // Role not yet in WebContent state: use session flags so child/tutor never see parent shell
-        if (user && roleForHome == null) {
-          if (sessionHintsChild && hasAccessibleChildren) {
-            return (
-              <ChildHomeScreen
-                familyId={homeFamilyId}
-                onNavigate={onTabChange}
-              />
-            );
-          }
-          if (sessionHintsTutor) {
-            return <TutorDashboard accessibleChildren={accessibleForHome} />;
-          }
-          return parentHome;
+        if (
+          propSession &&
+          (propSession.role_flags?.isParent ||
+            (!propSession.role_flags?.isChild && !propSession.role_flags?.isTutor)) &&
+          !propSession.loading
+        ) {
+          return renderParentHome(homeFamilyId);
         }
-        // Default: parent home (handles cache + RPC; no full-page loader while WebContent homeData catches up)
-        return parentHome;
+        if (homeFamilyId) {
+          return renderParentHome(homeFamilyId);
+        }
+        if (user) {
+          return renderParentHome(null);
+        }
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#fff' }}>
+            <Text style={{ fontSize: 14, color: '#6b7280' }}>Sign in to continue</Text>
+          </View>
+        );
       }
       case 'child-dashboard':
         if (activeSubtab) {

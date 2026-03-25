@@ -290,18 +290,6 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         if (age < CACHE_TTL_MS) return;
       }
       
-      // Wait for a real JWT before hitting the app API (avoids 403 "Missing access token" vs Supabase RPC succeeding first)
-      let tokenReady = false;
-      for (let i = 0; i < 8; i++) {
-        const { data: { session: s } } = await supabase.auth.getSession();
-        if (s?.access_token) {
-          tokenReady = true;
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 80));
-      }
-      if (!tokenReady) return;
-
       const { data: statusData, error } = await getIntegrationStatus();
       if (!error && statusData != null) {
         localStorage.setItem(cacheKey, JSON.stringify({

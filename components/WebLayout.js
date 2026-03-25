@@ -278,7 +278,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setUserRole(session.effective_role);
     }
   }, [session, propUserRole]);
-  const [homeLoading, setHomeLoading] = useState(true); // true so initial load overlay stays until WebContent reports ready
+  const [homeLoading, setHomeLoading] = useState(false); // WebContent home fetch runs in background; shell must not wait on it
   const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
   const [familyDataLoaded, setFamilyDataLoaded] = useState(false); // children, family, subjects from fetchFamilyMembers/fetchFamilyData
   const [academicYearsLoaded, setAcademicYearsLoaded] = useState(false);
@@ -295,20 +295,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [shellAssetsReady, setShellAssetsReady] = useState(false);
   const onShellGateReady = useCallback(() => setShellAssetsReady(true), []);
   const criticalDataReady = familyDataLoaded && (academicYearsLoaded || !session?.family_id);
-  const isChildOrStudentSession =
-    session?.role_flags?.isChild === true ||
-    session?.member_role === 'child' ||
-    session?.member_role === 'student' ||
-    session?.effective_role === 'child' ||
-    session?.effective_role === 'student';
-  // When on home: child/student shell is ready without WebContent's home RPC. Parents use ParentHomeScreen which
-  // loads from cache/RPC itself — do not block the app shell on WebContent homeLoading (get_home_data).
-  // If session is done and has no family_id, still require homeLoading settled so we don't flash wrong pane.
+  // Home tab: never block the app shell on WebContent's legacy home fetch (ParentHomeScreen loads its own data).
+  // Only require familyId once session has settled, or allow through if user has no family.
   const homeReady =
     activeTab !== 'home' ||
-    isChildOrStudentSession ||
-    (familyId && !isChildOrStudentSession) ||
-    (session && !session.loading && session.family_id == null && !homeLoading);
+    (familyId && session && !session.loading) ||
+    (session && !session.loading && session.family_id == null);
   const showLoader = !!(
     user &&
     session &&
@@ -1514,7 +1506,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       let { fid, status } = await tryOnce();
       if (fid) return fid;
       // 404 = route missing; 500 = backend/db error (e.g. missing GRANT). Retry once after delay.
-      if (status === 401 || status === 403 || status === 404 || status === 500) {
+      if (status === 404 || status === 500) {
         await new Promise(r => setTimeout(r, 800));
         const retry = await tryOnce();
         if (retry.fid) return retry.fid;
@@ -2172,6 +2164,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   /** Purple Month/Week/To-do segment only when that row is the active context. */
   const showTopPlannerSegmentHighlight =
     ['month', 'board', 'tasks'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
+
+  // Show full-screen loading when home tab is loading
+  const showFullScreenLoading = activeTab === 'home' && homeLoading;
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {

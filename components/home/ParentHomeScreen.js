@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, Platform, ActivityIndicator, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Platform, ScrollView, TouchableOpacity } from 'react-native';
 import { Plus, Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
@@ -34,7 +34,6 @@ export default function ParentHomeScreen({
   onAddChild,
 }) {
   const session = useSession();
-  const [loading, setLoading] = useState(false); // Start as false - check cache first
   const [homeData, setHomeData] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [notificationCount, setNotificationCount] = useState(0);
@@ -86,9 +85,8 @@ export default function ParentHomeScreen({
   };
 
   useEffect(() => {
-    // familyId from props (WebLayout) is enough for get_home_data; don't wait on session.loading
-    // or first paint stays empty while SessionContext finishes.
-    if (familyId && !session?.error) {
+    // Wait for session to be ready and familyId to be available
+    if (session && !session.loading && familyId && !session.error) {
       // Check cache first - if available, use it immediately without loading state
       const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
         ? selectedDate
@@ -100,7 +98,6 @@ export default function ParentHomeScreen({
       if (cachedData) {
         // Use cached data immediately - no loading state
         setHomeData(cachedData);
-        setLoading(false);
         setError(null);
         // Load notification count in background
         loadNotificationCount();
@@ -116,15 +113,12 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       });
-      setLoading(false);
       setError(null);
       // Load data in background silently
       loadData(true);
       // Load notification count in background
       loadNotificationCount();
     } else if (session && session.error) {
-      // If session has error, set loading to false to show error state
-      setLoading(false);
       setError(new Error('Session error: ' + session.error));
       setHomeData({
         learning: [],
@@ -133,8 +127,6 @@ export default function ParentHomeScreen({
         subjects: [],
       });
     } else if (session && !session.loading && !familyId) {
-      // Session resolved but no familyId anywhere — onboarding / new account
-      setLoading(false);
       setError(new Error('No family ID available'));
       setHomeData({
         learning: [],
@@ -143,14 +135,11 @@ export default function ParentHomeScreen({
         subjects: [],
       });
     }
-  }, [session, session?.loading, session?.error, familyId, selectedDate]);
+  }, [session, familyId, selectedDate]);
 
   const loadData = async (silent = false) => {
     if (!familyId) return;
 
-    if (!silent) {
-      setLoading(true);
-    }
     try {
       const validDate = selectedDate instanceof Date && !isNaN(selectedDate.getTime())
         ? selectedDate
@@ -214,10 +203,6 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       });
-    } finally {
-      if (!silent) {
-        setLoading(false);
-      }
     }
   };
 
@@ -269,39 +254,30 @@ export default function ParentHomeScreen({
     }
   };
 
-  if (loading) {
+  if (error && !homeData) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Loading...</Text>
+        <Text style={styles.errorText}>Unable to load home data</Text>
+        <Text style={styles.errorSubtext}>
+          {error.message || 'Please try refreshing the page'}
+        </Text>
       </View>
     );
   }
 
-  // If no homeData after loading, show error or empty state
-  if (!homeData) {
-    return (
-      <View style={styles.loadingContainer}>
-        {error ? (
-          <>
-            <Text style={styles.errorText}>Unable to load home data</Text>
-            <Text style={styles.errorSubtext}>
-              {error.message || 'Please try refreshing the page'}
-            </Text>
-          </>
-        ) : (
-          <Text style={styles.loadingText}>No data available</Text>
-        )}
-      </View>
-    );
-  }
+  const effectiveHomeData = homeData || {
+    learning: [],
+    tasks: [],
+    children: [],
+    subjects: [],
+  };
 
   // Compute weather forecast with contextual signals
-  const filteredLearning = homeData.learning || [];
+  const filteredLearning = effectiveHomeData.learning || [];
   const blockCount = filteredLearning.length;
-  const backlogCount = (homeData.tasks || []).filter(t => !t.start_ts || t.status === 'backlog').length;
-  const overdueCount = (homeData.tasks || []).filter(t => t.due_time === 'Overdue').length;
-  const children = homeData.children || [];
+  const backlogCount = (effectiveHomeData.tasks || []).filter(t => !t.start_ts || t.status === 'backlog').length;
+  const overdueCount = (effectiveHomeData.tasks || []).filter(t => t.due_time === 'Overdue').length;
+  const children = effectiveHomeData.children || [];
 
   // Calculate which students have activity today
   const studentsWithActivity = children.map(child => {
@@ -326,7 +302,7 @@ export default function ParentHomeScreen({
   const dayAfterTomorrow = new Date(tomorrow);
   dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
 
-  const dueTodayOrTomorrow = (homeData.learning || []).filter(event => {
+  const dueTodayOrTomorrow = (effectiveHomeData.learning || []).filter(event => {
     if (!event.start_ts && !event.start) return false;
     const eventType = event.event_type || event.type || '';
     if (eventType !== 'Assignment' && eventType !== 'Project') return false;
@@ -462,8 +438,8 @@ export default function ParentHomeScreen({
         </View>
         <TodayScheduleCard
           events={filteredLearning}
-          children={homeData.children || []}
-          subjects={homeData.subjects || []}
+          children={effectiveHomeData.children || []}
+          subjects={effectiveHomeData.subjects || []}
           onOpenPlanner={() => onNavigate?.('planner')}
           onTabChange={onNavigate}
           onAddBlock={onAddEvent}
@@ -489,9 +465,9 @@ export default function ParentHomeScreen({
 
   // Calculate most active subject for digest
   const subjectCounts = {};
-  (homeData.learning || []).forEach(event => {
+  (effectiveHomeData.learning || []).forEach(event => {
     if (event.subject_id) {
-      const subject = (homeData.subjects || []).find(s => s.id === event.subject_id);
+      const subject = (effectiveHomeData.subjects || []).find(s => s.id === event.subject_id);
       if (subject) {
         subjectCounts[subject.name] = (subjectCounts[subject.name] || 0) + 1;
       }
@@ -526,14 +502,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: colors.bgSubtle,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 14,
-    color: colors.textSecondary,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   errorText: {
     fontSize: 16,

@@ -98,13 +98,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Active section for sidebar navigation
   const [activeSection, setActiveSection] = useState(propInitialSection || 'profile');
 
-  /**
-   * Child accounts that joined via parent invite have an accepted row in `invites` for their child_id.
-   * Self-onboarding students ("I'm a student") do not — they should still see subscription in Family settings.
-   */
-  const [childInviteLinkResolved, setChildInviteLinkResolved] = useState(() => !isChildMode);
-  const [childJoinedViaAcceptedFamilyInvite, setChildJoinedViaAcceptedFamilyInvite] = useState(false);
-
   // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
   useEffect(() => {
     if (propInitialSection && propInitialSection !== activeSection) {
@@ -481,60 +474,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     })();
     return () => { cancelled = true; };
   }, [viewingAsChildId, familyId, propUserRole]);
-
-  useEffect(() => {
-    if (!isChildMode) {
-      setChildInviteLinkResolved(true);
-      setChildJoinedViaAcceptedFamilyInvite(false);
-      return;
-    }
-    let cancelled = false;
-    setChildInviteLinkResolved(false);
-    (async () => {
-      try {
-        // Authoritative: backend uses service role (children cannot read `invites` under RLS).
-        const { data: famData, error: famErr } = await getFamilyMembers();
-        if (cancelled) return;
-        const apiFlag = famData?.child_linked_via_accepted_invite;
-        if (!famErr && famData && typeof apiFlag === 'boolean') {
-          setChildJoinedViaAcceptedFamilyInvite(apiFlag);
-          setChildInviteLinkResolved(true);
-          return;
-        }
-      } catch (_) {
-        /* fall through */
-      }
-      if (!familyId || !currentChildId) {
-        if (!cancelled) {
-          setChildJoinedViaAcceptedFamilyInvite(false);
-          setChildInviteLinkResolved(true);
-        }
-        return;
-      }
-      try {
-        const { data, error } = await supabase
-          .from('invites')
-          .select('id')
-          .eq('family_id', familyId)
-          .eq('child_id', currentChildId)
-          .eq('role', 'child')
-          .not('accepted_at', 'is', null)
-          .limit(1);
-        if (cancelled) return;
-        setChildJoinedViaAcceptedFamilyInvite(Boolean(!error && data?.length));
-      } catch (_) {
-        if (!cancelled) setChildJoinedViaAcceptedFamilyInvite(false);
-      } finally {
-        if (!cancelled) setChildInviteLinkResolved(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isChildMode, familyId, currentChildId, user?.id]);
-
-  const showSubscriptionInSidebar =
-    !isChildMode || (childInviteLinkResolved && !childJoinedViaAcceptedFamilyInvite);
 
   // Load preferences and notification preferences from DB (skip notification_preferences in child mode to avoid 403 RLS)
   useEffect(() => {
@@ -1316,19 +1255,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
     try {
       const apiBase = getAPIBase();
-      let { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        await supabase.auth.refreshSession().catch(() => {});
-        await new Promise((r) => setTimeout(r, 120));
-        ({ data: { session } } = await supabase.auth.getSession());
-      }
-      if (!session?.access_token) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
 
       // Get integration status
       const statusRes = await fetch(`${apiBase}/api/integrations/status`, {
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
-          'Accept': 'application/json',
         },
       });
 
@@ -1404,13 +1337,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     
     try {
       const apiBase = getAPIBase();
-      let { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        await supabase.auth.refreshSession().catch(() => {});
-        await new Promise((r) => setTimeout(r, 120));
-        ({ data: { session } } = await supabase.auth.getSession());
-      }
-      if (!session?.access_token) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         toast.push('Please sign in to connect accounts', 'error');
         setConnectingProvider(null);
         return;
@@ -1492,13 +1420,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const handleDisconnectProvider = async (providerKey) => {
     try {
       const apiBase = getAPIBase();
-      let { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        await supabase.auth.refreshSession().catch(() => {});
-        await new Promise((r) => setTimeout(r, 120));
-        ({ data: { session } } = await supabase.auth.getSession());
-      }
-      if (!session?.access_token) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         toast.push('Please sign in to disconnect accounts', 'error');
         return;
       }
@@ -2250,21 +2173,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         style={styles.memberRowChildAvatar}
                         resizeMode="cover"
                       />
-                      {!isChildMode ? (
-                        <View
-                          style={[
-                            styles.memberRowChildStatusBadge,
-                            { backgroundColor: statusDotColor },
-                          ]}
-                          accessibilityLabel={
-                            invSt === 'accepted'
-                              ? 'Account linked'
-                              : invSt === 'pending'
-                                ? 'Invite pending'
-                                : 'Not invited'
-                          }
-                        />
-                      ) : null}
+                      <View
+                        style={[
+                          styles.memberRowChildStatusBadge,
+                          { backgroundColor: statusDotColor },
+                        ]}
+                        accessibilityLabel={
+                          invSt === 'accepted'
+                            ? 'Account linked'
+                            : invSt === 'pending'
+                              ? 'Invite pending'
+                              : 'Not invited'
+                        }
+                      />
                     </View>
                     <View style={styles.memberRowChildTextCol}>
                       <Text style={styles.memberRowName}>
@@ -3769,28 +3690,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </TouchableOpacity>
           </View>
 
-          {/* Subscription: hide for children who joined via parent invite (subscription is the household's) */}
-          {showSubscriptionInSidebar ? (
-            <View style={styles.sidebarCard}>
-              <Text style={styles.sidebarCardTitle}>Subscription</Text>
-              <View style={styles.sidebarSubscriptionContent}>
-                <View style={styles.sidebarSubscriptionInfo}>
-                  <TouchableOpacity 
-                    onPress={() => setShowComingSoonModal(true)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
-                  </TouchableOpacity>
-                  <View style={styles.sidebarSubscriptionStatusRow}>
-                    <View style={styles.sidebarSubscriptionStatusChip}>
-                      <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
-                    </View>
-                    <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
+          {/* Subscription Card */}
+          <View style={styles.sidebarCard}>
+            <Text style={styles.sidebarCardTitle}>Subscription</Text>
+            <View style={styles.sidebarSubscriptionContent}>
+              <View style={styles.sidebarSubscriptionInfo}>
+                <TouchableOpacity 
+                  onPress={() => setShowComingSoonModal(true)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
+                </TouchableOpacity>
+                <View style={styles.sidebarSubscriptionStatusRow}>
+                  <View style={styles.sidebarSubscriptionStatusChip}>
+                    <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
                   </View>
+                  <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
                 </View>
               </View>
             </View>
-          ) : null}
+          </View>
 
           {/* Support Card */}
           <View style={styles.sidebarCard}>
