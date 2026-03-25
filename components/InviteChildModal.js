@@ -10,24 +10,19 @@ import {
   ActivityIndicator,
   Image,
   ScrollView,
-  Alert,
 } from 'react-native';
-import { X, Send, Check, RotateCw } from 'lucide-react';
-import { inviteTutor, unlinkChildLogin } from '../lib/apiClient';
+import { X, Send, Check, AlertTriangle } from 'lucide-react';
+import { inviteTutor } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { sourceForChild } from './ui/ChildAvatarCluster';
 import { supabase } from '../lib/supabase';
 import {
   fetchChildInviteSummaries,
   mergeChildInviteSummary,
-  formatInviteLastSent,
   linkedSummariesFromFamilyApiMembers,
   mergeChildInviteSummaryMaps,
 } from '../lib/services/childInviteStatus';
 import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
-
-/** Slightly deeper blue for links/icons on white (pairs with LEARNADOODLE_LIGHT_BLUE) */
-const LD_BLUE_ACCENT = '#4A9FD4';
 
 function isValidEmail(value) {
   const t = (value || '').trim();
@@ -57,7 +52,6 @@ export default function InviteChildModal({
   const toast = useToast();
   const emailInputRef = useRef(null);
   const [summaries, setSummaries] = useState({});
-  const [summariesLoading, setSummariesLoading] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState(null);
   const [email, setEmail] = useState('');
   const [emailDirty, setEmailDirty] = useState(false);
@@ -65,7 +59,6 @@ export default function InviteChildModal({
   const [inviting, setInviting] = useState(false);
   const [successInfo, setSuccessInfo] = useState(null);
   const [emailFocused, setEmailFocused] = useState(false);
-  const [unlinkingLinked, setUnlinkingLinked] = useState(false);
 
   const list = useMemo(
     () => (familyChildren || []).filter((c) => c && c.id != null && !c.archived),
@@ -79,7 +72,6 @@ export default function InviteChildModal({
       setSummaries({});
       return;
     }
-    setSummariesLoading(true);
     try {
       const map = await fetchChildInviteSummaries(
         supabase,
@@ -89,8 +81,6 @@ export default function InviteChildModal({
       setSummaries(map);
     } catch (_) {
       setSummaries({});
-    } finally {
-      setSummariesLoading(false);
     }
   }, [familyId, list]);
 
@@ -106,7 +96,6 @@ export default function InviteChildModal({
     setEmailFocused(false);
     setEmailDirty(false);
     setEmail('');
-    setUnlinkingLinked(false);
     if (list.length === 1) {
       setSelectedChildId(list[0].id);
     } else {
@@ -170,7 +159,6 @@ export default function InviteChildModal({
     !isAccepted &&
     emailOk &&
     !inviting &&
-    !unlinkingLinked &&
     !successInfo &&
     !!familyId;
 
@@ -184,44 +172,6 @@ export default function InviteChildModal({
     setSuccessInfo(null);
     onClose?.();
   }, [onClose]);
-
-  const handleUnlinkLinkedLogin = useCallback(() => {
-    if (!selectedChildId || !familyId || unlinkingLinked) return;
-    const name = childDisplayName(selectedChild);
-    const em =
-      selectedChild?.invite_email && String(selectedChild.invite_email).trim()
-        ? String(selectedChild.invite_email).trim()
-        : 'this account';
-    Alert.alert(
-      'Remove linked login?',
-      `${name}'s profile stays in your family. We'll remove ${em} from this child and delete that login so you can invite a different email.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove login',
-          style: 'destructive',
-          onPress: async () => {
-            setUnlinkingLinked(true);
-            setError(null);
-            try {
-              const { data, error: err } = await unlinkChildLogin({ childId: selectedChildId });
-              if (err) throw err;
-              if (!data?.ok) throw new Error('Failed to remove linked login');
-              await reloadSummaries();
-              onInvited?.();
-              toast.push('Linked login removed. You can send a new invite.', 'success');
-            } catch (e) {
-              const msg = e?.message || 'Failed to remove linked login';
-              setError(msg);
-              toast.push(msg, 'error');
-            } finally {
-              setUnlinkingLinked(false);
-            }
-          },
-        },
-      ]
-    );
-  }, [selectedChildId, familyId, unlinkingLinked, selectedChild, reloadSummaries, onInvited, toast]);
 
   const handleSend = async () => {
     if (!emailOk) {
@@ -327,8 +277,6 @@ export default function InviteChildModal({
                   {mergedList.map((child) => {
                     const selected = String(child.id) === String(selectedChildId);
                     const name = childDisplayName(child);
-                    const st = child.invite_status || 'none';
-                    const lastSent = formatInviteLastSent(child.invite_sent_at);
                     return (
                       <TouchableOpacity
                         key={String(child.id)}
@@ -351,57 +299,22 @@ export default function InviteChildModal({
                             {selected ? ' ●' : ''}
                           </Text>
                         </View>
-                        {st === 'accepted' ? (
-                          <Text style={styles.miniCardMeta} numberOfLines={2}>
-                            ✓ Joined
-                            {child.invite_email ? ` • ${child.invite_email}` : ''}
-                          </Text>
-                        ) : st === 'pending' ? (
-                          <>
-                            <Text style={styles.miniCardMeta} numberOfLines={2}>
-                              invited • {child.invite_email || '—'}
-                            </Text>
-                            {lastSent ? (
-                              <Text style={styles.miniCardLastSent}>last sent {lastSent}</Text>
-                            ) : null}
-                            <TouchableOpacity
-                              style={styles.miniCardResend}
-                              onPress={() => {
-                                selectChild(child.id);
-                                setEmailDirty(false);
-                                setTimeout(() => {
-                                  try {
-                                    emailInputRef.current?.focus?.();
-                                  } catch (_) {}
-                                }, 50);
-                              }}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <RotateCw size={12} color={LD_BLUE_ACCENT} />
-                              <Text style={styles.miniCardResendText}>Resend</Text>
-                            </TouchableOpacity>
-                          </>
-                        ) : (
-                          <Text style={styles.miniCardMeta}>Not invited</Text>
-                        )}
                       </TouchableOpacity>
                     );
                   })}
                 </ScrollView>
-                {summariesLoading ? (
-                  <Text style={styles.loadingHint}>Loading status…</Text>
-                ) : null}
               </View>
 
               {!successInfo && selectedChild ? (
                 isAccepted ? (
-                  <View style={styles.linkedSection}>
-                    <Text style={styles.linkedLine}>
-                      ✓ Linked{selectedChild.invite_email ? ` • ${selectedChild.invite_email}` : ''}
-                    </Text>
-                    <Text style={styles.linkedSub}>
-                      This child already has an account. No invite needed.
+                  <View style={styles.alreadyConnectedBox}>
+                    <View style={styles.alreadyConnectedTitleRow}>
+                      <AlertTriangle size={18} color="#b45309" />
+                      <Text style={styles.alreadyConnectedTitle}>This child already has an account</Text>
+                    </View>
+                    <Text style={styles.alreadyConnectedBody}>
+                      Go to Family → Family Members, then tap Edit (pencil) on this child to disconnect
+                      the account or invite a different email.
                     </Text>
                   </View>
                 ) : (
@@ -459,30 +372,11 @@ export default function InviteChildModal({
                   <TouchableOpacity
                     style={styles.btnSecondary}
                     onPress={resetAndClose}
-                    disabled={unlinkingLinked}
-                    {...(Platform.OS === 'web' && { cursor: unlinkingLinked ? 'not-allowed' : 'pointer' })}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Text style={styles.btnSecondaryText}>Cancel</Text>
                   </TouchableOpacity>
-                  {isAccepted ? (
-                    <TouchableOpacity
-                      style={[
-                        styles.btnUnlinkOutline,
-                        unlinkingLinked && styles.btnPrimaryStrongDisabled,
-                      ]}
-                      onPress={handleUnlinkLinkedLogin}
-                      disabled={unlinkingLinked}
-                      {...(Platform.OS === 'web' && {
-                        cursor: unlinkingLinked ? 'not-allowed' : 'pointer',
-                      })}
-                    >
-                      {unlinkingLinked ? (
-                        <ActivityIndicator size="small" color="#b91c1c" />
-                      ) : (
-                        <Text style={styles.btnUnlinkOutlineText}>Remove linked login</Text>
-                      )}
-                    </TouchableOpacity>
-                  ) : (
+                  {!isAccepted ? (
                     <TouchableOpacity
                       style={[styles.btnPrimaryStrong, !canSend && styles.btnPrimaryStrongDisabled]}
                       onPress={handleSend}
@@ -500,7 +394,7 @@ export default function InviteChildModal({
                         </>
                       )}
                     </TouchableOpacity>
-                  )}
+                  ) : null}
                 </View>
               )}
             </>
@@ -560,14 +454,6 @@ const styles = StyleSheet.create({
   descMuted: {
     fontSize: 14,
     color: '#94a3b8',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  loadingHint: {
-    fontSize: 12,
-    color: '#9ca3af',
-    marginTop: 6,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -664,7 +550,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 6,
   },
   miniCardAvatar: {
     width: 28,
@@ -685,58 +570,34 @@ const styles = StyleSheet.create({
   miniCardNameSelected: {
     color: '#1e5f8a',
   },
-  miniCardMeta: {
-    fontSize: 11,
-    color: '#9ca3af',
-    lineHeight: 15,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  miniCardLastSent: {
-    fontSize: 10,
-    color: '#cbd5e1',
-    marginTop: 2,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  miniCardResend: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 8,
-    alignSelf: 'flex-start',
-  },
-  miniCardResendText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: LD_BLUE_ACCENT,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  linkedSection: {
+  alreadyConnectedBox: {
     marginBottom: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: '#f0fdf4',
+    backgroundColor: '#fffbeb',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: '#fde68a',
   },
-  linkedLine: {
+  alreadyConnectedTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  alreadyConnectedTitle: {
+    flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    color: '#166534',
+    color: '#92400e',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  linkedSub: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 4,
+  alreadyConnectedBody: {
+    fontSize: 13,
+    color: '#78350f',
+    lineHeight: 20,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -805,26 +666,6 @@ const styles = StyleSheet.create({
   },
   btnSecondaryText: {
     color: '#374151',
-    fontSize: 14,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  btnUnlinkOutline: {
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#ffffff',
-    minWidth: 132,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  btnUnlinkOutlineText: {
-    color: '#b91c1c',
     fontSize: 14,
     fontWeight: '600',
     ...(Platform.OS === 'web' && {

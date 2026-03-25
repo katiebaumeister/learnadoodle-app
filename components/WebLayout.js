@@ -27,6 +27,7 @@ import AddChildModal from './AddChildModal';
 import InviteChildModal from './InviteChildModal';
 import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
+import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import PlanYearWizard from './year/PlanYearWizard';
 import PlanYearModal from './planner/PlanYearModal';
 import GenerateCurriculumModal from './GenerateCurriculumModal';
@@ -134,6 +135,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showInviteChildModal, setShowInviteChildModal] = useState(false);
+  const [inviteChildModalPrefillId, setInviteChildModalPrefillId] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -160,6 +162,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [familyId, setFamilyId] = useState(() => (session?.family_id ?? null));
   const [family, setFamily] = useState(null);
   const [profile, setProfile] = useState(null);
+
+  const editChildLinkedLoginEmail = useMemo(() => {
+    if (!editingChild?.id || !family?.members?.length) return null;
+    const map = linkedSummariesFromFamilyApiMembers(family.members, [editingChild.id]);
+    return map[String(editingChild.id)]?.invite_email ?? null;
+  }, [editingChild?.id, family?.members]);
 
   // Keep familyId in sync with session when it becomes available or changes
   useEffect(() => {
@@ -1790,6 +1798,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = () => {
       fetchFamilyMembers();
+      setInviteChildModalPrefillId(null);
       setShowInviteChildModal(true);
     };
     window.addEventListener('openInviteChildModal', handler);
@@ -3755,10 +3764,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       <InviteChildModal
         visible={showInviteChildModal}
-        onClose={() => setShowInviteChildModal(false)}
+        onClose={() => {
+          setShowInviteChildModal(false);
+          setInviteChildModalPrefillId(null);
+        }}
         familyId={familyId}
         familyChildren={children}
         familyMembersFromApi={family?.members ?? null}
+        prefillChildId={inviteChildModalPrefillId}
+        onPrefillConsumed={() => setInviteChildModalPrefillId(null)}
         onInvited={() => {
           fetchFamilyMembers();
           fetchFamilyData();
@@ -4387,6 +4401,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setEditingChild(null);
         }}
         child={editingChild}
+        familyId={familyId}
+        linkedLoginEmail={editChildLinkedLoginEmail}
+        onRequestInviteChild={(childId) => {
+          setShowEditChildModal(false);
+          setEditingChild(null);
+          setInviteChildModalPrefillId(childId || null);
+          setShowInviteChildModal(true);
+        }}
         onChildUpdated={(updatedChild) => {
           if (!updatedChild?.id) return;
           setChildren((prev) => mergeUpdatedChildIntoList(prev, updatedChild));

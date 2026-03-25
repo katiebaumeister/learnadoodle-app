@@ -42,6 +42,8 @@ export default function EditChildModal({
   familyId,
   /** From Family Members list (API + invites merge); used when profiles.email is hidden by RLS */
   linkedLoginEmail = null,
+  /** Close edit (optional) and open invite flow for this child — e.g. Family Members → Invite Child */
+  onRequestInviteChild = null,
   onChildUpdated,
   onChildDeleted
 }) {
@@ -50,10 +52,7 @@ export default function EditChildModal({
   const [error, setError] = useState(null);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [confirmName, setConfirmName] = useState('');
-  const [archiving, setArchiving] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [isArchived, setIsArchived] = useState(false);
   const [fullChildData, setFullChildData] = useState(null);
   const [supportProfile, setSupportProfile] = useState(null);
   const [academicYear, setAcademicYear] = useState(null);
@@ -67,7 +66,6 @@ export default function EditChildModal({
   useEffect(() => {
     if (visible && child?.id) {
       setFormCanSubmit(false);
-      setIsArchived(child.archived || false);
       fetchFullChildDataInBackground();
     } else if (!visible) {
       setError(null);
@@ -94,7 +92,6 @@ export default function EditChildModal({
       if (fetchError) return;
 
       setFullChildData(data);
-      setIsArchived(data.archived || false);
 
       const { data: supportData } = await supabase
         .from('child_support_profiles')
@@ -316,116 +313,48 @@ export default function EditChildModal({
     }
   };
 
-  const handleArchive = async () => {
-    const childName = child?.first_name || child?.name || 'Child';
-    Alert.alert(
-      'Archive Child',
-      `Are you sure you want to archive ${childName}? This will hide them from planners and reports, but data will be preserved.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Archive',
-          style: 'destructive',
-          onPress: async () => {
-            setArchiving(true);
-            const { data, error } = await supabase.rpc('archive_child', {
-              _family: familyId,
-              _child: child.id
-            });
-
-            setArchiving(false);
-
-            if (error || !data?.ok) {
-              Alert.alert('Error', 'Failed to archive child');
-              return;
-            }
-
-            if (toast && toast.push) {
-              toast.push('Child archived successfully', 'success');
-            } else {
-              Alert.alert('Success', 'Child archived successfully');
-            }
-            setIsArchived(true);
-            setShowDangerZone(false);
-            if (onChildUpdated) {
-              onChildUpdated({ ...child, archived: true });
-            }
-            setTimeout(() => {
-              onClose();
-            }, 500);
-          }
-        }
-      ]
-    );
-  };
-
-  const handleRestore = async () => {
-    setRestoring(true);
-    const { data, error } = await supabase.rpc('restore_child', {
-      _family: familyId,
-      _child: child.id
-    });
-
-    setRestoring(false);
-
-    if (error || !data?.ok) {
-      const reason = data?.reason || 'unknown';
-      Alert.alert(
-        'Error',
-        reason === 'forbidden' ? 'You do not have permission' :
-        reason === 'not_found' ? 'Child not found' :
-        'Failed to restore child'
-      );
-      return;
-    }
-
-    if (toast && toast.push) {
-      toast.push('Child restored successfully', 'success');
-    } else {
-      Alert.alert('Success', 'Child restored successfully');
-    }
-    setIsArchived(false);
-    setShowDangerZone(false);
-    if (onChildUpdated) {
-      onChildUpdated({ ...child, archived: false });
-    }
-    setTimeout(() => {
-      onClose();
-    }, 500);
-  };
-
-  const handleUnlinkLinkedLogin = () => {
+  const handleDisconnectAccount = () => {
     if (!child?.id || unlinkingLogin) return;
-    const childName = fullChildData?.first_name || fullChildData?.name || child?.first_name || child?.name || 'Child';
-    const em = connectedEmail && String(connectedEmail).trim() ? String(connectedEmail).trim() : 'this account';
+    const em =
+      connectedEmail && String(connectedEmail).trim()
+        ? String(connectedEmail).trim()
+        : 'this email';
     Alert.alert(
-      'Remove linked login?',
-      `${childName}'s profile, planner, and progress stay in your family. We will remove ${em} from this child and delete that Learnadoodle login so you can invite a different email.\n\nThis cannot be undone.`,
+      'Disconnect account?',
+      `This will:\n\n• Remove access for ${em}\n• Keep all learning data and progress`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Remove login',
+          text: 'Disconnect',
           style: 'destructive',
           onPress: async () => {
             setUnlinkingLogin(true);
             const { data, error } = await unlinkChildLogin({ childId: child.id });
             setUnlinkingLogin(false);
             if (error) {
-              Alert.alert('Error', error.message || 'Failed to remove linked login');
+              Alert.alert('Error', error.message || 'Failed to disconnect account');
               return;
             }
             if (!data?.ok) {
-              Alert.alert('Error', 'Failed to remove linked login');
+              Alert.alert('Error', 'Failed to disconnect account');
               return;
             }
             setConnectedEmail(null);
-            if (toast?.push) toast.push('Linked login removed. You can invite a new email.', 'success');
-            else Alert.alert('Done', 'Linked login removed. You can invite a new email.');
+            if (toast?.push) {
+              toast.push('Account disconnected. You can invite a new email below.', 'success');
+            } else {
+              Alert.alert('Done', 'Account disconnected. You can invite a new email below.');
+            }
             if (onChildUpdated) onChildUpdated(child);
           },
         },
       ]
     );
+  };
+
+  const handleInviteChildFromAccount = () => {
+    if (!child?.id || typeof onRequestInviteChild !== 'function') return;
+    onRequestInviteChild(child.id);
   };
 
   const handleDelete = async () => {
@@ -435,17 +364,17 @@ export default function EditChildModal({
       return;
     }
 
-    const linkedAccountNote =
+    const loginBullets =
       connectedEmail != null && connectedEmail !== ''
-        ? `\n\nTheir Learnadoodle login (${connectedEmail}) will be deleted and they will be removed from this family.`
+        ? `\n• Delete linked account (${connectedEmail})\n• Remove them from this family`
         : '';
     Alert.alert(
-      'Delete Permanently',
-      `This will permanently delete ${childName} and ALL their data including sessions, goals, rules, and progress. This CANNOT be undone.${linkedAccountNote}\n\nAre you absolutely sure?`,
+      `Delete ${childName} permanently?`,
+      `This will:\n• Delete all learning data\n• Remove planner history, goals, and records${loginBullets}\n\nThis cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete Forever',
+          text: `Delete ${childName}`,
           style: 'destructive',
           onPress: async () => {
             const effectiveFamilyId = familyId || fullChildData?.family_id;
@@ -520,23 +449,44 @@ export default function EditChildModal({
           >
             {baseData ? (
               <>
-                {connectedEmail != null && connectedEmail !== '' && (
-                  <View style={styles.connectedEmailRow}>
-                    <Text style={styles.connectedEmailLabel}>Connected to email:</Text>
-                    <Text style={styles.connectedEmailValue} numberOfLines={1}>{connectedEmail}</Text>
-                    <TouchableOpacity
-                      style={[styles.unlinkLoginButton, unlinkingLogin && styles.unlinkLoginButtonDisabled]}
-                      onPress={handleUnlinkLinkedLogin}
-                      disabled={unlinkingLogin}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
-                    >
-                      <Text style={styles.unlinkLoginButtonText}>
-                        {unlinkingLogin ? 'Removing…' : 'Remove linked login'}
+                <View style={styles.accountSection}>
+                  <Text style={styles.accountSectionTitle}>Account</Text>
+                  <View style={styles.accountRule} />
+                  {connectedEmail != null && connectedEmail !== '' ? (
+                    <>
+                      <Text style={styles.accountStatusConnected}>✓ Connected</Text>
+                      <Text style={styles.accountEmail} numberOfLines={2}>{connectedEmail}</Text>
+                      <Text style={styles.accountDisconnectHint}>
+                        This removes the child’s login access. Their learning data will remain.
                       </Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
+                      <TouchableOpacity
+                        style={[styles.disconnectAccountButton, unlinkingLogin && styles.disconnectAccountButtonDisabled]}
+                        onPress={handleDisconnectAccount}
+                        disabled={unlinkingLogin}
+                        activeOpacity={0.7}
+                        {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
+                      >
+                        <Text style={styles.disconnectAccountButtonText}>
+                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect account'}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.accountEmptyText}>No account connected</Text>
+                      {typeof onRequestInviteChild === 'function' ? (
+                        <TouchableOpacity
+                          style={styles.accountInviteButton}
+                          onPress={handleInviteChildFromAccount}
+                          activeOpacity={0.85}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.accountInviteButtonText}>Invite child</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </>
+                  )}
+                </View>
                 <AddChildForm
                   ref={formRef}
                   initial={initialData}
@@ -560,47 +510,20 @@ export default function EditChildModal({
                   </TouchableOpacity>
                   {showDangerZone && (
                 <View style={styles.dangerZoneContent}>
-                  {/* Archive Section */}
                   <View style={styles.dangerSection}>
-                    <Text style={styles.dangerSectionTitle}>Archive child</Text>
+                    <Text style={styles.dangerSectionTitle}>Delete child permanently</Text>
                     <Text style={styles.dangerSectionDescription}>
-                      Hides {childName} from Planner and reports. Data is preserved and can be restored.
-                    </Text>
-                    <View style={styles.dangerActions}>
-                      <TouchableOpacity
-                        style={styles.dangerButton}
-                        onPress={handleArchive}
-                        disabled={archiving || isArchived}
-                      >
-                        <Text style={styles.dangerButtonText}>
-                          {archiving ? 'Archiving...' : 'Archive'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.dangerButton}
-                        onPress={handleRestore}
-                        disabled={restoring || !isArchived}
-                      >
-                        <Text style={styles.dangerButtonText}>
-                          {restoring ? 'Restoring...' : 'Restore'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  {/* Delete Section */}
-                  <View style={styles.dangerSection}>
-                    <Text style={styles.dangerSectionTitle}>Delete permanently</Text>
-                    <Text style={styles.dangerSectionDescription}>
-                      This removes all sessions, goals, overrides, and cached days for{' '}
-                      <Text style={styles.bold}>{childName}</Text>. This cannot be undone.
+                      This will delete all learning data, planner history, goals, and records for{' '}
+                      <Text style={styles.bold}>{childName}</Text>.
                       {connectedEmail != null && connectedEmail !== '' ? (
                         <>
-                          {' '}
-                          If they have a linked account ({connectedEmail}), that login will be deleted and they will be
-                          removed from this family.
+                          {'\n\n'}
+                          Also removes login access for:{' '}
+                          <Text style={styles.bold}>{connectedEmail}</Text>
                         </>
                       ) : null}
+                      {'\n\n'}
+                      This cannot be undone.
                     </Text>
                     
                     <Text style={styles.inputLabel}>
@@ -755,42 +678,78 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
   },
-  connectedEmailRow: {
-    marginBottom: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+  accountSection: {
+    marginBottom: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     backgroundColor: '#f8fafc',
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  connectedEmailLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748b',
-    marginBottom: 4,
+  accountSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
-  connectedEmailValue: {
+  accountRule: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  accountStatusConnected: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#166534',
+    marginBottom: 6,
+  },
+  accountEmail: {
     fontSize: 15,
     color: '#0f172a',
+    marginBottom: 8,
   },
-  unlinkLoginButton: {
+  accountDisconnectHint: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  accountEmptyText: {
+    fontSize: 15,
+    color: '#64748b',
+    marginBottom: 14,
+  },
+  disconnectAccountButton: {
     alignSelf: 'flex-start',
-    marginTop: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#fecaca',
     backgroundColor: '#fff',
   },
-  unlinkLoginButtonDisabled: {
+  disconnectAccountButtonDisabled: {
     opacity: 0.6,
   },
-  unlinkLoginButtonText: {
+  disconnectAccountButtonText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#b91c1c',
+  },
+  accountInviteButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: colors.blue || '#4A9FD4',
+  },
+  accountInviteButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
   },
   dangerZoneAccordion: {
     marginTop: 16,
@@ -842,23 +801,6 @@ const styles = StyleSheet.create({
   },
   bold: {
     fontWeight: '600',
-  },
-  dangerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  dangerButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#ffffff',
-  },
-  dangerButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
   },
   inputLabel: {
     fontSize: 11,

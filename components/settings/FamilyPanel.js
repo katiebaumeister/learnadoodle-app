@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw, Clock } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -11,7 +11,6 @@ import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchChildInviteSummaries,
-  formatInviteLastSent,
   linkedSummariesFromFamilyApiMembers,
   mergeChildInviteSummaryMaps,
 } from '../../lib/services/childInviteStatus';
@@ -2156,7 +2155,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               const invSt = inv?.invite_status || 'none';
               const statusDotColor =
                 invSt === 'accepted' ? '#22c55e' : invSt === 'pending' ? '#ca8a04' : '#94a3b8';
-              const lastSent = formatInviteLastSent(inv?.invite_sent_at);
               return (
                 <View 
                   key={child.id} 
@@ -2173,19 +2171,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         style={styles.memberRowChildAvatar}
                         resizeMode="cover"
                       />
-                      <View
-                        style={[
-                          styles.memberRowChildStatusBadge,
-                          { backgroundColor: statusDotColor },
-                        ]}
-                        accessibilityLabel={
-                          invSt === 'accepted'
-                            ? 'Account linked'
-                            : invSt === 'pending'
-                              ? 'Invite pending'
-                              : 'Not invited'
-                        }
-                      />
+                      {!isChildMode ? (
+                        <View
+                          style={[
+                            styles.memberRowChildStatusBadge,
+                            { backgroundColor: statusDotColor },
+                          ]}
+                          accessibilityLabel={
+                            invSt === 'accepted'
+                              ? 'Account linked'
+                              : invSt === 'pending'
+                                ? 'Invite pending'
+                                : 'Not invited'
+                          }
+                        />
+                      ) : null}
                     </View>
                     <View style={styles.memberRowChildTextCol}>
                       <Text style={styles.memberRowName}>
@@ -2200,24 +2200,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           {ageGradeLine}
                         </Text>
                       ) : null}
-                      {!isChildMode && invSt === 'none' ? (
-                        <Text style={styles.memberRowChildInviteLine}>Not invited</Text>
-                      ) : null}
-                      {!isChildMode && invSt === 'pending' ? (
-                        <>
-                          <Text style={styles.memberRowChildInviteLine}>
-                            Invited • {inv?.invite_email || '—'}
-                          </Text>
-                          {lastSent ? (
-                            <Text style={styles.memberRowChildInviteSub}>last sent {lastSent}</Text>
+                      {!isChildMode ? (
+                        <View style={styles.memberRowChildStatusLineRow}>
+                          {invSt === 'pending' ? (
+                            <View style={styles.memberRowChildStatusIconWrap}>
+                              <Clock size={12} color="#9ca3af" />
+                            </View>
                           ) : null}
-                          <Text style={styles.memberRowChildInviteWait}>Waiting for confirmation</Text>
-                        </>
-                      ) : null}
-                      {!isChildMode && invSt === 'accepted' ? (
-                        <Text style={styles.memberRowChildInviteLine}>
-                          ✓ Linked • {inv?.invite_email || '—'}
-                        </Text>
+                          <Text style={styles.memberRowChildInviteLine} numberOfLines={1}>
+                            {invSt === 'accepted'
+                              ? `✓ Linked${inv?.invite_email ? ` • ${inv.invite_email}` : ''}`
+                              : invSt === 'pending'
+                                ? `Pending invite${inv?.invite_email ? ` • ${inv.invite_email}` : ''}`
+                                : 'Not invited'}
+                          </Text>
+                        </View>
                       ) : null}
                       {!isChildMode && invSt === 'pending' ? (
                         <TouchableOpacity
@@ -3825,6 +3822,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             ? childInviteSummaries[String(editingChild.id)]?.invite_email || null
             : null
         }
+        onRequestInviteChild={(childId) => {
+          setShowEditChildModal(false);
+          setEditingChild(null);
+          setInviteModalPrefillChildId(childId || null);
+          setShowChildInviteModal(true);
+        }}
         onChildUpdated={(updatedChild) => {
           if (updatedChild && family) {
             setFamily((prevFamily) => {
@@ -4411,6 +4414,7 @@ function createStyles(tokens) {
       fontSize: 16,
       fontWeight: '500',
       color: '#374151',
+      flexShrink: 1,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -4422,12 +4426,6 @@ function createStyles(tokens) {
       gap: 12,
       minWidth: 0,
       marginRight: 12,
-    },
-    memberRowChildDot: {
-      width: 14,
-      height: 14,
-      borderRadius: 7,
-      flexShrink: 0,
     },
     memberRowChildAvatarWrap: {
       width: 44,
@@ -4466,28 +4464,22 @@ function createStyles(tokens) {
         fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
-    memberRowChildInviteLine: {
+    memberRowChildStatusLineRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
       marginTop: 4,
+      minWidth: 0,
+    },
+    memberRowChildStatusIconWrap: {
+      marginRight: 6,
+      justifyContent: 'center',
+    },
+    memberRowChildInviteLine: {
+      flexShrink: 1,
       fontSize: 12,
       fontWeight: '400',
       color: '#9ca3af',
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
-    },
-    memberRowChildInviteSub: {
-      marginTop: 2,
-      fontSize: 11,
-      color: '#cbd5e1',
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
-    },
-    memberRowChildInviteWait: {
-      marginTop: 2,
-      fontSize: 11,
-      color: '#94a3b8',
-      fontStyle: 'italic',
+      minWidth: 0,
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
