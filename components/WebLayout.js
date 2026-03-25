@@ -3771,6 +3771,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         familyId={familyId}
         familyChildren={children}
         familyMembersFromApi={family?.members ?? null}
+        childInviteSummariesFromApi={family?.child_invite_summaries ?? null}
         prefillChildId={inviteChildModalPrefillId}
         onPrefillConsumed={() => setInviteChildModalPrefillId(null)}
         onInvited={() => {

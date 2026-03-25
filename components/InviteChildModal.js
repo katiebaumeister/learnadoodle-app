@@ -21,6 +21,7 @@ import {
   mergeChildInviteSummary,
   linkedSummariesFromFamilyApiMembers,
   mergeChildInviteSummaryMaps,
+  mergeServerChildInviteSummaries,
 } from '../lib/services/childInviteStatus';
 import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
 
@@ -48,6 +49,8 @@ export default function InviteChildModal({
   onPrefillConsumed,
   /** From GET /api/family/members — fills linked status when Supabase RLS hides rows */
   familyMembersFromApi = null,
+  /** From GET /api/family/members — pending/accepted per child (service role; fixes RLS on invites) */
+  childInviteSummariesFromApi = null,
 }) {
   const toast = useToast();
   const emailInputRef = useRef(null);
@@ -113,12 +116,11 @@ export default function InviteChildModal({
   }, [visible, prefillChildId, list, onPrefillConsumed]);
 
   const summariesWithApi = useMemo(() => {
-    const apiLinked = linkedSummariesFromFamilyApiMembers(
-      familyMembersFromApi,
-      list.map((c) => c.id)
-    );
-    return mergeChildInviteSummaryMaps(summaries, apiLinked);
-  }, [summaries, familyMembersFromApi, list]);
+    const rawIds = list.map((c) => c.id);
+    const apiLinked = linkedSummariesFromFamilyApiMembers(familyMembersFromApi, rawIds);
+    const merged = mergeChildInviteSummaryMaps(summaries, apiLinked);
+    return mergeServerChildInviteSummaries(merged, childInviteSummariesFromApi, rawIds);
+  }, [summaries, familyMembersFromApi, childInviteSummariesFromApi, list]);
 
   const mergedList = useMemo(
     () =>

@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { permanentDeleteChild, unlinkChildLogin } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
+import { designTokens } from '../theme/designTokens';
 
 /** Normalize DB row for client lists (name + avatar for color chips). */
 function mapChildRowForClient(row) {
@@ -626,10 +627,22 @@ export default function EditChildModal({
                 <View style={styles.dangerZoneContent}>
                   {displayLinkedEmail != null && displayLinkedEmail !== '' && !accountDisconnectedThisSession ? (
                     <View style={styles.dangerDisconnectSection}>
-                      <Text style={styles.dangerDisconnectTitle}>Disconnect linked account</Text>
-                      <Text style={styles.dangerDisconnectDescription}>
-                        Disconnect the account to delete the linked email, {displayLinkedEmail}, but to keep the child and their data in your account. Delete the child below if you want to both delete the linked account as well as child data in both that account and this one.
-                      </Text>
+                      <Text style={styles.dangerDisconnectTitle}>{"Disconnect child's login"}</Text>
+                      <View style={styles.dangerBulletList}>
+                        <Text style={styles.dangerBulletLine}>
+                          • Remove <Text style={styles.bold}>{displayLinkedEmail}</Text>
+                          {" from the child's account."}
+                        </Text>
+                        <Text style={styles.dangerBulletLine}>
+                          • The child profile and all learning data will stay in your family.
+                        </Text>
+                        <Text style={styles.dangerBulletLine}>
+                          • The user will no longer be able to log in or access this child.
+                        </Text>
+                        <Text style={styles.dangerBulletLine}>
+                          • If you want to delete the child and all data instead, use the option below.
+                        </Text>
+                      </View>
                       <TouchableOpacity
                         style={[
                           styles.disconnectOutlineButton,
@@ -642,29 +655,34 @@ export default function EditChildModal({
                         {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
                       >
                         <Text style={styles.disconnectOutlineButtonText}>
-                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
+                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect account'}
                         </Text>
                       </TouchableOpacity>
                     </View>
                   ) : null}
                   <View style={styles.dangerSection}>
-                    <Text style={styles.dangerSectionTitle}>Delete child permanently</Text>
-                    <Text style={styles.dangerSectionDescription}>
-                      This will delete all learning data, planner history, goals, and records for{' '}
-                      <Text style={styles.bold}>{childName}</Text>.
-                      {displayLinkedEmail != null && displayLinkedEmail !== '' ? (
-                        <>
-                          {'\n\n'}
-                          Also removes login access for:{' '}
-                          <Text style={styles.bold}>{displayLinkedEmail}</Text>
-                        </>
-                      ) : null}
-                      {'\n\n'}
-                      This cannot be undone.
+                    <Text style={styles.dangerSectionTitle}>Delete child and all data</Text>
+                    <Text style={styles.dangerSectionLead}>
+                      This will permanently delete{' '}
+                      <Text style={styles.bold}>{`${childName}'s:`}</Text>
                     </Text>
-                    
+                    <View style={styles.dangerBulletList}>
+                      <Text style={styles.dangerBulletLine}>• Learning history</Text>
+                      <Text style={styles.dangerBulletLine}>• Planner events</Text>
+                      <Text style={styles.dangerBulletLine}>• Goals and records</Text>
+                    </View>
+                    {displayLinkedEmail != null && displayLinkedEmail !== '' ? (
+                      <Text style={styles.dangerSectionDescription}>
+                        It will also remove access for:{' '}
+                        <Text style={styles.bold}>{displayLinkedEmail}</Text>
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.dangerSectionDescription, styles.dangerSectionDescriptionLast]}>
+                      This action cannot be undone.
+                    </Text>
+
                     <Text style={styles.inputLabel}>
-                      Type the child's name to confirm
+                      Type {childName} to confirm
                     </Text>
                     <TextInput
                       style={styles.dangerInput}
@@ -919,17 +937,24 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 14,
   },
+  /** Match selected planner / planning-preferences chips (designTokens primary + soft lavender fill) */
   accountInviteButton: {
     alignSelf: 'flex-start',
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: colors.blue || '#4A9FD4',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: designTokens.colors.primary,
+    backgroundColor: designTokens.softAccents.core,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   accountInviteButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: designTokens.colors.primary,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   dangerZoneAccordion: {
     marginTop: 0,
@@ -971,13 +996,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#0f172a',
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  dangerDisconnectDescription: {
+  dangerBulletList: {
+    marginBottom: 14,
+    gap: 8,
+  },
+  dangerBulletLine: {
     fontSize: 12,
     color: '#6b7280',
     lineHeight: 18,
-    marginBottom: 14,
+    marginBottom: 6,
+  },
+  dangerSectionLead: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 18,
+    marginBottom: 8,
   },
   dangerSection: {
     backgroundColor: colors.redSoft || '#fef2f2',
@@ -997,6 +1032,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
     lineHeight: 18,
+    marginBottom: 8,
+  },
+  dangerSectionDescriptionLast: {
     marginBottom: 12,
   },
   bold: {

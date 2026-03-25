@@ -14,6 +14,7 @@ import {
   formatInviteLastSent,
   linkedSummariesFromFamilyApiMembers,
   mergeChildInviteSummaryMaps,
+  mergeServerChildInviteSummaries,
 } from '../../lib/services/childInviteStatus';
 import ChildDotCluster from '../ui/ChildDotCluster';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -223,8 +224,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     const rawIds = childrenIdsKeyForInvites.split(',').filter(Boolean);
     if (rawIds.length === 0) return {};
     const apiLinked = linkedSummariesFromFamilyApiMembers(family?.members, rawIds);
-    return mergeChildInviteSummaryMaps(childInviteSupabase, apiLinked);
-  }, [childInviteSupabase, family?.members, childrenIdsKeyForInvites]);
+    const merged = mergeChildInviteSummaryMaps(childInviteSupabase, apiLinked);
+    return mergeServerChildInviteSummaries(merged, family?.child_invite_summaries, rawIds);
+  }, [childInviteSupabase, family?.members, family?.child_invite_summaries, childrenIdsKeyForInvites]);
 
   // Full family payload (including members[]) — server sees linked children; props/RLS often do not
   useEffect(() => {
@@ -4056,6 +4058,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         familyId={family?.id || familyId}
         familyChildren={children}
         familyMembersFromApi={family?.members ?? null}
+        childInviteSummariesFromApi={family?.child_invite_summaries ?? null}
         prefillChildId={inviteModalPrefillChildId}
         onPrefillConsumed={() => setInviteModalPrefillChildId(null)}
         onInvited={() => {

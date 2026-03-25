@@ -11,7 +11,7 @@ import os
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field, EmailStr
 from typing import Dict, List, Optional, Set
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 from pathlib import Path
 
@@ -38,6 +38,14 @@ class ChildOut(BaseModel):
     grade_level: Optional[str] = None
     archived: Optional[bool] = False
 
+
+class ChildInviteSummaryOut(BaseModel):
+    """Per-child invite/link state (service role; clients often cannot read invites via RLS)."""
+
+    invite_status: str = "none"  # none | pending | accepted
+    invite_email: Optional[str] = None
+    invite_sent_at: Optional[str] = None
+
 class MemberOut(BaseModel):
     id: str
     name: Optional[str] = None
@@ -60,6 +68,8 @@ class FamilyMembersOut(BaseModel):
     members: List[MemberOut] = Field(default_factory=list)
     # True when the signed-in user is a child/student who joined via an accepted parent invite (RLS-safe for clients)
     child_linked_via_accepted_invite: Optional[bool] = None
+    # children.id -> pending/accepted/none (admin client; fixes Family list when Supabase client cannot SELECT invites)
+    child_invite_summaries: Dict[str, ChildInviteSummaryOut] = Field(default_factory=dict)
 
 class InviteTutorIn(BaseModel):
     email: EmailStr = Field(..., description="Email of the member to invite")
@@ -137,6 +147,136 @@ def _accepted_invite_email_by_child_id(supabase, family_id: str) -> Dict[str, st
         log_event("family.get_members.invite_email_map_error", error=str(e))
         return {}
     return {k: v[0] for k, v in best.items()}
+
+
+def _iso_or_none(v) -> Optional[str]:
+    if v is None:
+        return None
+    if hasattr(v, "isoformat"):
+        try:
+            return v.isoformat()
+        except Exception:
+            return str(v)
+    return str(v) if v else None
+
+
+def _child_invite_summaries_map(supabase, family_id: str, child_ids: List[str]) -> Dict[str, ChildInviteSummaryOut]:
+    """
+    Match lib/services/childInviteStatus.fetchChildInviteSummaries using service role.
+    Ensures pending invites appear in Family UI when RLS hides invites from the anon client.
+    """
+    ids = list({str(c).strip() for c in child_ids if c is not None and str(c).strip()})
+    out: Dict[str, ChildInviteSummaryOut] = {
+        cid: ChildInviteSummaryOut(invite_status="none", invite_email=None, invite_sent_at=None) for cid in ids
+    }
+    if not ids:
+        return out
+
+    linked: Dict[str, Optional[str]] = {}
+    try:
+        fm_res = (
+            supabase.table("family_members")
+            .select("child_id, child_scope, user_id, member_role")
+            .eq("family_id", family_id)
+            .execute()
+        )
+        for row in fm_res.data or []:
+            role = _norm_member_role(row.get("member_role"))
+            if role not in ("child", "student"):
+                continue
+            uid = row.get("user_id")
+            cid = row.get("child_id")
+            if cid is not None and str(cid).strip():
+                linked[str(cid).strip()] = str(uid).strip() if uid else None
+            raw_scope = row.get("child_scope") or []
+            if isinstance(raw_scope, str):
+                try:
+                    raw_scope = json.loads(raw_scope)
+                except Exception:
+                    raw_scope = []
+            if isinstance(raw_scope, list):
+                for x in raw_scope:
+                    if x is None:
+                        continue
+                    sid = str(x).strip()
+                    if sid and sid not in linked:
+                        linked[sid] = str(uid).strip() if uid else None
+    except Exception as e:
+        log_event("family.child_invite_summaries.fm_error", error=str(e))
+
+    email_by_user: Dict[str, str] = {}
+    uids = [u for u in set(linked.values()) if u]
+    if uids:
+        try:
+            prof_res = supabase.table("profiles").select("id, email").in_("id", uids).execute()
+            for p in prof_res.data or []:
+                pid = p.get("id")
+                em = p.get("email")
+                if pid and em:
+                    email_by_user[str(pid)] = str(em).strip()
+        except Exception as e:
+            log_event("family.child_invite_summaries.profiles_error", error=str(e))
+
+    pending_by_child: Dict[str, tuple] = {}
+    accepted_by_child: Dict[str, tuple] = {}
+    try:
+        inv_res = (
+            supabase.table("invites")
+            .select("child_id, email, accepted_at, created_at, updated_at, expires_at")
+            .eq("family_id", family_id)
+            .eq("role", "child")
+            .in_("child_id", ids)
+            .execute()
+        )
+        for inv in inv_res.data or []:
+            key = str(inv.get("child_id") or "").strip()
+            if not key or key not in out:
+                continue
+            if inv.get("accepted_at"):
+                em = str(inv.get("email") or "").strip() or None
+                acc = _iso_or_none(inv.get("accepted_at")) or ""
+                prev = accepted_by_child.get(key)
+                prev_t = prev[1] if prev else ""
+                if not prev or acc >= prev_t:
+                    accepted_by_child[key] = (em, acc)
+                continue
+            exp = inv.get("expires_at")
+            if exp:
+                try:
+                    exp_s = str(exp).replace("Z", "+00:00")
+                    exp_dt = datetime.fromisoformat(exp_s)
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if exp_dt < datetime.now(timezone.utc):
+                        continue
+                except Exception:
+                    pass
+            sent = inv.get("updated_at") or inv.get("created_at")
+            t = _iso_or_none(sent) or ""
+            prev = pending_by_child.get(key)
+            prev_t = prev[1] if prev else ""
+            em = str(inv.get("email") or "").strip() or None
+            if not prev or t > prev_t:
+                pending_by_child[key] = (em, t, sent)
+    except Exception as e:
+        log_event("family.child_invite_summaries.invites_error", error=str(e))
+
+    for cid in ids:
+        if cid in linked:
+            uid = linked.get(cid)
+            em = email_by_user.get(uid) if uid else None
+            out[cid] = ChildInviteSummaryOut(invite_status="accepted", invite_email=em, invite_sent_at=None)
+        elif cid in accepted_by_child:
+            em_acc, _ = accepted_by_child[cid]
+            out[cid] = ChildInviteSummaryOut(invite_status="accepted", invite_email=em_acc, invite_sent_at=None)
+        elif cid in pending_by_child:
+            em_p, _, sent_raw = pending_by_child[cid]
+            out[cid] = ChildInviteSummaryOut(
+                invite_status="pending",
+                invite_email=em_p,
+                invite_sent_at=_iso_or_none(sent_raw),
+            )
+    return out
 
 
 # --- Permanent child delete helpers ---
@@ -643,6 +783,12 @@ async def get_family_members(
 
         log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
 
+        invite_summaries: Dict[str, ChildInviteSummaryOut] = {}
+        try:
+            invite_summaries = _child_invite_summaries_map(supabase, family_id, [c.id for c in children])
+        except Exception as e:
+            log_event("family.get_members.invite_summaries_build_error", user_id=user["id"], error=str(e))
+
         return FamilyMembersOut(
             id=family_id,
             family_name=family_name,
@@ -652,6 +798,7 @@ async def get_family_members(
             children=children,
             members=members,
             child_linked_via_accepted_invite=child_linked_via_accepted_invite,
+            child_invite_summaries=invite_summaries,
         )
     except HTTPException:
         raise
@@ -667,6 +814,7 @@ async def get_family_members(
             children=[],
             members=[],
             child_linked_via_accepted_invite=None,
+            child_invite_summaries={},
         )
 
 
