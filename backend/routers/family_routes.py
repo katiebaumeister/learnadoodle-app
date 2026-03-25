@@ -148,23 +148,57 @@ def _norm_child_name(value: Optional[str]) -> str:
     return " ".join(str(value).strip().lower().split())
 
 
+def _norm_member_role(value: Optional[str]) -> str:
+    return (value or "").strip().lower()
+
+
 def _user_is_parent_for_family(supabase, user_id: str, family_id: str) -> bool:
+    """
+    True if this user may act as a parent for this family. Uses family_members when present;
+    case-insensitive role checks; falls back to profiles when the account has no parent row
+    (legacy/onboarding) but profiles.family_id matches and role is not child/student/tutor.
+    """
     try:
-        current_member_res = (
+        mem_res = (
             supabase.table("family_members")
             .select("member_role")
             .eq("user_id", user_id)
             .eq("family_id", family_id)
-            .maybe_single()
             .execute()
         )
-        if current_member_res.data and current_member_res.data.get("member_role") == "parent":
-            return True
+        rows = mem_res.data or []
+        saw_tutor_only = False
+        for row in rows:
+            mr = _norm_member_role(row.get("member_role"))
+            if mr == "parent":
+                return True
+            if mr in ("child", "student"):
+                return False
+            if mr == "tutor":
+                saw_tutor_only = True
+        if saw_tutor_only and rows:
+            return False
     except Exception:
         pass
     try:
-        profile_res = supabase.table("profiles").select("role").eq("id", user_id).maybe_single().execute()
-        if profile_res.data and profile_res.data.get("role") == "parent":
+        profile_res = (
+            supabase.table("profiles")
+            .select("role, family_id")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+        prof_list = profile_res.data or []
+        if not prof_list:
+            return False
+        prof = prof_list[0]
+        pr = _norm_member_role(prof.get("role"))
+        if pr == "parent":
+            return True
+        if pr in ("child", "student", "tutor"):
+            return False
+        fid = prof.get("family_id")
+        if fid and str(fid) == str(family_id):
             return True
     except Exception:
         pass

@@ -469,6 +469,14 @@ export default function EditChildModal({
           >
             {baseData ? (
               <>
+                <AddChildForm
+                  ref={formRef}
+                  initial={initialData}
+                  submitting={isSubmitting}
+                  onSubmit={handleSubmit}
+                  onValidationChange={setFormCanSubmit}
+                />
+
                 <View style={styles.accountSection}>
                   <Text style={styles.accountSectionTitle}>Account</Text>
                   <View style={styles.accountRule} />
@@ -478,7 +486,7 @@ export default function EditChildModal({
                         ✓ Connected · {displayLinkedEmail}
                       </Text>
                       <Text style={styles.accountReassuranceLine}>
-                        Access can be removed without deleting data.
+                        Disconnect the account to delete the linked email, {displayLinkedEmail}, but to keep the child and their data in your account. Delete the child if you want to both delete the linked account as well as child data in both that account and this one.
                       </Text>
                       <TouchableOpacity
                         style={[
@@ -558,14 +566,7 @@ export default function EditChildModal({
                     </>
                   )}
                 </View>
-                <AddChildForm
-                  ref={formRef}
-                  initial={initialData}
-                  submitting={isSubmitting}
-                  onSubmit={handleSubmit}
-                  onValidationChange={setFormCanSubmit}
-                />
-                
+
                 {/* Accordion — Danger zone */}
                 <View style={styles.dangerZoneAccordion}>
                   <TouchableOpacity
