@@ -51,6 +51,8 @@ class FamilyMembersOut(BaseModel):
     default_planning_mode: Optional[str] = None  # HOMESCHOOL_COMPLIANCE | AFTERSCHOOL_GOALS | NONE
     children: List[ChildOut] = Field(default_factory=list)
     members: List[MemberOut] = Field(default_factory=list)
+    # True when the signed-in user is a child/student who joined via an accepted parent invite (RLS-safe for clients)
+    child_linked_via_accepted_invite: Optional[bool] = None
 
 class InviteTutorIn(BaseModel):
     email: EmailStr = Field(..., description="Email of the member to invite")
@@ -151,7 +153,7 @@ async def get_family_members(
         members_data = []
         try:
             members_res = supabase.table("family_members").select(
-                "id, user_id, member_role, child_scope"
+                "id, user_id, member_role, child_scope, child_id"
             ).eq("family_id", family_id).execute()
             members_data = list(members_res.data or [])
         except Exception as e:
@@ -183,6 +185,33 @@ async def get_family_members(
                 child_scope=member.get("child_scope", []) or []
             ))
 
+        child_linked_via_accepted_invite = None
+        try:
+            uid = user["id"]
+            my_row = next((m for m in members_data if m.get("user_id") == uid), None)
+            if my_row and (my_row.get("member_role") or "") in ("child", "student"):
+                cid = my_row.get("child_id")
+                if not cid:
+                    cs = my_row.get("child_scope") or []
+                    if isinstance(cs, list) and len(cs) > 0:
+                        cid = cs[0]
+                if cid and family_id:
+                    inv_res = (
+                        supabase.table("invites")
+                        .select("id, accepted_at")
+                        .eq("family_id", family_id)
+                        .eq("child_id", str(cid))
+                        .eq("role", "child")
+                        .execute()
+                    )
+                    rows = inv_res.data or []
+                    child_linked_via_accepted_invite = any(bool(r.get("accepted_at")) for r in rows)
+                else:
+                    child_linked_via_accepted_invite = False
+        except Exception as e:
+            log_event("family.get_members.invite_link_check_error", user_id=user["id"], error=str(e))
+            child_linked_via_accepted_invite = None
+
         log_event("family.get_members.success", user_id=user["id"], family_id=family_id, members_count=len(members))
 
         return FamilyMembersOut(
@@ -192,7 +221,8 @@ async def get_family_members(
             onboarding_is_valid=onboarding_is_valid,
             default_planning_mode=default_planning_mode,
             children=children,
-            members=members
+            members=members,
+            child_linked_via_accepted_invite=child_linked_via_accepted_invite,
         )
     except HTTPException:
         raise
@@ -206,7 +236,8 @@ async def get_family_members(
             onboarding_is_valid=False,
             default_planning_mode=None,
             children=[],
-            members=[]
+            members=[],
+            child_linked_via_accepted_invite=None,
         )
 
 

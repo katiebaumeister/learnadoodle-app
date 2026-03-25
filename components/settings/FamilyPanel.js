@@ -488,14 +488,29 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setChildJoinedViaAcceptedFamilyInvite(false);
       return;
     }
-    if (!familyId || !currentChildId) {
-      setChildInviteLinkResolved(true);
-      setChildJoinedViaAcceptedFamilyInvite(false);
-      return;
-    }
     let cancelled = false;
     setChildInviteLinkResolved(false);
     (async () => {
+      try {
+        // Authoritative: backend uses service role (children cannot read `invites` under RLS).
+        const { data: famData, error: famErr } = await getFamilyMembers();
+        if (cancelled) return;
+        const apiFlag = famData?.child_linked_via_accepted_invite;
+        if (!famErr && famData && typeof apiFlag === 'boolean') {
+          setChildJoinedViaAcceptedFamilyInvite(apiFlag);
+          setChildInviteLinkResolved(true);
+          return;
+        }
+      } catch (_) {
+        /* fall through */
+      }
+      if (!familyId || !currentChildId) {
+        if (!cancelled) {
+          setChildJoinedViaAcceptedFamilyInvite(false);
+          setChildInviteLinkResolved(true);
+        }
+        return;
+      }
       try {
         const { data, error } = await supabase
           .from('invites')
@@ -516,7 +531,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     return () => {
       cancelled = true;
     };
-  }, [isChildMode, familyId, currentChildId]);
+  }, [isChildMode, familyId, currentChildId, user?.id]);
 
   const showSubscriptionInSidebar =
     !isChildMode || (childInviteLinkResolved && !childJoinedViaAcceptedFamilyInvite);
@@ -2219,19 +2234,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         style={styles.memberRowChildAvatar}
                         resizeMode="cover"
                       />
-                      <View
-                        style={[
-                          styles.memberRowChildStatusBadge,
-                          { backgroundColor: statusDotColor },
-                        ]}
-                        accessibilityLabel={
-                          invSt === 'accepted'
-                            ? 'Account linked'
-                            : invSt === 'pending'
-                              ? 'Invite pending'
-                              : 'Not invited'
-                        }
-                      />
+                      {!isChildMode ? (
+                        <View
+                          style={[
+                            styles.memberRowChildStatusBadge,
+                            { backgroundColor: statusDotColor },
+                          ]}
+                          accessibilityLabel={
+                            invSt === 'accepted'
+                              ? 'Account linked'
+                              : invSt === 'pending'
+                                ? 'Invite pending'
+                                : 'Not invited'
+                          }
+                        />
+                      ) : null}
                     </View>
                     <View style={styles.memberRowChildTextCol}>
                       <Text style={styles.memberRowName}>
