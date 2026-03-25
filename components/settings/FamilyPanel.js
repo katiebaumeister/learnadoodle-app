@@ -11,6 +11,7 @@ import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchChildInviteSummaries, formatInviteLastSent } from '../../lib/services/childInviteStatus';
 import ChildDotCluster from '../ui/ChildDotCluster';
+import { sourceForChild } from '../ui/ChildAvatarCluster';
 import EditChildModal from '../EditChildModal';
 import AddChildModal from '../AddChildModal';
 import InviteChildModal from '../InviteChildModal';
@@ -408,7 +409,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           .from('family_members')
           .select('user_id')
           .eq('family_id', familyId)
-          .eq('member_role', 'child')
+          .in('member_role', ['child', 'student'])
           .eq('child_id', viewingAsChildId)
           .maybeSingle();
         if (cancelled) return;
@@ -418,7 +419,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             .from('family_members')
             .select('user_id')
             .eq('family_id', familyId)
-            .eq('member_role', 'child')
+            .in('member_role', ['child', 'student'])
             .contains('child_scope', [viewingAsChildId])
             .limit(1);
           if (cancelled) return;
@@ -2134,12 +2135,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   })}
                 >
                   <View style={styles.memberRowChildMain}>
-                    <View
-                      style={[
-                        styles.memberRowChildDot,
-                        { backgroundColor: statusDotColor },
-                      ]}
-                    />
+                    <View style={styles.memberRowChildAvatarWrap}>
+                      <Image
+                        source={sourceForChild(child)}
+                        style={styles.memberRowChildAvatar}
+                        resizeMode="cover"
+                      />
+                      <View
+                        style={[
+                          styles.memberRowChildStatusBadge,
+                          { backgroundColor: statusDotColor },
+                        ]}
+                        accessibilityLabel={
+                          invSt === 'accepted'
+                            ? 'Account linked'
+                            : invSt === 'pending'
+                              ? 'Invite pending'
+                              : 'Not invited'
+                        }
+                      />
+                    </View>
                     <View style={styles.memberRowChildTextCol}>
                       <Text style={styles.memberRowName}>
                         {childName}
@@ -4360,6 +4375,30 @@ function createStyles(tokens) {
       height: 14,
       borderRadius: 7,
       flexShrink: 0,
+    },
+    memberRowChildAvatarWrap: {
+      width: 44,
+      height: 44,
+      position: 'relative',
+      flexShrink: 0,
+    },
+    memberRowChildAvatar: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: '#e5e7eb',
+      ...(Platform.OS === 'web' && { objectFit: 'cover' }),
+    },
+    memberRowChildStatusBadge: {
+      position: 'absolute',
+      right: -1,
+      bottom: -1,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: '#ffffff',
+      ...(Platform.OS === 'web' && { boxSizing: 'border-box' }),
     },
     memberRowChildTextCol: {
       flex: 1,

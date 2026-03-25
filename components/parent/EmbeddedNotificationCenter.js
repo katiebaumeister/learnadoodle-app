@@ -223,7 +223,7 @@ export default function EmbeddedNotificationCenter({
         .from('family_members')
         .select('child_id, user_id')
         .eq('family_id', familyId)
-        .eq('member_role', 'child')
+        .in('member_role', ['child', 'student'])
         .not('user_id', 'is', null);
 
       if (error) throw error;

@@ -87,7 +87,7 @@ export default function EditChildModal({
           .select('user_id')
           .eq('family_id', fid)
           .eq('child_id', child.id)
-          .eq('member_role', 'child')
+          .in('member_role', ['child', 'student'])
           .limit(1);
         const userId = fmRows?.[0]?.user_id;
         if (userId) {
