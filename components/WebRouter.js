@@ -3,7 +3,7 @@ import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native
 import WebAuthScreen from './WebAuthScreen';
 import PasswordResetPage from './PasswordResetPage';
 import SetPasswordPage from './SetPasswordPage';
-import AppLoader from './AppLoader';
+import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import { useAuth } from '../contexts/AuthContext';
 
 const AuthenticatedApp = lazy(() => import('./AuthenticatedApp'));
@@ -32,6 +32,12 @@ function WebRouterContent() {
   const [currentPath, setCurrentPath] = useState(getPath);
   const [isPasswordResetFlow, setIsPasswordResetFlow] = useState(false);
   const [resetFlowStartTime, setResetFlowStartTime] = useState(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      ensureWebShellImagesLoaded();
+    }
+  }, []);
 
   useEffect(() => {
     // Update path when URL changes

@@ -4403,6 +4403,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         child={editingChild}
         familyId={familyId}
         linkedLoginEmail={editChildLinkedLoginEmail}
+        childInviteStatus="none"
+        pendingInviteEmail={null}
         onRequestInviteChild={(childId) => {
           setShowEditChildModal(false);
           setEditingChild(null);

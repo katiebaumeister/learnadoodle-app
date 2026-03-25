@@ -52,20 +52,55 @@ function resolveUri(source) {
   }
 }
 
-/** Web: preload shell assets (onload = usable for gate). */
-function preloadShellImagesWeb(onLoaded) {
-  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-  SHELL_IMAGE_IDS.forEach((id) => {
-    const uri = resolveUri(SHELL_SOURCES[id]);
-    if (!uri) {
-      onLoaded(id);
-      return;
-    }
-    const img = new window.Image();
-    img.onload = () => onLoaded(id);
-    img.onerror = () => onLoaded(id);
-    img.src = uri;
+let webShellImagesPromise = null;
+
+/**
+ * Web: preload + decode all shell/toolbar PNGs once (singleton). Resolves when every asset
+ * has loaded and (if supported) decoded so the sidebar/FAB can paint without pop-in.
+ * No-op resolve on native.
+ */
+export function ensureWebShellImagesLoaded() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return Promise.resolve();
+  }
+  if (webShellImagesPromise) return webShellImagesPromise;
+  webShellImagesPromise = new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const loaded = new Set();
+    const onAssetDone = (id) => {
+      if (loaded.has(id)) return;
+      loaded.add(id);
+      if (loaded.size >= TOTAL_PRELOAD) finish();
+    };
+    SHELL_IMAGE_IDS.forEach((id) => {
+      const uri = resolveUri(SHELL_SOURCES[id]);
+      if (!uri) {
+        onAssetDone(id);
+        return;
+      }
+      const img = new window.Image();
+      const mark = () => {
+        if (typeof img.decode === 'function') {
+          img
+            .decode()
+            .then(() => onAssetDone(id))
+            .catch(() => onAssetDone(id));
+        } else {
+          onAssetDone(id);
+        }
+      };
+      img.onload = mark;
+      img.onerror = () => onAssetDone(id);
+      img.src = uri;
+    });
+    setTimeout(finish, STALL_FALLBACK_MS);
   });
+  return webShellImagesPromise;
 }
 
 /**
@@ -79,8 +114,10 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
   const gateTimerStartRef = useRef(null);
   const loadedRef = useRef(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
+  const [webShellDecodeDone, setWebShellDecodeDone] = useState(Platform.OS !== 'web');
 
-  const allShellImagesLoaded = loadedCount >= TOTAL_PRELOAD;
+  const allShellImagesLoaded =
+    Platform.OS === 'web' ? webShellDecodeDone : loadedCount >= TOTAL_PRELOAD;
 
   const markLoaded = (id) => {
     if (loadedRef.current.has(id)) return;
@@ -96,24 +133,25 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    preloadShellImagesWeb(markLoaded);
+    ensureWebShellImagesLoaded().then(() => setWebShellDecodeDone(true));
   }, []);
 
-  const preloadImages = (
-    <View style={[styles.preloadWrap, { pointerEvents: 'none' }]}>
-      {SHELL_IMAGE_IDS.map((id) => (
-        <Image
-          key={id}
-          source={SHELL_SOURCES[id]}
-          style={styles.preloadDecode}
-          resizeMode="contain"
-          onLoad={() => markLoaded(id)}
-          onLoadEnd={() => markLoaded(id)}
-          onError={() => markLoaded(id)}
-        />
-      ))}
-    </View>
-  );
+  const preloadImages =
+    Platform.OS === 'web' ? null : (
+      <View style={[styles.preloadWrap, { pointerEvents: 'none' }]}>
+        {SHELL_IMAGE_IDS.map((id) => (
+          <Image
+            key={id}
+            source={SHELL_SOURCES[id]}
+            style={styles.preloadDecode}
+            resizeMode="contain"
+            onLoad={() => markLoaded(id)}
+            onLoadEnd={() => markLoaded(id)}
+            onError={() => markLoaded(id)}
+          />
+        ))}
+      </View>
+    );
 
   useEffect(() => {
     if (!allShellImagesLoaded || gateTimerStartRef.current != null) return;
@@ -157,7 +195,7 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
 
   return (
     <View style={[styles.overlay, style]}>
-      {preloadImages}
+      {preloadImages ?? null}
       <View style={styles.inner}>
         <ActivityIndicator size="large" color={SPINNER_COLOR} />
       </View>

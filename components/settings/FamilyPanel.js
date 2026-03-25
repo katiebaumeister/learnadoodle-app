@@ -3818,7 +3818,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         child={editingChild}
         familyId={family?.id || familyId}
         linkedLoginEmail={
+          editingChild?.id &&
+          childInviteSummaries[String(editingChild.id)]?.invite_status === 'accepted'
+            ? childInviteSummaries[String(editingChild.id)]?.invite_email || null
+            : null
+        }
+        childInviteStatus={
           editingChild?.id
+            ? childInviteSummaries[String(editingChild.id)]?.invite_status || 'none'
+            : 'none'
+        }
+        pendingInviteEmail={
+          editingChild?.id &&
+          childInviteSummaries[String(editingChild.id)]?.invite_status === 'pending'
             ? childInviteSummaries[String(editingChild.id)]?.invite_email || null
             : null
         }

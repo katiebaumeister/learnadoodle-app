@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import AddChildForm from './AddChildForm';
@@ -40,8 +40,12 @@ export default function EditChildModal({
   onClose, 
   child,
   familyId,
-  /** From Family Members list (API + invites merge); used when profiles.email is hidden by RLS */
+  /** From Family Members list when invite_status is accepted; used when profiles.email is hidden by RLS */
   linkedLoginEmail = null,
+  /** 'none' | 'pending' | 'accepted' — from merged invite summaries (Family) */
+  childInviteStatus = 'none',
+  /** Email on the outstanding invite when status is pending */
+  pendingInviteEmail = null,
   /** Close edit (optional) and open invite flow for this child — e.g. Family Members → Invite Child */
   onRequestInviteChild = null,
   onChildUpdated,
@@ -59,13 +63,30 @@ export default function EditChildModal({
   const [formCanSubmit, setFormCanSubmit] = useState(false);
   const [connectedEmail, setConnectedEmail] = useState(null);
   const [unlinkingLogin, setUnlinkingLogin] = useState(false);
+  /** After disconnect, ignore stale linkedLoginEmail from parent until modal closes */
+  const [accountDisconnectedThisSession, setAccountDisconnectedThisSession] = useState(false);
 
   const toast = useToast();
+
+  /** Shown from first paint: prop from Family API list + RLS merge, then refined by fetch; never null→invite flash when prop is set */
+  const displayLinkedEmail = useMemo(() => {
+    if (accountDisconnectedThisSession) return null;
+    const fromState =
+      connectedEmail != null && String(connectedEmail).trim() !== ''
+        ? String(connectedEmail).trim()
+        : null;
+    if (fromState) return fromState;
+    if (linkedLoginEmail != null && String(linkedLoginEmail).trim() !== '') {
+      return String(linkedLoginEmail).trim();
+    }
+    return null;
+  }, [connectedEmail, linkedLoginEmail, accountDisconnectedThisSession]);
 
   // Use cached child immediately; fetch full data in background (support profile, academic year, connected email)
   useEffect(() => {
     if (visible && child?.id) {
       setFormCanSubmit(false);
+      setAccountDisconnectedThisSession(false);
       fetchFullChildDataInBackground();
     } else if (!visible) {
       setError(null);
@@ -77,6 +98,7 @@ export default function EditChildModal({
       setFormCanSubmit(false);
       setConnectedEmail(null);
       setUnlinkingLogin(false);
+      setAccountDisconnectedThisSession(false);
     }
   }, [visible, child?.id, familyId, linkedLoginEmail]);
 
@@ -315,13 +337,10 @@ export default function EditChildModal({
 
   const handleDisconnectAccount = () => {
     if (!child?.id || unlinkingLogin) return;
-    const em =
-      connectedEmail && String(connectedEmail).trim()
-        ? String(connectedEmail).trim()
-        : 'this email';
+    const em = displayLinkedEmail || 'this email';
     Alert.alert(
-      'Disconnect account?',
-      `This will:\n\n• Remove access for ${em}\n• Keep all learning data and progress`,
+      'Disconnect?',
+      `${em} will lose access to this child’s learning dashboard. Their profile and all learning data stay in your family. You can send a new invite anytime.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -340,10 +359,11 @@ export default function EditChildModal({
               return;
             }
             setConnectedEmail(null);
+            setAccountDisconnectedThisSession(true);
             if (toast?.push) {
-              toast.push('Account disconnected. You can invite a new email below.', 'success');
+              toast.push('Account disconnected', 'success');
             } else {
-              Alert.alert('Done', 'Account disconnected. You can invite a new email below.');
+              Alert.alert('Done', 'Account disconnected');
             }
             if (onChildUpdated) onChildUpdated(child);
           },
@@ -365,8 +385,8 @@ export default function EditChildModal({
     }
 
     const loginBullets =
-      connectedEmail != null && connectedEmail !== ''
-        ? `\n• Delete linked account (${connectedEmail})\n• Remove them from this family`
+      displayLinkedEmail != null && displayLinkedEmail !== ''
+        ? `\n• Delete linked account (${displayLinkedEmail})\n• Remove them from this family`
         : '';
     Alert.alert(
       `Delete ${childName} permanently?`,
@@ -452,28 +472,79 @@ export default function EditChildModal({
                 <View style={styles.accountSection}>
                   <Text style={styles.accountSectionTitle}>Account</Text>
                   <View style={styles.accountRule} />
-                  {connectedEmail != null && connectedEmail !== '' ? (
+                  {displayLinkedEmail != null && displayLinkedEmail !== '' ? (
                     <>
-                      <Text style={styles.accountStatusConnected}>✓ Connected</Text>
-                      <Text style={styles.accountEmail} numberOfLines={2}>{connectedEmail}</Text>
-                      <Text style={styles.accountDisconnectHint}>
-                        This removes the child’s login access. Their learning data will remain.
+                      <Text style={styles.accountConnectedLine1} numberOfLines={2}>
+                        ✓ Connected · {displayLinkedEmail}
+                      </Text>
+                      <Text style={styles.accountReassuranceLine}>
+                        Access can be removed without deleting data.
                       </Text>
                       <TouchableOpacity
-                        style={[styles.disconnectAccountButton, unlinkingLogin && styles.disconnectAccountButtonDisabled]}
+                        style={[
+                          styles.disconnectOutlineButton,
+                          unlinkingLogin && styles.disconnectOutlineButtonDisabled,
+                        ]}
                         onPress={handleDisconnectAccount}
                         disabled={unlinkingLogin}
-                        activeOpacity={0.7}
+                        activeOpacity={0.75}
                         {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
                       >
-                        <Text style={styles.disconnectAccountButtonText}>
-                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect account'}
+                        <Text style={styles.disconnectOutlineButtonText}>
+                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
                         </Text>
                       </TouchableOpacity>
+                    </>
+                  ) : accountDisconnectedThisSession ? (
+                    <>
+                      <Text style={styles.accountDisconnectedHeadline}>Account disconnected</Text>
+                      {typeof onRequestInviteChild === 'function' ? (
+                        <TouchableOpacity
+                          style={styles.accountInviteButton}
+                          onPress={handleInviteChildFromAccount}
+                          activeOpacity={0.85}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.accountInviteButtonText}>Invite child</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </>
+                  ) : childInviteStatus === 'pending' ? (
+                    <>
+                      <Text style={styles.accountPendingTitle}>Invite sent</Text>
+                      <Text style={styles.accountPendingEmail} numberOfLines={2}>
+                        {pendingInviteEmail && String(pendingInviteEmail).trim() !== ''
+                          ? String(pendingInviteEmail).trim()
+                          : '—'}
+                      </Text>
+                      <Text style={styles.accountPendingWait}>Waiting for acceptance</Text>
+                      {typeof onRequestInviteChild === 'function' ? (
+                        <View style={styles.accountInviteActionsRow}>
+                          <TouchableOpacity
+                            style={styles.accountOutlineButton}
+                            onPress={handleInviteChildFromAccount}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.accountOutlineButtonText}>Resend invite</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.accountOutlineButton}
+                            onPress={handleInviteChildFromAccount}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.accountOutlineButtonText}>Change email</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
                     </>
                   ) : (
                     <>
                       <Text style={styles.accountEmptyText}>No account connected</Text>
+                      <Text style={styles.accountPurposeLine}>
+                        Invite this child to access their learning dashboard.
+                      </Text>
                       {typeof onRequestInviteChild === 'function' ? (
                         <TouchableOpacity
                           style={styles.accountInviteButton}
@@ -515,11 +586,11 @@ export default function EditChildModal({
                     <Text style={styles.dangerSectionDescription}>
                       This will delete all learning data, planner history, goals, and records for{' '}
                       <Text style={styles.bold}>{childName}</Text>.
-                      {connectedEmail != null && connectedEmail !== '' ? (
+                      {displayLinkedEmail != null && displayLinkedEmail !== '' ? (
                         <>
                           {'\n\n'}
                           Also removes login access for:{' '}
-                          <Text style={styles.bold}>{connectedEmail}</Text>
+                          <Text style={styles.bold}>{displayLinkedEmail}</Text>
                         </>
                       ) : null}
                       {'\n\n'}
@@ -700,44 +771,90 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 14,
   },
-  accountStatusConnected: {
+  accountConnectedLine1: {
     fontSize: 15,
     fontWeight: '600',
     color: '#166534',
-    marginBottom: 6,
+    lineHeight: 22,
   },
-  accountEmail: {
-    fontSize: 15,
-    color: '#0f172a',
-    marginBottom: 8,
-  },
-  accountDisconnectHint: {
+  accountReassuranceLine: {
     fontSize: 12,
     color: '#64748b',
-    lineHeight: 18,
-    marginBottom: 12,
+    lineHeight: 17,
+    marginTop: 4,
   },
-  accountEmptyText: {
-    fontSize: 15,
+  disconnectOutlineButton: {
+    alignSelf: 'flex-start',
+    marginTop: 18,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
+  disconnectOutlineButtonDisabled: {
+    opacity: 0.55,
+  },
+  disconnectOutlineButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#64748b',
+  },
+  accountDisconnectedHeadline: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
     marginBottom: 14,
   },
-  disconnectAccountButton: {
-    alignSelf: 'flex-start',
-    paddingVertical: 10,
+  accountPendingTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  accountPendingEmail: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#334155',
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  accountPendingWait: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  accountInviteActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
+  accountOutlineButton: {
+    paddingVertical: 9,
     paddingHorizontal: 14,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fff',
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
-  disconnectAccountButtonDisabled: {
-    opacity: 0.6,
-  },
-  disconnectAccountButtonText: {
-    fontSize: 14,
+  accountOutlineButtonText: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#b91c1c',
+    color: '#475569',
+  },
+  accountEmptyText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 6,
+  },
+  accountPurposeLine: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 20,
+    marginBottom: 14,
   },
   accountInviteButton: {
     alignSelf: 'flex-start',

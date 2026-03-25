@@ -8,18 +8,30 @@
  * - TutorNavigator (tutor experience with assigned children only)
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { useSession } from '../../contexts/SessionContext';
 import ParentNavigator from './ParentNavigator';
 import TutorNavigator from './TutorNavigator';
-import AppLoader from '../AppLoader';
+import AppLoader, { ensureWebShellImagesLoaded } from '../AppLoader';
 
 export default function RoleGate({ children, ...props }) {
   const session = useSession();
+  const [shellToolbarReady, setShellToolbarReady] = useState(Platform.OS !== 'web');
 
-  // Show loading while session is being resolved (same as landing: white + light blue spinner + learnadoodle)
-  if (session.loading) {
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    let cancelled = false;
+    ensureWebShellImagesLoaded().then(() => {
+      if (!cancelled) setShellToolbarReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Session + web toolbar/shell PNGs preloaded/decoded so LeftRail does not pop in after first paint
+  if (session.loading || !shellToolbarReady) {
     return <AppLoader />;
   }
 
