@@ -8,7 +8,7 @@ Family management routes for Settings modal
 import os
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
@@ -75,6 +75,61 @@ class UpdateFamilyIn(BaseModel):
 class PermanentDeleteChildIn(BaseModel):
     child_id: str = Field(..., description="children.id to permanently remove")
     confirm_name: str = Field(..., min_length=1, description="Must match child's first name (case-insensitive)")
+
+
+def _auth_admin_email_for_user_id(supabase, uid: str) -> Optional[str]:
+    """Resolve login email from Auth when profiles.email is empty (supabase-py response shapes vary)."""
+    try:
+        res = supabase.auth.admin.get_user_by_id(uid)
+    except Exception as e:
+        log_event("family.get_members.auth_email_lookup_error", target_uid=uid, error=str(e))
+        return None
+    u = getattr(res, "user", None)
+    if u is None and isinstance(res, dict):
+        u = res.get("user")
+    if u is None:
+        return None
+    if isinstance(u, dict):
+        em = u.get("email")
+        return str(em).strip() if em else None
+    em = getattr(u, "email", None)
+    if em:
+        return str(em).strip()
+    try:
+        raw = u.model_dump()  # type: ignore[attr-defined]
+        em2 = raw.get("email") if isinstance(raw, dict) else None
+        return str(em2).strip() if em2 else None
+    except Exception:
+        return None
+
+
+def _accepted_invite_email_by_child_id(supabase, family_id: str) -> Dict[str, str]:
+    """Latest accepted child invite email per children.id (fallback when profile/auth email missing)."""
+    best: Dict[str, tuple] = {}
+    try:
+        inv_res = (
+            supabase.table("invites")
+            .select("child_id, email, accepted_at")
+            .eq("family_id", family_id)
+            .eq("role", "child")
+            .execute()
+        )
+        for row in inv_res.data or []:
+            if not row.get("accepted_at"):
+                continue
+            scid = str(row.get("child_id") or "").strip()
+            em = str(row.get("email") or "").strip()
+            if not scid or not em:
+                continue
+            acc = str(row.get("accepted_at") or "")
+            prev = best.get(scid)
+            if prev is None or acc >= prev[1]:
+                best[scid] = (em, acc)
+    except Exception as e:
+        log_event("family.get_members.invite_email_map_error", error=str(e))
+        return {}
+    return {k: v[0] for k, v in best.items()}
+
 
 # --- Permanent child delete helpers ---
 
@@ -426,25 +481,24 @@ async def get_family_members(
         for uid in set(user_ids):
             if profiles_map.get(uid):
                 continue
-            try:
-                auth_res = supabase.auth.admin.get_user_by_id(uid)
-                u = getattr(auth_res, "user", None)
-                em = getattr(u, "email", None) if u is not None else None
-                if em:
-                    profiles_map[uid] = em
-            except Exception as e:
-                log_event("family.get_members.auth_email_fallback_error", user_id=user["id"], target_uid=uid, error=str(e))
+            em = _auth_admin_email_for_user_id(supabase, uid)
+            if em:
+                profiles_map[uid] = em
+
+        invite_email_by_child = _accepted_invite_email_by_child_id(supabase, family_id)
 
         for member in members_data:
             mid = member.get("id")
             if not mid:
                 continue
             email = profiles_map.get(member.get("user_id")) if member.get("user_id") else None
-            name = email or None
             raw_cid = member.get("child_id")
             child_id_out = None
             if raw_cid is not None and str(raw_cid).strip() != "":
                 child_id_out = str(raw_cid).strip()
+            if not email and child_id_out:
+                email = invite_email_by_child.get(child_id_out)
+            name = email or None
             members.append(MemberOut(
                 id=mid,
                 name=name,

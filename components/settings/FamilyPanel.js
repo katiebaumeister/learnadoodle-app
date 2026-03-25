@@ -3820,6 +3820,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         onClose={() => { setShowEditChildModal(false); setEditingChild(null); }}
         child={editingChild}
         familyId={family?.id || familyId}
+        linkedLoginEmail={
+          editingChild?.id
+            ? childInviteSummaries[String(editingChild.id)]?.invite_email || null
+            : null
+        }
         onChildUpdated={(updatedChild) => {
           if (updatedChild && family) {
             setFamily((prevFamily) => {

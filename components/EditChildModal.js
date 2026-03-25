@@ -17,11 +17,31 @@ function mapChildRowForClient(row) {
   };
 }
 
+/** family_members row for a linked learner: child_id matches, or child_scope includes children.id */
+function findLinkedChildStudentMemberRow(fmRows, childId) {
+  const cid = String(childId);
+  for (const r of fmRows || []) {
+    if (r.child_id != null && String(r.child_id) === cid) return r;
+    let scope = r.child_scope;
+    if (typeof scope === 'string') {
+      try {
+        scope = JSON.parse(scope);
+      } catch (_) {
+        scope = [];
+      }
+    }
+    if (Array.isArray(scope) && scope.some((x) => String(x) === cid)) return r;
+  }
+  return null;
+}
+
 export default function EditChildModal({ 
   visible, 
   onClose, 
   child,
   familyId,
+  /** From Family Members list (API + invites merge); used when profiles.email is hidden by RLS */
+  linkedLoginEmail = null,
   onChildUpdated,
   onChildDeleted
 }) {
@@ -58,7 +78,7 @@ export default function EditChildModal({
       setFormCanSubmit(false);
       setConnectedEmail(null);
     }
-  }, [visible, child?.id]);
+  }, [visible, child?.id, familyId, linkedLoginEmail]);
 
   const fetchFullChildDataInBackground = async () => {
     if (!child?.id) return;
@@ -85,22 +105,25 @@ export default function EditChildModal({
       if (fid) {
         const { data: fmRows } = await supabase
           .from('family_members')
-          .select('user_id')
+          .select('user_id, child_id, child_scope')
           .eq('family_id', fid)
-          .eq('child_id', child.id)
-          .in('member_role', ['child', 'student'])
-          .limit(1);
-        const userId = fmRows?.[0]?.user_id;
+          .in('member_role', ['child', 'student']);
+        const fmRow = findLinkedChildStudentMemberRow(fmRows, child.id);
+        const userId = fmRow?.user_id;
+        let emailFromProfile = null;
         if (userId) {
           const { data: profile } = await supabase
             .from('profiles')
             .select('email')
             .eq('id', userId)
             .maybeSingle();
-          setConnectedEmail(profile?.email || null);
-        } else {
-          setConnectedEmail(null);
+          emailFromProfile = (profile?.email && String(profile.email).trim()) || null;
         }
+        const fromList =
+          linkedLoginEmail != null && String(linkedLoginEmail).trim() !== ''
+            ? String(linkedLoginEmail).trim()
+            : null;
+        setConnectedEmail(emailFromProfile || fromList || null);
 
         const { data: ay } = await supabase
           .from('academic_years')
