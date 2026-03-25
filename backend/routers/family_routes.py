@@ -5,6 +5,7 @@ Family management routes for Settings modal
 - PATCH /api/family/tutors/{member_id} - Update tutor's child_scope
 - POST /api/family/child/permanent_delete - Remove a child, their data, family membership, and linked auth users
 """
+import json
 import os
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field, EmailStr
@@ -40,6 +41,8 @@ class MemberOut(BaseModel):
     id: str
     name: Optional[str] = None
     email: Optional[str] = None
+    # Auth user for this row (child/student login, parent, tutor). Exposed for linked-child UI.
+    user_id: Optional[str] = None
     role: str
     member_role: Optional[str] = None
     child_scope: List[str] = Field(default_factory=list)
@@ -499,13 +502,25 @@ async def get_family_members(
             if not email and child_id_out:
                 email = invite_email_by_child.get(child_id_out)
             name = email or None
+            raw_scope = member.get("child_scope", []) or []
+            if isinstance(raw_scope, str):
+                try:
+                    raw_scope = json.loads(raw_scope)
+                except Exception:
+                    raw_scope = []
+            if not isinstance(raw_scope, list):
+                raw_scope = []
+            child_scope_out = [str(x) for x in raw_scope if x is not None and str(x).strip() != ""]
+            uid_raw = member.get("user_id")
+            user_id_out = str(uid_raw).strip() if uid_raw is not None and str(uid_raw).strip() != "" else None
             members.append(MemberOut(
-                id=mid,
+                id=str(mid),
                 name=name,
                 email=email,
+                user_id=user_id_out,
                 role=member.get("member_role", "parent"),
                 member_role=member.get("member_role"),
-                child_scope=member.get("child_scope", []) or [],
+                child_scope=child_scope_out,
                 child_id=child_id_out,
             ))
 
@@ -1201,13 +1216,19 @@ async def update_tutor_scope(
 
         log_event("family.update_tutor_scope.success", user_id=user["id"], member_id=member_id)
 
+        raw_tid = update_res.data.get("child_id")
+        tutor_child_id = str(raw_tid).strip() if raw_tid is not None and str(raw_tid).strip() != "" else None
+        raw_uid = update_res.data.get("user_id")
+        tutor_user_id = str(raw_uid).strip() if raw_uid is not None and str(raw_uid).strip() != "" else None
         return MemberOut(
-            id=update_res.data["id"],
+            id=str(update_res.data["id"]),
             name=email,
             email=email,
+            user_id=tutor_user_id,
             role="tutor",
             member_role="tutor",
-            child_scope=update_res.data.get("child_scope", []) or []
+            child_scope=update_res.data.get("child_scope", []) or [],
+            child_id=tutor_child_id,
         )
 
     except HTTPException:
