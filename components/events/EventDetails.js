@@ -3339,6 +3339,51 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </SafeFieldRow>
           )}
 
+          {isParentView &&
+            !readOnly &&
+            event?.id &&
+            familyId &&
+            isSchoolWorkEventType(event?.event_type || eventType) &&
+            assigneeIds.length > 0 && (
+              <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+                <View
+                  style={{
+                    alignSelf: 'stretch',
+                    backgroundColor: 'rgba(79, 70, 229, 0.07)',
+                    borderRadius: 12,
+                    paddingVertical: 12,
+                    paddingHorizontal: 14,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: colors.textSecondary,
+                      lineHeight: 20,
+                      marginBottom: 12,
+                    }}
+                  >
+                    Add this to your student’s Submissions list (Needs your attention).
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => setShowSendToStudentModal(true)}
+                    style={{
+                      alignSelf: 'flex-start',
+                      paddingVertical: 8,
+                      paddingHorizontal: 14,
+                      backgroundColor: '#4F46E5',
+                      borderRadius: 8,
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    accessibilityRole="button"
+                    accessibilityLabel="Send to student"
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Send to student</Text>
+                  </TouchableOpacity>
+                </View>
+              </SafeFieldRow>
+            )}
+
           {/* Notes */}
           {notes && notes.trim() && (
             <SafeFieldRow style={styles.fieldRow}>
@@ -3504,12 +3549,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       paddingHorizontal: 14,
                     }}
                   >
-                    <Text style={styles.fieldLabel}>Schoolwork</Text>
                     {!parentLinkedReady ? (
                       <View
                         style={{
                           minHeight: 48,
-                          marginTop: 8,
+                          marginTop: 0,
                           justifyContent: 'center',
                         }}
                       >
@@ -3518,22 +3562,24 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     ) : (
                       <>
                         {parentHelpAssignment ? (
-                          <View style={{ marginTop: 8 }}>
-                            <Text style={{ color: FG, fontSize: 14, lineHeight: 20 }}>
-                              {parentChildLabel(parentHelpAssignment)} asked for help on this.
-                            </Text>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setParentHelpModalAssignment(parentHelpAssignment);
-                                setShowParentHelpModal(true);
-                              }}
-                              style={{ marginTop: 12, alignSelf: 'flex-start' }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#EA580C' }}>
+                          <View style={{ marginTop: 0 }}>
+                            <Text style={{ color: FG, fontSize: 14, lineHeight: 22 }}>
+                              {parentChildLabel(parentHelpAssignment)} asked for help on this.{' '}
+                              <Text
+                                onPress={() => {
+                                  setParentHelpModalAssignment(parentHelpAssignment);
+                                  setShowParentHelpModal(true);
+                                }}
+                                style={{
+                                  fontSize: 14,
+                                  fontWeight: '700',
+                                  color: '#EA580C',
+                                  ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+                                }}
+                              >
                                 Respond to help request
                               </Text>
-                            </TouchableOpacity>
+                            </Text>
                           </View>
                         ) : null}
                         {parentSubmissionAssignment ? (
@@ -3828,53 +3874,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       </View>
           </View>
         )}
-
-        {isParentView &&
-          !readOnly &&
-          event?.id &&
-          isSchoolWorkEventType(eventType) &&
-          assigneeIds.length > 0 && (
-            <View style={{ marginTop: 4, marginBottom: 8, paddingHorizontal: 0 }}>
-              <View
-                style={{
-                  backgroundColor: 'rgba(79, 70, 229, 0.07)',
-                  borderRadius: 12,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 6 }}>
-                  Student Submissions
-                </Text>
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: colors.textSecondary,
-                    lineHeight: 18,
-                    marginBottom: 10,
-                  }}
-                >
-                  Send this to the student’s Submissions list (Needs your attention) even when the type isn’t
-                  Assignment.
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setShowSendToStudentModal(true)}
-                  style={{
-                    alignSelf: 'flex-start',
-                    paddingVertical: 8,
-                    paddingHorizontal: 14,
-                    backgroundColor: '#4F46E5',
-                    borderRadius: 8,
-                  }}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  accessibilityRole="button"
-                  accessibilityLabel="Send to student"
-                >
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Send to student</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
       </ScrollView>
 
       {/* End date picker - shown below start date for multi-day events */}
@@ -4920,6 +4919,51 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </View>
           </SafeFieldRow>
         )}
+
+        {isParentView &&
+          !readOnly &&
+          event?.id &&
+          familyId &&
+          isSchoolWorkEventType(eventType) &&
+          assigneeIds.length > 0 && (
+            <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
+              <View
+                style={{
+                  alignSelf: 'stretch',
+                  backgroundColor: 'rgba(79, 70, 229, 0.07)',
+                  borderRadius: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                    lineHeight: 20,
+                    marginBottom: 12,
+                  }}
+                >
+                  Add this to your student’s Submissions list (Needs your attention).
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowSendToStudentModal(true)}
+                  style={{
+                    alignSelf: 'flex-start',
+                    paddingVertical: 8,
+                    paddingHorizontal: 14,
+                    backgroundColor: '#4F46E5',
+                    borderRadius: 8,
+                  }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send to student"
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Send to student</Text>
+                </TouchableOpacity>
+              </View>
+            </SafeFieldRow>
+          )}
 
       </ScrollView>
 

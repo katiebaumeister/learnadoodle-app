@@ -531,7 +531,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   footer: {
-    marginTop: 0,
+    marginTop: 24,
     paddingTop: 0,
   },
   primaryButton: {

@@ -589,23 +589,35 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     return () => { cancelled = true; };
   }, [user?.id, familyId, isChildMode]);
 
-  // Persist app preferences to profiles when they change
+  // Persist app preferences to profiles when they change (merge — preserves explorerTourV1 and other keys)
   useEffect(() => {
     if (!preferencesLoadedRef.current || skipPreferencesSaveRef.current || !user?.id) return;
-    supabase
-      .from('profiles')
-      .update({
-        app_preferences: {
-          sound_effects: soundEffectsEnabled,
-          animations: animationsEnabled,
-          motivational_messages: motivationalMessagesEnabled,
-          dark_mode: darkMode,
-        },
-      })
-      .eq('id', user.id)
-      .then(({ error }) => {
-        if (error) console.warn('Failed to save app preferences:', error.message);
-      });
+    let cancelled = false;
+    (async () => {
+      const { data: row } = await supabase
+        .from('profiles')
+        .select('app_preferences')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      const prev = row?.app_preferences && typeof row.app_preferences === 'object' ? row.app_preferences : {};
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          app_preferences: {
+            ...prev,
+            sound_effects: soundEffectsEnabled,
+            animations: animationsEnabled,
+            motivational_messages: motivationalMessagesEnabled,
+            dark_mode: darkMode,
+          },
+        })
+        .eq('id', user.id);
+      if (error) console.warn('Failed to save app preferences:', error.message);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [soundEffectsEnabled, animationsEnabled, motivationalMessagesEnabled, darkMode, user?.id]);
 
   // Persist notification preferences to DB when they change (skip in child mode to avoid 403 RLS)

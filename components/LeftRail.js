@@ -243,6 +243,7 @@ export default function LeftRail({
               <TouchableOpacity
                 key={item.key}
                 ref={isMore ? moreButtonRef : null}
+                {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
                 style={[
                   styles.navItem,
                   active && styles.navItemActive,

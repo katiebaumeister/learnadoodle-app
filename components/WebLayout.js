@@ -64,8 +64,30 @@ import HelpPopover from './planner/HelpPopover';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
 import AvatarPreloader from './onboarding/AvatarPreloader';
+import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
+import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
+import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader from './AppLoader';
 import { comingSoonModalStyles } from '../theme/comingSoonModalTheme';
+
+/** Parent-only post-onboarding explorer tour (spotlight copy). */
+const EXPLORER_PARENT_STEPS = [
+  {
+    targetId: 'explorer-tour-sidebar-planner',
+    title: 'Start with Planner',
+    body: 'Start here! Try adding some events and full year plans.',
+  },
+  {
+    targetId: 'explorer-tour-planner-new',
+    title: 'Add events',
+    body: 'Use + New to add activities and events to your calendar (and more).',
+  },
+  {
+    targetId: 'explorer-tour-right-toolbar',
+    title: 'Planning tools',
+    body: "Explore Learnadoodle's planning actions and analytics.",
+  },
+];
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function toLocalYYYYMMDD(d) {
@@ -210,6 +232,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [onboardingModalReady, setOnboardingModalReady] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
+
+  /** Post-onboarding explorer tour (parents: 3-step; child/tutor: one modal). Persisted in profiles.app_preferences. */
+  const [explorerParentTourOpen, setExplorerParentTourOpen] = useState(false);
+  const [explorerParentStep, setExplorerParentStep] = useState(0);
+  const [learnerQuickStartOpen, setLearnerQuickStartOpen] = useState(false);
 
   const [activeRightTool, setActiveRightTool] = useState(null);
   const prevActiveTabRef = useRef(null);
@@ -1216,7 +1243,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         // Always fetch profile table for freshest name/phone
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('role, email, name, first_name, phone, avatar_url')
+          .select('role, email, name, first_name, phone, avatar_url, app_preferences')
           .eq('id', authUserId)
           .maybeSingle();
 
@@ -1229,6 +1256,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             email: user.email || profileData?.email || meData.email,
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
+            app_preferences: profileData?.app_preferences ?? null,
           };
           setUserRole(meData.role || profileData?.role || 'parent');
           setProfile(mergedProfile);
@@ -1248,7 +1276,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               name: profileData.name || profileData.first_name || '',
               first_name: profileData.first_name || '',
               phone: profileData.phone || '',
-              avatar_url: profileData.avatar_url || null
+              avatar_url: profileData.avatar_url || null,
+              app_preferences: profileData.app_preferences ?? null,
             });
           }
         } else {
@@ -1283,7 +1312,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('role, email, name, first_name, phone, avatar_url')
+          .select('role, email, name, first_name, phone, avatar_url, app_preferences')
           .eq('id', authUserId)
           .maybeSingle();
 
@@ -1295,6 +1324,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             email: user.email || profileData?.email || meData.email,
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
+            app_preferences: profileData?.app_preferences ?? null,
           };
           setUserRole(meData.role || profileData?.role || 'parent');
           setProfile(mergedProfile);
@@ -1309,7 +1339,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             name: profileData.name || profileData.first_name || '',
             first_name: profileData.first_name || '',
             phone: profileData.phone || '',
-            avatar_url: profileData.avatar_url || null
+            avatar_url: profileData.avatar_url || null,
+            app_preferences: profileData.app_preferences ?? null,
           });
         }
       } catch (error) {
@@ -2151,6 +2182,121 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     },
     [handleTabChange]
   );
+
+  const mergeExplorerTourInProfile = useCallback((patch) => {
+    setProfile((p) => {
+      if (!p) return p;
+      const prev = p.app_preferences && typeof p.app_preferences === 'object' ? p.app_preferences : {};
+      const cur =
+        prev[EXPLORER_TOUR_PREFS_KEY] && typeof prev[EXPLORER_TOUR_PREFS_KEY] === 'object'
+          ? prev[EXPLORER_TOUR_PREFS_KEY]
+          : {};
+      const nextTour = { ...cur };
+      if (patch.parent) nextTour.parent = { ...(cur.parent || {}), ...patch.parent };
+      if (patch.learner) nextTour.learner = { ...(cur.learner || {}), ...patch.learner };
+      return {
+        ...p,
+        app_preferences: {
+          ...prev,
+          [EXPLORER_TOUR_PREFS_KEY]: nextTour,
+        },
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!onboardingCheckDone || onboardingBlocked) return;
+    if (!authUserId || !session) return;
+    if (profile == null) return;
+
+    const tour = parseExplorerTourFromPrefs(profile.app_preferences);
+    const isParent = session.role_flags?.isParent === true;
+    const isLearner = !!(session.role_flags?.isChild || session.role_flags?.isTutor);
+
+    if (isParent && !tour.parent.done && !tour.parent.skipped) {
+      const s =
+        typeof tour.parent.step === 'number' && tour.parent.step >= 0 && tour.parent.step <= 2
+          ? tour.parent.step
+          : 0;
+      setExplorerParentStep(s);
+      setExplorerParentTourOpen(true);
+      setLearnerQuickStartOpen(false);
+    } else if (isLearner && !tour.learner.done && !tour.learner.skipped) {
+      setExplorerParentTourOpen(false);
+      setLearnerQuickStartOpen(true);
+    } else {
+      setExplorerParentTourOpen(false);
+      setLearnerQuickStartOpen(false);
+    }
+  }, [onboardingCheckDone, onboardingBlocked, authUserId, session, profile, profile?.app_preferences]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!explorerParentTourOpen) return;
+    if (explorerParentStep >= 1 && activeTab !== 'planner') {
+      handleTopSelect('planner');
+    }
+  }, [explorerParentTourOpen, explorerParentStep, activeTab, handleTopSelect]);
+
+  const handleExplorerParentNext = useCallback(async () => {
+    if (!authUserId) return;
+    try {
+      if (explorerParentStep === 0) {
+        const { error } = await persistExplorerTourMerge(authUserId, { parent: { step: 1 } });
+        if (!error) mergeExplorerTourInProfile({ parent: { step: 1 } });
+        handleTopSelect('planner');
+        setExplorerParentStep(1);
+        return;
+      }
+      if (explorerParentStep === 1) {
+        const { error } = await persistExplorerTourMerge(authUserId, { parent: { step: 2 } });
+        if (!error) mergeExplorerTourInProfile({ parent: { step: 2 } });
+        setExplorerParentStep(2);
+        return;
+      }
+      if (explorerParentStep === 2) {
+        const { error } = await persistExplorerTourMerge(authUserId, { parent: { done: true, step: 3 } });
+        if (!error) mergeExplorerTourInProfile({ parent: { done: true, step: 3 } });
+        setExplorerParentTourOpen(false);
+      }
+    } catch (e) {
+      console.warn('[WebLayout] explorer tour persist failed', e);
+    }
+  }, [authUserId, explorerParentStep, handleTopSelect, mergeExplorerTourInProfile]);
+
+  const handleExplorerParentSkip = useCallback(async () => {
+    if (!authUserId) return;
+    try {
+      const { error } = await persistExplorerTourMerge(authUserId, { parent: { skipped: true } });
+      if (!error) mergeExplorerTourInProfile({ parent: { skipped: true } });
+      setExplorerParentTourOpen(false);
+    } catch (e) {
+      console.warn('[WebLayout] explorer tour skip failed', e);
+    }
+  }, [authUserId, mergeExplorerTourInProfile]);
+
+  const handleLearnerGotIt = useCallback(async () => {
+    if (!authUserId) return;
+    try {
+      const { error } = await persistExplorerTourMerge(authUserId, { learner: { done: true } });
+      if (!error) mergeExplorerTourInProfile({ learner: { done: true } });
+      setLearnerQuickStartOpen(false);
+    } catch (e) {
+      console.warn('[WebLayout] learner quick start persist failed', e);
+    }
+  }, [authUserId, mergeExplorerTourInProfile]);
+
+  const handleLearnerDontShow = useCallback(async () => {
+    if (!authUserId) return;
+    try {
+      const { error } = await persistExplorerTourMerge(authUserId, { learner: { skipped: true } });
+      if (!error) mergeExplorerTourInProfile({ learner: { skipped: true } });
+      setLearnerQuickStartOpen(false);
+    } catch (e) {
+      console.warn('[WebLayout] learner quick start skip failed', e);
+    }
+  }, [authUserId, mergeExplorerTourInProfile]);
 
   const handleChildSelect = useCallback(
     (childId) => {
@@ -3150,6 +3296,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   {/* New Event Button — parents only; tutors use read-first planner */}
                   {!isTutorUser && (
                   <TouchableOpacity
+                    {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-planner-new' } : {})}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -3397,7 +3544,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               ) : null}
             </View>
             {isCalendarScreen && (
-              <View style={{
+              <View
+                {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-right-toolbar' } : {})}
+                style={{
                 width: 64,
                 flexShrink: 0,
                 borderLeftWidth: 1,
@@ -3505,6 +3654,27 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           </View>
         </AppShell>
 
+      <ExplorerTourOverlay
+        visible={
+          Platform.OS === 'web' &&
+          explorerParentTourOpen &&
+          session?.role_flags?.isParent === true &&
+          !onboardingBlocked
+        }
+        targetId={EXPLORER_PARENT_STEPS[explorerParentStep]?.targetId}
+        title={EXPLORER_PARENT_STEPS[explorerParentStep]?.title ?? ''}
+        body={EXPLORER_PARENT_STEPS[explorerParentStep]?.body ?? ''}
+        primaryLabel={explorerParentStep >= 2 ? 'Done' : 'Next'}
+        onNext={handleExplorerParentNext}
+        onSkip={handleExplorerParentSkip}
+      />
+
+      <LearnerQuickStartModal
+        visible={Platform.OS === 'web' && learnerQuickStartOpen && !onboardingBlocked}
+        onGotIt={handleLearnerGotIt}
+        onSkip={handleLearnerDontShow}
+      />
+
       <OnboardingModal
         visible={onboardingBlocked}
         familyId={familyId}
@@ -3514,6 +3684,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           if (Platform.OS === 'web') {
             window.dispatchEvent(new CustomEvent('refreshChildren'));
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            window.dispatchEvent(new CustomEvent('refreshProfile'));
           }
         }}
         onReady={() => setOnboardingModalReady(true)}
