@@ -68,6 +68,7 @@ export default function EditChildModal({
   const [accountDisconnectedThisSession, setAccountDisconnectedThisSession] = useState(false);
   /** Web: second RNModal stacks above Edit Child; window.confirm can sit behind RN Web modals */
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const toast = useToast();
 
@@ -110,6 +111,7 @@ export default function EditChildModal({
       setUnlinkingLogin(false);
       setAccountDisconnectedThisSession(false);
       setDisconnectConfirmOpen(false);
+      setDeleteConfirmOpen(false);
     }
   }, [visible, child?.id, familyId, linkedLoginEmail]);
 
@@ -126,12 +128,16 @@ export default function EditChildModal({
 
       setFullChildData(data);
 
-      const { data: supportData } = await supabase
+      const { data: supportData, error: supportErr } = await supabase
         .from('child_support_profiles')
         .select('*')
         .eq('child_id', child.id)
         .maybeSingle();
-      setSupportProfile(supportData || null);
+      if (!supportErr) {
+        setSupportProfile(supportData || null);
+      } else {
+        setSupportProfile(null);
+      }
 
       const fid = familyId || data.family_id;
       if (fid) {
@@ -427,7 +433,7 @@ export default function EditChildModal({
       } else {
         Alert.alert('Done', 'Account disconnected');
       }
-      if (onChildUpdated) onChildUpdated(child);
+      if (onChildUpdated) onChildUpdated(child, { unlinkLogin: true });
     } finally {
       setUnlinkingLogin(false);
     }
@@ -461,10 +467,74 @@ export default function EditChildModal({
     onRequestInviteChild(child.id);
   };
 
-  const handleDelete = async () => {
-    const childName = child?.first_name || child?.name || 'Child';
-    if (confirmName.trim().toLowerCase() !== childName.trim().toLowerCase()) {
-      Alert.alert('Error', 'Name does not match');
+  const performPermanentDelete = async () => {
+    const effectiveFamilyId = familyId || fullChildData?.family_id;
+    if (!effectiveFamilyId) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Family not found. Please refresh and try again.');
+      } else {
+        Alert.alert('Error', 'Family not found. Please refresh and try again.');
+      }
+      return;
+    }
+    setDeleting(true);
+    try {
+      const { data, error } = await permanentDeleteChild({
+        childId: child.id,
+        confirmName: confirmName.trim(),
+      });
+
+      if (error) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(error.message || 'Failed to delete child');
+        } else {
+          Alert.alert('Error', error.message || 'Failed to delete child');
+        }
+        return;
+      }
+      if (!data?.ok) {
+        const reason = data?.reason || 'unknown';
+        const msg =
+          reason === 'name_mismatch'
+            ? 'Name does not match'
+            : reason === 'forbidden'
+              ? 'You do not have permission'
+              : 'Failed to delete child';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Error', msg);
+        }
+        return;
+      }
+
+      setDeleteConfirmOpen(false);
+      if (toast && toast.push) {
+        toast.push('Child has been permanently deleted', 'success');
+      } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Child has been permanently deleted');
+      } else {
+        Alert.alert('Deleted', 'Child has been permanently deleted');
+      }
+      if (onChildDeleted) {
+        onChildDeleted(child.id);
+      }
+      setTimeout(() => {
+        onClose();
+      }, 500);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDelete = () => {
+    const nm = child?.first_name || child?.name || 'Child';
+    if (confirmName.trim().toLowerCase() !== nm.trim().toLowerCase()) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Name does not match');
+      } else {
+        Alert.alert('Error', 'Name does not match');
+      }
       return;
     }
 
@@ -472,56 +542,24 @@ export default function EditChildModal({
       displayLinkedEmail != null && displayLinkedEmail !== ''
         ? `\n• Delete linked account (${displayLinkedEmail})\n• Remove them from this family`
         : '';
+
+    if (Platform.OS === 'web') {
+      setDeleteConfirmOpen(true);
+      return;
+    }
+
     Alert.alert(
-      `Delete ${childName} permanently?`,
+      `Delete ${nm} permanently?`,
       `This will:\n• Delete all learning data\n• Remove planner history, goals, and records${loginBullets}\n\nThis cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: `Delete ${childName}`,
+          text: `Delete ${nm}`,
           style: 'destructive',
-          onPress: async () => {
-            const effectiveFamilyId = familyId || fullChildData?.family_id;
-            if (!effectiveFamilyId) {
-              Alert.alert('Error', 'Family not found. Please refresh and try again.');
-              return;
-            }
-            setDeleting(true);
-            const { data, error } = await permanentDeleteChild({
-              childId: child.id,
-              confirmName: confirmName.trim(),
-            });
-
-            setDeleting(false);
-
-            if (error) {
-              Alert.alert('Error', error.message || 'Failed to delete child');
-              return;
-            }
-            if (!data?.ok) {
-              const reason = data?.reason || 'unknown';
-              Alert.alert(
-                'Error',
-                reason === 'name_mismatch' ? 'Name does not match' :
-                reason === 'forbidden' ? 'You do not have permission' :
-                'Failed to delete child'
-              );
-              return;
-            }
-
-            if (toast && toast.push) {
-              toast.push('Child has been permanently deleted', 'success');
-            } else {
-              Alert.alert('Deleted', 'Child has been permanently deleted');
-            }
-            if (onChildDeleted) {
-              onChildDeleted(child.id);
-            }
-            setTimeout(() => {
-              onClose();
-            }, 500);
-          }
-        }
+          onPress: () => {
+            void performPermanentDelete();
+          },
+        },
       ]
     );
   };
@@ -532,6 +570,12 @@ export default function EditChildModal({
 
   const disconnectConfirmEmail = displayLinkedEmail || 'this email';
   const disconnectConfirmBody = `${disconnectConfirmEmail} will lose access to this child’s learning dashboard. Their profile and all learning data stay in your family. You can send a new invite anytime.`;
+
+  const deleteLoginBulletsModal =
+    displayLinkedEmail != null && displayLinkedEmail !== ''
+      ? `\n• Delete linked account (${displayLinkedEmail})\n• Remove them from this family`
+      : '';
+  const deleteConfirmBodyModal = `This will:\n• Delete all learning data\n• Remove planner history, goals, and records${deleteLoginBulletsModal}\n\nThis cannot be undone.`;
 
   return (
     <>
@@ -811,6 +855,54 @@ export default function EditChildModal({
               >
                 <Text style={styles.disconnectConfirmDestructiveText}>
                   {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </RNModal>
+    ) : null}
+    {Platform.OS === 'web' ? (
+      <RNModal
+        visible={deleteConfirmOpen && visible && !!child?.id}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !deleting && setDeleteConfirmOpen(false)}
+      >
+        <View style={styles.disconnectConfirmOverlay}>
+          <TouchableOpacity
+            style={styles.disconnectConfirmBackdrop}
+            activeOpacity={1}
+            onPress={() => !deleting && setDeleteConfirmOpen(false)}
+            accessibilityLabel="Dismiss delete confirmation"
+          />
+          <View style={styles.disconnectConfirmCard} accessibilityRole="alertdialog">
+            <Text style={styles.disconnectConfirmTitle}>Delete {childName} permanently?</Text>
+            <Text style={styles.disconnectConfirmBody}>{deleteConfirmBodyModal}</Text>
+            <View style={styles.disconnectConfirmActions}>
+              <TouchableOpacity
+                style={styles.disconnectConfirmCancelBtn}
+                onPress={() => setDeleteConfirmOpen(false)}
+                disabled={deleting}
+                activeOpacity={0.75}
+                {...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' })}
+              >
+                <Text style={styles.disconnectConfirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.disconnectConfirmDestructiveBtn,
+                  deleting && styles.disconnectConfirmDestructiveBtnDisabled,
+                ]}
+                onPress={() => {
+                  void performPermanentDelete();
+                }}
+                disabled={deleting}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' })}
+              >
+                <Text style={styles.disconnectConfirmDestructiveText}>
+                  {deleting ? 'Deleting…' : `Delete ${childName}`}
                 </Text>
               </TouchableOpacity>
             </View>

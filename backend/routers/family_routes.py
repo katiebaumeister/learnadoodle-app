@@ -1059,7 +1059,38 @@ async def unlink_child_login(
         )
 
     try:
-        supabase.table("invites").delete().eq("family_id", family_id).eq("child_id", str(body.child_id)).execute()
+        # Child invites may use child_scope only (no child_id); those rows must go too or summaries stay "connected".
+        inv_list = (
+            supabase.table("invites")
+            .select("id, child_id, child_scope")
+            .eq("family_id", family_id)
+            .eq("role", "child")
+            .execute()
+        )
+        cid = str(body.child_id)
+        for inv in inv_list.data or []:
+            iid = inv.get("id")
+            if not iid:
+                continue
+            inv_cid = inv.get("child_id")
+            if inv_cid is not None and str(inv_cid).strip() == cid:
+                try:
+                    supabase.table("invites").delete().eq("id", str(iid)).execute()
+                except Exception as de:
+                    log_event("family.unlink_login.invite_delete", invite_id=iid, error=str(de))
+                continue
+            raw_scope = inv.get("child_scope") or []
+            if isinstance(raw_scope, str):
+                try:
+                    raw_scope = json.loads(raw_scope)
+                except Exception:
+                    raw_scope = []
+            scope_strs = [str(x).strip() for x in raw_scope if x is not None and str(x).strip()]
+            if cid in scope_strs:
+                try:
+                    supabase.table("invites").delete().eq("id", str(iid)).execute()
+                except Exception as de:
+                    log_event("family.unlink_login.invite_delete_scope", invite_id=iid, error=str(de))
     except Exception as e:
         log_event("family.unlink_login.invites", error=str(e))
 

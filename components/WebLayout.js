@@ -4412,9 +4412,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setInviteChildModalPrefillId(childId || null);
           setShowInviteChildModal(true);
         }}
-        onChildUpdated={(updatedChild) => {
+        onChildUpdated={(updatedChild, meta) => {
           if (!updatedChild?.id) return;
           setChildren((prev) => mergeUpdatedChildIntoList(prev, updatedChild));
+          if (meta?.unlinkLogin) {
+            const sid = String(updatedChild.id);
+            const cleared = {
+              invite_status: 'none',
+              invite_email: null,
+              invite_sent_at: null,
+            };
+            setFamily((f) =>
+              f
+                ? {
+                    ...f,
+                    child_invite_summaries: { ...(f.child_invite_summaries || {}), [sid]: cleared },
+                    members: (f.members || []).filter((m) => {
+                      const role = (m.member_role || m.role || '').toLowerCase();
+                      if (role !== 'child' && role !== 'student') return true;
+                      if (m.child_id != null && String(m.child_id) === sid) return false;
+                      return true;
+                    }),
+                  }
+                : f
+            );
+          }
         }}
       />
 

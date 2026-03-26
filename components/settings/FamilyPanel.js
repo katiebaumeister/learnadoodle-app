@@ -315,18 +315,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setFamily((prev) => {
         const sameFamily =
           prev?.id != null && String(prev.id) === String(propFamily.id);
-        const propSummaries = propFamily.child_invite_summaries;
-        const propHasSummaries =
-          propSummaries &&
-          typeof propSummaries === 'object' &&
-          Object.keys(propSummaries).length > 0;
-        if (!sameFamily || propHasSummaries) {
+        if (!sameFamily) {
           return propFamily;
         }
-        return {
-          ...propFamily,
-          child_invite_summaries: prev?.child_invite_summaries,
-        };
+        // Same family: merge invite summaries so local refetch / optimistic unlink wins per child
+        // (propFamily from SessionContext is often stale and would overwrite getFamilyMembers()).
+        const propSum = propFamily.child_invite_summaries;
+        const prevSum = prev?.child_invite_summaries;
+        const mergedSummaries =
+          prevSum && typeof prevSum === 'object' && Object.keys(prevSum).length > 0
+            ? { ...(propSum && typeof propSum === 'object' ? propSum : {}), ...prevSum }
+            : propSum;
+        return { ...propFamily, child_invite_summaries: mergedSummaries };
       });
     } else if (!propFamily && user) {
       // Fallback: load family data if not provided as prop (e.g., in SettingsModal)
@@ -3866,11 +3866,33 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setInviteModalPrefillChildId(childId || null);
           setShowChildInviteModal(true);
         }}
-        onChildUpdated={(updatedChild) => {
-          if (updatedChild && family) {
+        onChildUpdated={(updatedChild, meta) => {
+          if (meta?.unlinkLogin && updatedChild?.id) {
+            const sid = String(updatedChild.id);
+            const cleared = {
+              invite_status: 'none',
+              invite_email: null,
+              invite_sent_at: null,
+            };
+            setChildInviteSupabase((m) => ({ ...(m || {}), [sid]: cleared }));
+          }
+          if (updatedChild) {
             setFamily((prevFamily) => {
               if (!prevFamily) return prevFamily;
-              const updatedChildren = (prevFamily.children || []).map((child) =>
+              let next = prevFamily;
+              if (meta?.unlinkLogin && updatedChild.id) {
+                const sid = String(updatedChild.id);
+                const cleared = {
+                  invite_status: 'none',
+                  invite_email: null,
+                  invite_sent_at: null,
+                };
+                next = {
+                  ...next,
+                  child_invite_summaries: { ...(next.child_invite_summaries || {}), [sid]: cleared },
+                };
+              }
+              const updatedChildren = (next.children || []).map((child) =>
                 child.id === updatedChild.id
                   ? {
                       ...child,
@@ -3885,7 +3907,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     }
                   : child
               );
-              return { ...prevFamily, children: updatedChildren };
+              return { ...next, children: updatedChildren };
             });
           }
           setChildrenFetchKey((k) => k + 1);
