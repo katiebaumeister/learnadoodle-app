@@ -66,6 +66,8 @@ export default function EditChildModal({
   const [unlinkingLogin, setUnlinkingLogin] = useState(false);
   /** After disconnect, ignore stale linkedLoginEmail from parent until modal closes */
   const [accountDisconnectedThisSession, setAccountDisconnectedThisSession] = useState(false);
+  /** Web: second RNModal stacks above Edit Child; window.confirm can sit behind RN Web modals */
+  const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
 
   const toast = useToast();
 
@@ -107,6 +109,7 @@ export default function EditChildModal({
       setConnectedEmail(null);
       setUnlinkingLogin(false);
       setAccountDisconnectedThisSession(false);
+      setDisconnectConfirmOpen(false);
     }
   }, [visible, child?.id, familyId, linkedLoginEmail]);
 
@@ -395,41 +398,62 @@ export default function EditChildModal({
     }
   };
 
+  const performDisconnectLogin = async () => {
+    setUnlinkingLogin(true);
+    try {
+      const { data, error } = await unlinkChildLogin({ childId: child.id });
+      if (error) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(error.message || 'Failed to disconnect account');
+        } else {
+          Alert.alert('Error', error.message || 'Failed to disconnect account');
+        }
+        return;
+      }
+      if (!data?.ok) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert('Failed to disconnect account');
+        } else {
+          Alert.alert('Error', 'Failed to disconnect account');
+        }
+        return;
+      }
+      setConnectedEmail(null);
+      setAccountDisconnectedThisSession(true);
+      if (toast?.push) {
+        toast.push('Account disconnected', 'success');
+      } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Account disconnected');
+      } else {
+        Alert.alert('Done', 'Account disconnected');
+      }
+      if (onChildUpdated) onChildUpdated(child);
+    } finally {
+      setUnlinkingLogin(false);
+    }
+  };
+
   const handleDisconnectAccount = () => {
     if (!child?.id || unlinkingLogin) return;
     const em = displayLinkedEmail || 'this email';
-    Alert.alert(
-      'Disconnect?',
-      `${em} will lose access to this child’s learning dashboard. Their profile and all learning data stay in your family. You can send a new invite anytime.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Disconnect',
-          style: 'destructive',
-          onPress: async () => {
-            setUnlinkingLogin(true);
-            const { data, error } = await unlinkChildLogin({ childId: child.id });
-            setUnlinkingLogin(false);
-            if (error) {
-              Alert.alert('Error', error.message || 'Failed to disconnect account');
-              return;
-            }
-            if (!data?.ok) {
-              Alert.alert('Error', 'Failed to disconnect account');
-              return;
-            }
-            setConnectedEmail(null);
-            setAccountDisconnectedThisSession(true);
-            if (toast?.push) {
-              toast.push('Account disconnected', 'success');
-            } else {
-              Alert.alert('Done', 'Account disconnected');
-            }
-            if (onChildUpdated) onChildUpdated(child);
-          },
+    const body = `${em} will lose access to this child’s learning dashboard. Their profile and all learning data stay in your family. You can send a new invite anytime.`;
+
+    // Web: use a stacked RNModal so the prompt is above this modal (native confirm can sit behind).
+    if (Platform.OS === 'web') {
+      setDisconnectConfirmOpen(true);
+      return;
+    }
+
+    Alert.alert('Disconnect?', body, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: () => {
+          void performDisconnectLogin();
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const handleInviteChildFromAccount = () => {
@@ -506,7 +530,11 @@ export default function EditChildModal({
 
   const childName = fullChildData?.first_name || fullChildData?.name || child?.first_name || child?.name || 'Child';
 
+  const disconnectConfirmEmail = displayLinkedEmail || 'this email';
+  const disconnectConfirmBody = `${disconnectConfirmEmail} will lose access to this child’s learning dashboard. Their profile and all learning data stay in your family. You can send a new invite anytime.`;
+
   return (
+    <>
     <RNModal
       visible={visible}
       transparent={true}
@@ -741,6 +769,56 @@ export default function EditChildModal({
         </TouchableOpacity>
       </TouchableOpacity>
     </RNModal>
+    {Platform.OS === 'web' ? (
+      <RNModal
+        visible={disconnectConfirmOpen && visible && !!child?.id}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDisconnectConfirmOpen(false)}
+      >
+        <View style={styles.disconnectConfirmOverlay}>
+          <TouchableOpacity
+            style={styles.disconnectConfirmBackdrop}
+            activeOpacity={1}
+            onPress={() => !unlinkingLogin && setDisconnectConfirmOpen(false)}
+            accessibilityLabel="Dismiss disconnect confirmation"
+          />
+          <View style={styles.disconnectConfirmCard} accessibilityRole="dialog">
+            <Text style={styles.disconnectConfirmTitle}>Disconnect?</Text>
+            <Text style={styles.disconnectConfirmBody}>{disconnectConfirmBody}</Text>
+            <View style={styles.disconnectConfirmActions}>
+              <TouchableOpacity
+                style={styles.disconnectConfirmCancelBtn}
+                onPress={() => setDisconnectConfirmOpen(false)}
+                disabled={unlinkingLogin}
+                activeOpacity={0.75}
+                {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
+              >
+                <Text style={styles.disconnectConfirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.disconnectConfirmDestructiveBtn,
+                  unlinkingLogin && styles.disconnectConfirmDestructiveBtnDisabled,
+                ]}
+                onPress={() => {
+                  setDisconnectConfirmOpen(false);
+                  void performDisconnectLogin();
+                }}
+                disabled={unlinkingLogin}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
+              >
+                <Text style={styles.disconnectConfirmDestructiveText}>
+                  {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </RNModal>
+    ) : null}
+    </>
   );
 }
 
@@ -1126,6 +1204,73 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 14,
     color: '#6b7280',
+  },
+  disconnectConfirmOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  disconnectConfirmBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+  },
+  disconnectConfirmCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 22,
+    zIndex: 2,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+    }),
+  },
+  disconnectConfirmTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 10,
+  },
+  disconnectConfirmBody: {
+    fontSize: 14,
+    color: '#4b5563',
+    lineHeight: 21,
+    marginBottom: 22,
+  },
+  disconnectConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
+  },
+  disconnectConfirmCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  disconnectConfirmCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  disconnectConfirmDestructiveBtn: {
+    backgroundColor: colors.redBold || '#dc2626',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  disconnectConfirmDestructiveBtnDisabled: {
+    opacity: 0.55,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
+  },
+  disconnectConfirmDestructiveText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });
 
