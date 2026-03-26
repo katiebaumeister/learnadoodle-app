@@ -17,6 +17,7 @@ import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 import { getHolidaysForRange, getEventForPlanSlot } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
+import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
 
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
@@ -643,6 +644,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   /** Same user across Supabase token refresh; avoids re-running home/family effects on every tab focus. */
   const authUserId = user?.id ?? null;
 
+  const familyUserControls = useOptionalFamilyUserControls();
+  const allowedRef = useRef(familyUserControls.allowed);
+  allowedRef.current = familyUserControls.allowed;
+  const sessionRef = useRef(propSession);
+  sessionRef.current = propSession;
+
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
   const validateAvatarUrl = (url) => {
@@ -1225,6 +1232,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (Platform.OS !== 'web') return;
     
     const handleOpenAddMaterialModal = (event) => {
+      const rf = sessionRef.current?.role_flags;
+      const restricted = !!(rf?.isChild || rf?.isTutor);
+      if (restricted && !allowedRef.current('materials')) {
+        Alert.alert('Not available', 'Your family admin has disabled adding or editing materials.');
+        return;
+      }
       const detail = event.detail || {};
       const subjectId = detail.subjectId || null;
       const subjectName = detail.subjectName || null;

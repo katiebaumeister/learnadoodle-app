@@ -3431,6 +3431,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     setShowRebalanceModal(true);
                   }}
                   onBuildPlan={() => {
+                    if (sessionRestricted && !familyUserControls.allowed('plans')) {
+                      Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
+                      return;
+                    }
                     setActiveRightTool('build-plan');
                     planYearReturnViewRef.current = currentView;
                     setPlanYearInitialAcademicYearId(null);
@@ -3446,6 +3450,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }
                   }}
                   onEditPlan={() => {
+                    if (sessionRestricted && !familyUserControls.allowed('plans')) {
+                      Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
+                      return;
+                    }
                     setActiveRightTool('edit-plan');
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'toolbar', academicYearId: null, openToEditList: true } }));

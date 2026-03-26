@@ -102,7 +102,7 @@ export default function UserControlsSettingsContent({ familyId: propFamilyId }) 
         if (error) throw error;
         await refresh();
       } catch (e) {
-        setFlags(flags);
+        setFlags((f) => ({ ...f, [id]: !f[id] }));
         toast.push(e?.message || 'Could not save', 'error');
       } finally {
         setSaving(false);

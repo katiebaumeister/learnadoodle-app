@@ -19,6 +19,7 @@ import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calenda
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
+import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import MaterialCard from './MaterialCard';
 import MaterialDetailDrawer from './MaterialDetailDrawer';
 import QuickReviewModal from './QuickReviewModal';
@@ -40,6 +41,15 @@ const ROLE_CHIPS = DOCUMENT_ROLE_CHIPS;
 export default function MaterialsLibrary({ familyId, children = [], preloadedSubjects = null, preloadedMaterials = null, onMaterialsUpdate = null }) {
   const toast = useToast();
   const session = useSession();
+  const familyUserControls = useOptionalFamilyUserControls();
+
+  const ensureCanEditMaterials = () => {
+    if (familyUserControls.isRestrictedViewer && !familyUserControls.allowed('materials')) {
+      toast.push('Your family admin has disabled adding or editing materials.', 'error');
+      return false;
+    }
+    return true;
+  };
   
   // Get child colors for dots
   const getChildDotColor = (childId) => {
@@ -396,6 +406,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
 
   const handleDeleteItem = async (item) => {
+    if (!ensureCanEditMaterials()) return;
     const { kind, data, normalized } = item;
     const itemName = normalized.title || 'this item';
     
@@ -504,6 +515,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
 
   const handleEditFromDetails = async (material) => {
+    if (!ensureCanEditMaterials()) return;
     // Close the details modal first
     setViewingMaterial(null);
     // Reload material to ensure we have latest data including reviews
@@ -519,6 +531,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
 
   const handleEditAttachment = async (item) => {
+    if (!ensureCanEditMaterials()) return;
     // Reload material to ensure we have latest data including reviews
     try {
       const { getMaterial } = await import('../../lib/services/materialsClient');
@@ -833,6 +846,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const nothingVisible = visibleMaterials.length === 0;
 
   const handleRestoreItem = async (item) => {
+    if (!ensureCanEditMaterials()) return;
     const { data, normalized } = item;
     const itemName = normalized.title || 'this item';
     
@@ -868,6 +882,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
 
   const handlePermanentlyDeleteItem = async (item) => {
+    if (!ensureCanEditMaterials()) return;
     const { data, normalized } = item;
     const itemName = normalized.title || 'this item';
     
@@ -984,7 +999,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
             </View>
             <TouchableOpacity
               style={styles.newButton}
-              onPress={() => setShowAddModal(true)}
+              onPress={() => {
+                if (!ensureCanEditMaterials()) return;
+                setShowAddModal(true);
+              }}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && {
                 cursor: 'pointer',
@@ -1104,7 +1122,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           </Text>
           <TouchableOpacity
             style={styles.emptyButton}
-            onPress={() => setShowAddModal(true)}
+            onPress={() => {
+              if (!ensureCanEditMaterials()) return;
+              setShowAddModal(true);
+            }}
           >
             <Plus size={18} color={colors.accent} />
             <Text style={styles.emptyButtonText}>Add your first material</Text>
