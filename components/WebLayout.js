@@ -125,6 +125,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }
   const { openSearch } = useGlobalSearch();
   const [activeTab, setActiveTab] = useState('home');
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const [activeSubtab, setActiveSubtab] = useState(null);
   const [activeTopNav, setActiveTopNav] = useState('home');
   const [activeChildId, setActiveChildId] = useState(null);
@@ -1591,30 +1593,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
     const checkUrlRoute = () => {
-      const pathname = window.location.pathname;
+      const pathnameRaw = window.location.pathname || '/';
+      const pathname = pathnameRaw.replace(/\/$/, '') || '/';
       const subjectDetailMatch = pathname.match(/^\/subjects\/([^/]+)$/);
       
       if (subjectDetailMatch) {
         const subjectId = subjectDetailMatch[1];
         const expectedTab = `subject-${subjectId}`;
-        if (activeTab !== expectedTab) {
-          setActiveTab(expectedTab);
-          setActiveTopNav('intelligence');
-        }
-      } else if (pathname === '/subjects') {
-        // Legacy subjects list route now points to Intelligence Hub
-        if (typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/intelligence');
-        }
-        if (activeTab !== 'intelligence') {
-          setActiveTab('intelligence');
-          setActiveTopNav('intelligence');
-        }
-      } else if (pathname === '/intelligence') {
-        if (activeTab !== 'intelligence') {
-          setActiveTab('intelligence');
-          setActiveTopNav('intelligence');
-        }
+        setActiveTab(expectedTab);
+        setActiveTopNav('intelligence');
+      } else if (pathname === '/subjects' || pathname === '/intelligence') {
+        // Default app entry should be Home. Legacy /subjects and hub /intelligence URLs
+        // were sending logged-in users straight to the Subjects/Intelligence screen.
+        window.history.replaceState({}, '', '/');
+        setActiveTab('home');
+        setActiveTopNav('home');
       } else if (pathname === '/planner') {
         if (activeTab !== 'planner') {
           setActiveTab('planner');
@@ -1631,10 +1624,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setActiveTopNav('materials');
         }
       } else if (pathname === '/' || pathname === '/home') {
-        // On home page - always set tab if URL matches
-        if (activeTab !== 'home') {
+        // Settings (Family) stays on URL `/` but uses pushState for About/Terms/Privacy.
+        // Forcing Home here on popstate would leave settings and show home loading.
+        if (activeTabRef.current !== 'settings') {
           setActiveTab('home');
-          setActiveTopNav('home');
+          setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
         }
       }
     };
@@ -2045,7 +2039,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         case 'subjects':
           handleTabChange('subjects');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/subjects');
+            // Use hub path (not legacy /subjects) so it is not confused with default landing
+            window.history.pushState({}, '', '/intelligence');
           }
           break;
         case 'review':

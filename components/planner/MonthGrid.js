@@ -23,6 +23,15 @@ const WEEK_PASTEL_COLORS = [
   'rgba(245, 243, 255, 0.04)', // Week 5: faint lavender (slightly more visible)
 ];
 
+/** Local calendar YYYY-MM-DD — never use toISOString().split (UTC) for grid / cache keys */
+function localCalendarYmd(d) {
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // Helper to filter out text nodes from children
 const filterTextNodes = (children) => {
   return React.Children.toArray(children).filter(child => {
@@ -53,6 +62,8 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
   const [localDropOverride, setLocalDropOverride] = useState(null); // { eventId, updatedEvent } so event appears in new cell immediately
   const dragRef = useRef(null);
   const dragStateRef = useRef(new Map()); // Track drag state per event
+  /** Day cell [data-day-date] where drag started — authoritative when event list has duplicate ids */
+  const dragSourceDayIsoRef = useRef(null);
   
   // Apply week backgrounds via DOM manipulation for web
   useEffect(() => {
@@ -99,8 +110,20 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
   }, [matrix.length, selectedDate]);
   
   // Handle mouse-based drag start for events
-  const handleMouseDragStart = useCallback((e, eventId) => {
+  const handleMouseDragStart = useCallback((e, eventId, sourceDayIso) => {
     if (typeof window === 'undefined' || Platform.OS !== 'web') return;
+
+    dragSourceDayIsoRef.current = null;
+    if (sourceDayIso) {
+      dragSourceDayIsoRef.current = String(sourceDayIso).trim().slice(0, 10);
+    } else if (e?.currentTarget) {
+      const node = e.currentTarget._nativeNode || e.currentTarget;
+      if (node && typeof node.closest === 'function') {
+        const cell = node.closest('[data-day-date]');
+        const attr = cell && cell.getAttribute ? cell.getAttribute('data-day-date') : null;
+        if (attr) dragSourceDayIsoRef.current = attr.trim().slice(0, 10);
+      }
+    }
     
     console.log('[MonthGrid] handleMouseDragStart called for event:', eventId, 'target:', e.currentTarget);
     
@@ -237,6 +260,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
       // If it was just a click (not a drag), trigger click manually
       if (!isDraggingRef.current) {
         console.log('[MonthGrid] MouseUp - was just a click, not a drag');
+        dragSourceDayIsoRef.current = null;
         setDragOverDay(null);
         // Clear the drag flag immediately
         dragStateRef.current.delete(eventId);
@@ -284,6 +308,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
         }
       };
       const restoreOriginalAndClear = () => {
+        dragSourceDayIsoRef.current = null;
         if (originalTarget) {
           removeGhostOnly();
           if (originalTarget._dragDomNode && originalTarget._dragDomNode.style) {
@@ -338,7 +363,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                 const [weekIndex, dayIndex] = dayKey.split('-').map(Number);
                 if (matrix[weekIndex] && matrix[weekIndex][dayIndex]) {
                   const day = matrix[weekIndex][dayIndex];
-                  targetDateIso = day.toISOString().split('T')[0];
+                  targetDateIso = localCalendarYmd(day);
                   dayCell = parent;
                   console.log('[MonthGrid] Found day cell by key at depth', depth, 'with date:', targetDateIso);
                   break;
@@ -368,7 +393,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                 const [weekIndex, dayIndex] = key.split('-').map(Number);
                 if (matrix[weekIndex] && matrix[weekIndex][dayIndex]) {
                   const day = matrix[weekIndex][dayIndex];
-                  targetDateIso = day.toISOString().split('T')[0];
+                  targetDateIso = localCalendarYmd(day);
                   dayCell = refElement;
                   console.log('[MonthGrid] Found day cell by DOM match with date:', targetDateIso);
                   break;
@@ -397,6 +422,23 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
         restoreOriginalAndClear();
         return;
       }
+
+      // Source day: DOM cell where drag started (fixes duplicate id + wrong events.find order)
+      const domSourceDay = dragSourceDayIsoRef.current;
+      dragSourceDayIsoRef.current = null;
+      const previousDateLocal =
+        (domSourceDay && String(domSourceDay).trim().slice(0, 10)) ||
+        (() => {
+          if (event.date_local) return String(event.date_local).trim().slice(0, 10);
+          const ts = event.start_ts || event.start;
+          if (!ts) return null;
+          const d = new Date(ts);
+          if (isNaN(d.getTime())) return null;
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${y}-${m}-${day}`;
+        })();
       
       {
           // Get original event times - prefer start_ts/end_ts as they are guaranteed ISO strings
@@ -580,7 +622,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
             if (typeof window !== 'undefined') {
               console.log('[MonthGrid] [drag-timing] t+' + (typeof performance !== 'undefined' ? (performance.now() - dropStart).toFixed(0) : '?') + 'ms dispatching eventRescheduled');
               window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                detail: { eventId, updatedEvent, dropStartTime: dropStart }
+                detail: { eventId, updatedEvent, dropStartTime: dropStart, previousDateLocal }
               }));
               rescheduleEvent(
               eventId,
@@ -636,7 +678,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                 // This will check for actual overlaps even if API failed
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                    detail: { eventId, updatedEvent, apiError: result.error }
+                    detail: { eventId, updatedEvent, apiError: result.error, previousDateLocal }
                   }));
                 }
                 // DO NOT revert optimistic update or force refresh here for conflicts
@@ -649,7 +691,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                   // Pass apiError so conflict detection can revert if no conflicts found
                   if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                      detail: { eventId, updatedEvent, apiError: result.error }
+                      detail: { eventId, updatedEvent, apiError: result.error, previousDateLocal }
                     }));
                   }
                   // Don't revert yet - let conflict detection decide
@@ -661,7 +703,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                     // Dispatch eventRescheduled with apiError so WebContent can show error but keep update visible
                     if (typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                        detail: { eventId, updatedEvent, apiError: result.error }
+                        detail: { eventId, updatedEvent, apiError: result.error, previousDateLocal }
                       }));
                     }
                     // Don't revert - let WebContent handle it
@@ -685,7 +727,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                     console.log('[MonthGrid] 400 error - dispatching eventRescheduled for conflict detection');
                     if (typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                        detail: { eventId, updatedEvent, apiError: result.error }
+                        detail: { eventId, updatedEvent, apiError: result.error, previousDateLocal }
                       }));
                     }
                     // Don't revert immediately - let conflict detection decide
@@ -760,7 +802,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                 // Dispatch eventRescheduled with apiError so WebContent can show error but keep update visible
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                    detail: { eventId, updatedEvent, apiError: err }
+                    detail: { eventId, updatedEvent, apiError: err, previousDateLocal }
                   }));
                 }
               } else {
@@ -802,7 +844,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
   // Convert blackout dates to Set for fast lookup
   const blackoutDatesSet = new Set(blackoutDates.map(d => {
     if (typeof d === 'string') return d;
-    return d.toISOString().split('T')[0];
+    return localCalendarYmd(d) || '';
   }));
 
   // Expand Project events to show on all days they span (if within a week)
@@ -898,8 +940,20 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
     if (!localDropOverride) return;
     const { eventId, updatedEvent } = localDropOverride;
     const targetDate = updatedEvent.date_local;
+    const localDayKey = (ts) => {
+      if (!ts) return null;
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return null;
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
     const hasFromParent = events.some(
-      (e) => e && e.id === eventId && (e.date_local === targetDate || (e.start_ts && e.start_ts.startsWith(targetDate)))
+      (e) =>
+        e &&
+        e.id === eventId &&
+        (e.date_local === targetDate || localDayKey(e.start_ts || e.start) === targetDate)
     );
     if (hasFromParent) {
       setLocalDropOverride(null);
@@ -1157,7 +1211,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                 }
               };
               
-              const dayDateIso = day.toISOString().split('T')[0]; // YYYY-MM-DD format
+              const dayDateIso = localCalendarYmd(day); // local YYYY-MM-DD (must match cache keys)
               const isDragOver = dragOverDay === dayDateIso;
               
               return (
@@ -1302,7 +1356,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                                   // Only start drag on left mouse button
                                   if (e.button === 0) {
                                     console.log('[MonthGrid] MouseDown on event:', ev.id);
-                                    handleMouseDragStart(e, ev.id);
+                                    handleMouseDragStart(e, ev.id, dayDateIso);
                                   }
                                 },
                                 onClick: (e) => {

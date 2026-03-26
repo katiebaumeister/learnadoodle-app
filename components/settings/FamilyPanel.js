@@ -29,6 +29,40 @@ import PlannerSettingsContent from './PlannerSettingsContent';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 
+/** Strip trailing " (you)" so edit fields never show that suffix (view-only cue). */
+function stripYouLabelForEdit(raw) {
+  return String(raw ?? '')
+    .trim()
+    .replace(/\s*\(you\)\s*$/i, '')
+    .trim();
+}
+
+/** Empty, legacy defaults, or placeholder “Parent 1” — show friendly Parent 1 (you) cue instead. */
+function isGenericFamilyDisplayName(raw) {
+  const t = stripYouLabelForEdit(raw).toLowerCase();
+  if (!t) return true;
+  return (
+    t === 'family' ||
+    t === 'my family' ||
+    t === 'myfamily' ||
+    t === 'parent 1' ||
+    t === 'parent1'
+  );
+}
+
+/** Parents section row: view label (adds “ (you)” only for a parent viewing their own account). */
+function getFamilyRowDisplayName(storedFamilyName, { isParentViewer }) {
+  const stored = storedFamilyName != null ? String(storedFamilyName).trim() : '';
+  if (!isGenericFamilyDisplayName(stored)) return stored;
+  return isParentViewer ? 'Parent 1 (you)' : 'Parent 1';
+}
+
+/** Value to put in the inline editor — never includes “(you)”. */
+function getFamilyRowEditValue(storedFamilyName) {
+  if (isGenericFamilyDisplayName(storedFamilyName)) return 'Parent 1';
+  return stripYouLabelForEdit(storedFamilyName);
+}
+
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
@@ -50,6 +84,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Profile state
   const [profile, setProfile] = useState(propProfile);
+
+  const isTutorViewer = propUserRole === 'tutor' || profile?.role === 'tutor';
+  /** “(you)” suffix only for parents/admins viewing Family — not children or tutors. */
+  const showFamilyRowYouCue = !isChildMode && !isTutorViewer;
   
   // Profile editing state
   const [editingProfile, setEditingProfile] = useState(false);
@@ -1168,7 +1206,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const normalizeMemberForIdCard = (member, role) => {
     if (role === 'child') return member;
     if (role === 'parent') {
-      const name = family?.family_name || member.email || 'Parent';
+      const name =
+        getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue }) ||
+        member.email ||
+        'Parent';
       return { id: member.id, first_name: name, name, avatar_url: member.avatar_url };
     }
     const name = member.name || member.email || 'Tutor';
@@ -2090,7 +2131,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </>
               ) : (
                 <>
-                  <Text style={styles.memberRowName}>{family?.family_name || 'Family'}</Text>
+                  <Text style={styles.memberRowName}>
+                    {getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue })}
+                  </Text>
                   {!isChildMode && (
                     <View style={styles.memberRowActions}>
                       <TouchableOpacity
@@ -2099,7 +2142,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           familyNameRowHovered && styles.memberRowActionButtonHovered,
                         ]}
                         onPress={() => {
-                          setEditingFamilyNameValue(family?.family_name || '');
+                          setEditingFamilyNameValue(getFamilyRowEditValue(family?.family_name));
                           setIsEditingFamilyName(true);
                         }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -4038,7 +4081,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     const label = idCardRole === 'child'
                       ? (member.name || member.first_name || 'Child')
                       : idCardRole === 'parent'
-                        ? (family?.family_name || member.email || 'Parent')
+                        ? (getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue }) ||
+                            member.email ||
+                            'Parent')
                         : (member.name || member.email || 'Tutor');
                     return (
                       <TouchableOpacity

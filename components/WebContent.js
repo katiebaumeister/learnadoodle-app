@@ -1253,39 +1253,79 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (Platform.OS !== 'web') return;
     
     const handleEventRescheduled = async (event) => {
-      const { eventId, updatedEvent, apiError, dropStartTime, fromApi } = event.detail || {};
+      const { eventId, updatedEvent, apiError, dropStartTime, fromApi, previousDateLocal } = event.detail || {};
       if (!eventId || !updatedEvent) return;
+
+      const localDateKeyFromTs = (ts) => {
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return null;
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
 
       // API success: patch state with saved event and skip full refetch
       if (fromApi) {
         lastMergeFromApiRef.current = { eventId, at: Date.now() };
         pendingOptimisticUpdatesRef.current.delete(eventId);
-        const saved = updatedEvent;
-        const newDateKey = saved.date_local || (() => {
-          const d = new Date(saved.start_ts || saved.start || saved.start_local);
-          return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : null;
-        })();
+        const raw = updatedEvent;
+        const saved = raw?.event && typeof raw.event === 'object' ? raw.event : raw;
+
+        // Always remove id from all days then insert once — avoids "found === false" leaving
+        // stale rows and matches month-grid local dates (not UTC toISOString day keys).
         setCalendarEvents((prevEvents) => {
+          let prior = null;
+          for (const k of Object.keys(prevEvents)) {
+            const arr = prevEvents[k];
+            if (!Array.isArray(arr)) continue;
+            const hit = arr.find((e) => e && e.id === eventId);
+            if (hit) {
+              prior = hit;
+              break;
+            }
+          }
+          // Bucket by local calendar day from start_ts first — API date_local can be stale or TZ-wrong
+          // and caused first-drag "jump back" when it disagreed with saved timestamps after ~500ms.
+          const newDateKey =
+            localDateKeyFromTs(saved.start_ts || saved.start || saved.start_local) ||
+            (saved.date_local && String(saved.date_local).trim().slice(0, 10)) ||
+            (prior && prior.date_local ? String(prior.date_local).trim().slice(0, 10) : null);
+          if (!newDateKey) return prevEvents;
+
           const newEvents = { ...prevEvents };
-          let found = false;
           Object.keys(newEvents).forEach((dateKey) => {
             const dayEvents = newEvents[dateKey];
             if (!Array.isArray(dayEvents)) return;
-            const index = dayEvents.findIndex((e) => e && e.id === eventId);
-            if (index < 0) return;
-            found = true;
-            const patched = { ...dayEvents[index], ...saved, date_local: newDateKey || dateKey };
-            if (newDateKey === dateKey) {
-              const updated = [...dayEvents];
-              updated[index] = patched;
-              newEvents[dateKey] = updated;
-            } else {
-              newEvents[dateKey] = dayEvents.filter((e) => e.id !== eventId);
-              if (!newEvents[newDateKey]) newEvents[newDateKey] = [];
-              newEvents[newDateKey] = [...newEvents[newDateKey], patched];
-            }
+            const filtered = dayEvents.filter((e) => !e || e.id !== eventId);
+            if (filtered.length === dayEvents.length) return;
+            if (filtered.length === 0) delete newEvents[dateKey];
+            else newEvents[dateKey] = filtered;
           });
-          return found ? newEvents : prevEvents;
+
+          const patched = { ...(prior || {}), ...saved };
+          patched.date_local = newDateKey;
+          const st = new Date(patched.start_ts || patched.start);
+          if (!isNaN(st.getTime())) {
+            const hh = String(st.getHours()).padStart(2, '0');
+            const mm = String(st.getMinutes()).padStart(2, '0');
+            patched.start_local = patched.start_local || `${hh}:${mm}`;
+            patched.time = patched.time || patched.start_local;
+          }
+          if (patched.end_ts) {
+            const en = new Date(patched.end_ts);
+            if (!isNaN(en.getTime())) {
+              patched.end_local =
+                patched.end_local ||
+                `${String(en.getHours()).padStart(2, '0')}:${String(en.getMinutes()).padStart(2, '0')}`;
+            }
+          }
+          if (!newEvents[newDateKey]) newEvents[newDateKey] = [];
+          newEvents[newDateKey] = [
+            ...newEvents[newDateKey].filter((e) => !e || e.id !== eventId),
+            patched,
+          ];
+          return newEvents;
         });
         return;
       }
@@ -1297,10 +1337,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         setCalendarEvents(prevEvents => {
           const newEvents = { ...prevEvents };
           let found = false;
-          const newDateKey = updatedEvent.date_local || (() => {
-            const d = new Date(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local);
-            return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : null;
-          })();
+          const newDateKey =
+            (updatedEvent.date_local && String(updatedEvent.date_local).trim().slice(0, 10)) ||
+            localDateKeyFromTs(
+              updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local
+            );
           Object.keys(newEvents).forEach(dateKey => {
             const dayEvents = newEvents[dateKey];
             if (Array.isArray(dayEvents)) {
@@ -1352,6 +1393,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (!found && newDateKey) {
             const withDateLocal = { ...updatedEvent, date_local: newDateKey };
             newEvents[newDateKey] = [...(newEvents[newDateKey] || []), withDateLocal];
+            // Authoritatively clear the source day so plannerEventsForMonth overlays [] over stale cache (first-drag fix)
+            const oldKey =
+              previousDateLocal && String(previousDateLocal).trim().slice(0, 10);
+            if (oldKey && oldKey !== newDateKey) {
+              newEvents[oldKey] = (newEvents[oldKey] || []).filter((e) => !e || e.id !== eventId);
+            }
             return newEvents;
           }
           return found ? newEvents : prevEvents;
@@ -1423,7 +1470,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             console.log('[WebContent] Invalid event date for conflict detection:', updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local);
             return;
           }
-          const dateKey = eventDate.toISOString().split('T')[0];
+          const dateKey =
+            (updatedEvent.date_local && String(updatedEvent.date_local).trim().slice(0, 10)) ||
+            localDateKeyFromTs(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local) ||
+            eventDate.toISOString().split('T')[0];
           // child_id might be nested or have different name
           const childId = updatedEvent.child_id || updatedEvent.childId || updatedEvent.student_id || 
                          (updatedEvent.data && (updatedEvent.data.child_id || updatedEvent.data.childId || updatedEvent.data.student_id));
@@ -2039,13 +2089,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               // Don't fetch database state - keep optimistic update visible
               // The user can try again or refresh to see the actual state
               return;
-            } else {
-              // No conflicts and API call succeeded - clear the pending flag
-              // The database now has the correct position, so refreshes are safe
-              // console.log('[WebContent] No conflicts - clearing pending optimistic update for event:', eventId);
-              pendingOptimisticUpdatesRef.current.delete(eventId);
             }
-            
+            // No calendar overlaps and no apiError in this payload — but this handler often
+            // runs from the *optimistic* eventRescheduled (save still in flight). Do not
+            // pendingOptimisticUpdatesRef.delete here: !apiError does not mean the API succeeded.
+            // Deleting early let month refetch overwrite the chip (first drag "jump back").
+            // Pending is cleared when eventRescheduled runs with fromApi: true after save.
+
             // Hide banner if it was showing for this event
             setConflictBanner(prev => {
               if (prev.eventId === eventId) {
@@ -2333,13 +2383,35 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
       setCalendarEvents((prev) => {
         let merged = { ...prev, ...byDate };
-        if (preserveEventId) {
+        // Re-apply optimistic positions for any in-flight drags so a slow month refetch
+        // (e.g. first planner open) cannot snap events back to stale server rows.
+        const idsToPreserve = new Set();
+        if (preserveEventId) idsToPreserve.add(preserveEventId);
+        try {
+          pendingOptimisticUpdatesRef.current.forEach((id) => {
+            if (id) idsToPreserve.add(id);
+          });
+        } catch (_) {}
+        idsToPreserve.forEach((eventId) => {
           let optimisticEvent = null;
           let optimisticDateKey = null;
           for (const key of Object.keys(prev)) {
             const arr = prev[key];
-            if (Array.isArray(arr)) {
-              const e = arr.find((ev) => ev && ev.id === preserveEventId);
+            if (!Array.isArray(arr)) continue;
+            const e = arr.find((ev) => ev && ev.id === eventId);
+            if (!e) continue;
+            const dl = e.date_local && String(e.date_local).trim().slice(0, 10);
+            if (dl && String(key) === dl) {
+              optimisticEvent = e;
+              optimisticDateKey = key;
+              break;
+            }
+          }
+          if (!optimisticEvent) {
+            for (const key of Object.keys(prev)) {
+              const arr = prev[key];
+              if (!Array.isArray(arr)) continue;
+              const e = arr.find((ev) => ev && ev.id === eventId);
               if (e) {
                 optimisticEvent = e;
                 optimisticDateKey = key;
@@ -2349,11 +2421,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }
           if (optimisticEvent && optimisticDateKey) {
             Object.keys(merged).forEach((k) => {
-              merged[k] = (merged[k] || []).filter((ev) => ev && ev.id !== preserveEventId);
+              merged[k] = (merged[k] || []).filter((ev) => ev && ev.id !== eventId);
             });
             merged[optimisticDateKey] = [...(merged[optimisticDateKey] || []), optimisticEvent];
           }
-        }
+        });
         return merged;
       });
       const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
@@ -2388,10 +2460,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const eventIdFromDetail = event?.detail?.eventId;
       const isTargetedRefresh = targetYear !== undefined && targetMonth !== undefined;
 
-      // Targeted refresh (e.g. after drag-drop): clear pending so refetch runs and server state sticks
-      if (isTargetedRefresh && eventIdFromDetail) {
-        pendingOptimisticUpdatesRef.current.delete(eventIdFromDetail);
-      }
+      // Do not delete pendingOptimisticUpdatesRef here — refreshCalendarData merges using it
+      // plus preserveEventId; clearing before refetch broke first-drag preservation.
 
       // Skip full refetch when we just patched this event from API (avoids ~400–500ms delay)
       const merged = lastMergeFromApiRef.current;
@@ -7257,7 +7327,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     Object.keys(calendarEvents).forEach((dateKey) => {
       if (!dateKey.startsWith(monthPrefix)) return;
       const fromState = calendarEvents[dateKey];
-      if (Array.isArray(fromState) && fromState.length > 0) {
+      // Include [] so a day cleared by merge (event moved away) does not fall back to stale cache.
+      if (Array.isArray(fromState)) {
         merged[dateKey] = fromState;
         fromState.forEach((e) => e && e.id && eventIdsInCalendarEvents.add(e.id));
       }
@@ -7268,13 +7339,32 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         const arr = merged[dateKey];
         if (!Array.isArray(arr)) return;
         const fromState = calendarEvents[dateKey];
-        const isAuthoritative = Array.isArray(fromState) && fromState.some((e) => e && e.id && eventIdsInCalendarEvents.has(e.id));
-        if (isAuthoritative) return; // this date is from calendarEvents, keep as-is
+        const isAuthoritative = Array.isArray(fromState);
+        if (isAuthoritative) return; // this date is from calendarEvents (including explicit []), keep as-is
         const filtered = arr.filter((e) => !e || !e.id || !eventIdsInCalendarEvents.has(e.id));
         if (filtered.length !== arr.length) merged[dateKey] = filtered;
       });
     }
-    const calendarEventList = Object.entries(merged).flatMap(([, evts]) => (Array.isArray(evts) ? evts : []));
+    // One row per id at the date calendar state assigns (avoids MonthGrid first-wins dedupe keeping a stale cell)
+    const idAuthoritativeDate = new Map();
+    Object.keys(calendarEvents).forEach((dk) => {
+      if (!dk.startsWith(monthPrefix)) return;
+      const st = calendarEvents[dk];
+      if (!Array.isArray(st)) return;
+      st.forEach((e) => {
+        if (e && e.id) idAuthoritativeDate.set(e.id, dk);
+      });
+    });
+    const calendarEventList = Object.entries(merged).flatMap(([dateKey, evts]) => {
+      if (!Array.isArray(evts)) return [];
+      return evts.filter((e) => {
+        if (!e) return false;
+        if (!e.id) return true;
+        const auth = idAuthoritativeDate.get(e.id);
+        if (auth === undefined) return true;
+        return String(dateKey) === String(auth);
+      });
+    });
     const holidays = plannerHolidaysCache[monthKey] || [];
     const holidayEvents = holidays.map((h) => ({
       id: `holiday-${h.date}-${(h.name || '').replace(/\s+/g, '-').slice(0, 30)}`,

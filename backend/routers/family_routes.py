@@ -426,6 +426,77 @@ def _purge_child_from_events(supabase, family_id: str, child_id: str) -> None:
         log_event("family.permanent_delete.events_child_ids", error=str(e))
 
 
+def _parse_subject_child_id_field(raw) -> List[str]:
+    """subject.child_id is semicolon-separated UUID strings; empty means all children."""
+    if raw is None:
+        return []
+    s = str(raw).strip()
+    if not s:
+        return []
+    return [x.strip() for x in s.split(";") if x.strip()]
+
+
+def _delete_subject_row_and_common_deps(supabase, family_id: str, subject_id: str) -> None:
+    """Remove a subject row after clearing common dependents (best-effort; tables may not exist)."""
+    sid = str(subject_id)
+    fid = str(family_id)
+    for tbl in ("subject_track", "subject_goals"):
+        try:
+            supabase.table(tbl).delete().eq("subject_id", sid).execute()
+        except Exception:
+            pass
+    try:
+        supabase.table("materials").update({"subject_id": None}).eq("subject_id", sid).eq("family_id", fid).execute()
+    except Exception:
+        pass
+    try:
+        supabase.table("events").update({"subject_id": None}).eq("subject_id", sid).eq("family_id", fid).execute()
+    except Exception:
+        pass
+    _safe_delete_eq(supabase, "subject", {"id": sid, "family_id": fid})
+
+
+def _purge_subjects_for_deleted_child(supabase, family_id: str, child_id: str) -> None:
+    """
+    subject.child_id lists which students the course applies to (semicolon-separated) or '' for all.
+    - If the subject lists only the deleted child, delete the subject.
+    - If it lists that child among others, remove that id and keep the subject.
+    - If child_id is empty (family-wide), leave the subject unchanged.
+    """
+    cid = str(child_id).strip()
+    fid = str(family_id)
+    try:
+        res = supabase.table("subject").select("id, child_id").eq("family_id", fid).execute()
+        rows = res.data or []
+    except Exception as e:
+        log_event("family.permanent_delete.subjects_read", error=str(e))
+        return
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for row in rows:
+        sid = row.get("id")
+        if not sid:
+            continue
+        parts = _parse_subject_child_id_field(row.get("child_id"))
+        if not parts:
+            continue
+        if cid not in parts:
+            continue
+        new_parts = [p for p in parts if str(p).strip() != cid]
+        if not new_parts:
+            try:
+                _delete_subject_row_and_common_deps(supabase, fid, str(sid))
+            except Exception as e:
+                log_event("family.permanent_delete.subject_delete", subject_id=str(sid), error=str(e))
+        else:
+            try:
+                supabase.table("subject").update(
+                    {"child_id": ";".join(new_parts), "updated_at": now_iso}
+                ).eq("id", str(sid)).eq("family_id", fid).execute()
+            except Exception as e:
+                log_event("family.permanent_delete.subject_patch_child_id", subject_id=str(sid), error=str(e))
+
+
 def _delete_child_scoped_rows(supabase, family_id: str, child_id: str) -> None:
     cid = str(child_id)
     tables_family_child = [
@@ -616,6 +687,7 @@ def _permanent_delete_child_data(supabase, family_id: str, child_id: str) -> Lis
         log_event("family.permanent_delete.invites", error=str(e))
 
     _delete_child_scoped_rows(supabase, family_id, cid)
+    _purge_subjects_for_deleted_child(supabase, family_id, cid)
     _purge_child_from_events(supabase, family_id, cid)
 
     auth_ids = _apply_family_members_for_deleted_child(supabase, family_id, cid)
