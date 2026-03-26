@@ -9,6 +9,7 @@ import { typography, getModeTokens } from '../../theme/pastelDesignTokens';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { useToast } from '../Toast';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import {
   fetchChildInviteSummaries,
   formatInviteLastSent,
@@ -26,6 +27,7 @@ import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
+import UserControlsSettingsContent from './UserControlsSettingsContent';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 
@@ -70,6 +72,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const { mode } = useSensoryMode();
   const tokens = getModeTokens(mode);
   const toast = useToast();
+  const familyUserControls = useOptionalFamilyUserControls();
+  const profileEditLocked = familyUserControls.isRestrictedViewer && !familyUserControls.allowed('child_profile');
   const { signOut, signOutLocal } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
@@ -803,11 +807,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Subject management functions
   const handleEditSubject = (subject) => {
+    if (familyUserControls.isRestrictedViewer && !familyUserControls.allowed('subjects')) {
+      toast.push('Your family admin has disabled adding or editing subjects.', 'error');
+      return;
+    }
     setEditingSubjectInModal(subject);
     setShowAddSubjectModal(true);
   };
 
   const handleSaveSubject = async () => {
+    if (familyUserControls.isRestrictedViewer && !familyUserControls.allowed('subjects')) {
+      toast.push('Your family admin has disabled adding or editing subjects.', 'error');
+      return;
+    }
     if (!editingSubject) return;
     setSavingSubject(true);
     try {
@@ -1071,6 +1083,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   };
 
   const handleSaveProfile = async () => {
+    if (familyUserControls.isRestrictedViewer && !familyUserControls.allowed('child_profile')) {
+      toast.push('Your family admin has disabled editing profile settings.', 'error');
+      return;
+    }
     setSavingProfile(true);
     setError(null);
     
@@ -1524,12 +1540,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <PlannerSettingsContent
               familyId={familyId || family?.id}
               initialData={preloadedPlannerData}
+              readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
               onSave={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
                 }
               }}
             />
+          </View>
+        );
+      case 'user-controls':
+        return (
+          <View style={[styles.mainContentInner, { flex: 1, minHeight: 0 }]}>
+            <UserControlsSettingsContent familyId={familyId || family?.id} />
           </View>
         );
       case 'connections':
@@ -1812,7 +1835,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   placeholderTextColor="#6b7280"
                   keyboardType="email-address"
                   autoCapitalize="none"
-                  editable={!isViewingAsChild}
+                  editable={!isViewingAsChild && !profileEditLocked}
                 />
                 {hasProfileChanges && (
                   <TouchableOpacity
@@ -3742,6 +3765,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
+            {!isChildMode && !isTutorViewer ? (
+              <TouchableOpacity
+                style={[styles.sidebarButton, activeSection === 'user-controls' && styles.sidebarButtonActive]}
+                onPress={() => setActiveSection('user-controls')}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text
+                  style={[
+                    styles.sidebarButtonText,
+                    activeSection === 'user-controls' && styles.sidebarButtonTextActive,
+                  ]}
+                >
+                  User Controls
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
             </TouchableOpacity>

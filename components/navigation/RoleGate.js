@@ -12,7 +12,6 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { useSession } from '../../contexts/SessionContext';
 import ParentNavigator from './ParentNavigator';
-import TutorNavigator from './TutorNavigator';
 import AppLoader, { ensureWebShellImagesLoaded } from '../AppLoader';
 
 export default function RoleGate({ children, ...props }) {
@@ -55,7 +54,8 @@ export default function RoleGate({ children, ...props }) {
   if (role_flags.isChild) {
     return <ParentNavigator session={session} user={props.user} userRole="child" {...props} />;
   } else if (role_flags.isTutor) {
-    return <TutorNavigator session={session} user={props.user} {...props} />;
+    // Same WebLayout shell as parent/child: focused tutor content + rail in WebContent, not a separate mobile shell.
+    return <ParentNavigator session={session} user={props.user} userRole="tutor" {...props} />;
   } else {
     // Default to parent navigator (includes fallback for unknown roles)
     return <ParentNavigator session={session} user={props.user} {...props} />;

@@ -44,6 +44,7 @@ export default function MobileCardView({
   onEventComplete,
   selectedDate,
   onSelectDate,
+  readOnly = false,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -167,7 +168,7 @@ export default function MobileCardView({
                     event={event}
                     onPress={() => onEventPress && onEventPress(event)}
                     onLongPress={() => onEventRightClick && onEventRightClick(event)}
-                    onComplete={() => onEventComplete && onEventComplete(event)}
+                    onComplete={readOnly || !onEventComplete ? undefined : () => onEventComplete(event)}
                     formatTime={formatTime}
                     getEventTime={getEventTime}
                   />
@@ -214,6 +215,7 @@ function EventCard({ event, onPress, onLongPress, onComplete, formatTime, getEve
             {duration > 0 && ` • ${duration} min`}
           </Text>
         </View>
+        {onComplete ? (
         <TouchableOpacity
           onPress={handleComplete}
           style={styles.completeButton}
@@ -224,6 +226,7 @@ function EventCard({ event, onPress, onLongPress, onComplete, formatTime, getEve
             <Circle size={20} color={colors.muted} />
           )}
         </TouchableOpacity>
+        ) : null}
       </View>
 
       <Text style={[styles.eventTitle, completed && styles.eventTitleCompleted]} numberOfLines={2}>

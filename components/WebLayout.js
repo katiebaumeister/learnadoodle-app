@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator, Image, LayoutAnimation } from 'react-native';
+import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator, Image, LayoutAnimation, Alert } from 'react-native';
 
 // For web portal rendering
 let ReactDOM;
@@ -14,6 +14,7 @@ import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date'
 import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Settings } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
+import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
 import { useGlobalSearch } from '../contexts/GlobalSearchContext';
 import WebContent from './WebContent';
@@ -109,6 +110,18 @@ function mergeUpdatedChildIntoList(prev, row) {
   });
 }
 
+/** Family / account UI tabs that often keep URL as `/` (or a stale `/planner` / `/materials`) — must not be overwritten by popstate URL sync. */
+function isFamilyShellTab(tab) {
+  if (!tab || typeof tab !== 'string') return false;
+  return (
+    tab === 'profile' ||
+    tab === 'settings' ||
+    tab === 'children-list' ||
+    tab.startsWith('child-') ||
+    tab.startsWith('notes-pages-')
+  );
+}
+
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
   const authUserId = user?.id ?? null;
@@ -144,6 +157,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventModalEventId, setEventModalEventId] = useState(null);
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
+  /** null | 'help' | 'submission' — parent review inbox opens event details + matching modal */
+  const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [editingChild, setEditingChild] = useState(null);
   const [taskModalDate, setTaskModalDate] = useState(new Date());
@@ -288,6 +303,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setUserRole(session.effective_role);
     }
   }, [session, propUserRole]);
+
+  /** Tutor: read-first planner; no global "new event" ownership. */
+  const isTutorUser = userRole === 'tutor' || session?.role_flags?.isTutor === true;
+
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const familyUserControls = useOptionalFamilyUserControls();
+  const allowedRef = useRef(familyUserControls.allowed);
+  allowedRef.current = familyUserControls.allowed;
+  const sessionRestricted = !!(session?.role_flags?.isChild || session?.role_flags?.isTutor);
+  const denyFamilyEventEdit = sessionRestricted && !familyUserControls.allowed('events');
+
   const [homeLoading, setHomeLoading] = useState(false); // WebContent home fetch runs in background; shell must not wait on it
   const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState([]);
@@ -1609,6 +1636,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         setActiveTab('home');
         setActiveTopNav('home');
       } else if (pathname === '/planner') {
+        // Family panel uses pushState for About/Terms/Privacy; URL may still be /planner after switching to Family without a replace.
+        if (isFamilyShellTab(activeTabRef.current)) {
+          return;
+        }
         if (activeTab !== 'planner') {
           setActiveTab('planner');
           setActiveTopNav('planner');
@@ -1619,14 +1650,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setCurrentView(view);
         }
       } else if (pathname === '/materials') {
+        if (isFamilyShellTab(activeTabRef.current)) {
+          return;
+        }
         if (activeTab !== 'materials') {
           setActiveTab('materials');
           setActiveTopNav('materials');
         }
+      } else if (pathname === '/students') {
+        if (activeTab !== 'tutor-students') {
+          setActiveTab('tutor-students');
+          setActiveTopNav('tutor-students');
+        }
       } else if (pathname === '/' || pathname === '/home') {
-        // Settings (Family) stays on URL `/` but uses pushState for About/Terms/Privacy.
-        // Forcing Home here on popstate would leave settings and show home loading.
-        if (activeTabRef.current !== 'settings') {
+        // Family stays on `/` but uses pushState for About/Terms/Privacy. Forcing Home on popstate
+        // must not run for any family shell tab (settings, profile, child-*, etc.).
+        if (!isFamilyShellTab(activeTabRef.current)) {
           setActiveTab('home');
           setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
         }
@@ -1674,6 +1713,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveTopNav('intelligence');
     } else if (activeTab === 'profile') {
       setActiveTopNav('profile');
+    } else if (activeTab === 'tutor-students') {
+      setActiveTopNav('tutor-students');
     } else if (activeTab === 'settings') {
       setActiveTopNav('new');
     } else if ((activeTab === 'children-list' || (activeTab && activeTab.startsWith('child-'))) && activeChildId) {
@@ -1691,6 +1732,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handler = (e) => {
+      const rf = sessionRef.current?.role_flags;
+      const restricted = !!(rf?.isChild || rf?.isTutor);
+      if (restricted && !allowedRef.current('subjects')) {
+        Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
+        return;
+      }
       // If event has detail (subject object), it's edit mode
       const subject = e.detail?.subject || null;
       setEditingSubject(subject);
@@ -1706,6 +1753,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (Platform.OS !== 'web') return;
     
     const handleOpenTaskModal = (event) => {
+      if (isTutorUser) return;
+      const rf = sessionRef.current?.role_flags;
+      const restricted = !!(rf?.isChild || rf?.isTutor);
+      if (restricted && !allowedRef.current('events')) {
+        Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+        return;
+      }
       const detail = event.detail || {};
       const date = detail.date || new Date();
       const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
@@ -1729,7 +1783,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener('openTaskModal', handleOpenTaskModal);
     };
-  }, []);
+  }, [isTutorUser]);
 
   // Listen for openEventModal event to open the global EventModal
   // Available from any screen (family, planner, etc.)
@@ -1740,6 +1794,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const detail = event.detail || {};
       const eventId = detail.eventId;
       const initialEvent = detail.initialEvent || null;
+      const parentEventFocus = detail.parentEventFocus ?? null;
       
       if (!eventId) {
         console.warn('[WebLayout] openEventModal event received but no eventId provided');
@@ -1751,6 +1806,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
+      setEventModalParentFocus(
+        parentEventFocus === 'help' || parentEventFocus === 'submission' ? parentEventFocus : null
+      );
       setShowEventModal(true);
     };
     
@@ -1760,6 +1818,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.removeEventListener('openEventModal', handleOpenEventModal);
     };
   }, [activeTab]);
+
+  // Subject overview → Home review inbox (parent)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => setActiveTab('home');
+    window.addEventListener('openParentHomeReviewInbox', handler);
+    return () => window.removeEventListener('openParentHomeReviewInbox', handler);
+  }, []);
 
   const handleChildAdded = () => {
     fetchFamilyMembers();
@@ -1822,6 +1888,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (event) => {
+      const rf = sessionRef.current?.role_flags;
+      const restricted = !!(rf?.isChild || rf?.isTutor);
+      if (restricted && !allowedRef.current('plans')) {
+        Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
+        return;
+      }
       const detail = event?.detail ?? {};
       const from = detail.from;
       const yearIdFromEvent = detail.academicYearId;
@@ -1864,6 +1936,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (e) => {
+      const rf = sessionRef.current?.role_flags;
+      const restricted = !!(rf?.isChild || rf?.isTutor);
+      if (restricted && !allowedRef.current('plans')) {
+        Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
+        return;
+      }
       const detail = e?.detail ?? {};
       const subjectId = detail.subjectId ?? null;
       const subjectName = detail.subjectName ?? null;
@@ -2060,6 +2138,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           break;
         case 'profile':
           handleTabChange('profile');
+          break;
+        case 'tutor-students':
+          handleTabChange('tutor-students');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/students');
+          }
           break;
         default:
           handleTabChange('home');
@@ -2881,7 +2965,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     flexDirection: 'row',
                     alignItems: 'center',
                   }}>
-                    <PlanHealthIcon familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={preloadedPlanHealth} />
+                    <PlanHealthIcon familyId={familyId} visible={!isTutorUser && (activeTab === 'planner' || activeTab === 'calendar')} initialHealth={preloadedPlanHealth} />
                   </View>
                 </View>
 
@@ -3063,7 +3147,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     )}
                   </View>
 
-                  {/* New Event Button */}
+                  {/* New Event Button — parents only; tutors use read-first planner */}
+                  {!isTutorUser && (
                   <TouchableOpacity
                     style={{
                       flexDirection: 'row',
@@ -3096,6 +3181,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       + NEW
                     </Text>
                   </TouchableOpacity>
+                  )}
                 </View>
               </View>
 
@@ -3508,8 +3594,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         position={newMenuPosition}
         currentContext={activeTab}
         onAddChild={() => setShowAddChildModal(true)}
-        onAddSubject={() => setShowAddSubjectModal(true)}
+        onAddSubject={() => {
+          if (sessionRestricted && !familyUserControls.allowed('subjects')) {
+            Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
+            return;
+          }
+          setShowAddSubjectModal(true);
+        }}
         onAddActivity={() => {
+          if (sessionRestricted && !familyUserControls.allowed('events')) {
+            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+            return;
+          }
           setTaskModalDate(new Date());
           setShowTaskModal(true);
           setShowNewMenu(false);
@@ -3575,16 +3671,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         schedulingMode={false}
         familyId={familyId}
         children={children}
+        viewerRole={session?.role_flags?.isTutor ? 'tutor' : undefined}
+        denyFamilyEventEdit={denyFamilyEventEdit}
         preloadedAcademicYears={preloadedAcademicYears}
         familyMembers={children.map(child => ({
           id: child.id,
           name: child.first_name || child.name || 'Unknown',
           role: 'child'
         }))}
+        parentEventFocus={eventModalParentFocus}
+        onParentEventFocusConsumed={() => setEventModalParentFocus(null)}
         onClose={() => {
           setShowEventModal(false);
           setEventModalEventId(null);
           setEventModalInitialEvent(null);
+          setEventModalParentFocus(null);
         }}
         onEventUpdated={async () => {
           console.log('[WebLayout] Global EventModal onEventUpdated');

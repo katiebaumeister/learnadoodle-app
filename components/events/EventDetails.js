@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator } from 'react-native';
 import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -11,9 +11,19 @@ import StandardsSearchModal from '../standards/StandardsSearchModal';
 import MasteryPicker from '../standards/MasteryPicker';
 import { useToast } from '../Toast';
 import { useSession } from '../../contexts/SessionContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { createAssignment, updateAssignment } from '../../lib/services/assignmentsClient';
+import { isChildHelpAssignment } from '../child/childHomeRailHelpers';
 import AddSubjectModal from '../AddSubjectModal';
 import { STRINGS } from '../../lib/i18n/strings';
 import { getAcademicYear } from '../../lib/services/academicYearClient';
+import AskParentHelpModal from '../child/AskParentHelpModal';
+import StudentHelpHistoryModal from '../child/StudentHelpHistoryModal';
+import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
+import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
+import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
+import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 
 const STATUS_BASE = ['scheduled', 'in_progress', 'done', 'skipped', 'canceled'];
 const STATUS_NORMALIZE = {
@@ -513,8 +523,9 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = [] }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = [], viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed }) {
   const session = useSession();
+  const { user: authUser } = useAuth();
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
@@ -630,7 +641,170 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [checkingPercent, setCheckingPercent] = useState(false);
   const [loadingStandards, setLoadingStandards] = useState(false);
   const [standardsMastery, setStandardsMastery] = useState({}); // Map of standard_id -> mastery_level
-  
+  const [showAskParentHelpModal, setShowAskParentHelpModal] = useState(false);
+  /** Assignment row linked to this event (if any), for child "Asked" / ask-another flow */
+  const [eventLinkedHelpAssignment, setEventLinkedHelpAssignment] = useState(null);
+  /** False until the first linked-assignment fetch finishes for this event+child (avoids Ask → Asked flash). Refresh keeps prior row until the new fetch completes. */
+  const [linkedHelpReady, setLinkedHelpReady] = useState(false);
+  const linkedHelpFetchSeq = useRef(0);
+  /** When set, modal uses assignment path (follow-up); when null, uses eventContext (first ask) */
+  const [askHelpModalAssignment, setAskHelpModalAssignment] = useState(null);
+  const [showStudentHelpHistoryModal, setShowStudentHelpHistoryModal] = useState(false);
+  const [parentLinkedAssignments, setParentLinkedAssignments] = useState([]);
+  const [parentLinkedReady, setParentLinkedReady] = useState(false);
+  const parentLinkedFetchSeq = useRef(0);
+  const [showParentHelpModal, setShowParentHelpModal] = useState(false);
+  const [parentHelpModalAssignment, setParentHelpModalAssignment] = useState(null);
+  const [showParentSubmissionModal, setShowParentSubmissionModal] = useState(false);
+  const [parentSubmissionModalAssignment, setParentSubmissionModalAssignment] = useState(null);
+  const [showSendToStudentModal, setShowSendToStudentModal] = useState(false);
+  const [sendToStudentNote, setSendToStudentNote] = useState('');
+  const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
+
+  const isParentView = useMemo(
+    () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
+    [session?.role_flags?.isParent, session?.role_flags?.isChild]
+  );
+
+  const helpChildId = useMemo(
+    () => event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id,
+    [event?.child_id, assigneeIds, session?.child_id]
+  );
+
+  const loadEventLinkedHelpAssignment = useCallback(async () => {
+    const et = event?.event_type || eventType;
+    if (!familyId || !helpChildId || !event?.id || !session?.role_flags?.isChild) {
+      setEventLinkedHelpAssignment(null);
+      setLinkedHelpReady(true);
+      return;
+    }
+    if (!isSchoolWorkEventType(et)) {
+      setEventLinkedHelpAssignment(null);
+      setLinkedHelpReady(true);
+      return;
+    }
+    const mySeq = linkedHelpFetchSeq.current;
+    try {
+      const { data: rows, error } = await supabase
+        .from('assignments')
+        .select('id, need_help, title, description, linked_event_ids, updated_at, help_message_log')
+        .eq('family_id', familyId)
+        .eq('child_id', helpChildId)
+        .order('updated_at', { ascending: false })
+        .limit(200);
+      if (mySeq !== linkedHelpFetchSeq.current) return;
+      if (error) {
+        setEventLinkedHelpAssignment(null);
+        return;
+      }
+      const match = (rows || []).find((r) => assignmentRowLinksEventId(r, event.id)) || null;
+      setEventLinkedHelpAssignment(match);
+    } catch {
+      if (mySeq !== linkedHelpFetchSeq.current) return;
+      setEventLinkedHelpAssignment(null);
+    } finally {
+      if (mySeq === linkedHelpFetchSeq.current) {
+        setLinkedHelpReady(true);
+      }
+    }
+  }, [familyId, helpChildId, event?.id, event?.event_type, eventType, session?.role_flags?.isChild]);
+
+  const loadEventLinkedParentAssignments = useCallback(async () => {
+    const et = event?.event_type || eventType;
+    if (!familyId || !event?.id || !isParentView) {
+      setParentLinkedAssignments([]);
+      setParentLinkedReady(true);
+      return;
+    }
+    if (!isSchoolWorkEventType(et)) {
+      setParentLinkedAssignments([]);
+      setParentLinkedReady(true);
+      return;
+    }
+    const mySeq = parentLinkedFetchSeq.current;
+    try {
+      const { data: rows, error } = await supabase
+        .from('assignments')
+        .select(
+          '*, child:child_id (id, first_name, avatar), subject:related_subject (id, name)'
+        )
+        .eq('family_id', familyId)
+        .order('updated_at', { ascending: false })
+        .limit(200);
+      if (mySeq !== parentLinkedFetchSeq.current) return;
+      if (error) {
+        setParentLinkedAssignments([]);
+        return;
+      }
+      const matches = (rows || []).filter((r) => assignmentRowLinksEventId(r, event.id));
+      setParentLinkedAssignments(matches);
+    } catch {
+      if (mySeq !== parentLinkedFetchSeq.current) return;
+      setParentLinkedAssignments([]);
+    } finally {
+      if (mySeq === parentLinkedFetchSeq.current) {
+        setParentLinkedReady(true);
+      }
+    }
+  }, [familyId, event?.id, event?.event_type, eventType, isParentView]);
+
+  useEffect(() => {
+    linkedHelpFetchSeq.current += 1;
+    setLinkedHelpReady(false);
+    setEventLinkedHelpAssignment(null);
+  }, [event?.id, helpChildId]);
+
+  useEffect(() => {
+    loadEventLinkedHelpAssignment();
+  }, [loadEventLinkedHelpAssignment]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => loadEventLinkedHelpAssignment();
+    window.addEventListener('childAssignmentsNeedRefresh', handler);
+    return () => window.removeEventListener('childAssignmentsNeedRefresh', handler);
+  }, [loadEventLinkedHelpAssignment]);
+
+  useEffect(() => {
+    parentLinkedFetchSeq.current += 1;
+    setParentLinkedReady(false);
+    setParentLinkedAssignments([]);
+  }, [event?.id]);
+
+  useEffect(() => {
+    loadEventLinkedParentAssignments();
+  }, [loadEventLinkedParentAssignments]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => loadEventLinkedParentAssignments();
+    window.addEventListener('parentAssignmentsNeedRefresh', handler);
+    return () => window.removeEventListener('parentAssignmentsNeedRefresh', handler);
+  }, [loadEventLinkedParentAssignments]);
+
+  useEffect(() => {
+    if (!parentLinkedReady || !parentEventFocus) return;
+    const helpA = parentLinkedAssignments.find((a) => a.need_help);
+    const subA = parentLinkedAssignments.find(
+      (a) =>
+        a.status === 'submitted' &&
+        (a.review_status == null || a.review_status === 'needs_revision')
+    );
+    if (parentEventFocus === 'help') {
+      if (helpA) {
+        setParentHelpModalAssignment(helpA);
+        setShowParentHelpModal(true);
+      }
+      onParentEventFocusConsumed?.();
+    } else if (parentEventFocus === 'submission') {
+      if (subA) {
+        setParentSubmissionModalAssignment(subA);
+        setShowParentSubmissionModal(true);
+      }
+      onParentEventFocusConsumed?.();
+    }
+  }, [parentLinkedReady, parentEventFocus, parentLinkedAssignments, onParentEventFocusConsumed]);
+
   // Validation
   const [validationErrors, setValidationErrors] = useState({});
   
@@ -638,6 +812,99 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [conflictWarning, setConflictWarning] = useState(null); // { event: {...}, message: "..." }
   const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false); // Flag for "Adjust automatically"
   const [shouldAllowOverlaps, setShouldAllowOverlaps] = useState(false); // Flag for "Save anyway"
+
+  const mergeDescriptionWithNote = (prev, note) => {
+    const n = (note || '').trim();
+    if (!n) return prev || null;
+    const p = (prev || '').trim();
+    return p ? `${p}\n\n${n}` : n;
+  };
+
+  const sendWorkToStudents = useCallback(
+    async (note) => {
+      if (!familyId || !event?.id || assigneeIds.length === 0) {
+        toast.push('Choose at least one student and save the event first.', 'error');
+        return;
+      }
+      const uid = authUser?.id;
+      if (!uid) {
+        toast.push('You must be signed in.', 'error');
+        return;
+      }
+      if (!isSchoolWorkEventType(event?.event_type || eventType)) {
+        toast.push('This only applies to schoolwork-style events.', 'info');
+        return;
+      }
+      setSendToStudentSubmitting(true);
+      try {
+        const eventIdStr = String(event.id);
+        const dueTs = event.due_ts || event.end_ts || event.start_ts;
+        const dueStr = dueTs ? new Date(dueTs).toISOString().split('T')[0] : null;
+        const titleBase = (draftTitle || event.title || 'Schoolwork').trim().slice(0, 200);
+
+        for (const childId of assigneeIds) {
+          const { data: rows, error: findErr } = await supabase
+            .from('assignments')
+            .select('id, title, description, linked_event_ids, need_help')
+            .eq('family_id', familyId)
+            .eq('child_id', childId)
+            .order('updated_at', { ascending: false })
+            .limit(200);
+
+          if (findErr) throw findErr;
+
+          const linked =
+            (rows || []).find((r) => assignmentRowLinksEventId(r, eventIdStr)) || null;
+
+          const noteTrim = (note || '').trim();
+
+          if (linked?.id) {
+            const baseUpdates = {
+              assigned_by: uid,
+              status: 'not_started',
+            };
+            if (isChildHelpAssignment(linked)) {
+              baseUpdates.title = titleBase;
+              baseUpdates.need_help = false;
+            }
+            if (noteTrim) {
+              baseUpdates.description = mergeDescriptionWithNote(linked.description, noteTrim);
+            }
+            const { error: upErr } = await updateAssignment(linked.id, baseUpdates);
+            if (upErr) throw upErr;
+          } else {
+            const { error: insErr } = await createAssignment({
+              family_id: familyId,
+              child_id: childId,
+              title: titleBase,
+              description: noteTrim || null,
+              assigned_by: uid,
+              related_subject: subjectId || null,
+              due_date: dueStr,
+              status: 'not_started',
+              linked_event_ids: [eventIdStr],
+              need_help: false,
+            });
+            if (insErr) throw insErr;
+          }
+        }
+
+        toast.push('Sent to student', 'success');
+        setShowSendToStudentModal(false);
+        setSendToStudentNote('');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+          window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+        }
+      } catch (e) {
+        console.error('[EventDetails] sendWorkToStudents', e);
+        toast.push(e?.message || 'Could not send', 'error');
+      } finally {
+        setSendToStudentSubmitting(false);
+      }
+    },
+    [familyId, event, assigneeIds, authUser?.id, draftTitle, eventType, subjectId, toast]
+  );
 
   const startPeriod = useMemo(() => {
     if (!draftStartTime) return null;
@@ -2634,6 +2901,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
       }
     }
+
+    const parentHelpAssignment = parentLinkedAssignments.find((a) => a.need_help);
+    const parentSubmissionAssignment = parentLinkedAssignments.find(
+      (a) =>
+        a.status === 'submitted' &&
+        (a.review_status == null || a.review_status === 'needs_revision')
+    );
+    const parentChildLabel = (a) =>
+      a?.child?.first_name ||
+      familyMembers.find((m) => String(m.id) === String(a?.child_id))?.name ||
+      'Child';
     
     return (
       <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
@@ -2723,6 +3001,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </SafeFieldRow>
           )}
+
+          {viewerRole === 'tutor' && event?.id && familyId ? (
+            <TutorEventHelpPanel
+              eventId={event.id}
+              familyId={familyId}
+              onUpdated={() => onEventUpdated?.()}
+            />
+          ) : null}
 
           {/* Count as instructional time - Add to plan? at top (when lesson and counted) */}
           {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && placement === 'calendar' && countsTowardPlan && academicYearId && (
@@ -3062,6 +3348,219 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </SafeFieldRow>
           )}
+
+          {session?.role_flags?.isChild &&
+            event?.id &&
+            isSchoolWorkEventType(event?.event_type || eventType) && (
+              <SafeFieldRow style={[styles.fieldRow, { marginTop: 4 }]}>
+                <View
+                  style={{
+                    alignSelf: 'stretch',
+                    backgroundColor: 'rgba(79, 70, 229, 0.07)',
+                    borderRadius: 12,
+                    paddingTop: 10,
+                    paddingBottom: 18,
+                    paddingHorizontal: 14,
+                  }}
+                >
+                  <Text style={styles.fieldLabel}>Need help with this?</Text>
+                  {!linkedHelpReady ? (
+                    <View
+                      style={{
+                        minHeight: 72,
+                        marginTop: 8,
+                        justifyContent: 'center',
+                        alignItems: 'flex-start',
+                      }}
+                      accessibilityLabel="Loading help status"
+                    >
+                      <ActivityIndicator size="small" color="#89B5E4" />
+                    </View>
+                  ) : eventLinkedHelpAssignment?.need_help ? (
+                    <>
+                      <Text style={{ color: FG, fontSize: 14, marginTop: 6, lineHeight: 20 }}>
+                        Your parent can see your message. You can send another note anytime.
+                      </Text>
+                      <View
+                        style={{
+                          marginTop: 14,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: 12,
+                        }}
+                      >
+                        <TouchableOpacity
+                          onPress={() => setShowStudentHelpHistoryModal(true)}
+                          activeOpacity={0.85}
+                          accessibilityRole="button"
+                          accessibilityLabel="View what you sent"
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <View
+                            style={{
+                              paddingHorizontal: 12,
+                              paddingVertical: 6,
+                              borderRadius: 999,
+                              backgroundColor: '#EBF5FF',
+                              borderWidth: 1,
+                              borderColor: '#89B5E4',
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 13,
+                                fontWeight: '700',
+                                color: '#89B5E4',
+                                ...(Platform.OS === 'web' && {
+                                  fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                }),
+                              }}
+                            >
+                              Asked
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setAskHelpModalAssignment(eventLinkedHelpAssignment);
+                            setShowAskParentHelpModal(true);
+                          }}
+                          activeOpacity={0.85}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 14,
+                              fontWeight: '600',
+                              color: '#89B5E4',
+                              ...(Platform.OS === 'web' && {
+                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                              }),
+                            }}
+                          >
+                            Ask another question
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={{ color: FG, fontSize: 14, marginTop: 6, lineHeight: 20 }}>
+                        Get help from your parent on this assignment.
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setAskHelpModalAssignment(null);
+                          setShowAskParentHelpModal(true);
+                        }}
+                        style={{
+                          marginTop: 16,
+                          alignSelf: 'flex-start',
+                          paddingVertical: 12,
+                          paddingHorizontal: 20,
+                          borderRadius: 10,
+                          backgroundColor: '#85C4F2',
+                          ...(Platform.OS === 'web' && {
+                            boxShadow: '0 2px 6px rgba(133, 196, 242, 0.35)',
+                            cursor: 'pointer',
+                          }),
+                        }}
+                        activeOpacity={0.9}
+                      >
+                        <Text
+                          style={{
+                            color: '#fff',
+                            fontWeight: '500',
+                            fontSize: 15,
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
+                          }}
+                        >
+                          Ask for help
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              </SafeFieldRow>
+            )}
+
+            {isParentView &&
+              event?.id &&
+              isSchoolWorkEventType(event?.event_type || eventType) &&
+              (!parentLinkedReady ||
+                parentHelpAssignment ||
+                parentSubmissionAssignment) && (
+                <SafeFieldRow style={[styles.fieldRow, { marginTop: 4 }]}>
+                  <View
+                    style={{
+                      alignSelf: 'stretch',
+                      backgroundColor: 'rgba(79, 70, 229, 0.07)',
+                      borderRadius: 12,
+                      paddingTop: 10,
+                      paddingBottom: 16,
+                      paddingHorizontal: 14,
+                    }}
+                  >
+                    <Text style={styles.fieldLabel}>Schoolwork</Text>
+                    {!parentLinkedReady ? (
+                      <View
+                        style={{
+                          minHeight: 48,
+                          marginTop: 8,
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <ActivityIndicator size="small" color="#89B5E4" />
+                      </View>
+                    ) : (
+                      <>
+                        {parentHelpAssignment ? (
+                          <View style={{ marginTop: 8 }}>
+                            <Text style={{ color: FG, fontSize: 14, lineHeight: 20 }}>
+                              {parentChildLabel(parentHelpAssignment)} asked for help on this.
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setParentHelpModalAssignment(parentHelpAssignment);
+                                setShowParentHelpModal(true);
+                              }}
+                              style={{ marginTop: 12, alignSelf: 'flex-start' }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#EA580C' }}>
+                                Respond to help request
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                        {parentSubmissionAssignment ? (
+                          <View style={{ marginTop: parentHelpAssignment ? 16 : 8 }}>
+                            <Text style={{ color: FG, fontSize: 14, lineHeight: 20 }}>
+                              {parentChildLabel(parentSubmissionAssignment)} submitted work for
+                              review.
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setParentSubmissionModalAssignment(parentSubmissionAssignment);
+                                setShowParentSubmissionModal(true);
+                              }}
+                              style={{ marginTop: 12, alignSelf: 'flex-start' }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#2563EB' }}>
+                                Review submission
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                      </>
+                    )}
+                  </View>
+                </SafeFieldRow>
+              )}
           </SafeView>
         </ScrollView>
 
@@ -3329,6 +3828,53 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       </View>
           </View>
         )}
+
+        {isParentView &&
+          !readOnly &&
+          event?.id &&
+          isSchoolWorkEventType(eventType) &&
+          assigneeIds.length > 0 && (
+            <View style={{ marginTop: 4, marginBottom: 8, paddingHorizontal: 0 }}>
+              <View
+                style={{
+                  backgroundColor: 'rgba(79, 70, 229, 0.07)',
+                  borderRadius: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 6 }}>
+                  Student Submissions
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                    lineHeight: 18,
+                    marginBottom: 10,
+                  }}
+                >
+                  Send this to the student’s Submissions list (Needs your attention) even when the type isn’t
+                  Assignment.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowSendToStudentModal(true)}
+                  style={{
+                    alignSelf: 'flex-start',
+                    paddingVertical: 8,
+                    paddingHorizontal: 14,
+                    backgroundColor: '#4F46E5',
+                    borderRadius: 8,
+                  }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send to student"
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Send to student</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
       </ScrollView>
 
       {/* End date picker - shown below start date for multi-day events */}
@@ -4492,6 +5038,87 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       )}
 
+      {session?.role_flags?.isChild && event?.id && isSchoolWorkEventType(eventType) && (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 8, paddingTop: 4 }}>
+          <View
+            style={{
+              alignSelf: 'stretch',
+              backgroundColor: 'rgba(79, 70, 229, 0.07)',
+              borderRadius: 10,
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>Need help with this?</Text>
+            {!linkedHelpReady ? (
+              <View
+                style={{
+                  minHeight: 52,
+                  marginTop: 6,
+                  justifyContent: 'center',
+                  alignItems: 'flex-start',
+                }}
+                accessibilityLabel="Loading help status"
+              >
+                <ActivityIndicator size="small" color="#89B5E4" />
+              </View>
+            ) : eventLinkedHelpAssignment?.need_help ? (
+              <>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4, lineHeight: 16 }}>
+                  Your parent can see your message. You can send another note anytime.
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, flexWrap: 'wrap', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowStudentHelpHistoryModal(true)}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel="View what you sent"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        borderRadius: 999,
+                        backgroundColor: '#EBF5FF',
+                        borderWidth: 1,
+                        borderColor: '#89B5E4',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#89B5E4' }}>Asked</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAskHelpModalAssignment(eventLinkedHelpAssignment);
+                      setShowAskParentHelpModal(true);
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#89B5E4' }}>Ask another question</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4, lineHeight: 16 }}>
+                  Get help from your parent on this assignment.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setAskHelpModalAssignment(null);
+                    setShowAskParentHelpModal(true);
+                  }}
+                  style={{ marginTop: 10, alignSelf: 'flex-start' }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#89B5E4' }}>Ask for help</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      )}
       <View style={styles.footerDivider} />
       {/* Footer with Cancel, Delete Event (when editing), and Save */}
       <View style={styles.footerEditEvent}>
@@ -4575,6 +5202,200 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             familyId={familyId}
             defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
           />
+
+          <AskParentHelpModal
+            visible={showAskParentHelpModal}
+            onClose={() => {
+              setShowAskParentHelpModal(false);
+              setAskHelpModalAssignment(null);
+            }}
+            onSent={() => {
+              toast.push('Sent to your parent', 'success');
+              loadEventLinkedHelpAssignment();
+              setAskHelpModalAssignment(null);
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+              }
+            }}
+            familyId={familyId}
+            childId={event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id}
+            assignment={askHelpModalAssignment}
+            eventContext={
+              askHelpModalAssignment
+                ? null
+                : event?.id
+                  ? {
+                      id: event.id,
+                      title: event.title || draftTitle,
+                      start_ts: event.start_ts,
+                      end_ts: event.end_ts,
+                    }
+                  : null
+            }
+          />
+
+          <Modal
+            visible={showSendToStudentModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => {
+              if (!sendToStudentSubmitting) setShowSendToStudentModal(false);
+            }}
+          >
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(0,0,0,0.45)',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: 24,
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: '#fff',
+                  borderRadius: 14,
+                  padding: 20,
+                  maxWidth: 440,
+                  width: '100%',
+                  ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(0,0,0,0.12)' } : {}),
+                }}
+              >
+                <Text style={{ fontSize: 17, fontWeight: '700', color: FG, marginBottom: 8 }}>
+                  Send to student
+                </Text>
+                <Text style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 20, marginBottom: 14 }}>
+                  Adds a parent-assigned task linked to this event so it shows under Submissions (Needs your
+                  attention).
+                </Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 6 }}>Note (optional)</Text>
+                <TextInput
+                  value={sendToStudentNote}
+                  onChangeText={setSendToStudentNote}
+                  placeholder="Add a short message…"
+                  placeholderTextColor={MUTED}
+                  multiline
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    fontSize: 14,
+                    color: FG,
+                    minHeight: 88,
+                    textAlignVertical: 'top',
+                  }}
+                  editable={!sendToStudentSubmitting}
+                />
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                    marginTop: 16,
+                    justifyContent: 'flex-end',
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (!sendToStudentSubmitting) {
+                        setShowSendToStudentModal(false);
+                        setSendToStudentNote('');
+                      }
+                    }}
+                    style={{ paddingVertical: 10, paddingHorizontal: 14 }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textSecondary }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => sendWorkToStudents('')}
+                    disabled={sendToStudentSubmitting}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 14,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#E5E7EB',
+                      backgroundColor: '#fff',
+                      opacity: sendToStudentSubmitting ? 0.6 : 1,
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: FG }}>Just send</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const t = sendToStudentNote.trim();
+                      if (!t) {
+                        toast.push('Add a note, or use Just send.', 'info');
+                        return;
+                      }
+                      sendWorkToStudents(t);
+                    }}
+                    disabled={sendToStudentSubmitting}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 14,
+                      borderRadius: 8,
+                      backgroundColor: '#4F46E5',
+                      opacity: sendToStudentSubmitting ? 0.6 : 1,
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                      {sendToStudentSubmitting ? 'Sending…' : 'Send with note'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
+          <StudentHelpHistoryModal
+            visible={showStudentHelpHistoryModal}
+            onClose={() => setShowStudentHelpHistoryModal(false)}
+            assignment={eventLinkedHelpAssignment}
+            contextTitle={event?.title || draftTitle}
+          />
+
+          {parentHelpModalAssignment && showParentHelpModal ? (
+            <RespondToHelpRequestModal
+              visible
+              assignment={parentHelpModalAssignment}
+              onClose={() => {
+                setShowParentHelpModal(false);
+                setParentHelpModalAssignment(null);
+              }}
+              onResponded={() => {
+                loadEventLinkedParentAssignments();
+                onEventUpdated?.();
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+                }
+              }}
+            />
+          ) : null}
+
+          {parentSubmissionModalAssignment && showParentSubmissionModal ? (
+            <AssignmentReviewModal
+              visible
+              assignment={parentSubmissionModalAssignment}
+              onClose={() => {
+                setShowParentSubmissionModal(false);
+                setParentSubmissionModalAssignment(null);
+              }}
+              onReviewed={() => {
+                loadEventLinkedParentAssignments();
+                onEventUpdated?.();
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+                }
+              }}
+              submissionReview
+            />
+          ) : null}
 
           {/* Add Material Modal */}
           <AddMaterialModal

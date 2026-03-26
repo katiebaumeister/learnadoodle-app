@@ -43,7 +43,7 @@ const filterTextNodes = (children) => {
   });
 };
 
-export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [], children = [], onSwitchToBoardView, onSwitchToBoardViewForDay, familyId = null }) {
+export default function MonthGrid({ date, events = [], selectedDate, onSelectDate, onEventPress, onEventRightClick, onEventComplete, blackoutDates = [], children = [], onSwitchToBoardView, onSwitchToBoardViewForDay, familyId = null, readOnly = false }) {
   // Validate date prop before using it
   if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
     console.error('[MonthGrid] Invalid date prop:', date);
@@ -111,6 +111,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
   
   // Handle mouse-based drag start for events
   const handleMouseDragStart = useCallback((e, eventId, sourceDayIso) => {
+    if (readOnly) return;
     if (typeof window === 'undefined' || Platform.OS !== 'web') return;
 
     dragSourceDayIsoRef.current = null;
@@ -839,7 +840,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
     document.addEventListener('mouseup', handleMouseUp, { once: false });
     
     console.log('[MonthGrid] Event listeners added. mousemove handler:', typeof mouseMoveHandler, 'mouseup handler:', typeof handleMouseUp);
-  }, [events, familyId, onEventPress]);
+  }, [events, familyId, onEventPress, readOnly]);
   
   // Convert blackout dates to Set for fast lookup
   const blackoutDatesSet = new Set(blackoutDates.map(d => {
@@ -1344,7 +1345,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                           console.log('[MonthGrid] Rendering event as dragging:', ev.id, 'draggedEventId:', draggedEventId);
                         }
                         const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
-                        const canDrag = ev.status !== 'done' && !isBlackout && !isHoliday;
+                        const canDrag = !readOnly && ev.status !== 'done' && !isBlackout && !isHoliday;
                         
                         if (Platform.OS === 'web' && canDrag) {
                           // Web: Use View with web-specific drag handlers

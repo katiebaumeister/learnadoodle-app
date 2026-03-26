@@ -11,6 +11,7 @@ import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { colors } from '../../theme/colors';
 
@@ -27,6 +28,10 @@ export default function EmbeddedNotificationCenter({
   onViewAll,
   onInviteChild,
   onGoToPlanner,
+  /** When true (e.g. child home), never show Invite / “assign events” onboarding — always the inbox tabs + list/empty states. */
+  hideOnboardingCards = false,
+  /** When set, scope assignments and upcoming events to this child (viewer is that learner). */
+  viewerChildId = null,
 }) {
   const session = useSession();
   const [loading, setLoading] = useState(false); // Start as false - no loading state
@@ -38,14 +43,34 @@ export default function EmbeddedNotificationCenter({
   const [dataReady, setDataReady] = useState(false);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
-  const [showReviewModal, setShowReviewModal] = useState(false);
+  /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
+  const [openModal, setOpenModal] = useState(null);
 
   useEffect(() => {
     if (session && !session.loading && familyId) {
       // Load data in background without showing loading state
       loadData();
     }
-  }, [session, familyId]);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const onParentRefresh = () => {
+        if (familyId) loadData();
+      };
+      window.addEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
+      return () => window.removeEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
+    }
+  }, [session, familyId, hideOnboardingCards, viewerChildId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (event) => {
+      const section = event?.detail?.section;
+      if (section === 'help_requests' || section === 'submissions' || section === 'needs_revision') {
+        setSelectedSection(section);
+      }
+    };
+    window.addEventListener('embeddedNotificationParentFocus', handler);
+    return () => window.removeEventListener('embeddedNotificationParentFocus', handler);
+  }, []);
 
   const loadData = async () => {
     if (!familyId) return;
@@ -60,7 +85,9 @@ export default function EmbeddedNotificationCenter({
           childRows = await loadChildren();
         })(),
       ]);
-      await loadLinkedChildAccounts(childRows);
+      if (!hideOnboardingCards) {
+        await loadLinkedChildAccounts(childRows);
+      }
     } catch (error) {
       console.error('[EmbeddedNotificationCenter] Error loading data:', error);
     } finally {
@@ -71,7 +98,7 @@ export default function EmbeddedNotificationCenter({
   const loadAssignments = async () => {
     try {
       // Check if assignments table exists
-      const { data, error } = await supabase
+      let submittedQ = supabase
         .from('assignments')
         .select(`
           *,
@@ -82,6 +109,10 @@ export default function EmbeddedNotificationCenter({
         .in('status', ['submitted'])
         .or('review_status.is.null,review_status.eq.needs_revision')
         .order('updated_at', { ascending: false });
+      if (viewerChildId) {
+        submittedQ = submittedQ.eq('child_id', viewerChildId);
+      }
+      const { data, error } = await submittedQ;
 
       if (error) {
         // If table doesn't exist, return empty array
@@ -92,7 +123,7 @@ export default function EmbeddedNotificationCenter({
         throw error;
       }
 
-      const { data: helpData, error: helpError } = await supabase
+      let helpQ = supabase
         .from('assignments')
         .select(`
           *,
@@ -102,6 +133,10 @@ export default function EmbeddedNotificationCenter({
         .eq('family_id', familyId)
         .eq('need_help', true)
         .order('updated_at', { ascending: false });
+      if (viewerChildId) {
+        helpQ = helpQ.eq('child_id', viewerChildId);
+      }
+      const { data: helpData, error: helpError } = await helpQ;
 
       if (helpError && helpError.code !== '42P01' && helpError.code !== 'PGRST200') {
         console.error('[EmbeddedNotificationCenter] Error loading help requests:', helpError);
@@ -126,7 +161,7 @@ export default function EmbeddedNotificationCenter({
       sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
       sevenDaysLater.setHours(23, 59, 59, 999);
 
-      const { data, error } = await supabase
+      let eventsQ = supabase
         .from('events')
         .select(`
           id,
@@ -146,6 +181,10 @@ export default function EmbeddedNotificationCenter({
         .is('deleted_at', null)
         .order('start_ts', { ascending: true })
         .limit(50);
+      if (viewerChildId) {
+        eventsQ = eventsQ.eq('child_id', viewerChildId);
+      }
+      const { data, error } = await eventsQ;
 
       if (error) {
         console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
@@ -270,8 +309,9 @@ export default function EmbeddedNotificationCenter({
         !a.need_help
     ) || assignments.some((a) => a.need_help === true);
 
-  const primaryCardMode =
-    dataReady && !hasLinkedChildAccount
+  const primaryCardMode = hideOnboardingCards
+    ? 'none'
+    : dataReady && !hasLinkedChildAccount
       ? 'invite'
       : dataReady && hasLinkedChildAccount && !hasInboxActivity
         ? 'assign'
@@ -340,13 +380,41 @@ export default function EmbeddedNotificationCenter({
   };
 
   const handleReview = (assignment) => {
+    const raw = assignment?.linked_event_ids;
+    let linkedEventId = null;
+    if (Array.isArray(raw) && raw.length > 0) linkedEventId = String(raw[0]);
+    else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) linkedEventId = String(parsed[0]);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    const parentFocus = assignment.need_help ? 'help' : 'submission';
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && linkedEventId) {
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: {
+            eventId: linkedEventId,
+            initialEvent: null,
+            parentEventFocus: parentFocus,
+          },
+        })
+      );
+      return;
+    }
     setSelectedAssignment(assignment);
-    setShowReviewModal(true);
+    setOpenModal(assignment.need_help ? 'help' : 'submission');
+  };
+
+  const closeModals = () => {
+    setOpenModal(null);
+    setSelectedAssignment(null);
   };
 
   const handleReviewComplete = () => {
-    setShowReviewModal(false);
-    setSelectedAssignment(null);
+    closeModals();
     loadData();
   };
 
@@ -548,12 +616,21 @@ export default function EmbeddedNotificationCenter({
         ) : null}
       </View>
 
-      {selectedAssignment && (
+      {selectedAssignment && openModal === 'submission' && (
         <AssignmentReviewModal
-          visible={showReviewModal}
-          onClose={() => setShowReviewModal(false)}
+          visible
+          onClose={closeModals}
           assignment={selectedAssignment}
           onReviewed={handleReviewComplete}
+          submissionReview
+        />
+      )}
+      {selectedAssignment && openModal === 'help' && (
+        <RespondToHelpRequestModal
+          visible
+          assignment={selectedAssignment}
+          onClose={closeModals}
+          onResponded={handleReviewComplete}
         />
       )}
     </>

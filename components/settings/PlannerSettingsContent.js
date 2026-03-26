@@ -42,7 +42,7 @@ const BORDER = '#E2E8F0';
 const CHIP_SELECTED_BORDER = designTokens.colors.primary;
 const CHIP_SELECTED_BG = designTokens.softAccents.core;
 
-export default function PlannerSettingsContent({ familyId, onSave, initialData }) {
+export default function PlannerSettingsContent({ familyId, onSave, initialData, readOnly = false }) {
   const toast = useToast();
   const [loading, setLoading] = useState(!initialData);
   const [saving, setSaving] = useState(false);
@@ -255,6 +255,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   const persist = useCallback(
     async (updates) => {
       if (!familyId) return;
+      if (readOnly) {
+        toast.push('Your family admin has disabled changing planning preferences.', 'error');
+        return;
+      }
       const s = stateRef.current;
       setSaving(true);
       setError(null);
@@ -289,7 +293,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
         setSaving(false);
       }
     },
-    [familyId, onSave, toast, loadDefaults]
+    [familyId, onSave, toast, loadDefaults, readOnly]
   );
 
   const debouncedPersist = useCallback(() => {
@@ -297,6 +301,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   }, [persist]);
 
   const handleTargetScopeChange = async (scope) => {
+    if (readOnly) {
+      toast.push('Your family admin has disabled changing planning preferences.', 'error');
+      return;
+    }
     setTargetScope(scope);
     const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope });
     if (!error) {
@@ -437,6 +445,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
     setSubjectTargets((prev) => ({ ...prev, [subjectId]: merged }));
     if (subjectTargetSaveTimeoutRef.current) clearTimeout(subjectTargetSaveTimeoutRef.current);
     subjectTargetSaveTimeoutRef.current = setTimeout(async () => {
+      if (readOnly) {
+        toast.push('Your family admin has disabled changing planning preferences.', 'error');
+        return;
+      }
       const mode = merged.mode || 'none';
       const days = mode === 'days' && merged.days?.trim() ? parseInt(merged.days, 10) : null;
       const hours = mode === 'hours' && merged.hours?.trim() ? parseFloat(merged.hours) : null;
@@ -462,7 +474,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
         setSaving(false);
       }
     }, 400);
-  }, [toast]);
+  }, [toast, readOnly]);
 
   const sectionStyle = {
     paddingVertical: 16,
@@ -552,6 +564,22 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData }
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
       <View style={{ paddingHorizontal: 24, paddingTop: 8 }}>
+        {readOnly ? (
+          <View
+            style={{
+              marginBottom: 16,
+              padding: 12,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: 'rgba(79, 70, 229, 0.25)',
+              backgroundColor: 'rgba(79, 70, 229, 0.06)',
+            }}
+          >
+            <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>
+              Your family admin has turned off changes to planning preferences. You can still review the settings below.
+            </Text>
+          </View>
+        ) : null}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
           <Text style={pageTitleStyle}>Planning Preferences</Text>
           {savedIndicator && (

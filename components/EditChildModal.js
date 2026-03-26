@@ -1170,13 +1170,15 @@ const styles = StyleSheet.create({
   },
   dangerBulletList: {
     marginBottom: 14,
-    gap: 8,
+    gap: 0,
   },
   dangerBulletLine: {
     fontSize: 12,
     color: '#6b7280',
-    lineHeight: 18,
-    marginBottom: 6,
+    lineHeight: 16,
+    marginTop: 0,
+    marginBottom: 0,
+    paddingVertical: 0,
   },
   dangerSectionLead: {
     fontSize: 12,

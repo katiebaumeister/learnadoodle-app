@@ -4,7 +4,27 @@ import { colors, shadows } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
 
-export default function EventModal({ eventId, visible, onClose, onEventUpdated, onEventDeleted, initialEvent = null, familyMembers = [], onEventPatched, familyId, children = [], schedulingMode = false, preloadedAcademicYears = [] }) {
+export default function EventModal({
+  eventId,
+  visible,
+  onClose,
+  onEventUpdated,
+  onEventDeleted,
+  initialEvent = null,
+  familyMembers = [],
+  onEventPatched,
+  familyId,
+  children = [],
+  schedulingMode = false,
+  preloadedAcademicYears = [],
+  /** 'tutor' = read-first event details; no schedule ownership affordances */
+  viewerRole = null,
+  /** Child/tutor: parent disabled add/edit events in User Controls */
+  denyFamilyEventEdit = false,
+  /** null | 'help' | 'submission' — parent opens respond/review modal once linked assignment loads */
+  parentEventFocus = null,
+  onParentEventFocusConsumed,
+}) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
   const [loading, setLoading] = useState(!initialEvent);
@@ -309,8 +329,11 @@ export default function EventModal({ eventId, visible, onClose, onEventUpdated, 
                   onEditingChange={handleEditingChange}
                   onClose={onClose}
                   initialSchedulingMode={schedulingMode}
-                  readOnly={isHolidayEvent(eventId, event)}
+                  readOnly={isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit}
+                  viewerRole={viewerRole}
                   preloadedAcademicYears={preloadedAcademicYears}
+                  parentEventFocus={parentEventFocus}
+                  onParentEventFocusConsumed={onParentEventFocusConsumed}
                 />
               ) : (
                 <View style={styles.loadingContainer}>

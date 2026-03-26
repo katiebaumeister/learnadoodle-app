@@ -32,6 +32,7 @@ export default function RoleHomeShell({ main, rail }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    minHeight: 0,
     width: '100%',
     /* Match main app surface so gutters / column gap aren’t blue-gray */
     backgroundColor: '#FFFFFF',
@@ -88,9 +89,11 @@ const styles = StyleSheet.create({
       flex: 1,
       minWidth: 236,
       maxWidth: 'calc(28.8% - 7px)',
+      minHeight: 0,
+      height: '100%',
+      alignSelf: 'stretch',
       display: 'flex',
       flexDirection: 'column',
-      alignSelf: 'stretch',
     }),
   },
 });

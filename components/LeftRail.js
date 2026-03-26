@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircle, Settings, MessageSquare } from 'lucide-react';
+import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircle, Settings, MessageSquare, Users } from 'lucide-react';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import { safeImageUri } from '../lib/safeImageUri';
 
@@ -135,8 +135,13 @@ export default function LeftRail({
       if (userRole === 'child') {
         return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       } else if (userRole === 'tutor') {
-        // Tutors see Home, Planner, New (no Records, no Explore - archived)
-        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
+        // Lean workspace: intervention + guidance — not family admin or full curriculum control.
+        return [
+          { key: 'home', label: 'Home', icon: Home },
+          { key: 'tutor-students', label: 'My students', icon: Users },
+          { key: 'planner', label: 'Planner', icon: CalendarDays },
+          { key: 'materials', label: 'Library', icon: BookOpen },
+        ];
       } else {
         // Parents see everything except archived items
         return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');

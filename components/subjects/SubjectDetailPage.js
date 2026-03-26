@@ -15,7 +15,6 @@ import {
   Calendar,
   Clock,
   FileText,
-  BookOpen,
   ChevronRight,
   ExternalLink,
   Plus,
@@ -29,7 +28,10 @@ import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
 import { deriveRoleFromTags, DOCUMENT_ROLES } from '../../lib/docs/roles';
 import { useSession } from '../../contexts/SessionContext';
-import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from '../materials/MaterialDocViewerModal';
+import MaterialDocViewerModal, {
+  resolveMaterialDocViewerUrl,
+  getMaterialFileTypeLabel,
+} from '../materials/MaterialDocViewerModal';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 const ATTENDANCE_LIST_LIMIT = 5;
@@ -400,6 +402,32 @@ export default function SubjectDetailPage({
     return (subjectData?.events || []).length > 0;
   }, [subjectData?.events]);
 
+  const assignmentAttentionByEventId = subjectData?.assignmentAttentionByEventId;
+  const isParentViewer =
+    session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
+
+  const hasProgressAttention = useMemo(() => {
+    if (!isParentViewer || !assignmentAttentionByEventId) return false;
+    return whatsNextInNext7Days.some((item) => {
+      const eventId =
+        item.type === 'event' && typeof item.id === 'string' && item.id.startsWith('event-')
+          ? item.id.slice(6)
+          : item.id;
+      if (!eventId) return false;
+      const a = assignmentAttentionByEventId[eventId];
+      return a && (a.needHelp || a.needsSubmissionReview);
+    });
+  }, [isParentViewer, whatsNextInNext7Days, assignmentAttentionByEventId]);
+
+  const hasGradesAttention = useMemo(() => {
+    if (!isParentViewer || !assignmentAttentionByEventId) return false;
+    return gradedItems.some((item) => {
+      if (!item.eventId) return false;
+      const a = assignmentAttentionByEventId[item.eventId];
+      return a && (a.needHelp || a.needsSubmissionReview);
+    });
+  }, [isParentViewer, gradedItems, assignmentAttentionByEventId]);
+
   const handleOpenEventDetails = useCallback((eventId, initialEvent) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('openEventModal', {
@@ -593,20 +621,24 @@ export default function SubjectDetailPage({
               <Text style={styles.materialsSubsectionLabel}>Syllabus</Text>
               {syllabusMaterials.length > 0 ? (
                 <View style={styles.materialsGrid}>
-                  {syllabusMaterials.map((material) => (
-                    <TouchableOpacity
-                      key={material.id}
-                      style={styles.materialChip}
-                      onPress={() => handleMaterialChipPress(material)}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <BookOpen size={14} color={colors.accent || '#4F46E5'} />
-                      <Text style={styles.materialChipText} numberOfLines={1}>
-                        {material.title || material.provider_name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {syllabusMaterials.map((material) => {
+                    const baseName = material.title || material.provider_name || 'Material';
+                    const typeLabel = getMaterialFileTypeLabel(material);
+                    const chipLabel = typeLabel ? `${baseName} (${typeLabel})` : baseName;
+                    return (
+                      <TouchableOpacity
+                        key={material.id}
+                        style={styles.materialChip}
+                        onPress={() => handleMaterialChipPress(material)}
+                        activeOpacity={0.7}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.materialChipText} numberOfLines={1}>
+                          {chipLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               ) : (
                 <TouchableOpacity
@@ -627,20 +659,24 @@ export default function SubjectDetailPage({
               <Text style={styles.materialsSubsectionLabel}>Lesson plan</Text>
               {lessonPlanMaterials.length > 0 ? (
                 <View style={styles.materialsGrid}>
-                  {lessonPlanMaterials.map((material) => (
-                    <TouchableOpacity
-                      key={material.id}
-                      style={styles.materialChip}
-                      onPress={() => handleMaterialChipPress(material)}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <BookOpen size={14} color={colors.accent || '#4F46E5'} />
-                      <Text style={styles.materialChipText} numberOfLines={1}>
-                        {material.title || material.provider_name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {lessonPlanMaterials.map((material) => {
+                    const baseName = material.title || material.provider_name || 'Material';
+                    const typeLabel = getMaterialFileTypeLabel(material);
+                    const chipLabel = typeLabel ? `${baseName} (${typeLabel})` : baseName;
+                    return (
+                      <TouchableOpacity
+                        key={material.id}
+                        style={styles.materialChip}
+                        onPress={() => handleMaterialChipPress(material)}
+                        activeOpacity={0.7}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.materialChipText} numberOfLines={1}>
+                          {chipLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               ) : (
                 <TouchableOpacity
@@ -661,8 +697,15 @@ export default function SubjectDetailPage({
 
         {/* Section 1: Progress - next 7 days only; then link to Planner */}
         <View id="progress-section" style={styles.section}>
-          <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
+          <View style={[styles.attendanceSectionHeader, styles.attendanceSectionHeaderMultiLine]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
+              {hasProgressAttention && isParentViewer ? (
+                <Text style={styles.attentionHintText} accessibilityRole="text">
+                  * Open the listed event for a help request or submission review.
+                </Text>
+              ) : null}
+            </View>
             {onNavigateToPlanner && (
               <TouchableOpacity
                 style={styles.exportIconButton}
@@ -704,6 +747,14 @@ export default function SubjectDetailPage({
                     : item.id;
                   const event = (subjectData?.events || []).find(e => e.id === eventId);
                   const timeLabel = formatTimeLabel(item.dueDate);
+                  const att =
+                    eventId && assignmentAttentionByEventId
+                      ? assignmentAttentionByEventId[eventId]
+                      : null;
+                  const needsAttentionMark =
+                    isParentViewer &&
+                    att &&
+                    (att.needHelp || att.needsSubmissionReview);
                   return (
                     <TouchableOpacity
                       key={item.id}
@@ -716,6 +767,7 @@ export default function SubjectDetailPage({
                     >
                       <View style={styles.timelineItemContent}>
                         <Text style={styles.timelineItemTitle}>
+                          {needsAttentionMark ? '* ' : ''}
                           {item.title}
                         </Text>
                         <Text style={styles.timelineItemDate}>
@@ -908,8 +960,15 @@ export default function SubjectDetailPage({
 
         {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
-          <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
+          <View style={[styles.attendanceSectionHeader, styles.attendanceSectionHeaderMultiLine]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
+              {hasGradesAttention && isParentViewer ? (
+                <Text style={styles.attentionHintText} accessibilityRole="text">
+                  * Open the listed event for a help request or submission review.
+                </Text>
+              ) : null}
+            </View>
             <TouchableOpacity
               style={styles.exportIconButton}
               onPress={() => setShowExportComingSoonModal(true)}
@@ -939,10 +998,21 @@ export default function SubjectDetailPage({
                         ...(Platform.OS === 'web' && { cursor: 'pointer' }),
                       }
                     : {};
+                  const gAtt =
+                    item.eventId && assignmentAttentionByEventId
+                      ? assignmentAttentionByEventId[item.eventId]
+                      : null;
+                  const needsGradeMark =
+                    isParentViewer &&
+                    gAtt &&
+                    (gAtt.needHelp || gAtt.needsSubmissionReview);
                   return (
                     <Wrapper key={item.id} style={styles.gradeItem} {...wrapperProps}>
                       <View style={styles.gradeItemContent}>
-                        <Text style={styles.gradeItemName}>{item.name}</Text>
+                        <Text style={styles.gradeItemName}>
+                          {needsGradeMark ? '* ' : ''}
+                          {item.name}
+                        </Text>
                         <Text style={styles.gradeItemDate}>{formatDate(item.date)}</Text>
                       </View>
                       <View style={styles.gradeItemScore}>
@@ -1366,6 +1436,9 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 16,
   },
+  attendanceSectionHeaderMultiLine: {
+    alignItems: 'flex-start',
+  },
   attendanceHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1383,6 +1456,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  attentionHintText: {
+    fontSize: 12,
+    color: '#92400E',
+    marginTop: 6,
+    lineHeight: 16,
+    maxWidth: '100%',
   },
   progressCheckInModalOverlay: {
     flex: 1,

@@ -33,7 +33,7 @@ export default function TutorStudentsScreen({ onSelectChild }) {
 
     setLoading(true);
     try {
-      const childIds = session.accessible_children.map(c => c.id);
+      const childIds = session.accessible_children.map((c) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
       
       // Load child details
       const { data: childrenData, error: childrenError } = await supabase

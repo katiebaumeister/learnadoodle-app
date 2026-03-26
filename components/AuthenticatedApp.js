@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { SessionProvider } from '../contexts/SessionContext';
+import { FamilyUserControlsProvider } from '../contexts/FamilyUserControlsContext';
 import RoleGate from './navigation/RoleGate';
 
 /**
@@ -11,7 +12,9 @@ export default function AuthenticatedApp() {
   const { user } = useAuth();
   return (
     <SessionProvider>
-      <RoleGate user={user} />
+      <FamilyUserControlsProvider>
+        <RoleGate user={user} />
+      </FamilyUserControlsProvider>
     </SessionProvider>
   );
 }

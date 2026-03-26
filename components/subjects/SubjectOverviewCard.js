@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap, TrendingUp, Calendar } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { useSession } from '../../contexts/SessionContext';
 
 export default function SubjectOverviewCard({
   subject,
@@ -17,6 +18,7 @@ export default function SubjectOverviewCard({
   onAddEvent,
   recentlyViewedMaterials = [],
 }) {
+  const session = useSession();
   const [showStatusTooltip, setShowStatusTooltip] = useState(false);
   const [hoveredButton, setHoveredButton] = useState(null);
 
@@ -191,6 +193,22 @@ export default function SubjectOverviewCard({
   const nextItem = subject.nextItem;
   const overdueCount = subject.overdueCount || 0;
 
+  const isParentViewer =
+    session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
+  const parentAssignmentAttentionCount = subject.parentAssignmentAttentionCount || 0;
+
+  const openHomeReviewList = (e) => {
+    if (e?.stopPropagation) e.stopPropagation();
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openParentHomeReviewInbox'));
+      window.dispatchEvent(
+        new CustomEvent('embeddedNotificationParentFocus', {
+          detail: { section: 'submissions' },
+        })
+      );
+    }
+  };
+
   return (
     <TouchableOpacity
       style={styles.card}
@@ -252,6 +270,29 @@ export default function SubjectOverviewCard({
               <Text style={styles.studentsList}>{childrenNames.join(', ')}</Text>
             </View>
           )}
+          {isParentViewer && parentAssignmentAttentionCount > 0 ? (
+            <View style={styles.parentAttentionBanner}>
+              <Text style={styles.parentAttentionText}>
+                *{' '}
+                {parentAssignmentAttentionCount === 1
+                  ? 'One linked assignment needs a response'
+                  : `${parentAssignmentAttentionCount} linked assignments need a response`}
+                . Open this subject for details, or use the review list on Home.
+              </Text>
+              {Platform.OS === 'web' ? (
+                <TouchableOpacity
+                  onPress={openHomeReviewList}
+                  activeOpacity={0.7}
+                  style={styles.parentAttentionLinkWrap}
+                  accessibilityRole="button"
+                  accessibilityLabel="Go to Home review list"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.parentAttentionLink}>Go to Home → review list</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
         </View>
       </View>
 
@@ -467,6 +508,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 4,
+  },
+  parentAttentionBanner: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+  },
+  parentAttentionText: {
+    fontSize: 12,
+    color: '#92400E',
+    lineHeight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  parentAttentionLinkWrap: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  parentAttentionLink: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563EB',
+    textDecorationLine: 'underline',
   },
   studentsLabel: {
     fontSize: 12,

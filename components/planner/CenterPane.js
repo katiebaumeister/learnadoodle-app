@@ -48,6 +48,8 @@ export default function CenterPane({
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
   plannerAttendanceSnapshot = null,
+  /** Tutor / observer: view events, no drag-create-complete ownership */
+  readOnly = false,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -190,7 +192,8 @@ export default function CenterPane({
           onSelectDate={onSelectDate}
           onEventPress={onEventSelect}
           onEventRightClick={onEventRightClick}
-          onEventComplete={onEventComplete}
+          onEventComplete={readOnly ? undefined : onEventComplete}
+          readOnly={readOnly}
         />
       ) : (
         <>
@@ -210,11 +213,12 @@ export default function CenterPane({
                 onSelectDate={onSelectDate}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={onEventComplete}
+                onEventComplete={readOnly ? undefined : onEventComplete}
                 blackoutDates={blackoutDates}
                 children={children}
                 onSwitchToBoardView={() => setMode('Board')}
                 onSwitchToBoardViewForDay={switchToBoardViewForDay}
+                readOnly={readOnly}
               />
             </View>
           ) : (
@@ -226,11 +230,12 @@ export default function CenterPane({
                 onSelectDate={onSelectDate}
                 onEventPress={onEventSelect}
                 onEventRightClick={onEventRightClick}
-                onEventComplete={onEventComplete}
+                onEventComplete={readOnly ? undefined : onEventComplete}
                 blackoutDates={blackoutDates}
                 children={children}
                 onSwitchToBoardView={() => setMode('Board')}
                 onSwitchToBoardViewForDay={switchToBoardViewForDay}
+                readOnly={readOnly}
               />
             )
           )}
@@ -247,6 +252,7 @@ export default function CenterPane({
               selectedChildIds={filters?.childIds || []}
               onChildFilterChange={onChildFilterChange}
               onEventSelect={onEventSelect}
+              readOnly={readOnly}
               onViewChange={(newView) => {
                 if (newView === 'Board') {
                   setMode('Board');
@@ -260,7 +266,7 @@ export default function CenterPane({
               events={filtered}
               onEventPress={onEventSelect}
               onEventRightClick={onEventRightClick}
-              onEventComplete={onEventComplete}
+              onEventComplete={readOnly ? undefined : onEventComplete}
               children={children}
             />
           )}
@@ -270,7 +276,7 @@ export default function CenterPane({
               events={filtered}
               onEventPress={onEventSelect}
               onEventRightClick={onEventRightClick}
-              onEventComplete={onEventComplete}
+              onEventComplete={readOnly ? undefined : onEventComplete}
               children={children}
             />
           )}
@@ -279,8 +285,8 @@ export default function CenterPane({
               events={filtered}
               onEventPress={onEventSelect}
               onEventRightClick={onEventRightClick}
-              onEventComplete={onEventComplete}
-              onCreateTask={onCreateTask}
+              onEventComplete={readOnly ? undefined : onEventComplete}
+              onCreateTask={readOnly ? undefined : onCreateTask}
               children={children}
               familyId={familyId}
               preloadedBacklogEvents={preloadedBacklogEvents}
@@ -301,7 +307,7 @@ export default function CenterPane({
                 children={children}
                 events={mode === 'Attendance' ? filtered : []}
                 onEventPress={onEventSelect}
-                onEditChild={onEditChild}
+                onEditChild={readOnly ? undefined : onEditChild}
                 plannerInitialSnapshot={plannerAttendanceSnapshot}
               />
             </View>
@@ -312,7 +318,7 @@ export default function CenterPane({
                 children={children}
                 events={filtered}
                 onEventPress={onEventSelect}
-                onEditChild={onEditChild}
+                onEditChild={readOnly ? undefined : onEditChild}
                 plannerInitialSnapshot={plannerAttendanceSnapshot}
               />
             )

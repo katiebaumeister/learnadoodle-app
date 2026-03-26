@@ -78,6 +78,43 @@ export function inferMaterialViewerKind(material) {
   return 'unsupported';
 }
 
+/**
+ * Short file-type label for lists, e.g. "PDF", "DOCX", "Link".
+ * @param {object} material — row from `materials` (mime, filename, title, storage_path, provider_url, …)
+ * @returns {string|null}
+ */
+export function getMaterialFileTypeLabel(material) {
+  if (!material) return null;
+  const ext =
+    extensionFromString(material.filename) ||
+    extensionFromString(material.title) ||
+    extensionFromString(material.storage_path) ||
+    extensionFromString(material.provider_url || '');
+  if (ext) {
+    const e = ext.toLowerCase();
+    if (e === 'jpeg' || e === 'jpg') return 'JPEG';
+    return ext.toUpperCase();
+  }
+  const mime = (material.mime || '').toLowerCase();
+  if (mime.includes('pdf')) return 'PDF';
+  if (mime.startsWith('image/')) {
+    const part = mime.split('/')[1];
+    if (part === 'jpeg') return 'JPEG';
+    return part ? part.toUpperCase() : 'IMAGE';
+  }
+  if (mime.startsWith('video/')) return 'VIDEO';
+  if (mime.startsWith('audio/')) return 'AUDIO';
+  if (mime.startsWith('text/')) return 'TEXT';
+  if (
+    /word|excel|powerpoint|spreadsheet|presentation|officedocument|msword|ms-powerpoint|ms-excel/.test(mime)
+  ) {
+    return 'Office';
+  }
+  if (material.provider_url && isValidDocViewerUrl(material.provider_url)) return 'Link';
+  if (material.storage_path) return 'File';
+  return null;
+}
+
 function WebMediaMount({ viewerKind, url, title }) {
   const hostRef = useRef(null);
 

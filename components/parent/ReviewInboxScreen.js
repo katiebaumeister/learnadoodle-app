@@ -18,6 +18,7 @@ import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { reviewAssignment } from '../../lib/services/gradebookClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 
@@ -34,7 +35,8 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
   const [children, setChildren] = useState([]);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
-  const [showReviewModal, setShowReviewModal] = useState(false);
+  /** null | 'submission' | 'help' */
+  const [openModal, setOpenModal] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
   useEffect(() => {
@@ -197,7 +199,7 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
 
   const handleReview = (assignment) => {
     setSelectedAssignment(assignment);
-    setShowReviewModal(true);
+    setOpenModal(assignment.need_help ? 'help' : 'submission');
   };
 
   const handleViewDetails = (assignment) => {
@@ -207,7 +209,7 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
 
   const handleReviewed = async () => {
     await loadAssignments();
-    setShowReviewModal(false);
+    setOpenModal(null);
     setShowDetailModal(false);
     setSelectedAssignment(null);
   };
@@ -391,16 +393,29 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
         )}
       </View>
 
-      {/* Review Modal */}
-      <AssignmentReviewModal
-        visible={showReviewModal}
-        assignment={selectedAssignment}
-        onClose={() => {
-          setShowReviewModal(false);
-          setSelectedAssignment(null);
-        }}
-        onReviewed={handleReviewed}
-      />
+      {selectedAssignment && openModal === 'submission' && (
+        <AssignmentReviewModal
+          visible
+          assignment={selectedAssignment}
+          onClose={() => {
+            setOpenModal(null);
+            setSelectedAssignment(null);
+          }}
+          onReviewed={handleReviewed}
+          submissionReview
+        />
+      )}
+      {selectedAssignment && openModal === 'help' && (
+        <RespondToHelpRequestModal
+          visible
+          assignment={selectedAssignment}
+          onClose={() => {
+            setOpenModal(null);
+            setSelectedAssignment(null);
+          }}
+          onResponded={handleReviewed}
+        />
+      )}
 
       {/* Detail Modal */}
       <AssignmentDetailModal
@@ -416,7 +431,7 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
         onToggleHelp={null} // Parents don't toggle help
         onReview={() => {
           setShowDetailModal(false);
-          setShowReviewModal(true);
+          setOpenModal(selectedAssignment?.need_help ? 'help' : 'submission');
         }}
       />
     </>

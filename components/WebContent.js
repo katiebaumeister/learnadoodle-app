@@ -510,7 +510,8 @@ import RebalanceModal from './year/RebalanceModal'
 import EventOutcomeModal from './events/EventOutcomeModal'
 import ConfirmDialog from './ConfirmDialog'
 import ChildDashboard from './dashboards/ChildDashboard'
-import TutorDashboard from './dashboards/TutorDashboard'
+import TutorHomeWorkspace from './tutor/TutorHomeWorkspace'
+import TutorStudentsScreen from './tutor/TutorStudentsScreen'
 import IntegrationsSettings from './settings/IntegrationsSettings'
 import InspireLearning from './inspire/InspireLearning'
 import LearningStoryCard from './parent/LearningStoryCard'
@@ -2858,6 +2859,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [accessibleChildren, setAccessibleChildren] = useState([]);
   // Use session role/children first so we show correct home (child vs parent) on first paint
   const roleForHome = propSession?.effective_role ?? userRole;
+  /** Tutors observe and support; they do not own the calendar. */
+  const plannerReadOnly = roleForHome === 'tutor' || propSession?.role_flags?.isTutor === true;
   const accessibleForHome = Array.isArray(propSession?.accessible_children) && propSession.accessible_children.length > 0
     ? propSession.accessible_children
     : accessibleChildren;
@@ -7392,16 +7395,18 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }),
         }}
       >
-        <PlanHealthBanner familyId={familyId} visible={activeTab === 'planner' || activeTab === 'calendar'} initialHealth={propPreloadedPlanHealth} />
+        <PlanHealthBanner familyId={familyId} visible={!plannerReadOnly && (activeTab === 'planner' || activeTab === 'calendar')} initialHealth={propPreloadedPlanHealth} />
         <CenterPane
         date={date}
         events={plannerEventsForMonth}
         selectedDate={date}
+        readOnly={plannerReadOnly}
         onSelectDate={(d) => {
           setPlannerDate(d);
           if (onCurrentMonthChange) onCurrentMonthChange(d);
         }}
         onCreateTask={() => {
+          if (plannerReadOnly) return;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: plannerDate } }));
           }
@@ -7422,7 +7427,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           const y = e.clientY ?? e.nativeEvent?.clientY ?? 0;
           window.dispatchEvent(new CustomEvent('plannerEventContextMenu', { detail: { event: ev, position: { x, y } } }));
         }}
-        onEventComplete={async (event) => {
+        onEventComplete={plannerReadOnly ? undefined : async (event) => {
           if (!event?.id) return;
           if (event?.type === 'holiday' || event?.event_type === 'holiday') return;
           const isCurrentlyDone = event.status === 'done';
@@ -7466,7 +7471,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         blackoutDates={calendarBlackoutDates[`${plannerDate.getFullYear()}-${plannerDate.getMonth()}`] || []}
         familyId={familyId}
         viewMode={propPlannerView}
-        onEditChild={onEditChild}
+        onEditChild={plannerReadOnly ? undefined : onEditChild}
         preloadedBacklogEvents={plannerPreloadedBacklog}
         preloadedTrashEvents={plannerPreloadedTrash}
         plannerAttendanceSnapshot={plannerAttendanceSnapshot}
@@ -7709,7 +7714,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           );
         }
         if (isTutor) {
-          return <TutorDashboard accessibleChildren={accessibleForHome} />;
+          return (
+            <TutorHomeWorkspace
+              familyId={familyId || propSession?.family_id}
+              onNavigate={onTabChange}
+            />
+          );
         }
         if (
           propSession &&
@@ -7744,7 +7754,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           </View>
         )
       case 'tutor-dashboard':
-        return <TutorDashboard accessibleChildren={accessibleChildren} />
+        return (
+          <TutorHomeWorkspace
+            familyId={familyId || propSession?.family_id}
+            onNavigate={onTabChange}
+          />
+        );
+      case 'tutor-students':
+        return <TutorStudentsScreen />;
       // case 'explore': // Archived - explore page removed
       //   return <ExploreContent familyId={familyId} children={children} />
       case 'new':

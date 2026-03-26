@@ -12,7 +12,7 @@ import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import RoleHomeShell from '../home/RoleHomeShell';
 import TodayScheduleCard from '../home/TodayScheduleCard';
-import AssignmentsCard from './overview/AssignmentsCard';
+import ChildHomeRightRail from './ChildHomeRightRail';
 import { applyChildFilter } from '../../lib/queryFilters';
 import { colors } from '../../theme/colors';
 
@@ -295,27 +295,30 @@ export default function ChildHomeScreen({
 
   const railContent = (
     <View style={styles.railContent}>
-      <View style={styles.railPanel}>
-        {safeChildId ? (
-          <AssignmentsCard
-            childId={childId}
-            familyId={familyId}
-            onNavigate={onNavigate ? () => onNavigate('assignments') : null}
-            embedded
-          />
-        ) : (
-          <View style={{ minHeight: 120 }} />
-        )}
-      </View>
+      {safeFamilyId ? (
+        <ChildHomeRightRail familyId={safeFamilyId} childId={safeChildId} />
+      ) : (
+        <View style={{ minHeight: 120 }} />
+      )}
     </View>
   );
 
   return (
-    <RoleHomeShell main={mainContent} rail={railContent} />
+    <View style={styles.homeRoot}>
+      <RoleHomeShell main={mainContent} rail={railContent} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  homeRoot: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      alignSelf: 'stretch',
+    }),
+  },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -474,29 +477,18 @@ const styles = StyleSheet.create({
     }),
   },
   railContent: {
+    flex: 1,
+    flexDirection: 'column',
+    minHeight: 0,
+    width: '100%',
+    alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
       display: 'flex',
-      flexDirection: 'column',
-      width: '100%',
       height: '100%',
-      alignSelf: 'stretch',
+      flex: 1,
     }),
     ...(Platform.OS !== 'web' && {
       gap: 20,
-    }),
-  },
-  railPanel: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.22)',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 0,
-      boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
     }),
   },
 });

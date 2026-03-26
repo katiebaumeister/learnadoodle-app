@@ -241,8 +241,8 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
               );
             })}
 
-          {/* Click to add overlay - only captures clicks on empty space */}
-          {typeof window === 'undefined' ? (
+          {/* Click to add overlay - only captures clicks on empty space (hidden when read-only / no onAdd) */}
+          {onAdd && (typeof window === 'undefined' ? (
             <TouchableOpacity
               style={styles.addOverlay}
               onPress={(e) => {
@@ -283,12 +283,12 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                 }
               })}
             />
-          )}
+          ))}
     </View>
   );
 }
 
-export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, selectedChildIds, onChildFilterChange, onViewChange, weekStart: propWeekStart, onWeekStartChange, onEventSelect }) {
+export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, selectedChildIds, onChildFilterChange, onViewChange, weekStart: propWeekStart, onWeekStartChange, onEventSelect, readOnly = false }) {
   const [weekStart, setWeekStart] = useState(() => propWeekStart || startOfWeek(new Date()));
   
   // Sync with prop if provided
@@ -1663,6 +1663,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
 
   // Handle mouse-based drag start - MUST be before early return
   const handleMouseDragStart = useCallback((e, eventId) => {
+    if (readOnly) return;
     if (typeof window === 'undefined') return;
 
     // Don't prevent default immediately - let the drag start naturally
@@ -2183,7 +2184,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
     
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [data.events, selectedChildIds, weekStart, handleWeekStartChange, familyId]);
+  }, [readOnly, data.events, selectedChildIds, weekStart, handleWeekStartChange, familyId]);
 
   // Always render week view with current data (no loading screen); data updates in place when refetches complete
   return (
@@ -2345,12 +2346,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                     focusedChildId={focusedChildId}
                     draggedEventId={draggedEventId}
                     familyId={familyId}
-                    onAdd={(startMin) => {
+                    onAdd={readOnly ? undefined : (startMin) => {
                       onAddActivity?.({ date: iso, startMin });
                     }}
                     onEventChanged={handleEventChanged}
                     onEventClick={handleEventClick}
-                    onMouseDragStart={handleMouseDragStart}
+                    onMouseDragStart={readOnly ? undefined : handleMouseDragStart}
                   />
                 );
               })}
