@@ -63,8 +63,6 @@ export default function LeftRail({
   onOpenSettings,
   onOpenFeedback,
   isCollapsed: isCollapsedProp,
-  sidebarMode: sidebarModeProp,
-  setIsHoveringSidebar,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
@@ -188,10 +186,6 @@ export default function LeftRail({
     <View 
       style={[styles.container, isCollapsed ? styles.collapsed : styles.expanded]}
       {...(Platform.OS === 'web' && containerClassName ? { className: containerClassName } : {})}
-      {...(Platform.OS === 'web' && sidebarModeProp === 'expandOnHover' && setIsHoveringSidebar && {
-        onMouseEnter: () => setIsHoveringSidebar(true),
-        onMouseLeave: () => setIsHoveringSidebar(false),
-      })}
     >
       <View style={[styles.wrap, isCollapsed && styles.wrapCollapsed]}>
         {/* Top Icon - Only shown when expanded */}

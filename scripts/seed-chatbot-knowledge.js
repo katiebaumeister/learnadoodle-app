@@ -1,23 +1,18 @@
 #!/usr/bin/env node
 /**
- * Seed the chatbot vector store from docs/APP_GUIDE_FOR_CHATBOT_VECTOR_STORE.md.
+ * Seed the chatbot vector store from lib/appGuide/appGuideMarkdown.js (canonical guide).
  * Run once after migration and when the guide is updated.
  *
  * Requires: OPENAI_API_KEY, Supabase URL + key (service role for insert/delete).
  * Optional: .env with OPENAI_API_KEY, EXPO_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
- * Usage: node scripts/seed-chatbot-knowledge.js
+ * Usage: npm run seed:chatbot-knowledge
  */
 
 import 'dotenv/config';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { seedFromGuideMarkdown } from '../lib/chatbotKnowledgeStore.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const guidePath = join(__dirname, '..', 'docs', 'APP_GUIDE_FOR_CHATBOT_VECTOR_STORE.md');
+import { APP_GUIDE_MARKDOWN } from '../lib/appGuide/appGuideMarkdown.js';
 
 async function main() {
   if (!process.env.OPENAI_API_KEY) {
@@ -32,15 +27,8 @@ async function main() {
     process.exit(1);
   }
   const supabase = createClient(url, serviceKey || anonKey);
-  let markdown;
-  try {
-    markdown = readFileSync(guidePath, 'utf8');
-  } catch (e) {
-    console.error('Could not read app guide:', guidePath, e.message);
-    process.exit(1);
-  }
-  console.log('Seeding chatbot knowledge from app guide...');
-  const { inserted, error } = await seedFromGuideMarkdown(markdown, supabase);
+  console.log('Seeding chatbot knowledge from lib/appGuide/appGuideMarkdown.js...');
+  const { inserted, error } = await seedFromGuideMarkdown(APP_GUIDE_MARKDOWN, supabase);
   if (error) {
     console.error('Seed failed:', error);
     process.exit(1);

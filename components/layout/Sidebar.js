@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image, Linking } from 'react-native';
 import { PanelLeftClose, PanelLeftOpen, Settings, Send, Search } from 'lucide-react';
 import LeftRail from '../LeftRail';
@@ -27,9 +27,8 @@ export default function Sidebar({
   onOpenFeedback,
   onCollapsedChange,
 }) {
-  const [sidebarMode, setSidebarMode] = useState('expanded'); // 'expanded', 'collapsed', 'expandOnHover'
+  const [sidebarMode, setSidebarMode] = useState('expanded'); // 'expanded', 'collapsed'
   const [showCollapseMenu, setShowCollapseMenu] = useState(false);
-  const [isHoveringSidebar, setIsHoveringSidebar] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [hoveredMenuItem, setHoveredMenuItem] = useState(null);
   const [tooltip, setTooltip] = useState({ visible: false, text: '', x: 0, y: 0 });
@@ -41,13 +40,8 @@ export default function Sidebar({
   const feedbackButtonRef = useRef(null);
   const tooltipRef = useRef(null);
 
-  // Determine if sidebar should be collapsed based on mode
-  const isCollapsed = useMemo(() => {
-    if (sidebarMode === 'expanded') return false;
-    if (sidebarMode === 'collapsed') return true;
-    if (sidebarMode === 'expandOnHover') return !isHoveringSidebar;
-    return false;
-  }, [sidebarMode, isHoveringSidebar]);
+  // Determine if sidebar should be collapsed based on mode (no hover-to-expand)
+  const isCollapsed = sidebarMode === 'collapsed';
 
   // Notify parent of collapsed state changes
   useEffect(() => {
@@ -190,8 +184,6 @@ export default function Sidebar({
           onOpenSettings={onOpenSettings}
           onOpenFeedback={onOpenFeedback}
           isCollapsed={isCollapsed}
-          sidebarMode={sidebarMode}
-          setIsHoveringSidebar={setIsHoveringSidebar}
         />
       </View>
 

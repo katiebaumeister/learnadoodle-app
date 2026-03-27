@@ -391,21 +391,26 @@ export default function EmbeddedNotificationCenter({
         /* ignore */
       }
     }
-    const parentFocus = assignment.need_help ? 'help' : 'submission';
+    // Help: open respond modal here so parent home does not stack event details + help.
+    if (assignment.need_help) {
+      setSelectedAssignment(assignment);
+      setOpenModal('help');
+      return;
+    }
     if (Platform.OS === 'web' && typeof window !== 'undefined' && linkedEventId) {
       window.dispatchEvent(
         new CustomEvent('openEventModal', {
           detail: {
             eventId: linkedEventId,
             initialEvent: null,
-            parentEventFocus: parentFocus,
+            parentEventFocus: 'submission',
           },
         })
       );
       return;
     }
     setSelectedAssignment(assignment);
-    setOpenModal(assignment.need_help ? 'help' : 'submission');
+    setOpenModal('submission');
   };
 
   const closeModals = () => {

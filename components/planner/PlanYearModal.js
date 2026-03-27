@@ -46,7 +46,6 @@ import {
   ArrowRight,
   Paperclip,
   BookOpen,
-  GripVertical,
   Edit,
   MoreVertical,
   Pencil,
@@ -72,7 +71,7 @@ import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlanne
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
-import { buildCurriculum, commitCurriculum, previewPacing, parsePlainText, generateCurriculumDraft, commitManualDraft, commitParsedDraft, commitGeneratedDraft } from '../../lib/services/curriculumClient';
+import { buildCurriculum, commitCurriculum, previewPacing, parsePlainText, generateCurriculumDraft, commitManualDraft, commitParsedDraft, commitGeneratedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { getMaterials } from '../../lib/services/materialsClient';
 import {
   PLAN_MY_YEAR_LOGISTICS_FIRST,
@@ -124,6 +123,46 @@ const DURATION_OPTIONS = [
 
 const LESSON_TYPES = ['lesson', 'project', 'exam', 'assignment', 'activity'];
 
+/** Unscheduled manual curriculum rows use DB placeholder start_ts; hide that in UI. */
+function curriculumEventDisplayDate(event) {
+  const meta = event?.curriculum_metadata || {};
+  if (meta.unscheduled_placeholder) return null;
+  const ts = event?.start_ts;
+  if (!ts) return null;
+  return typeof ts === 'string' ? ts.slice(0, 10) : new Date(ts).toISOString().split('T')[0];
+}
+
+function mapStoredLessonTypeToManualBuilder(t) {
+  const lt = String(t || 'lesson').toLowerCase();
+  if (lt === 'assessment' || lt === 'quiz') return 'exam';
+  if (LESSON_TYPES.includes(lt)) return lt;
+  return 'lesson';
+}
+
+function manualDraftFromUnitStructureData(struct) {
+  const units = struct?.units;
+  if (!units?.length) return null;
+  const uid = Date.now();
+  return {
+    title: null,
+    units: units.map((u, ui) => ({
+      temp_id: `loaded-${uid}-${ui}`,
+      title: u.title || `Unit ${ui + 1}`,
+      sequence_index: ui + 1,
+      description: null,
+      inferred: false,
+      lessons: (u.lessons || []).map((le, li) => ({
+        temp_id: le.id ? `evt-${le.id}` : `temp-l-${uid}-${ui}-${li}`,
+        title: le.title || `Lesson ${li + 1}`,
+        lesson_type: mapStoredLessonTypeToManualBuilder(le.type),
+        sequence_index: li + 1,
+        minutes_est: typeof le.minutes === 'number' && !Number.isNaN(le.minutes) ? le.minutes : 60,
+        reference_date: le.date || null,
+      })),
+    })),
+  };
+}
+
 const BG = '#ffffff';
 const FG = '#111827';
 const SUB = '#6b7280';
@@ -156,10 +195,51 @@ const BORDER_STRONG = '#cbd5e1';
 const BRAND_500 = '#6BB3E8';
 const BRAND_600 = '#5A9FD6';
 const TEXT_SECONDARY = '#64748b';
+/** Event details modal primary action (matches EventDetails createButton). */
+const EVENT_DETAILS_PRIMARY_BG = '#85C4F2';
+const EDIT_UNITS_PRIMARY_BUTTON_TEXT = {
+  fontSize: 16,
+  fontWeight: '500',
+  color: '#FFFFFF',
+  ...(Platform.OS === 'web' && {
+    fontFamily: '"League Spartan", sans-serif',
+  }),
+};
 const SECTION_GAP = 28;
 const OPTION_GAP = 16;
 const LABEL_INPUT_GAP = 6;
 const INPUT_GAP = 12;
+/** Logistics-first unit-structure overlay: stacked footer + dark primary (matches help-response modal pattern). */
+const UNIT_STRUCTURE_OVERLAY_PRIMARY_BG = '#0f172a';
+
+/** Align raw web `<input type="date">` with modal labels / `styles.input` (Cooper Hewitt + FG). */
+const WEB_INPUT_FONT_FAMILY = '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const WEB_REF_DATE_INPUT_CLASS = 'plan-year-ref-date-input';
+
+if (typeof document !== 'undefined' && Platform.OS === 'web') {
+  const sid = 'plan-year-ref-date-input-font';
+  if (!document.getElementById(sid)) {
+    const el = document.createElement('style');
+    el.id = sid;
+    el.textContent = `
+.${WEB_REF_DATE_INPUT_CLASS} {
+  font-family: ${WEB_INPUT_FONT_FAMILY};
+  font-size: 12px;
+  font-weight: 500;
+  color: ${FG};
+}
+.${WEB_REF_DATE_INPUT_CLASS}::-webkit-datetime-edit,
+.${WEB_REF_DATE_INPUT_CLASS}::-webkit-datetime-edit-fields-wrapper,
+.${WEB_REF_DATE_INPUT_CLASS}::-webkit-datetime-edit-text,
+.${WEB_REF_DATE_INPUT_CLASS}::-webkit-datetime-edit-month-field,
+.${WEB_REF_DATE_INPUT_CLASS}::-webkit-datetime-edit-day-field,
+.${WEB_REF_DATE_INPUT_CLASS}::-webkit-datetime-edit-year-field {
+  color: ${FG};
+}
+`;
+    document.head.appendChild(el);
+  }
+}
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAY_NUMBERS = [0, 1, 2, 3, 4, 5, 6];
@@ -173,6 +253,58 @@ function formatDateDisplay(ymd) {
   if (!ymd) return '';
   const d = dateStringToDate(ymd);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** Flatten manual/upload draft units into ordered lessons for schedule preview (1-based index). */
+function flattenUnitLessonsForPreview(units) {
+  if (!Array.isArray(units)) return [];
+  const out = [];
+  let n = 0;
+  for (const u of units) {
+    for (const l of u.lessons || []) {
+      n += 1;
+      const raw = l && l.title != null ? String(l.title).trim() : '';
+      out.push({ title: raw || `Lesson ${n}`, index: n });
+    }
+  }
+  return out;
+}
+
+/**
+ * Zip cadence slot lines with curriculum lessons for one subject (same order as apply: chronological slots).
+ */
+function buildLessonSchedulePreviewRows(previewSlotLines, flatLessons, curriculumSubjectId, availableSlotLabel) {
+  const sid =
+    curriculumSubjectId != null && String(curriculumSubjectId).trim() !== ''
+      ? String(curriculumSubjectId)
+      : '';
+  if (!sid || !flatLessons.length || !previewSlotLines.length) {
+    return {
+      rows: previewSlotLines.map((line) => ({ line, detailLine: null })),
+      overflowCount: 0,
+      hasCurriculumMapping: false,
+      curriculumSubjectId: null,
+    };
+  }
+  const q = flatLessons.map((l) => ({ ...l }));
+  const rows = previewSlotLines.map((line) => {
+    if (String(line.subjectId || '') !== sid) {
+      return { line, detailLine: null };
+    }
+    if (q.length > 0) {
+      const lesson = q.shift();
+      const childPart =
+        line.assigneeShortLabel && line.assigneeShortLabel !== 'Whole family'
+          ? `${line.assigneeShortLabel} `
+          : '';
+      const detailLine = `${line.subjectName} ${childPart}Lesson ${lesson.index} — ${lesson.title}`
+        .replace(/\s+/g, ' ')
+        .trim();
+      return { line, detailLine };
+    }
+    return { line, detailLine: availableSlotLabel };
+  });
+  return { rows, overflowCount: q.length, hasCurriculumMapping: true, curriculumSubjectId: sid };
 }
 
 /** Parse year_name into card lines; if " · " separated use as scope / subjects / date, else title + date. */
@@ -621,6 +753,7 @@ export default function PlanYearModal({
   const [pacingPreview, setPacingPreview] = useState(null); // Phase 2: lesson-to-slot mapping before commit
   const [pacingPreviewLoading, setPacingPreviewLoading] = useState(false);
   const [pacingPreviewError, setPacingPreviewError] = useState(null);
+  const [addContentCadenceInlineHint, setAddContentCadenceInlineHint] = useState(false);
   const [hoverSourceKey, setHoverSourceKey] = useState(null); // for step 1 option hover (web)
   const [hoverScopeKey, setHoverScopeKey] = useState(null); // for scope step option hover (web)
   const [entryChoiceHoverKey, setEntryChoiceHoverKey] = useState(null); // 'edit' | 'create' for arrow on hover
@@ -641,7 +774,6 @@ export default function PlanYearModal({
   const [expandedUnits, setExpandedUnits] = useState(new Set()); // Set of unit indices
   const [editingItemId, setEditingItemId] = useState(null); // ID of item being edited inline
   const [editingItemText, setEditingItemText] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
   
   // Upload/Paste/Generate mode state
   const [unitStructureStep, setUnitStructureStep] = useState('input'); // 'input' | 'draft' | 'saving'
@@ -683,7 +815,11 @@ export default function PlanYearModal({
   
   // Manual mode state (for paste/manual)
   const [manualDraft, setManualDraft] = useState(null);
-  
+  /** After user clears manual draft while staying on unit structure, do not immediately re-hydrate from unitStructureData. */
+  const suppressManualCurriculumHydrateRef = useRef(false);
+  /** Draft unit-structure modal: which lesson rows show date + extra type chips (`${unitIdx}-${lessonIdx}`). */
+  const [expandedDraftLessonDetailKeys, setExpandedDraftLessonDetailKeys] = useState(() => new Set());
+
   // Helper functions for draft editing (matching original modals)
   const updateDraftUnit = useCallback((unitIndex, field, value) => {
     if (draftData) {
@@ -939,16 +1075,15 @@ export default function PlanYearModal({
       setParseContentError(null);
       setParsingContent(false);
       setUnitStructureData(null);
+      setLastSavedUnitSubjectId(null);
       if (method === 'paste') {
+        suppressManualCurriculumHydrateRef.current = false;
         setPlanSource('paste');
         setRawText('');
         setUnitStructureStep('input');
-        setManualDraft({
-          title: null,
-          units: [{ temp_id: `temp-${Date.now()}`, title: 'Unit 1', sequence_index: 1, description: null, lessons: [] }],
-        });
+        setManualDraft(null);
         setExpandedUnitIndexManual(0);
-        setExpandedUnits(new Set([0]));
+        setExpandedUnits(new Set());
       } else if (method === 'paste_plain') {
         setPlanSource('paste_plain');
         setManualDraft(null);
@@ -1111,6 +1246,16 @@ export default function PlanYearModal({
       const childNames = blockChildIds.length > 0
         ? blockChildIds.map((cid) => childList.find((c) => String(c.id) === String(cid))?.first_name || childList.find((c) => String(c.id) === String(cid))?.name || 'Child').join(', ')
         : 'Whole family';
+      const assigneeShortLabel =
+        blockChildIds.length === 1
+          ? (
+              String(
+                childList.find((c) => String(c.id) === String(blockChildIds[0]))?.first_name ||
+                  childList.find((c) => String(c.id) === String(blockChildIds[0]))?.name ||
+                  'Child',
+              ).trim() || 'Child'
+            )
+          : childNames;
       const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
       dates.forEach((ymd) => {
         lines.push({
@@ -1118,13 +1263,58 @@ export default function PlanYearModal({
           dateLabel: formatDateDisplay(ymd),
           timeLabel,
           subjectName,
+          subjectId: block.subject_id ?? null,
           childNames,
+          assigneeShortLabel,
         });
       });
     });
     lines.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
     return lines;
   }, [blocks, startDate, endDate, customHolidays, customBreaks, baseSubjectList, children, allFamilyChildIds]);
+
+  /** True when date range + cadence produce at least one class occurrence (instructional slot preview). */
+  const cadenceYieldsInstructionalSlots = previewSlotLines.length > 0;
+
+  /** Client-side lesson → slot lines (matches apply order; no DB placeholders required). */
+  const lessonSchedulePreviewPlan = useMemo(() => {
+    const flatDraft = flattenUnitLessonsForPreview((manualDraft || draftData)?.units);
+    const flatSaved = flattenUnitLessonsForPreview(unitStructureData?.units);
+    const lessons = flatDraft.length > 0 ? flatDraft : flatSaved;
+    const curriculumSubjectId =
+      flatDraft.length > 0 ? unitPipelineSubjectId : lastSavedUnitSubjectId || unitPipelineSubjectId;
+    const built = buildLessonSchedulePreviewRows(
+      previewSlotLines,
+      lessons,
+      curriculumSubjectId,
+      s('planMyYear.multiSubjectUnits.availableInstructionalSlot'),
+    );
+    return {
+      ...built,
+      curriculumSubjectId: built.curriculumSubjectId || curriculumSubjectId || null,
+    };
+  }, [
+    previewSlotLines,
+    manualDraft,
+    draftData,
+    unitStructureData,
+    unitPipelineSubjectId,
+    lastSavedUnitSubjectId,
+  ]);
+
+  const handleOpenCadenceUnitMethod = useCallback(
+    (subjectId, method) => {
+      if (!cadenceYieldsInstructionalSlots) {
+        setAddContentCadenceInlineHint(true);
+      }
+      openCadenceUnitMethod(subjectId, method);
+    },
+    [cadenceYieldsInstructionalSlots, openCadenceUnitMethod],
+  );
+
+  useEffect(() => {
+    if (cadenceYieldsInstructionalSlots) setAddContentCadenceInlineHint(false);
+  }, [cadenceYieldsInstructionalSlots]);
 
   // When modal opens (without an explicit academic year id), load latest academic year so "Apply again" replaces instead of duplicating — unless openForNewPlan (header button: create new)
   useEffect(() => {
@@ -1975,46 +2165,13 @@ export default function PlanYearModal({
         setLoadingUnitStructure(true);
         try {
           const subjectId = unitPipelineSubjectId;
-          const { data, error } = await supabase
-            .from('events')
-            .select('id, title, curriculum_unit_title, curriculum_lesson_sequence, curriculum_metadata, start_ts, is_reference_date')
-            .eq('family_id', familyId)
-            .eq('subject_id', subjectId)
-            .eq('is_curriculum_related', true)
-            .is('deleted_at', null)
-            .order('curriculum_unit_title', { ascending: true })
-            .order('curriculum_lesson_sequence', { ascending: true });
-          
+          const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
           if (error) throw error;
-          
-          // Group by unit
-          const unitsMap = new Map();
-          (data || []).forEach((event) => {
-            const unitTitle = event.curriculum_unit_title || 'Untitled Unit';
-            if (!unitsMap.has(unitTitle)) {
-              unitsMap.set(unitTitle, []);
-            }
-            const metadata = event.curriculum_metadata || {};
-            const lessonType = metadata.lesson_type || 'lesson';
-            unitsMap.get(unitTitle).push({
-              id: event.id,
-              title: event.title,
-              type: lessonType,
-              sequence: event.curriculum_lesson_sequence || 0,
-              date: event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : null,
-              isReferenceOnly: event.is_reference_date || false,
-              minutes: metadata.minutes_est || 60,
-            });
-          });
-          
-          // Convert to array and sort lessons within each unit
-          const units = Array.from(unitsMap.entries()).map(([title, lessons]) => ({
-            title,
-            lessons: lessons.sort((a, b) => a.sequence - b.sequence),
-          }));
-          
+          const units = Array.isArray(data?.units) ? data.units : [];
           setUnitStructureData({ units });
-          // Expand first unit by default
+          if (units.some((u) => (u.lessons || []).length > 0)) {
+            setLastSavedUnitSubjectId(subjectId);
+          }
           if (units.length > 0) {
             setExpandedUnits(new Set([0]));
           }
@@ -3268,6 +3425,15 @@ export default function PlanYearModal({
   const unitStructureSkipDraftLabel = PLAN_MY_YEAR_LOGISTICS_FIRST
     ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
     : t('planMyYear.multiSubjectUnits.footerSkipClassic');
+  const hasPersistedManualCurriculum = useMemo(
+    () =>
+      planSource === 'paste' &&
+      Boolean(unitPipelineSubjectId) &&
+      (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0),
+    [planSource, unitPipelineSubjectId, unitStructureData],
+  );
+  const unitStructureSaveManualChangesLabel = t('planMyYear.multiSubjectUnits.footerSaveManualChanges');
+
   const stepScopeComplete = !!planningScope;
   const stepSourceComplete = true; // Choose method always has a selection (default: placeholders)
   const step0Complete = preconditionsMet;
@@ -3303,8 +3469,16 @@ export default function PlanYearModal({
     !showPlanManagerView &&
     !openToEditPlanList;
 
-  const renderPlanYearUnitStructureScroll = () => (
-            <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
+  const renderPlanYearUnitStructureScroll = (overlayCompactHeader = false) => (
+            <ScrollView
+              style={styles.content}
+              contentContainerStyle={
+                overlayCompactHeader
+                  ? [styles.contentContainer, styles.contentContainerUnitStructureOverlay]
+                  : styles.contentContainer
+              }
+              showsVerticalScrollIndicator={false}
+            >
               {(() => {
                 const availableSubjectId = unitPipelineSubjectId;
                 const availableSubject = availableSubjectId ? baseSubjectList.find((s) => String(s.id) === String(availableSubjectId)) : null;
@@ -3376,37 +3550,135 @@ export default function PlanYearModal({
                   const units = currentDraft.units || [];
                   const totalLessons = units.reduce((sum, u) => sum + (u.lessons || []).length, 0);
                   const totalAssessments = units.reduce((sum, u) => sum + (u.lessons || []).filter(l => (l.lesson_type === 'assessment' || l.lesson_type === 'exam')).length, 0);
-                  
+                  const DRAFT_EXTRA_TYPES = ['project', 'assessment', 'exam', 'activity'];
+                  const unitCardTint = 'rgba(241, 246, 255, 0.85)';
+                  const unitInnerBg = 'rgba(255, 255, 255, 0.65)';
+                  const timelineColor = '#bfdbfe';
+
                   return (
                     <>
                       {unitSubjectBanner}
-                      {/* Summary bar */}
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: BORDER }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-                          <Text style={[styles.sectionTitle, { fontSize: 16, marginBottom: 0 }]}>
-                            {units.length} {units.length === 1 ? 'Unit' : 'Units'} · {totalLessons} {totalLessons === 1 ? 'Lesson' : 'Lessons'} · {totalAssessments} {totalAssessments === 1 ? 'Assessment' : 'Assessments'}
+                      {PLAN_MY_YEAR_LOGISTICS_FIRST && !cadenceYieldsInstructionalSlots && (
+                        <View
+                          style={{
+                            marginBottom: 16,
+                            paddingVertical: 12,
+                            paddingHorizontal: 14,
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: 'rgba(245, 158, 11, 0.32)',
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, color: FG, lineHeight: 19 }}>
+                            {s('planMyYear.multiSubjectUnits.unitModalNoScheduleBanner')}
                           </Text>
                         </View>
-                        <TouchableOpacity
-                          onPress={() => setShowAdvanced(!showAdvanced)}
-                          style={{ paddingVertical: 4, paddingHorizontal: 8 }}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={{ fontSize: 12, color: ACCENT }}>Edit totals</Text>
-                        </TouchableOpacity>
+                      )}
+                      {/* Summary — progress-oriented */}
+                      <View style={{ marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: BORDER }}>
+                        <Text style={[styles.sectionTitle, { fontSize: 16, marginBottom: 0, lineHeight: 22 }]}>
+                          {units.length} {units.length === 1 ? 'unit' : 'units'} · {totalLessons} {totalLessons === 1 ? 'lesson' : 'lessons'}
+                          {totalAssessments > 0
+                            ? ` · ${totalAssessments} ${totalAssessments === 1 ? 'assessment' : 'assessments'}`
+                            : ''}{' '}
+                          built
+                        </Text>
+                        {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && (
+                          <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 8, lineHeight: 18 }}>
+                            {previewSlotLines.length === 1
+                              ? s('planMyYear.multiSubjectUnits.instructionalSlotsAvailableOne')
+                              : t('planMyYear.multiSubjectUnits.instructionalSlotsAvailableMany', {
+                                  count: previewSlotLines.length,
+                                })}
+                          </Text>
+                        )}
                       </View>
-                      
+                      {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && totalLessons > 0 && (
+                        <View
+                          style={{
+                            marginBottom: 14,
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            backgroundColor: ELIGIBILITY_CARD_BG,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: ELIGIBILITY_CARD_BORDER,
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 8 }}>
+                            {lessonSchedulePreviewPlan.hasCurriculumMapping
+                              ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
+                              : s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
+                          </Text>
+                          {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
+                            <ScrollView
+                              style={{ maxHeight: 220 }}
+                              nestedScrollEnabled
+                              showsVerticalScrollIndicator
+                            >
+                              {lessonSchedulePreviewPlan.rows
+                                .filter(
+                                  ({ line }) =>
+                                    String(line.subjectId || '') ===
+                                    String(lessonSchedulePreviewPlan.curriculumSubjectId || ''),
+                                )
+                                .map(({ line, detailLine }, idx) => (
+                                  <View
+                                    key={`unit-overlay-slot-${line.date}-${idx}`}
+                                    style={{
+                                      marginBottom: 10,
+                                      paddingBottom: 8,
+                                      borderBottomWidth: 1,
+                                      borderBottomColor: BORDER,
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>
+                                      {line.dateLabel}, {line.timeLabel}
+                                    </Text>
+                                    <Text style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                                      {detailLine ??
+                                        `${line.subjectName}${line.childNames ? ` · ${line.childNames}` : ''}`}
+                                    </Text>
+                                  </View>
+                                ))}
+                              {lessonSchedulePreviewPlan.overflowCount > 0 ? (
+                                <Text style={{ fontSize: 11, color: TEXT_SECONDARY, marginTop: 4 }}>
+                                  {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
+                                    count: lessonSchedulePreviewPlan.overflowCount,
+                                  })}
+                                </Text>
+                              ) : null}
+                            </ScrollView>
+                          ) : (
+                            <Text style={{ fontSize: 12, color: MUTED, lineHeight: 18 }}>
+                              {s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+
                       {/* Units list */}
-                      <View style={{ gap: 12 }}>
+                      <View style={{ gap: 14 }}>
                         {units.map((unit, unitIdx) => {
                           const isExpanded = expandedUnits.has(unitIdx);
                           const lessons = unit.lessons || [];
                           const lessonCount = lessons.filter(l => l.lesson_type === 'lesson' || l.lesson_type === 'project' || l.lesson_type === 'activity').length;
                           const assessmentCount = lessons.filter(l => l.lesson_type === 'assessment' || l.lesson_type === 'exam').length;
-                          
+
                           return (
-                            <View key={unit.temp_id || unitIdx} style={{ borderWidth: 1, borderColor: BORDER, borderRadius: 8, backgroundColor: BG, overflow: 'hidden' }}>
-                              {/* Unit header */}
+                            <View
+                              key={unit.temp_id || unitIdx}
+                              style={{
+                                borderWidth: 1,
+                                borderColor: BORDER,
+                                borderRadius: 12,
+                                backgroundColor: unitCardTint,
+                                overflow: 'hidden',
+                                ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(15,23,42,0.06)' } : {}),
+                              }}
+                            >
+                              {/* Unit header (container) */}
                               <TouchableOpacity
                                 onPress={() => {
                                   const newExpanded = new Set(expandedUnits);
@@ -3417,21 +3689,21 @@ export default function PlanYearModal({
                                   }
                                   setExpandedUnits(newExpanded);
                                 }}
-                                style={{ flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 }}
+                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10 }}
                                 activeOpacity={0.7}
                                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                               >
                                 {isExpanded ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
                                 <View style={{ flex: 1 }}>
                                   <TextInput
-                                    style={[styles.input, { fontSize: 15, fontWeight: '600', padding: 4, marginBottom: 4 }]}
+                                    style={[styles.input, { fontSize: 15, fontWeight: '700', paddingVertical: 4, paddingHorizontal: 4, marginBottom: 2, backgroundColor: 'transparent' }]}
                                     value={unit.title || ''}
                                     onChangeText={(v) => updateDraftUnit(unitIdx, 'title', v)}
                                     placeholder={`Unit ${unitIdx + 1}`}
                                     placeholderTextColor={MUTED}
                                     {...(Platform.OS === 'web' && { cursor: 'text' })}
                                   />
-                                  <Text style={[styles.mutedText, { fontSize: 13 }]}>
+                                  <Text style={[styles.mutedText, { fontSize: 12 }]}>
                                     {lessonCount} {lessonCount === 1 ? 'lesson' : 'lessons'}
                                     {assessmentCount > 0 && ` · ${assessmentCount} ${assessmentCount === 1 ? 'assessment' : 'assessments'}`}
                                   </Text>
@@ -3447,134 +3719,194 @@ export default function PlanYearModal({
                                   <Trash2 size={16} color={ERROR} />
                                 </TouchableOpacity>
                               </TouchableOpacity>
-                              
-                              {/* Expanded lessons list */}
+
+                              {/* Lessons — timeline list inside unit */}
                               {isExpanded && (
-                                <View style={{ borderTopWidth: 1, borderTopColor: BORDER }}>
-                                  {lessons.map((lesson, lessonIdx) => {
-                                    const typeOptions = ['lesson', 'project', 'assessment', 'activity'];
-                                    const currentType = lesson.lesson_type || 'lesson';
-                                    const refDate = lesson.cadence_metadata?.reference_date || lesson.reference_date || lesson.suggested_date || lesson.date_text || null;
-                                    
-                                    return (
-                                      <View key={lesson.temp_id || lessonIdx} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, paddingLeft: 48, borderTopWidth: lessonIdx > 0 ? 1 : 0, borderTopColor: BORDER, gap: 8 }}>
-                                        <GripVertical size={16} color={MUTED} style={{ opacity: 0.5 }} />
-                                        <View style={{ flex: 1 }}>
-                                          <TextInput
-                                            style={[styles.input, { fontSize: 14, padding: 6, marginBottom: 6 }]}
-                                            value={lesson.title || ''}
-                                            onChangeText={(v) => updateDraftLesson(unitIdx, lessonIdx, 'title', v)}
-                                            placeholder="Lesson title"
-                                            placeholderTextColor={MUTED}
-                                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                                          />
-                                          {/* Reference date input */}
-                                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                                            <Text style={[styles.smallLabel, { fontSize: 11, color: MUTED }]}>Reference date:</Text>
-                                            {Platform.OS === 'web' ? (
-                                              <input
-                                                type="date"
-                                                value={refDate || ''}
-                                                onChange={(e) => {
-                                                  const dateValue = e.target.value || null;
-                                                  const currentLesson = (draftData || manualDraft)?.units?.[unitIdx]?.lessons?.[lessonIdx];
-                                                  if (currentLesson) {
-                                                    if (!currentLesson.cadence_metadata) {
-                                                      updateDraftLesson(unitIdx, lessonIdx, 'cadence_metadata', { reference_date: dateValue });
-                                                    } else {
-                                                      updateDraftLesson(unitIdx, lessonIdx, 'cadence_metadata', { ...currentLesson.cadence_metadata, reference_date: dateValue });
-                                                    }
-                                                  }
-                                                }}
-                                                style={{
-                                                  flex: 1,
-                                                  maxWidth: 140,
-                                                  padding: '6px',
-                                                  borderRadius: '6px',
-                                                  border: '1px solid #d1d5db',
-                                                  fontSize: '12px',
-                                                  backgroundColor: '#fff',
-                                                }}
-                                              />
-                                            ) : (
-                                              <TextInput
-                                                style={[styles.input, { flex: 1, maxWidth: 140, paddingVertical: 6, fontSize: 12 }]}
-                                                value={refDate || ''}
-                                                onChangeText={(v) => {
-                                                  const currentLesson = (draftData || manualDraft)?.units?.[unitIdx]?.lessons?.[lessonIdx];
-                                                  if (currentLesson) {
-                                                    if (!currentLesson.cadence_metadata) {
-                                                      updateDraftLesson(unitIdx, lessonIdx, 'cadence_metadata', { reference_date: v || null });
-                                                    } else {
-                                                      updateDraftLesson(unitIdx, lessonIdx, 'cadence_metadata', { ...currentLesson.cadence_metadata, reference_date: v || null });
-                                                    }
-                                                  }
-                                                }}
-                                                placeholder="YYYY-MM-DD"
-                                                placeholderTextColor={MUTED}
-                                              />
-                                            )}
-                                            <Text style={[styles.smallLabel, { fontSize: 10, color: MUTED }]}>Connects to planner</Text>
-                                          </View>
-                                        </View>
-                                        <View style={{ flexDirection: 'row', gap: 4 }}>
-                                          {typeOptions.map((type) => (
+                                <View style={{ borderTopWidth: 1, borderTopColor: BORDER, backgroundColor: unitInnerBg, paddingBottom: 8 }}>
+                                  <View style={{ marginLeft: 12, marginRight: 10, marginTop: 8, paddingLeft: 14, borderLeftWidth: 2, borderLeftColor: timelineColor, gap: 4 }}>
+                                    {lessons.map((lesson, lessonIdx) => {
+                                      const detailKey = `${unitIdx}-${lessonIdx}`;
+                                      const currentType = lesson.lesson_type || 'lesson';
+                                      const refDate = lesson.cadence_metadata?.reference_date || lesson.reference_date || lesson.suggested_date || lesson.date_text || null;
+                                      const detailsOpen = expandedDraftLessonDetailKeys.has(detailKey);
+                                      const patchCadence = (partial) => {
+                                        const curL = (draftData || manualDraft)?.units?.[unitIdx]?.lessons?.[lessonIdx];
+                                        if (!curL) return;
+                                        const cur = curL.cadence_metadata || {};
+                                        updateDraftLesson(unitIdx, lessonIdx, 'cadence_metadata', { ...cur, ...partial });
+                                      };
+
+                                      return (
+                                        <View
+                                          key={lesson.temp_id || lessonIdx}
+                                          style={{
+                                            paddingVertical: 4,
+                                            paddingRight: 4,
+                                            borderTopWidth: lessonIdx > 0 ? 1 : 0,
+                                            borderTopColor: 'rgba(15,23,42,0.06)',
+                                            paddingTop: lessonIdx > 0 ? 8 : 0,
+                                          }}
+                                        >
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                            <View style={{ alignItems: 'center', justifyContent: 'center', gap: 0, paddingRight: 2 }}>
+                                              <TouchableOpacity
+                                                onPress={() => moveDraftLesson(unitIdx, lessonIdx, -1)}
+                                                disabled={lessonIdx === 0}
+                                                style={{ padding: 2 }}
+                                                accessibilityLabel={s('planMyYear.multiSubjectUnits.draftReorderA11y')}
+                                                {...(Platform.OS === 'web' && { cursor: lessonIdx === 0 ? 'default' : 'pointer', title: 'Move up' })}
+                                              >
+                                                <ChevronUp size={14} color={lessonIdx === 0 ? '#e5e7eb' : MUTED} />
+                                              </TouchableOpacity>
+                                              <TouchableOpacity
+                                                onPress={() => moveDraftLesson(unitIdx, lessonIdx, 1)}
+                                                disabled={lessonIdx === lessons.length - 1}
+                                                style={{ padding: 2 }}
+                                                accessibilityLabel={s('planMyYear.multiSubjectUnits.draftReorderA11y')}
+                                                {...(Platform.OS === 'web' && { cursor: lessonIdx === lessons.length - 1 ? 'default' : 'pointer', title: 'Move down' })}
+                                              >
+                                                <ChevronDown size={14} color={lessonIdx === lessons.length - 1 ? '#e5e7eb' : MUTED} />
+                                              </TouchableOpacity>
+                                            </View>
+                                            <Text style={{ color: MUTED, fontSize: 14, fontWeight: '700', width: 12, textAlign: 'center', marginRight: 2 }}>•</Text>
+                                            <TextInput
+                                              style={[styles.input, { flex: 1, fontSize: 14, paddingVertical: 6, paddingHorizontal: 8, minWidth: 0 }]}
+                                              value={lesson.title || ''}
+                                              onChangeText={(v) => updateDraftLesson(unitIdx, lessonIdx, 'title', v)}
+                                              placeholder="Lesson title"
+                                              placeholderTextColor={MUTED}
+                                              onFocus={() => {
+                                                setExpandedDraftLessonDetailKeys((prev) => {
+                                                  const n = new Set(prev);
+                                                  n.add(detailKey);
+                                                  return n;
+                                                });
+                                              }}
+                                              {...(Platform.OS === 'web' && { cursor: 'text' })}
+                                            />
                                             <TouchableOpacity
-                                              key={type}
                                               onPress={() => {
-                                                updateDraftLesson(unitIdx, lessonIdx, 'lesson_type', type);
+                                                setExpandedDraftLessonDetailKeys((prev) => {
+                                                  const n = new Set(prev);
+                                                  if (n.has(detailKey)) n.delete(detailKey);
+                                                  else n.add(detailKey);
+                                                  return n;
+                                                });
                                               }}
-                                              style={{
-                                                paddingHorizontal: 8,
-                                                paddingVertical: 4,
-                                                borderRadius: 12,
-                                                backgroundColor: currentType === type ? ACCENT_LIGHT : '#f3f4f6',
-                                                borderWidth: 1,
-                                                borderColor: currentType === type ? ACCENT : '#e5e7eb',
-                                              }}
+                                              style={{ padding: 4 }}
+                                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                              accessibilityLabel={detailsOpen ? 'Hide lesson details' : 'Show lesson details'}
+                                              {...(Platform.OS === 'web' && { cursor: 'pointer', title: detailsOpen ? 'Hide details' : 'Type and date' })}
+                                            >
+                                              {detailsOpen ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                              onPress={() => deleteDraftLesson(unitIdx, lessonIdx)}
+                                              style={{ padding: 4 }}
                                               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                             >
-                                              <Text style={{ fontSize: 11, color: currentType === type ? ACCENT : MUTED, textTransform: 'capitalize' }}>
-                                                {type}
-                                              </Text>
+                                              <Trash2 size={14} color={ERROR} />
                                             </TouchableOpacity>
-                                          ))}
+                                          </View>
+                                          {detailsOpen && (
+                                            <View style={{ marginTop: 8, marginLeft: 52, gap: 8 }}>
+                                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                                {['lesson', ...DRAFT_EXTRA_TYPES].map((type) => (
+                                                  <TouchableOpacity
+                                                    key={type}
+                                                    onPress={() => updateDraftLesson(unitIdx, lessonIdx, 'lesson_type', type)}
+                                                    style={{
+                                                      paddingHorizontal: 10,
+                                                      paddingVertical: 5,
+                                                      borderRadius: 8,
+                                                      backgroundColor: currentType === type ? ACCENT_LIGHT : BG,
+                                                      borderWidth: 1,
+                                                      borderColor: currentType === type ? ACCENT : BORDER,
+                                                    }}
+                                                    accessibilityRole="button"
+                                                    accessibilityState={{ selected: currentType === type }}
+                                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                  >
+                                                    <Text
+                                                      style={{
+                                                        fontSize: 12,
+                                                        fontWeight: '600',
+                                                        color: currentType === type ? ACCENT : MUTED,
+                                                        ...(type !== 'lesson' ? { textTransform: 'capitalize' } : {}),
+                                                      }}
+                                                    >
+                                                      {type === 'lesson' ? s('terminology.lesson') : type}
+                                                    </Text>
+                                                  </TouchableOpacity>
+                                                ))}
+                                              </View>
+                                              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                                                <Text style={[styles.smallLabel, { fontSize: 12, color: FG, minWidth: 88 }]}>{s('planMyYear.multiSubjectUnits.draftLessonReferenceDate')}</Text>
+                                                {Platform.OS === 'web' ? (
+                                                  <input
+                                                    type="date"
+                                                    className={WEB_REF_DATE_INPUT_CLASS}
+                                                    value={refDate || ''}
+                                                    onChange={(e) => {
+                                                      const dateValue = e.target.value || null;
+                                                      patchCadence({ reference_date: dateValue });
+                                                    }}
+                                                    style={{
+                                                      padding: '6px 8px',
+                                                      borderRadius: '6px',
+                                                      border: '1px solid #d1d5db',
+                                                      fontSize: 12,
+                                                      fontWeight: '500',
+                                                      color: FG,
+                                                      backgroundColor: '#fff',
+                                                      fontFamily: WEB_INPUT_FONT_FAMILY,
+                                                    }}
+                                                  />
+                                                ) : (
+                                                  <TextInput
+                                                    style={[
+                                                      styles.input,
+                                                      {
+                                                        width: 130,
+                                                        paddingVertical: 6,
+                                                        fontSize: 12,
+                                                        fontWeight: '500',
+                                                        color: FG,
+                                                      },
+                                                    ]}
+                                                    value={refDate || ''}
+                                                    onChangeText={(v) => patchCadence({ reference_date: v || null })}
+                                                    placeholder="YYYY-MM-DD"
+                                                    placeholderTextColor={MUTED}
+                                                  />
+                                                )}
+                                              </View>
+                                            </View>
+                                          )}
                                         </View>
-                                        {refDate && (
-                                          <Text style={{ fontSize: 12, color: MUTED, minWidth: 100 }}>
-                                            {new Date(refDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                          </Text>
-                                        )}
-                                        <TouchableOpacity
-                                          onPress={() => deleteDraftLesson(unitIdx, lessonIdx)}
-                                          style={{ padding: 4 }}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Trash2 size={14} color={ERROR} />
-                                        </TouchableOpacity>
-                                      </View>
-                                    );
-                                  })}
-                                  <TouchableOpacity
-                                    onPress={() => addDraftLesson(unitIdx)}
-                                    style={{ flexDirection: 'row', alignItems: 'center', padding: 12, paddingLeft: 48, borderTopWidth: 1, borderTopColor: BORDER, gap: 8 }}
-                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                  >
-                                    <Plus size={16} color={ACCENT} />
-                                    <Text style={{ fontSize: 14, color: ACCENT }}>Break it down further</Text>
-                                  </TouchableOpacity>
+                                      );
+                                    })}
+                                    <TouchableOpacity
+                                      onPress={() => addDraftLesson(unitIdx)}
+                                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingTop: 10, gap: 6 }}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Plus size={16} color={ACCENT} />
+                                      <Text style={{ fontSize: 14, fontWeight: '600', color: ACCENT }}>{s('planMyYear.multiSubjectUnits.addLessonLink')}</Text>
+                                    </TouchableOpacity>
+                                  </View>
                                 </View>
                               )}
                             </View>
                           );
                         })}
                       </View>
-                      
-                      {/* Add unit button */}
+
+                      {/* Add unit — inline, same family as Add lesson */}
                       <TouchableOpacity
                         onPress={() => {
-                          const currentDraft = draftData || manualDraft;
-                          const newUnits = [...(currentDraft?.units || [])];
+                          const currentD = draftData || manualDraft;
+                          const newUnits = [...(currentD?.units || [])];
                           const newUnit = {
                             temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
                             title: `Unit ${newUnits.length + 1}`,
@@ -3589,39 +3921,11 @@ export default function PlanYearModal({
                           }
                           setExpandedUnits(new Set([...expandedUnits, newUnits.length - 1]));
                         }}
-                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, marginTop: 24, borderWidth: 2, borderColor: BORDER, borderStyle: 'dashed', borderRadius: 8, gap: 8 }}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, marginTop: 12, gap: 6 }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Plus size={18} color={MUTED} />
-                        <Text style={{ fontSize: 14, color: MUTED }}>Add unit</Text>
-                      </TouchableOpacity>
-                      
-                      {/* Back to earlier step (manual input → Method; others stay on unit structure) */}
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (planSource === 'paste') {
-                            setDraftData(null);
-                            setManualDraft(null);
-                            setUnitStructureStep('input');
-                            setRawText('');
-                            setExpandedUnits(new Set());
-                            setExpandedUnitIndexManual(0);
-                            setPlanStep('source');
-                            return;
-                          }
-                          setDraftData(null);
-                          setManualDraft(null);
-                          setUnitStructureStep('input');
-                          setRawText('');
-                          setExpandedUnits(new Set());
-                          setExpandedUnitIndexManual(0);
-                        }}
-                        style={{ marginTop: 16, paddingVertical: 8, alignItems: 'center' }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={{ fontSize: 14, color: MUTED, textDecorationLine: 'underline' }}>
-                          Back to {planSource === 'paste' ? 'method' : planSource === 'generate' ? 'form' : planSource === 'upload' ? 'material selection' : planSource === 'paste_plain' ? 'paste form' : 'manual builder'}
-                        </Text>
+                        <Plus size={16} color={ACCENT} />
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: ACCENT }}>{s('planMyYear.multiSubjectUnits.addUnitLink')}</Text>
                       </TouchableOpacity>
                     </>
                   );
@@ -4317,6 +4621,52 @@ export default function PlanYearModal({
                 
                 // Paste mode: Full Manual Builder interface (after clearing draft, show start state — do not auto-init manualDraft in useEffect or Back appears broken)
                 if (planSource === 'paste' && unitStructureStep === 'input' && !draftData) {
+                  if (!manualDraft && hasPersistedManualCurriculum) {
+                    const savedUnits = unitStructureData?.units || [];
+                    const totalLessons = savedUnits.reduce((sum, u) => sum + (u.lessons || []).length, 0);
+                    return (
+                      <View>
+                        {unitSubjectBanner}
+                        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>
+                          {t('planMyYear.multiSubjectUnits.savedManualCurriculumTitle')}
+                        </Text>
+                        <Text style={[styles.mutedText, { marginBottom: 16, lineHeight: 20 }]}>
+                          {t('planMyYear.multiSubjectUnits.savedManualCurriculumHint')}
+                        </Text>
+                        <View style={{ marginBottom: 16, gap: 12 }}>
+                          {savedUnits.map((u, uIdx) => (
+                            <View
+                              key={`saved-summary-${uIdx}`}
+                              style={{
+                                borderWidth: 1,
+                                borderColor: BORDER,
+                                borderRadius: 8,
+                                padding: 14,
+                                backgroundColor: 'rgba(248,250,252,0.95)',
+                              }}
+                            >
+                              <Text style={{ fontSize: 15, fontWeight: '600', color: FG, marginBottom: 8 }}>
+                                {u.title || `Unit ${uIdx + 1}`}
+                              </Text>
+                              {(u.lessons || []).map((le, li) => (
+                                <Text
+                                  key={String(le.id || `${uIdx}-${li}`)}
+                                  style={{ fontSize: 13, color: SUB, marginBottom: 4 }}
+                                >
+                                  {li + 1}. {le.title || 'Lesson'}
+                                  {le.date ? ` · ${le.date}` : ''}
+                                </Text>
+                              ))}
+                            </View>
+                          ))}
+                        </View>
+                        <Text style={[styles.mutedText, { fontSize: 12 }]}>
+                          {savedUnits.length} {savedUnits.length === 1 ? 'unit' : 'units'} · {totalLessons}{' '}
+                          {totalLessons === 1 ? 'lesson' : 'lessons'}
+                        </Text>
+                      </View>
+                    );
+                  }
                   if (!manualDraft) {
                     return (
                       <View>
@@ -4412,12 +4762,12 @@ export default function PlanYearModal({
                               </View>
                               
                               <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 }}
                                 onPress={() => addDraftLesson(uIdx)}
                                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                               >
-                                <Plus size={14} color={ACCENT} />
-                                <Text style={{ fontSize: 14, color: ACCENT }}>Break it down further</Text>
+                                <Plus size={16} color={ACCENT} />
+                                <Text style={{ fontSize: 14, fontWeight: '600', color: ACCENT }}>{s('planMyYear.multiSubjectUnits.addLessonLink')}</Text>
                               </TouchableOpacity>
                               
                               {/* Lessons */}
@@ -4453,6 +4803,7 @@ export default function PlanYearModal({
                                           {Platform.OS === 'web' ? (
                                             <input
                                               type="date"
+                                              className={WEB_REF_DATE_INPUT_CLASS}
                                               value={lesson.reference_date || ''}
                                               onChange={(e) => updateDraftLesson(uIdx, lIdx, 'reference_date', e.target.value || null)}
                                               style={{
@@ -4460,8 +4811,11 @@ export default function PlanYearModal({
                                                 padding: '8px',
                                                 borderRadius: '8px',
                                                 border: '1px solid #d1d5db',
-                                                fontSize: '14px',
+                                                fontSize: 12,
+                                                fontWeight: '500',
+                                                color: FG,
                                                 backgroundColor: '#fff',
+                                                fontFamily: WEB_INPUT_FONT_FAMILY,
                                               }}
                                             />
                                           ) : (
@@ -4542,9 +4896,9 @@ export default function PlanYearModal({
                         </View>
                       ))}
                       
-                      {/* Add unit button */}
+                      {/* Add unit — inline, same as Add lesson */}
                       <TouchableOpacity
-                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, marginTop: 8, borderWidth: 2, borderColor: BORDER, borderStyle: 'dashed', borderRadius: 8, gap: 8 }}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, marginTop: 8, gap: 6 }}
                         onPress={() => {
                           const newUnits = [...(manualDraft.units || [])];
                           const newUnit = {
@@ -4560,8 +4914,8 @@ export default function PlanYearModal({
                         }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Plus size={18} color={MUTED} />
-                        <Text style={{ fontSize: 14, color: MUTED }}>Add unit</Text>
+                        <Plus size={16} color={ACCENT} />
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: ACCENT }}>{s('planMyYear.multiSubjectUnits.addUnitLink')}</Text>
                       </TouchableOpacity>
                     </View>
                   );
@@ -4938,16 +5292,34 @@ export default function PlanYearModal({
           ) : planStep === 'preview' && !(PLAN_MY_YEAR_LOGISTICS_FIRST && isHomeschool) ? (
             <View style={{ flex: 1, minHeight: 0 }}>
               <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={true}>
-                <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>Preview selected days/times</Text>
+                <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>
+                  {lessonSchedulePreviewPlan.hasCurriculumMapping
+                    ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
+                    : s('planMyYear.multiSubjectUnits.previewSelectedDaysTimesTitle')}
+                </Text>
                 <Text style={[styles.mutedText, { marginBottom: 16 }]}>
                   {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
                 </Text>
-                {previewSlotLines.map((line, idx) => (
-                  <View key={`${line.date}-${line.subjectName}-${idx}`} style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}>
-                    <Text style={[styles.label, { marginBottom: 2 }]}>{line.dateLabel} · {line.timeLabel}</Text>
-                    <Text style={[styles.mutedText, { fontSize: 14 }]}>{line.subjectName}{line.childNames ? ` · ${line.childNames}` : ''}</Text>
+                {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => (
+                  <View
+                    key={`ls-classic-${line.date}-${line.subjectId}-${idx}`}
+                    style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                  >
+                    <Text style={[styles.label, { marginBottom: 2 }]}>
+                      {line.dateLabel}, {line.timeLabel}
+                    </Text>
+                    <Text style={[styles.mutedText, { fontSize: 14 }]}>
+                      {detailLine ?? (line.childNames ? `${line.subjectName} · ${line.childNames}` : line.subjectName)}
+                    </Text>
                   </View>
                 ))}
+                {lessonSchedulePreviewPlan.overflowCount > 0 ? (
+                  <Text style={[styles.mutedText, { fontSize: 12, marginTop: 4, color: TEXT_SECONDARY }]}>
+                    {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
+                      count: lessonSchedulePreviewPlan.overflowCount,
+                    })}
+                  </Text>
+                ) : null}
               </ScrollView>
             </View>
           ) : showEntryChoice ? (
@@ -5158,16 +5530,16 @@ export default function PlanYearModal({
                       <TouchableOpacity
                         onPress={() => {
                           if (!ensureUnitSubjectForUnitStructure()) return;
+                          suppressManualCurriculumHydrateRef.current = false;
                           setPlanSource('paste');
                           setDraftData(null);
                           setRawText('');
                           setUnitStructureStep('input');
-                          setManualDraft({
-                            title: null,
-                            units: [{ temp_id: `temp-${Date.now()}`, title: 'Unit 1', sequence_index: 1, description: null, lessons: [] }],
-                          });
+                          setUnitStructureData(null);
+                          setLastSavedUnitSubjectId(null);
+                          setManualDraft(null);
                           setExpandedUnitIndexManual(0);
-                          setExpandedUnits(new Set([0]));
+                          setExpandedUnits(new Set());
                           setPlanStep('unit_structure');
                         }}
                         activeOpacity={0.9}
@@ -5932,6 +6304,20 @@ export default function PlanYearModal({
                 {(effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
                   <View style={[styles.fieldSection, { marginTop: 16, marginBottom: 16 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
                       <View style={styles.scheduleBlocksInner}>
+                      {PLAN_MY_YEAR_LOGISTICS_FIRST && (
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            fontWeight: '700',
+                            letterSpacing: 0.6,
+                            color: TEXT_SECONDARY,
+                            textTransform: 'uppercase',
+                            marginBottom: 6,
+                          }}
+                        >
+                          {s('planMyYear.multiSubjectUnits.step1SetSchedule')}
+                        </Text>
+                      )}
                       <Text style={[styles.logisticsLabel, { marginBottom: 8 }]}>Cadence <Text style={{ color: ERROR }}>*</Text></Text>
                       {PLAN_MY_YEAR_MULTI_SUBJECT_CADENCE &&
                         showMultiSubjectCadenceHint(PLAN_MY_YEAR_LOGISTICS_FIRST, effectiveSubjectIds.length) && (
@@ -6079,51 +6465,6 @@ export default function PlanYearModal({
                             </View>
                           )}
                           </View>
-                          {PLAN_MY_YEAR_LOGISTICS_FIRST && block.subject_id && (
-                            <View
-                              style={{
-                                marginTop: 10,
-                                flexDirection: 'row',
-                                flexWrap: 'wrap',
-                                alignItems: 'center',
-                                alignSelf: 'flex-start',
-                                maxWidth: '100%',
-                              }}
-                            >
-                              <Text style={{ fontSize: 12, color: MUTED, marginRight: 6, marginBottom: 4 }}>
-                                {s('planMyYear.multiSubjectUnits.cadenceAddUnitsInlinePrompt')}
-                              </Text>
-                              {[
-                                { method: 'paste', label: s('planMyYear.sections.useASource.options.paste.label') },
-                                { method: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label') },
-                                { method: 'upload', label: s('planMyYear.sections.useASource.options.upload.label') },
-                                { method: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel') },
-                              ].map((opt, optIdx) => (
-                                <React.Fragment key={opt.method}>
-                                  {optIdx > 0 ? (
-                                    <Text style={{ fontSize: 12, color: MUTED, marginHorizontal: 6, marginBottom: 4 }}>
-                                      ·
-                                    </Text>
-                                  ) : null}
-                                  <TouchableOpacity
-                                    onPress={() => openCadenceUnitMethod(block.subject_id, opt.method)}
-                                    activeOpacity={0.7}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {
-                                      methodLabel: opt.label,
-                                      subjectName: blockSubjectLabel,
-                                    })}
-                                    style={{ marginBottom: 4, paddingVertical: 2 }}
-                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                  >
-                                    <Text style={{ fontSize: 13, color: ACCENT, textDecorationLine: 'underline' }}>
-                                      {opt.label}
-                                    </Text>
-                                  </TouchableOpacity>
-                                </React.Fragment>
-                              ))}
-                            </View>
-                          )}
                         </View>
                       );
                     })}
@@ -6200,16 +6541,128 @@ export default function PlanYearModal({
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && (
                   <View style={{ marginTop: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: BORDER_SUBTLE }}>
-                    <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>Preview selected days/times</Text>
-                    <Text style={[styles.mutedText, { marginBottom: 16 }]}>
-                      {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
+                    {cadenceYieldsInstructionalSlots && (
+                      <>
+                        <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>
+                          {lessonSchedulePreviewPlan.hasCurriculumMapping
+                            ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
+                            : s('planMyYear.multiSubjectUnits.previewSelectedDaysTimesTitle')}
+                        </Text>
+                        <Text style={[styles.mutedText, { marginBottom: 16 }]}>
+                          {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
+                        </Text>
+                        {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => (
+                          <View
+                            key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
+                            style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                          >
+                            <Text style={[styles.label, { marginBottom: 2 }]}>
+                              {line.dateLabel}, {line.timeLabel}
+                            </Text>
+                            <Text style={[styles.mutedText, { fontSize: 14 }]}>
+                              {detailLine ?? (line.childNames ? `${line.subjectName} · ${line.childNames}` : line.subjectName)}
+                            </Text>
+                          </View>
+                        ))}
+                        {lessonSchedulePreviewPlan.overflowCount > 0 ? (
+                          <Text style={[styles.mutedText, { fontSize: 12, marginTop: 4, color: TEXT_SECONDARY }]}>
+                            {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
+                              count: lessonSchedulePreviewPlan.overflowCount,
+                            })}
+                          </Text>
+                        ) : null}
+                      </>
+                    )}
+                    <Text
+                      style={[
+                        styles.sectionTitle,
+                        {
+                          marginBottom: 8,
+                          marginTop: cadenceYieldsInstructionalSlots ? 20 : 0,
+                          textTransform: 'none',
+                          fontSize: 16,
+                        },
+                      ]}
+                    >
+                      {s('planMyYear.multiSubjectUnits.step2AddContent')}
                     </Text>
-                    {previewSlotLines.map((line, idx) => (
-                      <View key={`inline-${line.date}-${line.subjectName}-${idx}`} style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}>
-                        <Text style={[styles.label, { marginBottom: 2 }]}>{line.dateLabel} · {line.timeLabel}</Text>
-                        <Text style={[styles.mutedText, { fontSize: 14 }]}>{line.subjectName}{line.childNames ? ` · ${line.childNames}` : ''}</Text>
+                    {!cadenceYieldsInstructionalSlots && (
+                      <Text style={[styles.mutedText, { marginBottom: 12, fontSize: 13, lineHeight: 19 }]}>
+                        {s('planMyYear.multiSubjectUnits.addContentSetCadenceHint')}
+                      </Text>
+                    )}
+                    {blocks
+                      .filter((b) => b.subject_id)
+                      .map((block) => {
+                        const subj = baseSubjectList.find((s) => s.id === block.subject_id);
+                        const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
+                        const linkColor = cadenceYieldsInstructionalSlots ? ACCENT : MUTED;
+                        return (
+                          <View
+                            key={`step2-add-${block.block_id}`}
+                            style={{
+                              marginBottom: 10,
+                              flexDirection: 'row',
+                              flexWrap: 'wrap',
+                              alignItems: 'center',
+                              alignSelf: 'flex-start',
+                              maxWidth: '100%',
+                            }}
+                          >
+                            {blocks.filter((b) => b.subject_id).length > 1 ? (
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginRight: 6, marginBottom: 4 }}>{blockSubjectLabel}</Text>
+                            ) : null}
+                            <Text style={{ fontSize: 12, color: MUTED, marginRight: 6, marginBottom: 4 }}>
+                              {s('planMyYear.multiSubjectUnits.cadenceAddUnitsInlinePrompt')}
+                            </Text>
+                            {[
+                              { method: 'paste', label: s('planMyYear.sections.useASource.options.paste.label') },
+                              { method: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label') },
+                              { method: 'upload', label: s('planMyYear.sections.useASource.options.upload.label') },
+                              { method: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel') },
+                            ].map((opt, optIdx) => (
+                              <React.Fragment key={`${block.block_id}-${opt.method}`}>
+                                {optIdx > 0 ? (
+                                  <Text style={{ fontSize: 12, color: MUTED, marginHorizontal: 6, marginBottom: 4 }}>
+                                    ·
+                                  </Text>
+                                ) : null}
+                                <TouchableOpacity
+                                  onPress={() => handleOpenCadenceUnitMethod(block.subject_id, opt.method)}
+                                  activeOpacity={0.7}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {
+                                    methodLabel: opt.label,
+                                    subjectName: blockSubjectLabel,
+                                  })}
+                                  style={{ marginBottom: 4, paddingVertical: 2 }}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text style={{ fontSize: 13, color: linkColor, textDecorationLine: 'underline' }}>{opt.label}</Text>
+                                </TouchableOpacity>
+                              </React.Fragment>
+                            ))}
+                          </View>
+                        );
+                      })}
+                    {addContentCadenceInlineHint && !cadenceYieldsInstructionalSlots && (
+                      <View
+                        style={{
+                          marginTop: 4,
+                          marginBottom: 12,
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                          backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(217, 119, 6, 0.25)',
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
+                          {s('planMyYear.multiSubjectUnits.addContentBeforeCadenceInline')}
+                        </Text>
                       </View>
-                    ))}
+                    )}
                     <TouchableOpacity
                       style={[
                         styles.primaryButton,
@@ -6239,8 +6692,29 @@ export default function PlanYearModal({
               transparent
               visible
               onRequestClose={() => {
-                setUnitFocusSubjectId(null);
-                setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                if (planSource === 'paste' && (draftData || manualDraft)) {
+                  setDraftData(null);
+                  setManualDraft(null);
+                  setUnitStructureStep('input');
+                  setRawText('');
+                  setExpandedUnits(new Set());
+                  setExpandedUnitIndexManual(0);
+                  setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                  setUnitFocusSubjectId(null);
+                  return;
+                }
+                if (draftData || manualDraft) {
+                  suppressManualCurriculumHydrateRef.current = true;
+                  setDraftData(null);
+                  setManualDraft(null);
+                  setUnitStructureStep('input');
+                  setRawText('');
+                  setExpandedUnits(new Set());
+                  setExpandedUnitIndexManual(0);
+                } else {
+                  setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                  setUnitFocusSubjectId(null);
+                }
               }}
             >
               <View
@@ -6255,75 +6729,79 @@ export default function PlanYearModal({
                   style={{
                     maxHeight: Platform.OS === 'web' ? '92%' : '100%',
                     width: '100%',
-                    maxWidth: 760,
+                    maxWidth: 875,
                     alignSelf: 'center',
                     backgroundColor: BG,
-                    borderRadius: 12,
+                    borderRadius: 22,
                     overflow: 'hidden',
                     flex: Platform.OS === 'web' ? undefined : 1,
+                    position: 'relative',
                     ...(Platform.OS === 'web' ? { boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' } : {}),
                   }}
                 >
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (planSource === 'paste' && (draftData || manualDraft)) {
+                        setDraftData(null);
+                        setManualDraft(null);
+                        setUnitStructureStep('input');
+                        setRawText('');
+                        setExpandedUnits(new Set());
+                        setExpandedUnitIndexManual(0);
+                        setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                        setUnitFocusSubjectId(null);
+                        return;
+                      }
+                      if (draftData || manualDraft) {
+                        suppressManualCurriculumHydrateRef.current = true;
+                        setDraftData(null);
+                        setManualDraft(null);
+                        setUnitStructureStep('input');
+                        setRawText('');
+                        setExpandedUnits(new Set());
+                        setExpandedUnitIndexManual(0);
+                      } else {
+                        setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                        setUnitFocusSubjectId(null);
+                      }
+                    }}
+                    style={{
+                      position: 'absolute',
+                      top: 14,
+                      right: 14,
+                      zIndex: 20,
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: 'rgba(255,255,255,0.96)',
+                      borderWidth: 1,
+                      borderColor: BORDER,
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={STRINGS.global.actions.close}
+                    hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={20} color={FG} />
+                  </TouchableOpacity>
+                  <View style={{ flex: 1, minHeight: 0, paddingTop: 28 }}>
+                    {renderPlanYearUnitStructureScroll(true)}
+                  </View>
                   <View
                     style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingHorizontal: 16,
-                      paddingVertical: 12,
-                      borderBottomWidth: 1,
-                      borderBottomColor: BORDER,
-                      backgroundColor: SURFACE_ELEVATED,
+                      paddingHorizontal: 24,
+                      paddingTop: 4,
+                      paddingBottom: Platform.OS === 'web' ? 28 : 24,
+                      backgroundColor: BG,
                     }}
                   >
-                    <Text style={[styles.sectionTitle, { marginBottom: 0, fontSize: 17 }]}>
-                      {s('planMyYear.multiSubjectUnits.unitInputModalTitle')}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setUnitFocusSubjectId(null);
-                        setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
-                      }}
-                      hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <X size={22} color={FG} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ flex: 1, minHeight: 0 }}>
-                    {renderPlanYearUnitStructureScroll()}
-                  </View>
-                  <View style={[styles.footer, { borderTopWidth: 1, borderTopColor: BORDER_SUBTLE, marginTop: 0 }]}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        if (planSource === 'paste' && (draftData || manualDraft)) {
-                          setDraftData(null);
-                          setManualDraft(null);
-                          setUnitStructureStep('input');
-                          setRawText('');
-                          setExpandedUnits(new Set());
-                          setExpandedUnitIndexManual(0);
-                          setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
-                          setUnitFocusSubjectId(null);
-                          return;
-                        }
-                        if (draftData || manualDraft) {
-                          setDraftData(null);
-                          setManualDraft(null);
-                          setUnitStructureStep('input');
-                          setRawText('');
-                          setExpandedUnits(new Set());
-                          setExpandedUnitIndexManual(0);
-                        } else {
-                          setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
-                          setUnitFocusSubjectId(null);
-                        }
-                      }}
-                      style={styles.cancelButton}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text style={styles.cancelText}>Back</Text>
-                    </TouchableOpacity>
+                    {unitStructureError ? (
+                      <View style={{ marginBottom: 12, padding: 10, backgroundColor: '#fee2e2', borderRadius: 8 }}>
+                        <Text style={{ fontSize: 13, color: ERROR }}>{unitStructureError}</Text>
+                      </View>
+                    ) : null}
                     {(draftData || manualDraft) ? (
                       <TouchableOpacity
                         onPress={async () => {
@@ -6336,16 +6814,19 @@ export default function PlanYearModal({
                           setUnitStructureStep('saving');
                           setUnitStructureError(null);
                           try {
-                            if (planSource === 'paste' && manualDraft) {
+                            if (manualDraft) {
                               const { data, error: err } = await commitManualDraft({
                                 subject_id: availableSubject?.id,
                                 family_id: familyId,
                                 subject_name: availableSubject?.name || '',
                                 draft: manualDraft,
                                 builder_mode: 'rich_units',
+                                replace_existing: true,
                               });
                               if (err || !data) {
-                                setUnitStructureError(err?.message || 'Failed to save curriculum');
+                                setUnitStructureError(
+                                  err?.message || err?.detail || (typeof err === 'string' ? err : null) || 'Failed to save curriculum',
+                                );
                                 setUnitStructureStep('draft');
                                 return;
                               }
@@ -6361,7 +6842,7 @@ export default function PlanYearModal({
                                 setUnitStructureStep('draft');
                                 return;
                               }
-                            } else if (planSource === 'generate') {
+                            } else if (planSource === 'generate' && draftData) {
                               const { data, error: err } = await commitGeneratedDraft({
                                 subject_id: availableSubject?.id,
                                 family_id: familyId,
@@ -6373,6 +6854,10 @@ export default function PlanYearModal({
                                 setUnitStructureStep('draft');
                                 return;
                               }
+                            } else {
+                              setUnitStructureError('Nothing to save. Add content or pick Manual / Upload / Generate.');
+                              setUnitStructureStep('draft');
+                              return;
                             }
                             if (unitPipelineSubjectId) {
                               setLastSavedUnitSubjectId(unitPipelineSubjectId);
@@ -6385,64 +6870,200 @@ export default function PlanYearModal({
                             if (unitPipelineSubjectId) {
                               setLoadingUnitStructure(true);
                               const subjectId = unitPipelineSubjectId;
-                              const { data: eventsData, error: eventsErr } = await supabase
-                                .from('events')
-                                .select('id, title, curriculum_unit_title, curriculum_lesson_sequence, curriculum_metadata, start_ts, is_reference_date')
-                                .eq('family_id', familyId)
-                                .eq('subject_id', subjectId)
-                                .eq('is_curriculum_related', true)
-                                .order('curriculum_unit_title', { ascending: true })
-                                .order('curriculum_lesson_sequence', { ascending: true });
-                              if (!eventsErr && eventsData) {
-                                const grouped = {};
-                                eventsData.forEach((evt) => {
-                                  const unitTitle = evt.curriculum_unit_title || 'Unnamed Unit';
-                                  if (!grouped[unitTitle]) {
-                                    grouped[unitTitle] = { title: unitTitle, lessons: [] };
-                                  }
-                                  const meta = evt.curriculum_metadata || {};
-                                  grouped[unitTitle].lessons.push({
-                                    id: evt.id,
-                                    title: evt.title,
-                                    type: meta.lesson_type || 'lesson',
-                                    date: evt.start_ts ? evt.start_ts.slice(0, 10) : null,
-                                    sequence: evt.curriculum_lesson_sequence || 0,
-                                  });
-                                });
-                                setUnitStructureData({ units: Object.values(grouped) });
+                              try {
+                                const { data: structureData, error: structureErr } =
+                                  await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
+                                if (!structureErr && Array.isArray(structureData?.units)) {
+                                  setUnitStructureData({ units: structureData.units });
+                                }
+                              } finally {
+                                setLoadingUnitStructure(false);
                               }
-                              setLoadingUnitStructure(false);
                             }
                           } catch (err) {
                             setUnitStructureError(err.message || 'Failed to save curriculum');
                             setUnitStructureStep('draft');
                           }
                         }}
-                        style={[styles.primaryButton, unitStructureStep === 'saving' && styles.primaryButtonDisabled]}
-                        disabled={unitStructureStep === 'saving'}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        style={{
+                          width: '100%',
+                          backgroundColor: UNIT_STRUCTURE_OVERLAY_PRIMARY_BG,
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          opacity:
+                            unitStructureStep === 'saving' ||
+                            (manualDraft && getManualCommitValidationError(manualDraft))
+                              ? 0.65
+                              : 1,
+                        }}
+                        disabled={
+                          unitStructureStep === 'saving' ||
+                          Boolean(manualDraft && getManualCommitValidationError(manualDraft))
+                        }
+                        {...(Platform.OS === 'web' && {
+                          cursor:
+                            unitStructureStep === 'saving' ||
+                            (manualDraft && getManualCommitValidationError(manualDraft))
+                              ? 'not-allowed'
+                              : 'pointer',
+                        })}
                       >
                         {unitStructureStep === 'saving' ? (
-                          <>
-                            <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
-                            <Text style={styles.primaryButtonText}>{s('global.status.saving')}</Text>
-                          </>
+                          <ActivityIndicator size="small" color="#ffffff" />
                         ) : (
-                          <Text style={styles.primaryButtonText}>{unitStructureSaveDraftLabel}</Text>
+                          <Text
+                            style={[styles.primaryButtonText, { textAlign: 'center', lineHeight: 22 }]}
+                            numberOfLines={2}
+                          >
+                            {manualDraft && hasPersistedManualCurriculum
+                              ? unitStructureSaveManualChangesLabel
+                              : unitStructureSaveDraftLabel}
+                          </Text>
                         )}
                       </TouchableOpacity>
+                    ) : hasPersistedManualCurriculum ? (
+                      <View
+                        style={{
+                          marginHorizontal: -24,
+                          borderTopWidth: 1,
+                          borderTopColor: BORDER,
+                          paddingHorizontal: 20,
+                          paddingTop: 12,
+                          paddingBottom: 4,
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          backgroundColor: BG,
+                        }}
+                      >
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (planSource === 'paste' && (draftData || manualDraft)) {
+                              setDraftData(null);
+                              setManualDraft(null);
+                              setUnitStructureStep('input');
+                              setRawText('');
+                              setExpandedUnits(new Set());
+                              setExpandedUnitIndexManual(0);
+                              setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                              setUnitFocusSubjectId(null);
+                              return;
+                            }
+                            if (draftData || manualDraft) {
+                              suppressManualCurriculumHydrateRef.current = true;
+                              setDraftData(null);
+                              setManualDraft(null);
+                              setUnitStructureStep('input');
+                              setRawText('');
+                              setExpandedUnits(new Set());
+                              setExpandedUnitIndexManual(0);
+                            } else {
+                              setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                              setUnitFocusSubjectId(null);
+                            }
+                          }}
+                          style={{ paddingVertical: 10, paddingHorizontal: 4 }}
+                          {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+                        >
+                          <Text style={{ fontSize: 15, fontWeight: '500', color: SUB }}>{s('global.actions.cancel')}</Text>
+                        </TouchableOpacity>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
+                              setUnitFocusSubjectId(null);
+                            }}
+                            style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+                          >
+                            <Text style={{ fontSize: 15, fontWeight: '600', color: SUB }}>
+                              {t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterBackToBuilder')}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              suppressManualCurriculumHydrateRef.current = false;
+                              const next = manualDraftFromUnitStructureData(unitStructureData);
+                              if (next) {
+                                setManualDraft(next);
+                                setExpandedUnitIndexManual(0);
+                                setExpandedUnits(new Set([0]));
+                              }
+                            }}
+                            style={{
+                              backgroundColor: EVENT_DETAILS_PRIMARY_BG,
+                              paddingVertical: 12,
+                              paddingHorizontal: 20,
+                              borderRadius: 10,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              ...(Platform.OS === 'web' && { boxShadow: '0 2px 6px rgba(133,196,242,0.3)' }),
+                            }}
+                            activeOpacity={0.9}
+                            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+                          >
+                            <Text style={EDIT_UNITS_PRIMARY_BUTTON_TEXT}>
+                              {t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterEditUnits')}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
                     ) : (
                       <TouchableOpacity
                         onPress={() => {
                           setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
                           setUnitFocusSubjectId(null);
                         }}
-                        style={styles.primaryButton}
+                        style={{
+                          width: '100%',
+                          backgroundColor: UNIT_STRUCTURE_OVERLAY_PRIMARY_BG,
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text style={styles.primaryButtonText}>{unitStructureSkipDraftLabel}</Text>
+                        <Text style={[styles.primaryButtonText, { textAlign: 'center' }]}>{unitStructureSkipDraftLabel}</Text>
                       </TouchableOpacity>
                     )}
+                    {!(hasPersistedManualCurriculum && !draftData && !manualDraft) ? (
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (planSource === 'paste' && (draftData || manualDraft)) {
+                            setDraftData(null);
+                            setManualDraft(null);
+                            setUnitStructureStep('input');
+                            setRawText('');
+                            setExpandedUnits(new Set());
+                            setExpandedUnitIndexManual(0);
+                            setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                            setUnitFocusSubjectId(null);
+                            return;
+                          }
+                          if (draftData || manualDraft) {
+                            suppressManualCurriculumHydrateRef.current = true;
+                            setDraftData(null);
+                            setManualDraft(null);
+                            setUnitStructureStep('input');
+                            setRawText('');
+                            setExpandedUnits(new Set());
+                            setExpandedUnitIndexManual(0);
+                          } else {
+                            setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                            setUnitFocusSubjectId(null);
+                          }
+                        }}
+                        style={{ alignSelf: 'center', marginTop: 14, paddingVertical: 8, paddingHorizontal: 12 }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={{ fontSize: 15, fontWeight: '500', color: TEXT_SECONDARY }}>{s('global.actions.cancel')}</Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 </View>
               </View>
@@ -7016,6 +7637,7 @@ export default function PlanYearModal({
                       return;
                     }
                     if (draftData || manualDraft) {
+                      suppressManualCurriculumHydrateRef.current = true;
                       setDraftData(null);
                       setManualDraft(null);
                       setUnitStructureStep('input');
@@ -7031,7 +7653,9 @@ export default function PlanYearModal({
                   onMouseLeave={Platform.OS === 'web' ? () => setFooterCancelHover(false) : undefined}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={[styles.cancelText, footerCancelHover && Platform.OS === 'web' && { textDecorationLine: 'underline' }]}>Back</Text>
+                  <Text style={[styles.cancelText, footerCancelHover && Platform.OS === 'web' && { textDecorationLine: 'underline' }]}>
+                    {s('global.actions.cancel')}
+                  </Text>
                 </TouchableOpacity>
                 {(draftData || manualDraft) ? (
                   <TouchableOpacity
@@ -7046,17 +7670,19 @@ export default function PlanYearModal({
                       setUnitStructureStep('saving');
                       setUnitStructureError(null);
                       try {
-                        if (planSource === 'paste' && manualDraft) {
-                          // Save manual draft
+                        if (manualDraft) {
                           const { data, error: err } = await commitManualDraft({
                             subject_id: availableSubject?.id,
                             family_id: familyId,
                             subject_name: availableSubject?.name || '',
                             draft: manualDraft,
                             builder_mode: 'rich_units',
+                            replace_existing: true,
                           });
                           if (err || !data) {
-                            setUnitStructureError(err?.message || 'Failed to save curriculum');
+                            setUnitStructureError(
+                              err?.message || err?.detail || (typeof err === 'string' ? err : null) || 'Failed to save curriculum',
+                            );
                             setUnitStructureStep('draft');
                             return;
                           }
@@ -7073,8 +7699,7 @@ export default function PlanYearModal({
                             setUnitStructureStep('draft');
                             return;
                           }
-                        } else if (planSource === 'generate') {
-                          // Save generated draft
+                        } else if (planSource === 'generate' && draftData) {
                           const { data, error: err } = await commitGeneratedDraft({
                             subject_id: availableSubject?.id,
                             family_id: familyId,
@@ -7086,6 +7711,10 @@ export default function PlanYearModal({
                             setUnitStructureStep('draft');
                             return;
                           }
+                        } else {
+                          setUnitStructureError('Nothing to save. Add content or pick Manual / Upload / Generate.');
+                          setUnitStructureStep('draft');
+                          return;
                         }
 
                         if (unitPipelineSubjectId) {
@@ -7101,42 +7730,38 @@ export default function PlanYearModal({
                         if (unitPipelineSubjectId) {
                           setLoadingUnitStructure(true);
                           const subjectId = unitPipelineSubjectId;
-                          const { data: eventsData, error: eventsErr } = await supabase
-                            .from('events')
-                            .select('id, title, curriculum_unit_title, curriculum_lesson_sequence, curriculum_metadata, start_ts, is_reference_date')
-                            .eq('family_id', familyId)
-                            .eq('subject_id', subjectId)
-                            .eq('is_curriculum_related', true)
-                            .order('curriculum_unit_title', { ascending: true })
-                            .order('curriculum_lesson_sequence', { ascending: true });
-                          if (!eventsErr && eventsData) {
-                            const grouped = {};
-                            eventsData.forEach((evt) => {
-                              const unitTitle = evt.curriculum_unit_title || 'Unnamed Unit';
-                              if (!grouped[unitTitle]) {
-                                grouped[unitTitle] = { title: unitTitle, lessons: [] };
-                              }
-                              const meta = evt.curriculum_metadata || {};
-                              grouped[unitTitle].lessons.push({
-                                id: evt.id,
-                                title: evt.title,
-                                type: meta.lesson_type || 'lesson',
-                                date: evt.start_ts ? evt.start_ts.slice(0, 10) : null,
-                                sequence: evt.curriculum_lesson_sequence || 0,
-                              });
-                            });
-                            setUnitStructureData({ units: Object.values(grouped) });
+                          try {
+                            const { data: structureData, error: structureErr } =
+                              await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
+                            if (!structureErr && Array.isArray(structureData?.units)) {
+                              setUnitStructureData({ units: structureData.units });
+                            }
+                          } finally {
+                            setLoadingUnitStructure(false);
                           }
-                          setLoadingUnitStructure(false);
                         }
                       } catch (err) {
                         setUnitStructureError(err.message || 'Failed to save curriculum');
                         setUnitStructureStep('draft');
                       }
                     }}
-                    style={[styles.primaryButton, unitStructureStep === 'saving' && styles.primaryButtonDisabled]}
-                    disabled={unitStructureStep === 'saving'}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    style={[
+                      styles.primaryButton,
+                      (unitStructureStep === 'saving' ||
+                        (manualDraft && getManualCommitValidationError(manualDraft))) &&
+                        styles.primaryButtonDisabled,
+                    ]}
+                    disabled={
+                      unitStructureStep === 'saving' ||
+                      Boolean(manualDraft && getManualCommitValidationError(manualDraft))
+                    }
+                    {...(Platform.OS === 'web' && {
+                      cursor:
+                        unitStructureStep === 'saving' ||
+                        (manualDraft && getManualCommitValidationError(manualDraft))
+                          ? 'not-allowed'
+                          : 'pointer',
+                    })}
                   >
                     {unitStructureStep === 'saving' ? (
                       <>
@@ -7145,10 +7770,52 @@ export default function PlanYearModal({
                       </>
                     ) : (
                       <Text style={styles.primaryButtonText}>
-                        {unitStructureSaveDraftLabel}
+                        {manualDraft && hasPersistedManualCurriculum
+                          ? unitStructureSaveManualChangesLabel
+                          : unitStructureSaveDraftLabel}
                       </Text>
                     )}
                   </TouchableOpacity>
+                ) : hasPersistedManualCurriculum ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
+                      }}
+                      style={{ paddingVertical: 10, paddingHorizontal: 8 }}
+                      {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+                    >
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: SUB }}>
+                        {t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterBackToBuilder')}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        suppressManualCurriculumHydrateRef.current = false;
+                        const next = manualDraftFromUnitStructureData(unitStructureData);
+                        if (next) {
+                          setManualDraft(next);
+                          setExpandedUnitIndexManual(0);
+                          setExpandedUnits(new Set([0]));
+                        }
+                      }}
+                      style={{
+                        backgroundColor: EVENT_DETAILS_PRIMARY_BG,
+                        paddingVertical: 12,
+                        paddingHorizontal: 20,
+                        borderRadius: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        ...(Platform.OS === 'web' && { boxShadow: '0 2px 6px rgba(133,196,242,0.3)' }),
+                      }}
+                      activeOpacity={0.9}
+                      {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+                    >
+                      <Text style={EDIT_UNITS_PRIMARY_BUTTON_TEXT}>
+                        {t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterEditUnits')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <TouchableOpacity
                     onPress={() => setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST))}
@@ -8134,6 +8801,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingTop: 24,
     paddingBottom: 48,
+  },
+  /** Logistics-first unit overlay: align summary row with top-right close control (FAB top 14, h 40). */
+  contentContainerUnitStructureOverlay: {
+    paddingTop: 18,
+    /** Less inset than main flow — footer sits directly under scroll; avoids a tall gap above primary CTA. */
+    paddingBottom: 32,
   },
   /** Match attendance YearHeatmapGrid “Year at a glance” title + help (TOKENS.sectionTitle / sectionHelp). */
   planYearGlanceHeaderWrap: {

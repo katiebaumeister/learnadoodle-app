@@ -2107,6 +2107,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.history.replaceState({}, '', '/');
       }
+    } else if (target === 'navigate_family_feedback') {
+      handleTabChange('settings', 'feedback');
+    } else if (target === 'navigate_family') {
+      handleTabChange('profile');
+    } else if (target === 'navigate_subjects') {
+      handleTabChange('subjects');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/intelligence');
+      }
+    } else if (target === 'navigate_materials') {
+      handleTabChange('materials');
     }
   }, [handleTabChange]);
 
@@ -3696,8 +3707,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} onNavigate={handleDoodleNavigate} />
       )}
 
-      {/* Ask AI — hidden on Home so “Add event” is the only floating primary there */}
-      {user && activeTab !== 'home' && (
+      {/* Ask AI — floating button (all main tabs including Home) */}
+      {user && (
         <TouchableOpacity
           onPress={() => setShowDoodleSearchModal(true)}
           style={styles.fabAskAI}

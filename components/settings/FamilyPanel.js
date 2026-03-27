@@ -92,6 +92,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const isTutorViewer = propUserRole === 'tutor' || profile?.role === 'tutor';
   /** “(you)” suffix only for parents/admins viewing Family — not children or tutors. */
   const showFamilyRowYouCue = !isChildMode && !isTutorViewer;
+
+  /** Sidebar subscription card: parents always; tutors never; children only if they self-signed up as student in onboarding (stored in app_preferences). */
+  const showFamilySubscriptionCard = useMemo(() => {
+    if (isTutorViewer) return false;
+    if (!isChildMode) return true;
+    return profile?.app_preferences?.student_self_signup === true;
+  }, [isTutorViewer, isChildMode, profile?.app_preferences?.student_self_signup]);
   
   // Profile editing state
   const [editingProfile, setEditingProfile] = useState(false);
@@ -3807,26 +3814,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </TouchableOpacity>
           </View>
 
-          {/* Subscription Card */}
-          <View style={styles.sidebarCard}>
-            <Text style={styles.sidebarCardTitle}>Subscription</Text>
-            <View style={styles.sidebarSubscriptionContent}>
-              <View style={styles.sidebarSubscriptionInfo}>
-                <TouchableOpacity 
-                  onPress={() => setShowComingSoonModal(true)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
-                </TouchableOpacity>
-                <View style={styles.sidebarSubscriptionStatusRow}>
-                  <View style={styles.sidebarSubscriptionStatusChip}>
-                    <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+          {/* Subscription Card — hidden for linked tutors/children; child self-signup from onboarding only */}
+          {showFamilySubscriptionCard ? (
+            <View style={styles.sidebarCard}>
+              <Text style={styles.sidebarCardTitle}>Subscription</Text>
+              <View style={styles.sidebarSubscriptionContent}>
+                <View style={styles.sidebarSubscriptionInfo}>
+                  <TouchableOpacity
+                    onPress={() => setShowComingSoonModal(true)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
+                  </TouchableOpacity>
+                  <View style={styles.sidebarSubscriptionStatusRow}>
+                    <View style={styles.sidebarSubscriptionStatusChip}>
+                      <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+                    </View>
+                    <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
                   </View>
-                  <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
                 </View>
               </View>
             </View>
-          </View>
+          ) : null}
 
           {/* Support Card */}
           <View style={styles.sidebarCard}>

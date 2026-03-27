@@ -300,6 +300,10 @@ class CommitManualDraftRequest(BaseModel):
     subject_name: str = Field(..., description="For curriculum_units.subject_tags")
     builder_mode: Literal["rich_units", "class_days"] = "rich_units"
     draft: ManualDraftPayload
+    replace_existing: bool = Field(
+        False,
+        description="If true, delete existing manual curriculum events for this subject before inserting (edit/save).",
+    )
 
 
 class CommitManualDraftResponse(BaseModel):
@@ -536,6 +540,122 @@ async def list_curriculum_lessons(
     except Exception as e:
         log_event("curriculum.list_lessons.error", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to list curriculum lessons")
+
+
+def _curriculum_event_display_date(ev: Dict[str, Any]) -> Optional[str]:
+    """Match PlanYearModal curriculumEventDisplayDate (hide placeholder timestamps)."""
+    meta = ev.get("curriculum_metadata") or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    if meta.get("unscheduled_placeholder"):
+        return None
+    ts = ev.get("start_ts")
+    if not ts:
+        return None
+    s = str(ts)
+    return s[:10] if len(s) >= 10 else None
+
+
+@router.get("/subject-events-structure")
+async def get_subject_curriculum_events_structure(
+    family_id: str = Query(...),
+    subject_id: str = Query(...),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Plan Year: events-backed curriculum for one subject (is_curriculum_related).
+    Admin client avoids RLS hiding rows with null child_id after service-role inserts.
+    """
+    try:
+        fid = get_family_id_for_user(user["id"])
+        if not fid or str(fid) != str(family_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        supabase = get_admin_client()
+        res = (
+            supabase.table("events")
+            .select(
+                "id, title, curriculum_unit_title, curriculum_lesson_sequence, curriculum_metadata, start_ts, is_reference_date"
+            )
+            .eq("family_id", family_id)
+            .eq("subject_id", subject_id)
+            .eq("is_curriculum_related", True)
+            .is_("deleted_at", "null")
+            .order("curriculum_unit_title", desc=False)
+            .order("curriculum_lesson_sequence", desc=False)
+            .execute()
+        )
+        rows = res.data or []
+        units_map: Dict[str, List[Dict[str, Any]]] = {}
+        for ev in rows:
+            utitle = (ev.get("curriculum_unit_title") or "").strip() or "Untitled Unit"
+            if utitle not in units_map:
+                units_map[utitle] = []
+            meta = ev.get("curriculum_metadata") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            lt_raw = meta.get("lesson_type") or "lesson"
+            lesson_type = str(lt_raw).strip().lower() if lt_raw is not None else "lesson"
+            me = meta.get("minutes_est")
+            if isinstance(me, (int, float)) and not isinstance(me, bool):
+                minutes = max(1, min(480, int(me)))
+            else:
+                try:
+                    minutes = max(1, min(480, int(me))) if me is not None else 60
+                except (TypeError, ValueError):
+                    minutes = 60
+            units_map[utitle].append(
+                {
+                    "id": str(ev["id"]),
+                    "title": ev.get("title") or "Lesson",
+                    "type": lesson_type,
+                    "sequence": int(ev.get("curriculum_lesson_sequence") or 0),
+                    "date": _curriculum_event_display_date(ev),
+                    "isReferenceOnly": bool(ev.get("is_reference_date")),
+                    "minutes": minutes,
+                }
+            )
+        units_out: List[Dict[str, Any]] = []
+        for title, lessons in units_map.items():
+            lessons.sort(key=lambda x: (x.get("sequence") or 0, x.get("title") or ""))
+            units_out.append({"title": title, "lessons": lessons})
+        units_out.sort(key=lambda u: u.get("title") or "")
+        return {"units": units_out}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.subject_events_structure.error", error=str(e), family_id=family_id)
+        raise HTTPException(status_code=500, detail="Failed to load curriculum events structure")
+
+
+@router.delete("/manual-curriculum-events")
+async def delete_manual_curriculum_events(
+    family_id: str = Query(...),
+    subject_id: str = Query(...),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """Remove Plan Year manual curriculum rows for one subject (source=manual, is_curriculum_related)."""
+    try:
+        fid = get_family_id_for_user(user["id"])
+        if not fid or str(fid) != str(family_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        supabase = get_admin_client()
+        supabase.table("events").delete().eq("family_id", family_id).eq("subject_id", subject_id).eq(
+            "is_curriculum_related", True
+        ).eq("source", "manual").is_("deleted_at", "null").execute()
+        log_event(
+            "curriculum.manual_curriculum_cleared",
+            family_id=family_id,
+            subject_id=subject_id,
+            user_id=user["id"],
+        )
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("curriculum.manual_curriculum_clear.error", error=str(e), family_id=family_id)
+        raise HTTPException(status_code=500, detail="Failed to clear manual curriculum")
 
 
 @router.post("/build")
@@ -1052,6 +1172,8 @@ MANUAL_MODALITY_MAP = {
     "lab": "hands_on",
     "placeholder": "practice",
 }
+# events.start_ts / end_ts are NOT NULL — use a far-future anchor + per-lesson offset for unscheduled shells.
+_MANUAL_CURRICULUM_PLACEHOLDER_ANCHOR = datetime(2099, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 
 def _validate_manual_draft(draft: ManualDraftPayload) -> None:
@@ -1086,11 +1208,15 @@ async def commit_manual_draft_endpoint(
         _validate_manual_draft(body.draft)
         subject_name = (body.subject_name or "").strip() or "Subject"
         supabase = get_admin_client()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        if body.replace_existing:
+            supabase.table("events").delete().eq("family_id", body.family_id).eq("subject_id", body.subject_id).eq(
+                "is_curriculum_related", True
+            ).eq("source", "manual").is_("deleted_at", "null").execute()
         event_ids: List[str] = []
         unit_count = 0
         lesson_count = 0
-        
+        placeholder_lesson_index = 0
+
         for ui, u in enumerate(body.draft.units):
             unit_title = (u.title or "").strip() or f"Unit {ui + 1}"
             unit_count += 1
@@ -1135,11 +1261,9 @@ async def commit_manual_draft_endpoint(
                     curriculum_metadata["is_placeholder"] = True
                 if cadence_meta:
                     curriculum_metadata["cadence_metadata"] = cadence_meta
-                
-                # Determine if this is a reference date (has reference_date but not scheduled)
-                is_ref_date = reference_date is not None
-                
-                # Parse reference_date to datetime if provided
+
+                # Parse syllabus reference_date to real timestamps when valid
+                has_real_reference_time = False
                 start_ts = None
                 end_ts = None
                 if reference_date:
@@ -1147,11 +1271,21 @@ async def commit_manual_draft_endpoint(
                         ref_dt = datetime.fromisoformat(reference_date.replace("Z", "+00:00")) if "T" in reference_date else datetime.combine(date.fromisoformat(reference_date), datetime.min.time()).replace(tzinfo=timezone.utc)
                         start_ts = ref_dt.isoformat()
                         end_ts = (ref_dt + timedelta(minutes=minutes)).isoformat()
+                        has_real_reference_time = True
                     except (ValueError, AttributeError):
-                        # Invalid date format, treat as reference-only
                         pass
-                
-                # Create event record
+
+                # DB requires non-null start_ts/end_ts; unscheduled curriculum uses placeholders + metadata flag
+                if not has_real_reference_time:
+                    ph = _MANUAL_CURRICULUM_PLACEHOLDER_ANCHOR + timedelta(seconds=placeholder_lesson_index)
+                    placeholder_lesson_index += 1
+                    start_ts = ph.isoformat()
+                    end_ts = (ph + timedelta(minutes=minutes)).isoformat()
+                    curriculum_metadata["unscheduled_placeholder"] = True
+
+                is_ref_date = has_real_reference_time
+
+                # Create event record (events.source is typically constrained to manual/ai/system/etc.; not "curriculum")
                 event_record = {
                     "family_id": body.family_id,
                     "subject_id": body.subject_id,
@@ -1160,8 +1294,11 @@ async def commit_manual_draft_endpoint(
                     "description": (le.objective or "").strip() or None,
                     "start_ts": start_ts,
                     "end_ts": end_ts,
-                    "status": "scheduled" if start_ts else "planned",
-                    "source": "curriculum",
+                    # DB events_status_check does not allow "planned"; use scheduled for all rows.
+                    # Unscheduled shells use placeholder start_ts + curriculum_metadata.unscheduled_placeholder.
+                    "status": "scheduled",
+                    "source": "manual",
+                    "event_type": "Lesson",
                     "modality": modality,
                     "is_curriculum_related": True,
                     "is_reference_date": is_ref_date,
@@ -1170,10 +1307,12 @@ async def commit_manual_draft_endpoint(
                     "curriculum_metadata": curriculum_metadata,
                     "counts_toward_plan": True,
                 }
-                
+
                 event_ins = supabase.table("events").insert(event_record).execute()
-                if event_ins.data and len(event_ins.data) > 0:
-                    event_ids.append(event_ins.data[0]["id"])
+                if not event_ins.data:
+                    err_detail = getattr(event_ins, "error", None) or getattr(event_ins, "error_message", None)
+                    raise RuntimeError(f"events insert returned no row: {err_detail!r}")
+                event_ids.append(event_ins.data[0]["id"])
         
         log_event(
             "curriculum.commit_manual.ok",

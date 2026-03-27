@@ -7246,6 +7246,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.history.replaceState({}, '', '/');
         }
+      } else if (response.fetch === 'navigate_family_feedback' && onTabChange) {
+        onTabChange('settings', 'feedback');
+      } else if (response.fetch === 'navigate_family' && onTabChange) {
+        onTabChange('profile');
+      } else if (response.fetch === 'navigate_subjects' && onTabChange) {
+        onTabChange('subjects');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/intelligence');
+        }
+      } else if (response.fetch === 'navigate_materials' && onTabChange) {
+        onTabChange('materials');
       }
 
       if (response.openTaskModal && Platform.OS === 'web' && typeof window !== 'undefined') {

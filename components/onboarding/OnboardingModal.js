@@ -14,6 +14,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import { saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
+import { persistStudentSelfSignupFromOnboarding } from '../../lib/services/accountPrefsClient';
 import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
 import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
@@ -593,6 +594,14 @@ export default function OnboardingModal({
     try {
       const res = await completeOnboarding({ family_id: fid });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to complete.');
+      if (onboardingWho === 'student') {
+        const { data: authData } = await supabase.auth.getUser();
+        const uid = authData?.user?.id;
+        if (uid) {
+          const { error: perr } = await persistStudentSelfSignupFromOnboarding(uid);
+          if (perr) console.warn('[OnboardingModal] student_self_signup preference', perr);
+        }
+      }
       // Dispatch first so WebLayout can close modal immediately (avoids depending on refetch, e.g. 429)
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('onboardingCompleted'));
