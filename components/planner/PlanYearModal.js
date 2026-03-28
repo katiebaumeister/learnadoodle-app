@@ -51,6 +51,7 @@ import {
   Pencil,
   RotateCcw,
   GripVertical,
+  AlertTriangle,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -85,6 +86,11 @@ import {
   getPreviewBackStep,
   showMultiSubjectCadenceHint,
 } from './planYearFlowConfig';
+import {
+  analyzePlanCadenceConflicts,
+  applyCadenceTimeShiftsUntilStable,
+  getNextCadenceTimeShift,
+} from '../../lib/utils/planCadenceConflicts';
 import {
   getAcademicYearsPickerCache,
   setAcademicYearsPickerCache,
@@ -1112,6 +1118,10 @@ export default function PlanYearModal({
   /** Set when curriculum is committed from unit structure (shown on Review). */
   const [lastSavedUnitSubjectId, setLastSavedUnitSubjectId] = useState(null);
   const [existingPlaceholdersCount, setExistingPlaceholdersCount] = useState(0);
+  /** Calendar events in plan date range — cadence overlap vs existing schedule. */
+  const [calendarEventsForConflicts, setCalendarEventsForConflicts] = useState([]);
+  const [loadingCalendarEventsForConflicts, setLoadingCalendarEventsForConflicts] = useState(false);
+  const [ignorePlanCadenceConflicts, setIgnorePlanCadenceConflicts] = useState(false);
   const [replacePlaceholders, setReplacePlaceholders] = useState(true);
   const [applyFromMode, setApplyFromMode] = useState('entire'); // 'entire' | 'today' | 'date'
   const [applyFromDate, setApplyFromDate] = useState(null); // YYYY-MM-DD when applyFromMode === 'date'
@@ -2183,6 +2193,66 @@ export default function PlanYearModal({
       }),
     [blocks, startDate, endDate, customHolidays, customBreaks, baseSubjectList, children, allFamilyChildIds],
   );
+
+  const cadenceConflictContext = useMemo(
+    () => ({
+      startDate,
+      endDate,
+      customHolidays,
+      customBreaks,
+      baseSubjectList,
+      children,
+      allFamilyChildIds,
+      existingEvents: calendarEventsForConflicts,
+      academicYearId,
+    }),
+    [
+      startDate,
+      endDate,
+      customHolidays,
+      customBreaks,
+      baseSubjectList,
+      children,
+      allFamilyChildIds,
+      calendarEventsForConflicts,
+      academicYearId,
+    ],
+  );
+
+  const cadenceConflictReport = useMemo(() => {
+    if (!isHomeschool || !startDate || !endDate || !blocks.length) return null;
+    return analyzePlanCadenceConflicts({
+      blocks,
+      startDate,
+      endDate,
+      customHolidays,
+      customBreaks,
+      baseSubjectList,
+      children,
+      allFamilyChildIds,
+      existingEvents: calendarEventsForConflicts,
+      academicYearId,
+    });
+  }, [
+    isHomeschool,
+    blocks,
+    startDate,
+    endDate,
+    customHolidays,
+    customBreaks,
+    baseSubjectList,
+    children,
+    allFamilyChildIds,
+    calendarEventsForConflicts,
+    academicYearId,
+  ]);
+
+  const hasCadenceConflicts =
+    !!cadenceConflictReport &&
+    (cadenceConflictReport.internal.length > 0 || cadenceConflictReport.external.length > 0);
+
+  const cadenceConflictDates = cadenceConflictReport?.conflictDates ?? new Set();
+  const cadenceConflictDayCount = cadenceConflictDates.size;
 
   /** True when date range + cadence produce at least one class occurrence (instructional slot preview). */
   const cadenceYieldsInstructionalSlots = previewSlotLines.length > 0;
@@ -4383,6 +4453,10 @@ export default function PlanYearModal({
       setError(t('planMyYear.applyFrom.dateRequired'));
       return;
     }
+    if (isHomeschool && hasCadenceConflicts && !ignorePlanCadenceConflicts) {
+      setError(t('planMyYear.cadenceConflicts.applyBlocked'));
+      return;
+    }
 
     if (existingPlaceholdersCount > 0) {
       await runApplyToCalendar(true);
@@ -4725,6 +4799,17 @@ export default function PlanYearModal({
     setBlocks(blocks.map((b, i) => (i === index ? { ...b, ...updates } : b)));
   };
 
+  const applyNextCadenceSuggestion = useCallback(() => {
+    const shift = getNextCadenceTimeShift(blocks, cadenceConflictContext);
+    if (!shift) return;
+    updateBlock(shift.blockIndex, { start_time: shift.start_time, end_time: shift.end_time });
+  }, [blocks, cadenceConflictContext]);
+
+  const applyAllCadenceSuggestions = useCallback(() => {
+    const next = applyCadenceTimeShiftsUntilStable(blocks, cadenceConflictContext, 40);
+    if (next !== blocks) setBlocks(next);
+  }, [blocks, cadenceConflictContext]);
+
   // Reset state when modal closes (so reopening doesn't show stale conflicts/plan data after e.g. removing placeholders)
   useEffect(() => {
     if (!visible) {
@@ -4753,8 +4838,48 @@ export default function PlanYearModal({
       setApplyFromMode('entire');
       setApplyFromDate(null);
       setShowApplyFromDatePicker(false);
+      setCalendarEventsForConflicts([]);
+      setIgnorePlanCadenceConflicts(false);
     }
   }, [visible]);
+
+  useEffect(() => {
+    setIgnorePlanCadenceConflicts(false);
+  }, [blocks, startDate, endDate]);
+
+  // Load calendar events in range so cadence can be checked against existing schedule.
+  useEffect(() => {
+    if (!visible || !familyId || !startDate || !endDate || !isHomeschool) {
+      setCalendarEventsForConflicts([]);
+      setLoadingCalendarEventsForConflicts(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCalendarEventsForConflicts(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select(
+          'id, title, start_ts, end_ts, child_id, child_ids, status, deleted_at, is_backlog, is_flexible, recurrence_rule, generated_by, academic_year_id',
+        )
+        .eq('family_id', familyId)
+        .gte('start_ts', `${startDate}T00:00:00`)
+        .lte('start_ts', `${endDate}T23:59:59`)
+        .is('deleted_at', null)
+        .limit(2500);
+      if (cancelled) return;
+      if (error) {
+        setCalendarEventsForConflicts([]);
+        setLoadingCalendarEventsForConflicts(false);
+        return;
+      }
+      setCalendarEventsForConflicts(data || []);
+      setLoadingCalendarEventsForConflicts(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, familyId, startDate, endDate, isHomeschool]);
 
   // Clear validation error when user fixes the missing field (e.g. selects end date)
   useEffect(() => {
@@ -5314,6 +5439,15 @@ export default function PlanYearModal({
                               <Text style={{ fontSize: 13, fontWeight: '600', color: FG, marginBottom: 10 }}>
                                 {s('planMyYear.multiSubjectUnits.parsedSchedulePreviewTitle')}
                               </Text>
+                              {cadenceConflictDayCount > 0 ? (
+                                <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 10, lineHeight: 18 }}>
+                                  {cadenceConflictDayCount === 1
+                                    ? t('planMyYear.cadenceConflicts.previewConflictSummaryOne')
+                                    : t('planMyYear.cadenceConflicts.previewConflictSummaryMany', {
+                                        count: cadenceConflictDayCount,
+                                      })}
+                                </Text>
+                              ) : null}
                               {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
                                 <ScrollView
                                   style={{ maxHeight: 240 }}
@@ -5333,21 +5467,29 @@ export default function PlanYearModal({
                                       const timePart = slotLine ? `${slotLine.dateLabel}, ${slotLine.timeLabel}` : null;
                                       if (les && timePart) {
                                         lines.push(
-                                          <Text
-                                            key={`parsed-slot-${i}`}
-                                            style={{ fontSize: 12, color: FG, lineHeight: 20, marginBottom: 8 }}
-                                          >
-                                            {`${lineNo}. ${timePart}  →  Lesson ${les.index}: ${les.title}`}
-                                          </Text>,
+                                          <View key={`parsed-slot-${i}`} style={{ marginBottom: 8 }}>
+                                            <Text style={{ fontSize: 12, color: FG, lineHeight: 20 }}>
+                                              {`${lineNo}. ${timePart}  →  Lesson ${les.index}: ${les.title}`}
+                                            </Text>
+                                            {slotLine && cadenceConflictDates.has(slotLine.date) ? (
+                                              <Text style={{ fontSize: 11, color: '#b45309', marginTop: 4, lineHeight: 16 }}>
+                                                {t('planMyYear.cadenceConflicts.previewRowFlag')}
+                                              </Text>
+                                            ) : null}
+                                          </View>,
                                         );
                                       } else if (!les && timePart) {
                                         lines.push(
-                                          <Text
-                                            key={`parsed-slot-${i}`}
-                                            style={{ fontSize: 12, color: MUTED, lineHeight: 20, marginBottom: 8 }}
-                                          >
-                                            {`${lineNo}. ${timePart}  →  ${availSlotLblParsed}`}
-                                          </Text>,
+                                          <View key={`parsed-slot-${i}`} style={{ marginBottom: 8 }}>
+                                            <Text style={{ fontSize: 12, color: MUTED, lineHeight: 20 }}>
+                                              {`${lineNo}. ${timePart}  →  ${availSlotLblParsed}`}
+                                            </Text>
+                                            {slotLine && cadenceConflictDates.has(slotLine.date) ? (
+                                              <Text style={{ fontSize: 11, color: '#b45309', marginTop: 4, lineHeight: 16 }}>
+                                                {t('planMyYear.cadenceConflicts.previewRowFlag')}
+                                              </Text>
+                                            ) : null}
+                                          </View>,
                                         );
                                       } else if (les && !timePart) {
                                         lines.push(
@@ -5431,6 +5573,15 @@ export default function PlanYearModal({
                                   ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
                                   : s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
                               </Text>
+                              {cadenceConflictDayCount > 0 ? (
+                                <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 10, lineHeight: 18 }}>
+                                  {cadenceConflictDayCount === 1
+                                    ? t('planMyYear.cadenceConflicts.previewConflictSummaryOne')
+                                    : t('planMyYear.cadenceConflicts.previewConflictSummaryMany', {
+                                        count: cadenceConflictDayCount,
+                                      })}
+                                </Text>
+                              ) : null}
                               {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
                                 <ScrollView
                                   style={{ maxHeight: 220 }}
@@ -5460,6 +5611,11 @@ export default function PlanYearModal({
                                           {detailLine ??
                                             `${line.subjectName}${line.childNames ? ` · ${line.childNames}` : ''}`}
                                         </Text>
+                                        {cadenceConflictDates.has(line.date) ? (
+                                          <Text style={{ fontSize: 11, color: '#b45309', marginTop: 6, lineHeight: 16 }}>
+                                            {t('planMyYear.cadenceConflicts.previewRowFlag')}
+                                          </Text>
+                                        ) : null}
                                       </View>
                                     ))}
                                   <LessonOverflowFollowUp
@@ -7257,6 +7413,13 @@ export default function PlanYearModal({
                 <Text style={[styles.mutedText, { marginBottom: 16 }]}>
                   {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
                 </Text>
+                {cadenceConflictDayCount > 0 ? (
+                  <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 12, lineHeight: 18 }}>
+                    {cadenceConflictDayCount === 1
+                      ? t('planMyYear.cadenceConflicts.previewConflictSummaryOne')
+                      : t('planMyYear.cadenceConflicts.previewConflictSummaryMany', { count: cadenceConflictDayCount })}
+                  </Text>
+                ) : null}
                 {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => (
                   <View
                     key={`ls-classic-${line.date}-${line.subjectId}-${idx}`}
@@ -7268,6 +7431,11 @@ export default function PlanYearModal({
                     <Text style={[styles.mutedText, { fontSize: 14 }]}>
                       {detailLine ?? (line.childNames ? `${line.subjectName} · ${line.childNames}` : line.subjectName)}
                     </Text>
+                    {cadenceConflictDates.has(line.date) ? (
+                      <Text style={{ fontSize: 11, color: '#b45309', marginTop: 6, lineHeight: 16 }}>
+                        {t('planMyYear.cadenceConflicts.previewRowFlag')}
+                      </Text>
+                    ) : null}
                   </View>
                 ))}
                 <LessonOverflowFollowUp
@@ -8463,6 +8631,110 @@ export default function PlanYearModal({
                             {s('planMyYear.multiSubjectUnits.cadenceRowHint')}
                           </Text>
                         )}
+                      {loadingCalendarEventsForConflicts ? (
+                        <Text style={[styles.mutedText, { marginBottom: 10, fontSize: 12 }]}>
+                          {t('planMyYear.cadenceConflicts.loadingCalendar')}
+                        </Text>
+                      ) : null}
+                      {hasCadenceConflicts ? (
+                        <View
+                          style={{
+                            marginBottom: 12,
+                            padding: 12,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: 'rgba(217, 119, 6, 0.35)',
+                            backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                            <AlertTriangle size={18} color="#b45309" style={{ marginRight: 8, marginTop: 2 }} />
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: FG, flex: 1 }}>
+                              {t('planMyYear.cadenceConflicts.title')}
+                            </Text>
+                          </View>
+                          {cadenceConflictReport.internal.slice(0, 3).map((c, i) => (
+                            <Text key={`int-${c.date}-${i}`} style={{ fontSize: 12, color: FG, marginBottom: 4, lineHeight: 18 }}>
+                              {t('planMyYear.cadenceConflicts.internalLine', {
+                                date: formatDateDisplay(c.date),
+                                subjectA: c.subjectA,
+                                subjectB: c.subjectB,
+                                time: c.timeLabel,
+                              })}
+                            </Text>
+                          ))}
+                          {cadenceConflictReport.external.slice(0, 3).map((c, i) => (
+                            <Text key={`ext-${c.date}-${c.eventId}-${i}`} style={{ fontSize: 12, color: FG, marginBottom: 4, lineHeight: 18 }}>
+                              {t('planMyYear.cadenceConflicts.externalLine', {
+                                date: formatDateDisplay(c.date),
+                                subjectName: c.subjectName,
+                                slotTime: c.slotTimeLabel,
+                                eventTitle: c.eventTitle,
+                              })}
+                            </Text>
+                          ))}
+                          {(() => {
+                            const ni = cadenceConflictReport.internal.length;
+                            const ne = cadenceConflictReport.external.length;
+                            const shown = Math.min(3, ni) + Math.min(3, ne);
+                            const more = ni + ne - shown;
+                            return more > 0 ? (
+                              <Text style={{ fontSize: 11, color: MUTED, marginBottom: 8 }}>
+                                {t('planMyYear.cadenceConflicts.more', { count: more })}
+                              </Text>
+                            ) : null;
+                          })()}
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                            <TouchableOpacity
+                              onPress={applyNextCadenceSuggestion}
+                              activeOpacity={0.85}
+                              style={{
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 8,
+                                backgroundColor: ACCENT,
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>
+                                {t('planMyYear.cadenceConflicts.trySuggestion')}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={applyAllCadenceSuggestions}
+                              activeOpacity={0.85}
+                              style={{
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: ACCENT,
+                                backgroundColor: 'transparent',
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: ACCENT }}>
+                                {t('planMyYear.cadenceConflicts.tryAllSuggestions')}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <Switch
+                              value={ignorePlanCadenceConflicts}
+                              onValueChange={setIgnorePlanCadenceConflicts}
+                              trackColor={{ false: BORDER, true: ACCENT }}
+                            />
+                            <View style={{ flex: 1, minWidth: 200 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>
+                                {t('planMyYear.cadenceConflicts.ignoreToggle')}
+                              </Text>
+                              <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
+                                {t('planMyYear.cadenceConflicts.ignoreHint')}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      ) : null}
                       {blocks.map((block, idx) => {
                       const subj = block.subject_id ? baseSubjectList.find((s) => s.id === block.subject_id) : null;
                       const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
@@ -8789,6 +9061,15 @@ export default function PlanYearModal({
                         <Text style={[styles.mutedText, { marginBottom: 16 }]}>
                           {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
                         </Text>
+                        {cadenceConflictDayCount > 0 ? (
+                          <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 12, lineHeight: 18 }}>
+                            {cadenceConflictDayCount === 1
+                              ? t('planMyYear.cadenceConflicts.previewConflictSummaryOne')
+                              : t('planMyYear.cadenceConflicts.previewConflictSummaryMany', {
+                                  count: cadenceConflictDayCount,
+                                })}
+                          </Text>
+                        ) : null}
                         {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => (
                           <View
                             key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
@@ -8800,6 +9081,11 @@ export default function PlanYearModal({
                             <Text style={[styles.mutedText, { fontSize: 14 }]}>
                               {detailLine ?? (line.childNames ? `${line.subjectName} · ${line.childNames}` : line.subjectName)}
                             </Text>
+                            {cadenceConflictDates.has(line.date) ? (
+                              <Text style={{ fontSize: 11, color: '#b45309', marginTop: 6, lineHeight: 16 }}>
+                                {t('planMyYear.cadenceConflicts.previewRowFlag')}
+                              </Text>
+                            ) : null}
                           </View>
                         ))}
                         <LessonOverflowFollowUp

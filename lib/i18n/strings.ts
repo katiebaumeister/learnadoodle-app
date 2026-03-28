@@ -215,6 +215,27 @@ export const STRINGS = {
       },
     },
 
+    cadenceConflicts: {
+      title: "Schedule conflicts",
+      loadingCalendar: "Checking your calendar for overlapping events…",
+      internalLine:
+        "{date}: {subjectA} and {subjectB} overlap ({time}) for the same student(s).",
+      externalLine:
+        "{date}: {subjectName} ({slotTime}) overlaps “{eventTitle}” on the calendar.",
+      more: "+ {count} more",
+      trySuggestion: "Apply suggested times",
+      ignoreToggle: "Ignore conflicts and allow overlapping slots",
+      ignoreHint:
+        "We will still generate instructional slots; you can fix overlaps on the calendar later.",
+      previewRowFlag: "Conflict with another class or calendar event",
+      previewConflictSummaryOne: "1 day in this preview has a schedule conflict.",
+      previewConflictSummaryMany:
+        "{count} days in this preview have schedule conflicts.",
+      tryAllSuggestions: "Apply all suggested times",
+      applyBlocked:
+        "Resolve schedule conflicts below, or enable “Ignore conflicts” before applying.",
+    },
+
     planningTargetProgress: {
       title: "Target vs this plan",
       subtitle:
