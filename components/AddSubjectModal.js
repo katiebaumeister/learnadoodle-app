@@ -14,8 +14,80 @@ import ConfirmDialog from './ConfirmDialog';
 import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
 import { deriveRoleFromTags, DOCUMENT_ROLES } from '../lib/docs/roles';
 import { designTokens } from '../theme/designTokens';
+import { invalidatePlanHealthCache } from '../lib/services/academicYearClient';
+import { dropAllPlanYearCachesForFamily } from '../lib/planEditListCache';
+import { prefetchPlanEditListForFamily } from '../lib/services/plannerPrefetch';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
+/** Remove instructional blocks and per-subject targets that reference a deleted subject (Plan Year / Edit plan). */
+async function removeSubjectFromFamilyPlanRows(supabaseClient, familyId, subjectId) {
+  const sid = String(subjectId);
+  const { data: rows, error } = await supabaseClient
+    .from('academic_year_plan')
+    .select('id, blocks, subject_targets')
+    .eq('family_id', familyId);
+  if (error) {
+    console.warn('[AddSubjectModal] academic_year_plan cleanup:', error.message || error);
+    return;
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const nowIso = new Date().toISOString();
+  for (const row of rows) {
+    const blocks = Array.isArray(row.blocks) ? row.blocks : [];
+    const newBlocks = blocks.filter((b) => String(b?.subject_id || '') !== sid);
+    const st =
+      row.subject_targets && typeof row.subject_targets === 'object' ? { ...row.subject_targets } : null;
+    const hadTarget = st && Object.prototype.hasOwnProperty.call(st, sid);
+    if (hadTarget) delete st[sid];
+    const blocksChanged = newBlocks.length !== blocks.length;
+    const targetsChanged = Boolean(hadTarget);
+    if (!blocksChanged && !targetsChanged) continue;
+    const patch = { updated_at: nowIso };
+    if (blocksChanged) patch.blocks = newBlocks;
+    if (targetsChanged) patch.subject_targets = st && Object.keys(st).length > 0 ? st : {};
+    const { error: upErr } = await supabaseClient.from('academic_year_plan').update(patch).eq('id', row.id);
+    if (upErr) {
+      console.warn('[AddSubjectModal] academic_year_plan row update:', upErr.message || upErr);
+    }
+  }
+}
+
+/** Best-effort: remove imported curriculum rows tagged with this subject name (matches subject_tags). */
+async function deleteCurriculumUnitsForSubjectTag(supabaseClient, familyId, subjectName) {
+  const name = (subjectName || '').trim();
+  if (!name) return;
+  try {
+    const { data: units, error } = await supabaseClient
+      .from('curriculum_units')
+      .select('id')
+      .eq('family_id', familyId)
+      .contains('subject_tags', [name]);
+    if (error || !units?.length) return;
+    const unitIds = units.map((u) => u.id).filter(Boolean);
+    if (unitIds.length === 0) return;
+    await supabaseClient.from('curriculum_lessons').delete().in('unit_id', unitIds);
+    try {
+      await supabaseClient.from('curriculum_pacing').delete().in('unit_id', unitIds);
+    } catch (_) {
+      /* optional */
+    }
+    await supabaseClient.from('curriculum_units').delete().in('id', unitIds);
+  } catch (e) {
+    console.warn('[AddSubjectModal] curriculum cleanup:', e?.message || e);
+  }
+}
+
+async function deleteSubjectAuxiliaryRows(supabaseClient, subjectId) {
+  const sid = String(subjectId);
+  for (const tbl of ['subject_track', 'subject_goals']) {
+    try {
+      await supabaseClient.from(tbl).delete().eq('subject_id', sid);
+    } catch (_) {
+      /* optional tables */
+    }
+  }
+}
 
 const PLANNING_CHIP_SELECTED = {
   border: designTokens.colors.primary,
@@ -468,7 +540,17 @@ export default function AddSubjectModal({
     if (!subject || !subject.id || !familyId) return;
     setDeletingSubject(true);
     try {
-      await supabase.from('events').delete().eq('subject_id', subject.id);
+      const deletedName = subject.name || subjectName || 'Subject';
+      await removeSubjectFromFamilyPlanRows(supabase, familyId, subject.id);
+      await deleteSubjectAuxiliaryRows(supabase, subject.id);
+      const deletedAt = new Date().toISOString();
+      const { error: evErr } = await supabase
+        .from('events')
+        .update({ deleted_at: deletedAt })
+        .eq('subject_id', subject.id)
+        .eq('family_id', familyId)
+        .is('deleted_at', null);
+      if (evErr) throw evErr;
       await supabase.from('materials').delete().eq('subject_id', subject.id);
       const { data: syllabi } = await supabase.from('syllabi').select('id').eq('subject_id', subject.id);
       if (syllabi && syllabi.length > 0) {
@@ -476,12 +558,29 @@ export default function AddSubjectModal({
         await supabase.from('syllabus_sections').delete().in('syllabus_id', syllabusIds);
         await supabase.from('syllabi').delete().eq('subject_id', subject.id);
       }
+      await deleteCurriculumUnitsForSubjectTag(supabase, familyId, deletedName);
       const { error } = await supabase.from('subject').delete().eq('id', subject.id).eq('family_id', familyId);
       if (error) throw error;
-      const name = subject.name || subjectName || 'Subject';
-      if (toast?.push) toast.push(`"${name}" has been deleted.`, 'success');
+      invalidatePlanHealthCache();
+      dropAllPlanYearCachesForFamily(familyId);
+      prefetchPlanEditListForFamily(familyId).catch(() => {});
+      if (toast?.push) toast.push(`"${deletedName}" has been deleted.`, 'success');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(
+          new CustomEvent('refreshCalendar', {
+            detail: { forceInvalidate: true, skipHomeRefresh: false },
+          }),
+        );
+        window.dispatchEvent(new CustomEvent('refreshEvents'));
+        if (familyId) {
+          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+        }
+        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
+        }, 200);
       }
       onClose();
     } catch (err) {

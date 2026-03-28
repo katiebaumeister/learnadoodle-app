@@ -30,6 +30,8 @@ import {
   secondaryAttentionContextLine,
   primaryCompletedStatusLabel,
   partitionComingUpEvents,
+  collectParentAssignedLinkedEventIds,
+  filterEventsForComingUpRail,
 } from './childHomeRailHelpers';
 import { colors } from '../../theme/colors';
 import { useToast } from '../Toast';
@@ -81,7 +83,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = () => loadDataRef.current();
     window.addEventListener('childAssignmentsNeedRefresh', handler);
-    return () => window.removeEventListener('childAssignmentsNeedRefresh', handler);
+    window.addEventListener('refreshCalendar', handler);
+    return () => {
+      window.removeEventListener('childAssignmentsNeedRefresh', handler);
+      window.removeEventListener('refreshCalendar', handler);
+    };
   }, []);
 
   const loadAssignments = async () => {
@@ -99,6 +105,17 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       const horizon = new Date(now);
       horizon.setDate(horizon.getDate() + 30);
       horizon.setHours(23, 59, 59, 999);
+
+      const { data: assignRows, error: assignErr } = await supabase
+        .from('assignments')
+        .select('linked_event_ids, assigned_by')
+        .eq('family_id', familyId)
+        .eq('child_id', childId)
+        .not('assigned_by', 'is', null);
+      if (assignErr && assignErr.code !== '42P01' && assignErr.code !== 'PGRST200') {
+        console.error('[ChildHomeRightRail] linked assignments:', assignErr);
+      }
+      const parentAssignedEventIds = collectParentAssignedLinkedEventIds(assignRows || []);
 
       let q = supabase
         .from('events')
@@ -129,9 +146,9 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       }
 
       const raw = data || [];
-      const schoolOnly = raw.filter((e) => isSchoolWorkEventType(e.event_type));
+      const filtered = filterEventsForComingUpRail(raw, parentAssignedEventIds);
 
-      const subjectIds = [...new Set(schoolOnly.map((e) => e.subject_id).filter(Boolean))];
+      const subjectIds = [...new Set(filtered.map((e) => e.subject_id).filter(Boolean))];
       let subjectsMap = {};
       if (subjectIds.length > 0) {
         const { data: subjectsData } = await supabase.from('subject').select('id, name').in('id', subjectIds);
@@ -144,7 +161,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       }
 
       setUpcomingEvents(
-        schoolOnly.map((event) => ({
+        filtered.map((event) => ({
           ...event,
           subject: event.subject_id ? subjectsMap[event.subject_id] : null,
         }))

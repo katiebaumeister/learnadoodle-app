@@ -17,6 +17,7 @@ import { isChildHelpAssignment } from '../child/childHomeRailHelpers';
 import AddSubjectModal from '../AddSubjectModal';
 import { STRINGS } from '../../lib/i18n/strings';
 import { getAcademicYear } from '../../lib/services/academicYearClient';
+import { dropPlanYearFullDataCacheEntry, dropPlanEditListTimesCacheEntry } from '../../lib/planEditListCache';
 import AskParentHelpModal from '../child/AskParentHelpModal';
 import StudentHelpHistoryModal from '../child/StudentHelpHistoryModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
@@ -24,6 +25,25 @@ import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
+import { defaultRequiresSubmissionHomeForEventType } from '../../lib/eventRequiresSubmissionHome';
+
+/** Display name for Add to plan? / plan banners from an academic_years row (never "Loading…"). */
+function formatAcademicYearPlanLabel(ay) {
+  if (!ay) return '';
+  if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
+  const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+  const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+  if (start && end) {
+    try {
+      const s = new Date(`${start}T12:00:00`);
+      const e = new Date(`${end}T12:00:00`);
+      return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    } catch (_) {
+      return `${start} – ${end}`;
+    }
+  }
+  return ay.id ? String(ay.id).slice(0, 8) : 'Plan';
+}
 
 const STATUS_BASE = ['scheduled', 'in_progress', 'done', 'skipped', 'canceled'];
 const STATUS_NORMALIZE = {
@@ -38,7 +58,21 @@ const normalizeStatus = (value) => {
   return STATUS_NORMALIZE[key] || key;
 };
 
-
+/** Shallow copy of events.curriculum_metadata for reads/writes (lesson_label vs optional DB column). */
+const parseCurriculumMetadata = (ev) => {
+  const raw = ev?.curriculum_metadata;
+  if (raw == null) return {};
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) return { ...raw };
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw);
+      return typeof p === 'object' && p !== null && !Array.isArray(p) ? { ...p } : {};
+    } catch (_) {
+      return {};
+    }
+  }
+  return {};
+};
 
 const getTimestamp = (event, keys = []) => {
   for (const key of keys) {
@@ -593,10 +627,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // Academic and location fields
   const [subjectId, setSubjectId] = useState(null);
   const [countsTowardPlan, setCountsTowardPlan] = useState(true);
+  const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
   const [academicYearId, setAcademicYearId] = useState(null);
   const [academicYears, setAcademicYears] = useState(() => (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0 ? preloadedAcademicYears : []));
   const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
   const [unit, setUnit] = useState('');
+  const [lesson, setLesson] = useState('');
   const [grade, setGrade] = useState('');
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
   const [location, setLocation] = useState('');
@@ -1019,22 +1055,36 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!event?.id) return;
     setLoadingStandards(true);
     try {
-      const { data, error } = await supabase
+      // Avoid standards(*) embed: PostgREST returns PGRST200 if no FK to standards in schema cache.
+      const { data: links, error } = await supabase
         .from('lesson_standards')
-        .select('standard_id, standards(*)')
+        .select('standard_id')
         .eq('lesson_id', event.id);
-      
+
       if (error) throw error;
-      
-      const standards = (data || []).map(item => ({
-        id: item.standard_id,
-        ...item.standards,
-      }));
-      setAttachedStandards(standards);
-      
+
+      const linkStandardIds = [...new Set((links || []).map((r) => r.standard_id).filter(Boolean))];
+      let loadedStandards = [];
+      if (linkStandardIds.length === 0) {
+        setAttachedStandards([]);
+      } else {
+        const { data: stdRows, error: stdErr } = await supabase
+          .from('standards')
+          .select('*')
+          .in('id', linkStandardIds);
+
+        if (stdErr) throw stdErr;
+
+        loadedStandards = (stdRows || []).map((row) => ({
+          id: row.id,
+          ...row,
+        }));
+        setAttachedStandards(loadedStandards);
+      }
+
       // Load mastery levels if event is done and has a student
       if (event.status === 'done' && event.child_id) {
-        const standardIds = standards.map(s => s.id);
+        const standardIds = loadedStandards.map((s) => s.id);
         if (standardIds.length > 0) {
           const { data: masteryData, error: masteryError } = await supabase
             .from('student_standard_mastery')
@@ -1372,9 +1422,27 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // Academic fields
     setSubjectId(event.subject_id || null);
     setCountsTowardPlan(event.counts_toward_plan !== false);
+    const loadedType = event.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event.event_type || 'Lesson');
+    setShowRequiresSubmissionHome(
+      typeof event.requires_submission_home === 'boolean'
+        ? event.requires_submission_home
+        : defaultRequiresSubmissionHomeForEventType(
+            loadedType === 'Scheduled Class Day' ? 'Lesson' : loadedType
+          )
+    );
     setAcademicYearId(event.academic_year_id || null);
     setInstructionalMinutesOverride(event.instructional_minutes != null ? String(event.instructional_minutes) : '');
-    setUnit(event.unit || '');
+    const unitStr = ((event.unit || event.curriculum_unit_title || '') + '').trim();
+    setUnit(unitStr);
+    const cm = parseCurriculumMetadata(event);
+    let lessonStr =
+      (event.lesson && String(event.lesson).trim()) ||
+      (cm.lesson_label && String(cm.lesson_label).trim()) ||
+      '';
+    if (!lessonStr && event.curriculum_lesson_id && event.title) {
+      lessonStr = String(event.title).trim();
+    }
+    setLesson(lessonStr);
     setGrade(event.grade || '');
     setPercentOfTotalGrade(event.percent_of_total_grade ? event.percent_of_total_grade.toString() : '');
     
@@ -1386,7 +1454,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     
     // Auto-expand sections if they have content
     const hasLogisticDetails = !!(event.location || event.mode || event.instructor);
-    const hasAcademicDetails = !!(event.subject_id || event.unit || event.grade || event.percent_of_total_grade);
+    const hasAcademicDetails = !!(
+      event.subject_id ||
+      (event.unit || event.curriculum_unit_title || '').trim() ||
+      (event.lesson || '').trim() ||
+      (cm.lesson_label && String(cm.lesson_label).trim()) ||
+      (event.curriculum_lesson_id && (event.title || '').trim()) ||
+      event.grade ||
+      event.percent_of_total_grade
+    );
     setShowLogisticDetails(hasLogisticDetails);
     setShowAcademicDetails(hasAcademicDetails);
     
@@ -1464,7 +1540,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         .select('id, start_date, end_date, year_name')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false })
-        .limit(10);
+        .limit(24);
       if (cancelled) return;
       if (error) {
         if (!(Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0)) {
@@ -1474,7 +1550,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
       // One chip per plan: dedupe by date range so we show only one row per plan (the most recent, with friendly name)
       const seen = new Set();
-      const list = (data || []).filter((ay) => {
+      let list = (data || []).filter((ay) => {
         const start = (ay.start_date && String(ay.start_date).slice(0, 10)) || '';
         const end = (ay.end_date && String(ay.end_date).slice(0, 10)) || '';
         const key = `${start}_${end}`;
@@ -1482,10 +1558,44 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         seen.add(key);
         return true;
       });
-      setAcademicYears(list);
+      // This event may reference a year row that was dropped by dedupe (same date range, different id) — always include it.
+      if (academicYearId && !list.some((a) => a.id === academicYearId)) {
+        const { data: linkedRow } = await supabase
+          .from('academic_years')
+          .select('id, start_date, end_date, year_name')
+          .eq('id', academicYearId)
+          .eq('family_id', familyId)
+          .maybeSingle();
+        if (!cancelled && linkedRow) {
+          list = [linkedRow, ...list];
+        }
+      }
+      if (!cancelled) setAcademicYears(list);
     })();
     return () => { cancelled = true; };
-  }, [familyId, preloadedAcademicYears]);
+  }, [familyId, preloadedAcademicYears, academicYearId]);
+
+  // When academic_year_id is set after the list query, or preloaded list omitted this id, merge the row in.
+  useEffect(() => {
+    if (!familyId || !academicYearId) return;
+    let cancelled = false;
+    (async () => {
+      const { data: one, error } = await supabase
+        .from('academic_years')
+        .select('id, start_date, end_date, year_name')
+        .eq('id', academicYearId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (cancelled || error || !one) return;
+      setAcademicYears((prev) => {
+        if (prev.some((a) => a.id === one.id)) return prev;
+        return [one, ...prev];
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, academicYearId]);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes (for editing)
   useEffect(() => {
@@ -2413,11 +2523,25 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         counts_toward_plan: countsTowardPlan,
         academic_year_id: countsTowardPlan ? (academicYearId || null) : null,
         instructional_status: countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE',
+        requires_submission_home: showRequiresSubmissionHome,
         instructional_minutes: instructionalMinutesOverride.trim() ? (() => {
           const n = parseInt(instructionalMinutesOverride.trim(), 10);
           return (n != null && !Number.isNaN(n)) ? n : null;
         })() : null,
       };
+
+      const cmSave = parseCurriculumMetadata(event);
+      const hadMetaKeys = Object.keys(cmSave).length > 0;
+      if (lesson && lesson.trim()) {
+        cmSave.lesson_label = lesson.trim();
+      } else {
+        delete cmSave.lesson_label;
+      }
+      if (Object.keys(cmSave).length > 0) {
+        updates.curriculum_metadata = cmSave;
+      } else if (hadMetaKeys) {
+        updates.curriculum_metadata = null;
+      }
       
       // Log assigneeIds state before save
       console.log('[EventDetails] AssigneeIds state before save:', {
@@ -2635,6 +2759,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             fallbackUpdate.counts_toward_plan = countsTowardPlan;
             fallbackUpdate.academic_year_id = countsTowardPlan ? academicYearId : null;
             fallbackUpdate.instructional_status = countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE';
+            fallbackUpdate.requires_submission_home = showRequiresSubmissionHome;
             const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
             fallbackUpdate.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
 
@@ -2856,8 +2981,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         ...patch,
       });
       onEventUpdated?.();
-      // Recompute plan health immediately so banner and compliance UI update
-      if (typeof window !== 'undefined' && event?.academic_year_id) {
+      // Plan-year events: drop stale plan caches, refresh calendar + home, plan health
+      const planYearId = patch?.academic_year_id ?? event?.academic_year_id;
+      if (typeof window !== 'undefined' && planYearId && familyId) {
+        const yid = String(planYearId);
+        dropPlanYearFullDataCacheEntry(familyId, yid);
+        dropPlanEditListTimesCacheEntry(familyId, yid);
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(
+          new CustomEvent('refreshCalendar', {
+            detail: { forceInvalidate: true, skipHomeRefresh: false },
+          }),
+        );
+      } else if (typeof window !== 'undefined' && event?.academic_year_id) {
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
       }
       // Refresh Subjects page so grades/materials and subject detail stay in sync
@@ -2968,7 +3104,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     }));
                   }
                 }}
-                style={styles.connectedPlanBanner}
+                style={[styles.connectedPlanBanner, { marginTop: 8 }]}
                 {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
               >
                 <Text style={styles.connectedPlanBannerText}>
@@ -2981,14 +3117,38 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
           {/* Plan event note - event linked to plan; attach/detach via Count as instructional time and plan attachment */}
           {event?.generated_by === 'plan_year' && event?.curriculum_lesson_id == null && editing && (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 8, marginBottom: 4, backgroundColor: '#f0f9ff', borderRadius: 8, marginTop: 8 }}>
+            <View style={{ paddingHorizontal: 14, paddingVertical: 6, marginBottom: 2, backgroundColor: '#f0f9ff', borderRadius: 8, marginTop: 4 }}>
               <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 18 }}>This event is linked to your plan. Use &quot;Count as instructional time&quot; and plan attachment to include or exclude it from the plan.</Text>
             </View>
           )}
 
+          {isParentView &&
+            !readOnly &&
+            event?.id &&
+            familyId &&
+            isSchoolWorkEventType(event?.event_type || eventType) &&
+            assigneeIds.length > 0 && (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setShowSendToStudentModal(true)}
+                style={[
+                  styles.connectedPlanBanner,
+                  !(countsTowardPlan && academicYearId) ? { marginTop: 0 } : null,
+                ]}
+                {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+                accessibilityRole="button"
+                accessibilityLabel="Send to student"
+              >
+                <Text style={styles.connectedPlanBannerText}>
+                  To send this to your student as a required submission,{' '}
+                  <Text style={styles.connectedPlanBannerLink}>click here.</Text>
+                </Text>
+              </TouchableOpacity>
+            )}
+
           {/* Event Type - at top */}
           {eventType && (
-            <SafeFieldRow style={[styles.fieldRow, { marginTop: 20, marginBottom: 8 }]}>
+            <SafeFieldRow style={[styles.fieldRow, { marginTop: 10, marginBottom: 8 }]}>
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Event Type</Text>
                 <View style={styles.dropdownContainer}>
@@ -3013,26 +3173,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {/* Count as instructional time - Add to plan? at top (when lesson and counted) */}
           {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && placement === 'calendar' && countsTowardPlan && academicYearId && (
             <View style={{ marginTop: 0, marginBottom: 4, paddingHorizontal: 2 }}>
-              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Add to plan? (option)</Text>
+              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
               <View style={[styles.chipOption, styles.chipOptionActive, { alignSelf: 'flex-start' }]}>
                 <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
-                  {(() => {
-                    const ay = academicYears.find((a) => a.id === academicYearId);
-                    if (!ay) return 'Loading…';
-                    if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
-                    const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                    const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                    if (start && end) {
-                      try {
-                        const s = new Date(start + 'T12:00:00');
-                        const e = new Date(end + 'T12:00:00');
-                        return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-                      } catch (_) {
-                        return `${start} – ${end}`;
-                      }
-                    }
-                    return ay.id?.slice(0, 8) || 'Plan';
-                  })()}
+                  {formatAcademicYearPlanLabel(academicYears.find((a) => a.id === academicYearId)) || 'This plan'}
                 </Text>
               </View>
             </View>
@@ -3192,8 +3336,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
 
           {/* Academic Details - keep as is */}
-          {(subjectId || unit || grade || event?.percent_of_total_grade) && (
-            <SafeView style={styles.academicSection}>
+          {(subjectId || unit || lesson || grade || event?.percent_of_total_grade) && (
+            <SafeView style={[styles.academicSection, styles.academicSectionTopSpacing]}>
               <View
                 style={{
                   paddingVertical: 4,
@@ -3202,23 +3346,31 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 <Text style={styles.sectionLabel}>Academic Details</Text>
               </View>
               {subjectId && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
+                <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
+                  <View style={[styles.field, styles.fieldStretch]}>
                     <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Subject</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>
                       {selectedSubject?.name || subjectName || 'Unknown'}
                     </Text>
                   </View>
                 </SafeFieldRow>
               )}
-              {unit && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Unit / Topic</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{unit}</Text>
+              {unit ? (
+                <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
+                  <View style={[styles.field, styles.fieldStretch]}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Unit</Text>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>{unit}</Text>
                   </View>
                 </SafeFieldRow>
-              )}
+              ) : null}
+              {lesson ? (
+                <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
+                  <View style={[styles.field, styles.fieldStretch]}>
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Lesson</Text>
+                    <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>{lesson}</Text>
+                  </View>
+                </SafeFieldRow>
+              ) : null}
               {grade && (
                 <SafeFieldRow style={styles.fieldRow}>
                   <View style={styles.field}>
@@ -3338,51 +3490,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </SafeFieldRow>
           )}
-
-          {isParentView &&
-            !readOnly &&
-            event?.id &&
-            familyId &&
-            isSchoolWorkEventType(event?.event_type || eventType) &&
-            assigneeIds.length > 0 && (
-              <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
-                <View
-                  style={{
-                    alignSelf: 'stretch',
-                    backgroundColor: 'rgba(79, 70, 229, 0.07)',
-                    borderRadius: 12,
-                    paddingVertical: 12,
-                    paddingHorizontal: 14,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      color: colors.textSecondary,
-                      lineHeight: 20,
-                      marginBottom: 12,
-                    }}
-                  >
-                    Add this to your student’s Submissions list (Needs your attention).
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setShowSendToStudentModal(true)}
-                    style={{
-                      alignSelf: 'flex-start',
-                      paddingVertical: 8,
-                      paddingHorizontal: 14,
-                      backgroundColor: '#4F46E5',
-                      borderRadius: 8,
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    accessibilityRole="button"
-                    accessibilityLabel="Send to student"
-                  >
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Send to student</Text>
-                  </TouchableOpacity>
-                </View>
-              </SafeFieldRow>
-            )}
 
           {/* Notes */}
           {notes && notes.trim() && (
@@ -3691,8 +3798,79 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           },
         })}
       >
+      {/* Plan link banner + Send to student — top of form, under plan context (matches read-only order) */}
+      {countsTowardPlan && academicYearId && (() => {
+        const ay = academicYears.find((a) => a.id === academicYearId);
+        const planLabel = !ay ? 'this plan' : (ay.year_name && String(ay.year_name).trim())
+          ? String(ay.year_name).trim()
+          : (() => {
+              const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
+              const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
+              if (start && end) {
+                try {
+                  const s = new Date(start + 'T12:00:00');
+                  const e = new Date(end + 'T12:00:00');
+                  return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                } catch (_) {
+                  return `${start} – ${end}`;
+                }
+              }
+              return 'this plan';
+            })();
+        return (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => {
+              if (typeof window !== 'undefined') {
+                onClose?.();
+                window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+                  detail: { from: 'event_details', academicYearId },
+                }));
+              }
+            }}
+            style={[styles.connectedPlanBanner, { marginTop: 8 }]}
+            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+          >
+            <Text style={styles.connectedPlanBannerText}>
+              This event is connected to {planLabel}. To make changes to the connected plan{' '}
+              <Text style={styles.connectedPlanBannerLink}>click here.</Text>
+            </Text>
+          </TouchableOpacity>
+        );
+      })()}
+
+      {event?.generated_by === 'plan_year' && event?.curriculum_lesson_id == null && (
+        <View style={{ paddingHorizontal: 14, paddingVertical: 6, marginBottom: 2, backgroundColor: '#f0f9ff', borderRadius: 8, marginTop: 4 }}>
+          <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 18 }}>This event is linked to your plan. Use &quot;Count as instructional time&quot; and plan attachment to include or exclude it from the plan.</Text>
+        </View>
+      )}
+
+      {isParentView &&
+        !readOnly &&
+        event?.id &&
+        familyId &&
+        isSchoolWorkEventType(eventType) &&
+        assigneeIds.length > 0 && (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setShowSendToStudentModal(true)}
+            style={[
+              styles.connectedPlanBanner,
+              !(countsTowardPlan && academicYearId) ? { marginTop: 0 } : null,
+            ]}
+            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+            accessibilityRole="button"
+            accessibilityLabel="Send to student"
+          >
+            <Text style={styles.connectedPlanBannerText}>
+              To send this to your student as a required submission,{' '}
+              <Text style={styles.connectedPlanBannerLink}>click here.</Text>
+            </Text>
+          </TouchableOpacity>
+        )}
+
       {/* Event Type - at top above Schedule on calendar/backlog */}
-      <SafeFieldRow style={[styles.fieldRow, { marginTop: 20, marginBottom: 12 }]}>
+      <SafeFieldRow style={[styles.fieldRow, { marginTop: 10, marginBottom: 12 }]}>
         <View style={styles.field}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={styles.fieldLabel}>Event Type</Text>
@@ -3707,6 +3885,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 key={type}
                 onPress={() => {
                   setEventType(type);
+                  setShowRequiresSubmissionHome(
+                    defaultRequiresSubmissionHomeForEventType(type === 'Scheduled Class Day' ? 'Lesson' : type)
+                  );
                   if (validationErrors.eventType) {
                     setValidationErrors({ ...validationErrors, eventType: null });
                   }
@@ -4391,7 +4572,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </SafeView>
 
         {/* Academic Details Section - after Schedule time */}
-        <SafeView style={styles.academicSection}>
+        <SafeView style={[styles.academicSection, styles.academicSectionTopSpacing]}>
           <TouchableOpacity
             onPress={() => setShowAcademicDetails(!showAcademicDetails)}
             style={{
@@ -4413,18 +4594,39 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
           {placement === 'calendar' && (
             <View style={{ marginTop: 0, marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
-                <Switch
-                  value={countsTowardPlan}
-                  onValueChange={setCountsTowardPlan}
-                  trackColor={{ false: BORDER, true: '#AECBFA' }}
-                  thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
-                />
+              <View
+                style={{
+                  flexDirection: 'row',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 12,
+                  marginBottom: 8,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                  <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }}>Count this as instructional time</Text>
+                  <Switch
+                    value={countsTowardPlan}
+                    onValueChange={setCountsTowardPlan}
+                    trackColor={{ false: BORDER, true: '#AECBFA' }}
+                    thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                  <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
+                    Show in student home as &apos;Requires Submission&apos;
+                  </Text>
+                  <Switch
+                    value={showRequiresSubmissionHome}
+                    onValueChange={setShowRequiresSubmissionHome}
+                    trackColor={{ false: BORDER, true: '#AECBFA' }}
+                    thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
+                  />
+                </View>
               </View>
               {countsTowardPlan && (
                 <>
-                  <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (option)</Text>
+                  <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -4484,14 +4686,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               )}
             </View>
           )}
-          {/* Subject, Unit/Topic, Grade - always visible */}
-          <SafeFieldRow style={styles.fieldRow}>
-            <View style={styles.field}>
+          {/* Subject (full width), then Unit / Lesson stacked like Lesson row */}
+          <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
+            <View style={[styles.field, styles.fieldStretch]}>
               <Text style={styles.fieldLabel}>Subject (optional)</Text>
-              <View style={styles.selectContainer}>
+              <View style={[styles.selectContainer, styles.selectContainerFull]}>
                 <TouchableOpacity
                   ref={subjectButtonRef}
-                  style={[styles.select, assigneeIds.length === 0 && { opacity: 0.6 }]}
+                  style={[styles.select, styles.selectFullWidth, assigneeIds.length === 0 && { opacity: 0.6 }]}
                   onPress={() => {
                     if (assigneeIds.length > 0) {
                       setShowSubjectDropdown(!showSubjectDropdown);
@@ -4653,14 +4855,30 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 )}
               </View>
             </View>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Unit / Topic (optional)</Text>
-            <TextInput
+          </SafeFieldRow>
+
+          <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
+            <View style={[styles.field, styles.fieldStretch]}>
+              <Text style={styles.fieldLabel}>Unit (optional)</Text>
+              <TextInput
                 placeholder="e.g. Algebra I – Linear Equations"
                 placeholderTextColor={MUTED}
                 value={unit}
                 onChangeText={setUnit}
-                style={styles.input}
+                style={[styles.input, styles.inputFullWidth]}
+              />
+            </View>
+          </SafeFieldRow>
+
+          <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
+            <View style={[styles.field, styles.fieldStretch]}>
+              <Text style={styles.fieldLabel}>Lesson (optional)</Text>
+              <TextInput
+                placeholder="e.g. Introduction to fractions"
+                placeholderTextColor={MUTED}
+                value={lesson}
+                onChangeText={setLesson}
+                style={[styles.input, styles.inputFullWidth]}
               />
             </View>
           </SafeFieldRow>
@@ -4919,51 +5137,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </View>
           </SafeFieldRow>
         )}
-
-        {isParentView &&
-          !readOnly &&
-          event?.id &&
-          familyId &&
-          isSchoolWorkEventType(eventType) &&
-          assigneeIds.length > 0 && (
-            <SafeFieldRow style={[styles.fieldRow, { marginTop: 12 }]}>
-              <View
-                style={{
-                  alignSelf: 'stretch',
-                  backgroundColor: 'rgba(79, 70, 229, 0.07)',
-                  borderRadius: 12,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 13,
-                    color: colors.textSecondary,
-                    lineHeight: 20,
-                    marginBottom: 12,
-                  }}
-                >
-                  Add this to your student’s Submissions list (Needs your attention).
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setShowSendToStudentModal(true)}
-                  style={{
-                    alignSelf: 'flex-start',
-                    paddingVertical: 8,
-                    paddingHorizontal: 14,
-                    backgroundColor: '#4F46E5',
-                    borderRadius: 8,
-                  }}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  accessibilityRole="button"
-                  accessibilityLabel="Send to student"
-                >
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Send to student</Text>
-                </TouchableOpacity>
-              </View>
-            </SafeFieldRow>
-          )}
 
       </ScrollView>
 
@@ -6770,7 +6943,7 @@ const styles = StyleSheet.create({
   // Styles matching TaskCreateModal.js
   header: {
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: BORDER,
   },
@@ -6935,9 +7108,33 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 10,
   },
+  /** Single full-width row (e.g. Lesson) — row + column stretch so inputs span the modal. */
+  fieldRowFull: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
   field: {
     flex: 1,
     alignItems: 'flex-start',
+  },
+  fieldStretch: {
+    flex: 1,
+    minWidth: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+    alignItems: 'stretch',
+  },
+  inputFullWidth: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  selectFullWidth: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  selectContainerFull: {
+    width: '100%',
+    alignSelf: 'stretch',
   },
   fieldLabelEdit: {
     color: SUB,
@@ -7087,11 +7284,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     marginHorizontal: 0,
-    marginTop: 8,
-    marginBottom: 12,
+    marginTop: 2,
+    marginBottom: 4,
   },
   connectedPlanBannerText: {
     fontSize: 13,
@@ -7212,6 +7409,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: '#f9fafb',
     overflow: 'visible',
+  },
+  /** Extra space above Academic Details after Schedule time / prior sections */
+  academicSectionTopSpacing: {
+    marginTop: 20,
   },
   selectContainer: {
     position: 'relative',

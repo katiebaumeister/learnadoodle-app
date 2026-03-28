@@ -50,6 +50,7 @@ import {
   MoreVertical,
   Pencil,
   RotateCcw,
+  GripVertical,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -71,7 +72,8 @@ import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlanne
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
-import { buildCurriculum, commitCurriculum, previewPacing, parsePlainText, generateCurriculumDraft, commitManualDraft, commitParsedDraft, commitGeneratedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraft, commitManualDraft, commitParsedDraft, commitGeneratedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { buildImportStreamPreviewDisplay } from '../../lib/parseStreamHumanPreview';
 import { getMaterials } from '../../lib/services/materialsClient';
 import {
   PLAN_MY_YEAR_LOGISTICS_FIRST,
@@ -90,6 +92,7 @@ import {
   mergePlanEditListTimesCache,
   mergePlanYearFullDataCache,
   getPlanYearFullDataFromCache,
+  dropPlanYearFullDataCacheEntry,
   dropPlanEditListTimesCacheEntry,
   formatTimeRange,
   getPlanBlocksTimesSummary,
@@ -137,6 +140,94 @@ function mapStoredLessonTypeToManualBuilder(t) {
   if (lt === 'assessment' || lt === 'quiz') return 'exam';
   if (LESSON_TYPES.includes(lt)) return lt;
   return 'lesson';
+}
+
+/** Empty manual builder: one unit, no lessons (skip “Start building” tap). */
+function createInitialManualDraft() {
+  return {
+    title: null,
+    units: [
+      {
+        temp_id: `temp-${Date.now()}`,
+        title: 'Unit 1',
+        sequence_index: 1,
+        description: null,
+        lessons: [],
+      },
+    ],
+  };
+}
+
+/** Keep `sequence_index` aligned after unit/lesson structural edits. */
+function resequenceDraftUnits(units) {
+  return (units || []).map((unit, ui) => ({
+    ...unit,
+    sequence_index: ui + 1,
+    lessons: (unit.lessons || []).map((le, li) => ({
+      ...le,
+      sequence_index: li + 1,
+    })),
+  }));
+}
+
+const DRAFT_LESSON_DRAG_MIME = 'application/json';
+
+function readDraftLessonDragPayload(e) {
+  if (Platform.OS !== 'web') return null;
+  const dt = e?.nativeEvent?.dataTransfer ?? e?.dataTransfer;
+  if (!dt?.getData) return null;
+  try {
+    const raw = dt.getData(DRAFT_LESSON_DRAG_MIME);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (typeof p.fromUnit !== 'number' || typeof p.fromLesson !== 'number') return null;
+    return p;
+  } catch (_) {
+    return null;
+  }
+}
+
+const PLAN_YEAR_IMPORT_DRAFT_STORAGE_PREFIX = 'ld:planYearImportDraft:v1:';
+
+function planYearImportDraftStorageKey(familyId, subjectId, planSource) {
+  const fid = familyId != null && String(familyId).trim() !== '' ? String(familyId) : 'none';
+  const sid = subjectId != null && String(subjectId).trim() !== '' ? String(subjectId) : 'none';
+  const src = planSource === 'upload' ? 'upload' : 'paste_plain';
+  return `${PLAN_YEAR_IMPORT_DRAFT_STORAGE_PREFIX}${fid}:${sid}:${src}`;
+}
+
+function readPlanYearImportDraft(familyId, subjectId, planSource) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(planYearImportDraftStorageKey(familyId, subjectId, planSource));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function writePlanYearImportDraft(familyId, subjectId, planSource, payload) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(planYearImportDraftStorageKey(familyId, subjectId, planSource), JSON.stringify(payload));
+  } catch (_) {}
+}
+
+function clearPlanYearImportDraft(familyId, subjectId, planSource) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(planYearImportDraftStorageKey(familyId, subjectId, planSource));
+  } catch (_) {}
+}
+
+/** Map events.source from GET subject-events-structure to cadence row method keys. */
+function mapEventSourceToCadenceMethod(source) {
+  if (!source || typeof source !== 'string') return null;
+  const v = source.trim().toLowerCase();
+  if (v === 'manual') return 'paste';
+  if (v === 'plain_text_parsed') return 'paste_plain';
+  return null;
 }
 
 function manualDraftFromUnitStructureData(struct) {
@@ -261,10 +352,16 @@ function flattenUnitLessonsForPreview(units) {
   const out = [];
   let n = 0;
   for (const u of units) {
+    const unitTitleRaw = u && u.title != null ? String(u.title).trim() : '';
+    const unitTitle = unitTitleRaw || '';
     for (const l of u.lessons || []) {
       n += 1;
       const raw = l && l.title != null ? String(l.title).trim() : '';
-      out.push({ title: raw || `Lesson ${n}`, index: n });
+      out.push({
+        title: raw || `Lesson ${n}`,
+        index: n,
+        unitTitle: unitTitle || null,
+      });
     }
   }
   return out;
@@ -293,18 +390,121 @@ function buildLessonSchedulePreviewRows(previewSlotLines, flatLessons, curriculu
     }
     if (q.length > 0) {
       const lesson = q.shift();
-      const childPart =
-        line.assigneeShortLabel && line.assigneeShortLabel !== 'Whole family'
-          ? `${line.assigneeShortLabel} `
-          : '';
-      const detailLine = `${line.subjectName} ${childPart}Lesson ${lesson.index} — ${lesson.title}`
-        .replace(/\s+/g, ' ')
-        .trim();
+      const unitPart = lesson.unitTitle && String(lesson.unitTitle).trim() ? String(lesson.unitTitle).trim() : '';
+      const detailLine = unitPart
+        ? `${line.subjectName} · ${unitPart} · ${lesson.title}`.replace(/\s+/g, ' ').trim()
+        : `${line.subjectName} · ${lesson.title}`.replace(/\s+/g, ' ').trim();
       return { line, detailLine };
     }
     return { line, detailLine: availableSlotLabel };
   });
   return { rows, overflowCount: q.length, hasCurriculumMapping: true, curriculumSubjectId: sid };
+}
+
+/** Slot time labels in lesson order (matches `flattenUnitLessonsForPreview` + `buildLessonSchedulePreviewRows`). */
+function buildFlatLessonSlotTimes(previewPlan, availableSlotLabel) {
+  if (!previewPlan?.hasCurriculumMapping) return [];
+  const sid = String(previewPlan.curriculumSubjectId || '');
+  const out = [];
+  for (const { line, detailLine } of previewPlan.rows) {
+    if (String(line.subjectId || '') !== sid) continue;
+    if (detailLine && detailLine !== availableSlotLabel) {
+      out.push({ dateLabel: line.dateLabel, timeLabel: line.timeLabel });
+    }
+  }
+  return out;
+}
+
+/**
+ * Apply instructional-slot dates from the plan preview onto lessons before commit so rows persist in-range
+ * (not 2099 placeholders) and show on the calendar / plan year summaries.
+ * Does not override a lesson that already has reference_date / cadence_metadata.reference_date.
+ */
+function mergeManualDraftWithInstructionalSlotDates(manualDraft, previewPlan, availableSlotLabel) {
+  if (!manualDraft?.units?.length) return manualDraft;
+  if (!previewPlan?.hasCurriculumMapping) return manualDraft;
+  const sid = String(previewPlan.curriculumSubjectId || '');
+  const slotDates = [];
+  for (const { line, detailLine } of previewPlan.rows) {
+    if (String(line.subjectId || '') !== sid) continue;
+    if (detailLine && detailLine !== availableSlotLabel && line.date) {
+      slotDates.push(line.date);
+    }
+  }
+  if (slotDates.length === 0) return manualDraft;
+  let idx = 0;
+  const units = manualDraft.units.map((u) => ({
+    ...u,
+    lessons: (u.lessons || []).map((le) => {
+      const ymd = slotDates[idx];
+      idx += 1;
+      if (!ymd) return le;
+      const refTop = le.reference_date != null ? String(le.reference_date).trim() : '';
+      const refCad =
+        le.cadence_metadata && typeof le.cadence_metadata === 'object' && le.cadence_metadata.reference_date != null
+          ? String(le.cadence_metadata.reference_date).trim()
+          : '';
+      const hasUserDate =
+        /^\d{4}-\d{2}-\d{2}$/.test(refTop) ||
+        /^\d{4}-\d{2}-\d{2}T/.test(refTop) ||
+        /^\d{4}-\d{2}-\d{2}$/.test(refCad) ||
+        /^\d{4}-\d{2}-\d{2}T/.test(refCad);
+      if (hasUserDate) return le;
+      const prevCad =
+        le.cadence_metadata && typeof le.cadence_metadata === 'object' && !Array.isArray(le.cadence_metadata)
+          ? { ...le.cadence_metadata }
+          : {};
+      return {
+        ...le,
+        reference_date: ymd,
+        cadence_metadata: { ...prevCad, reference_date: ymd },
+      };
+    }),
+  }));
+  return { ...manualDraft, units };
+}
+
+/**
+ * Heuristic structure label after paste (client-only).
+ * @returns {'lessonBased'|'unitBased'|'weekBased'|'dateBased'|'outline'|null}
+ */
+function detectPastedStructureHintKey(text) {
+  if (!text || !String(text).trim()) return null;
+  const t = String(text);
+  if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(t) || (/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}/i.test(t) && /\d{4}/.test(t))) {
+    return 'dateBased';
+  }
+  if (/^week\s*\d+/im.test(t)) return 'weekBased';
+  if (/^unit\s*\d+/im.test(t)) return 'unitBased';
+  if (/^lesson\s*\d+/im.test(t) || /^\d+[.)]\s+\S/m.test(t)) return 'lessonBased';
+  return 'outline';
+}
+
+function importParseHintLabelFromKey(key) {
+  if (!key) return null;
+  const map = {
+    lessonBased: 'planMyYear.multiSubjectUnits.importParseHintLessonBased',
+    unitBased: 'planMyYear.multiSubjectUnits.importParseHintUnitBased',
+    weekBased: 'planMyYear.multiSubjectUnits.importParseHintWeekBased',
+    dateBased: 'planMyYear.multiSubjectUnits.importParseHintDateBased',
+    outline: 'planMyYear.multiSubjectUnits.importParseHintOutline',
+  };
+  const path = map[key];
+  return path ? s(path) : null;
+}
+
+function estimateImportReviewFlagCount(rawText) {
+  const lines = String(rawText || '')
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length < 4) return 0;
+  return lines.filter((line) => {
+    if (line.length >= 14) return false;
+    if (/^(unit|lesson|week)\s*\d+/i.test(line)) return false;
+    if (/^\d+[.)]\s*\S/.test(line)) return false;
+    return true;
+  }).length;
 }
 
 /** Parse year_name into card lines; if " · " separated use as scope / subjects / date, else title + date. */
@@ -317,6 +517,28 @@ function parsePlanCardLines(ay) {
   if (parts.length >= 3) return { line1: parts[0], line2: parts[1], line3: parts[2] };
   if (parts.length === 2) return { line1: parts[0], line2: null, line3: parts[1] };
   return { line1: name, line2: null, line3: dateRange };
+}
+
+/**
+ * Hide Edit plan rows whose subject label no longer matches any family subject (e.g. subject removed on Subjects page).
+ * Matches buildPlanYearName: segment is parts[1] when year_name uses " · "; multi-subject labels use commas and optional "+N".
+ */
+function planRowSubjectsStillExist(ay, subjectList) {
+  const subs = Array.isArray(subjectList) ? subjectList : [];
+  const active = new Set(
+    subs.map((s) => (s && s.name ? String(s.name).trim().toLowerCase() : '')).filter(Boolean),
+  );
+  const name = ay?.year_name || '';
+  const parts = name.split(' · ').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 3) return true;
+  const subjectPart = parts[1];
+  if (!subjectPart) return true;
+  const segments = subjectPart
+    .split(',')
+    .map((s) => s.replace(/\s*\+\d+\s*$/, '').trim())
+    .filter(Boolean);
+  if (segments.length === 0) return true;
+  return segments.every((seg) => active.has(seg.toLowerCase()));
 }
 
 /** Dedupe and stable-sort children for Edit plan / subject-style dot clusters */
@@ -590,6 +812,210 @@ function getChildIdsForSubject(subject, children) {
   return matched.length > 0 ? matched : [...familyIds];
 }
 
+/** Same rules as logistics `previewSlotLines` — used to project instructional slots when extending the plan end date. */
+function buildPreviewSlotLinesForPlanYear({
+  startDate,
+  endDate,
+  blocks,
+  customHolidays,
+  customBreaks,
+  baseSubjectList,
+  children,
+  allFamilyChildIds,
+}) {
+  if (!startDate || !endDate || blocks.length === 0) return [];
+  const exclusionRanges = [
+    ...(customHolidays || []).map((h) => [h.date, h.date]),
+    ...(customBreaks || []).map((b) => [b.start || b.startDate, b.end || b.endDate].filter(Boolean)).filter((r) => r.length === 2),
+  ];
+  const lines = [];
+  const childList = children || [];
+  blocks.forEach((block) => {
+    const subj = (baseSubjectList || []).find((s) => String(s.id) === String(block.subject_id));
+    const subjectName = subj?.name || 'Subject';
+    const timeLabel = block.all_day ? 'All day' : formatTimeRange(block.start_time, block.end_time);
+    const blockChildIds =
+      Array.isArray(block.child_ids) && block.child_ids.length > 0
+        ? block.child_ids
+        : block.subject_id
+          ? getChildIdsForSubject(subj, childList)
+          : allFamilyChildIds;
+    const childNames = blockChildIds.length > 0
+      ? blockChildIds.map((cid) => childList.find((c) => String(c.id) === String(cid))?.first_name || childList.find((c) => String(c.id) === String(cid))?.name || 'Child').join(', ')
+      : 'Whole family';
+    const assigneeShortLabel =
+      blockChildIds.length === 1
+        ? (
+            String(
+              childList.find((c) => String(c.id) === String(blockChildIds[0]))?.first_name ||
+                childList.find((c) => String(c.id) === String(blockChildIds[0]))?.name ||
+                'Child',
+            ).trim() || 'Child'
+          )
+        : childNames;
+    const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
+    dates.forEach((ymd) => {
+      lines.push({
+        date: ymd,
+        dateLabel: formatDateDisplay(ymd),
+        timeLabel,
+        subjectName,
+        subjectId: block.subject_id ?? null,
+        childNames,
+        assigneeShortLabel,
+      });
+    });
+  });
+  lines.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
+  return lines;
+}
+
+function countPreviewSlotsForSubject(previewLines, curriculumSubjectId) {
+  if (!curriculumSubjectId) return 0;
+  const sid = String(curriculumSubjectId);
+  return previewLines.filter((l) => String(l.subjectId || '') === sid).length;
+}
+
+/** Minimum end date (YYYY-MM-DD) so this subject gains `overflowCount` more instructional slots vs current `endDate`. */
+function findExtendedEndDateForLessonOverflow({
+  startDate,
+  endDate,
+  overflowCount,
+  curriculumSubjectId,
+  blocks,
+  customHolidays,
+  customBreaks,
+  baseSubjectList,
+  children,
+  allFamilyChildIds,
+}) {
+  if (
+    !overflowCount ||
+    overflowCount <= 0 ||
+    !curriculumSubjectId ||
+    !startDate ||
+    !endDate ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(endDate)
+  ) {
+    return null;
+  }
+  const linesThroughCurrent = buildPreviewSlotLinesForPlanYear({
+    startDate,
+    endDate,
+    blocks,
+    customHolidays,
+    customBreaks,
+    baseSubjectList,
+    children,
+    allFamilyChildIds,
+  });
+  const currentSlots = countPreviewSlotsForSubject(linesThroughCurrent, curriculumSubjectId);
+  const targetSlots = currentSlots + overflowCount;
+  let probe = dateStringToDate(endDate);
+  const maxDays = 800;
+  for (let i = 0; i < maxDays; i++) {
+    const ymd = toLocalYYYYMMDD(probe);
+    const lines = buildPreviewSlotLinesForPlanYear({
+      startDate,
+      endDate: ymd,
+      blocks,
+      customHolidays,
+      customBreaks,
+      baseSubjectList,
+      children,
+      allFamilyChildIds,
+    });
+    if (countPreviewSlotsForSubject(lines, curriculumSubjectId) >= targetSlots) {
+      return ymd;
+    }
+    probe.setDate(probe.getDate() + 1);
+  }
+  return null;
+}
+
+function normalizeCadenceTime(t) {
+  if (!t || typeof t !== 'string') return '09:00';
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return String(t);
+  const h = Math.min(23, parseInt(m[1], 10));
+  const min = Math.min(59, parseInt(m[2], 10));
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** Stable snapshot of weekday/time cadence per block (for dirty detection). */
+function serializeCadenceSnapshot(blockList) {
+  if (!Array.isArray(blockList) || blockList.length === 0) return '';
+  const rows = blockList.map((b) => ({
+    block_id: String(b.block_id ?? ''),
+    weekdays: [...(b.weekdays || [])].sort((a, c) => a - c),
+    start_time: normalizeCadenceTime(b.start_time || '09:00'),
+    end_time: normalizeCadenceTime(b.end_time || '10:00'),
+    all_day: !!b.all_day,
+  }));
+  rows.sort((a, b) => a.block_id.localeCompare(b.block_id));
+  return JSON.stringify(rows);
+}
+
+function parseTimeToMinutesForBlock(s) {
+  if (!s || typeof s !== 'string') return 0;
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return 0;
+  const h = Math.min(23, parseInt(m[1], 10));
+  const min = Math.min(59, parseInt(m[2], 10));
+  return h * 60 + min;
+}
+
+/** Minutes per class session for a block (aligns with backend blocks_calculator). */
+function blockMinutesForPlanYearBlock(block) {
+  if (!block) return 0;
+  if (block.all_day) return 6 * 60;
+  const startMin = parseTimeToMinutesForBlock(block.start_time || '09:00');
+  let endMin = parseTimeToMinutesForBlock(block.end_time || '10:00');
+  if (endMin <= startMin) endMin += 24 * 60;
+  return Math.max(0, endMin - startMin);
+}
+
+function LessonOverflowFollowUp({
+  textStyle,
+  overflowCount,
+  extendEndYmd,
+  curriculumSubjectId,
+  hasCurriculumMapping,
+  onApplyExtend,
+  t,
+}) {
+  if (!overflowCount || overflowCount <= 0) return null;
+  const showExtend = Boolean(hasCurriculumMapping && extendEndYmd && curriculumSubjectId);
+  return (
+    <View style={{ marginTop: 4 }}>
+      <Text style={textStyle}>
+        {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', { count: overflowCount })}
+      </Text>
+      {showExtend ? (
+        <>
+          <Text style={[textStyle, { marginTop: 6, lineHeight: 16 }]}>
+            {t('planMyYear.multiSubjectUnits.lessonsOverflowExtendSuggestion', {
+              extraDays: overflowCount,
+              endDate: formatDateDisplay(extendEndYmd),
+            })}
+          </Text>
+          <TouchableOpacity
+            onPress={() => onApplyExtend(extendEndYmd)}
+            style={{ marginTop: 8, alignSelf: 'flex-start' }}
+            activeOpacity={0.7}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+              {t('planMyYear.multiSubjectUnits.lessonsOverflowExtendCta', { endDate: formatDateDisplay(extendEndYmd) })}
+            </Text>
+          </TouchableOpacity>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 export default function PlanYearModal({
   visible,
   renderInline = false,
@@ -702,6 +1128,8 @@ export default function PlanYearModal({
 
   // Blocks (Phase 1: schedule potential from blocks)
   const [blocks, setBlocks] = useState([]);
+  /** Serialized cadence (weekdays + times) last saved / loaded — inline "Apply to plan" only when this differs. */
+  const [cadenceBaselineKey, setCadenceBaselineKey] = useState(null);
   const [schedulePotential, setSchedulePotential] = useState(null);
   const [computingPotential, setComputingPotential] = useState(false);
   const schedulePotentialTimeoutRef = useRef(null);
@@ -753,6 +1181,8 @@ export default function PlanYearModal({
   const [pacingPreview, setPacingPreview] = useState(null); // Phase 2: lesson-to-slot mapping before commit
   const [pacingPreviewLoading, setPacingPreviewLoading] = useState(false);
   const [pacingPreviewError, setPacingPreviewError] = useState(null);
+  /** No-op state: draft pacing API preview was removed (client-side preview only). Keeping this setter defined prevents ReferenceError when React Fast Refresh leaves a stale effect/cleanup that still calls `setDraftUnitPacingPreview`. */
+  const [, setDraftUnitPacingPreview] = useState(null);
   const [addContentCadenceInlineHint, setAddContentCadenceInlineHint] = useState(false);
   const [hoverSourceKey, setHoverSourceKey] = useState(null); // for step 1 option hover (web)
   const [hoverScopeKey, setHoverScopeKey] = useState(null); // for scope step option hover (web)
@@ -780,8 +1210,14 @@ export default function PlanYearModal({
   const [rawText, setRawText] = useState(''); // For paste mode
   // selectedMaterialId already declared above (line 421)
   const [parsing, setParsing] = useState(false);
+  /** Readable live lines while import parse streams (not raw JSON). */
+  const [importParseStreamPreview, setImportParseStreamPreview] = useState('');
   const [generating, setGenerating] = useState(false);
   const [unitStructureError, setUnitStructureError] = useState(null);
+  /** From GET /subject-events-structure: events.source (manual | plain_text_parsed | …) for cadence UX */
+  const [savedContentSource, setSavedContentSource] = useState(null);
+  /** When opening a different method than saved, show banner in unit-structure overlay */
+  const [cadenceDifferentMethodNotice, setCadenceDifferentMethodNotice] = useState(null);
   const [draftData, setDraftData] = useState(null); // Parsed/generated draft before saving
   
   // Generate mode form state
@@ -809,6 +1245,8 @@ export default function PlanYearModal({
   const [extractAssignments, setExtractAssignments] = useState(true);
   const [extractAssessments, setExtractAssessments] = useState(true);
   const [specialInstructionsParse, setSpecialInstructionsParse] = useState('');
+  const [pasteTextFlash, setPasteTextFlash] = useState(false);
+  const prevRawTextLenRef = useRef(0);
   
   // Manual builder state (for paste)
   const [expandedUnitIndexManual, setExpandedUnitIndexManual] = useState(0);
@@ -819,6 +1257,22 @@ export default function PlanYearModal({
   const suppressManualCurriculumHydrateRef = useRef(false);
   /** Draft unit-structure modal: which lesson rows show date + extra type chips (`${unitIdx}-${lessonIdx}`). */
   const [expandedDraftLessonDetailKeys, setExpandedDraftLessonDetailKeys] = useState(() => new Set());
+  /** `${unitIdx}-${lessonIdx}` — lesson row kebab in draft builder */
+  const [draftBuilderLessonMenuKey, setDraftBuilderLessonMenuKey] = useState(null);
+  const [draftBuilderUnitMenuKey, setDraftBuilderUnitMenuKey] = useState(null);
+  /** When set, lesson menu shows “Move to…” target list for this key */
+  const [draftBuilderMovePickKey, setDraftBuilderMovePickKey] = useState(null);
+  /** Web: fixed-position anchors for draft builder menus (avoid ScrollView/stacking + hit-testing under TextInputs). */
+  const [webDraftLessonMenuLayout, setWebDraftLessonMenuLayout] = useState(null);
+  const [webDraftUnitMenuLayout, setWebDraftUnitMenuLayout] = useState(null);
+
+  useEffect(() => {
+    if (draftBuilderLessonMenuKey == null) setWebDraftLessonMenuLayout(null);
+  }, [draftBuilderLessonMenuKey]);
+
+  useEffect(() => {
+    if (draftBuilderUnitMenuKey === null) setWebDraftUnitMenuLayout(null);
+  }, [draftBuilderUnitMenuKey]);
 
   // Helper functions for draft editing (matching original modals)
   const updateDraftUnit = useCallback((unitIndex, field, value) => {
@@ -993,6 +1447,187 @@ export default function PlanYearModal({
     }
   }, [draftData, manualDraft]);
 
+  const insertUnitBreakAboveLesson = useCallback((unitIndex, lessonIndex) => {
+    setDraftBuilderLessonMenuKey(null);
+    setDraftBuilderMovePickKey(null);
+    const updater = (prev) => {
+      if (!prev?.units?.[unitIndex]?.lessons) return prev;
+      const units = prev.units.map((u) => ({ ...u, lessons: [...(u.lessons || [])] }));
+      const lessons = units[unitIndex].lessons;
+      if (lessonIndex < 0 || lessonIndex > lessons.length) return prev;
+      if (lessonIndex === 0) {
+        const emptyUnit = {
+          temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          title: `Unit ${unitIndex + 1}`,
+          sequence_index: unitIndex + 1,
+          description: null,
+          lessons: [],
+        };
+        units.splice(unitIndex, 0, emptyUnit);
+        return { ...prev, units: resequenceDraftUnits(units) };
+      }
+      const head = lessons.slice(0, lessonIndex);
+      const tail = lessons.slice(lessonIndex);
+      units[unitIndex] = { ...units[unitIndex], lessons: head };
+      const newUnit = {
+        temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: `Unit ${unitIndex + 2}`,
+        sequence_index: unitIndex + 2,
+        description: null,
+        lessons: tail,
+      };
+      units.splice(unitIndex + 1, 0, newUnit);
+      return { ...prev, units: resequenceDraftUnits(units) };
+    };
+    if (draftData) setDraftData(updater);
+    else if (manualDraft) setManualDraft(updater);
+    setExpandedUnits((prev) => {
+      const next = new Set();
+      prev.forEach((idx) => {
+        if (idx > unitIndex) next.add(idx + 1);
+        else next.add(idx);
+      });
+      next.add(unitIndex);
+      next.add(unitIndex + 1);
+      return next;
+    });
+  }, [draftData, manualDraft]);
+
+  const moveDraftLessonToNewUnit = useCallback((unitIndex, lessonIndex) => {
+    setDraftBuilderLessonMenuKey(null);
+    setDraftBuilderMovePickKey(null);
+    const updater = (prev) => {
+      if (!prev?.units?.[unitIndex]?.lessons) return prev;
+      const lessons = prev.units[unitIndex].lessons;
+      if (lessonIndex < 0 || lessonIndex >= lessons.length) return prev;
+      const units = prev.units.map((u) => ({ ...u, lessons: [...(u.lessons || [])] }));
+      const from = [...units[unitIndex].lessons];
+      const [removed] = from.splice(lessonIndex, 1);
+      units[unitIndex] = { ...units[unitIndex], lessons: from };
+      const newUnit = {
+        temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: `Unit ${unitIndex + 2}`,
+        sequence_index: unitIndex + 2,
+        description: null,
+        lessons: [removed],
+      };
+      units.splice(unitIndex + 1, 0, newUnit);
+      return { ...prev, units: resequenceDraftUnits(units) };
+    };
+    if (draftData) setDraftData(updater);
+    else if (manualDraft) setManualDraft(updater);
+    setExpandedUnits((prev) => {
+      const next = new Set();
+      prev.forEach((idx) => {
+        if (idx > unitIndex) next.add(idx + 1);
+        else next.add(idx);
+      });
+      next.add(unitIndex);
+      next.add(unitIndex + 1);
+      return next;
+    });
+  }, [draftData, manualDraft]);
+
+  /**
+   * Move a lesson to another unit (or reorder within unit).
+   * `insertBeforeLessonIndex`: insert before this index; null = append to end.
+   */
+  const moveDraftLessonToUnit = useCallback((fromUnitIndex, lessonIndex, toUnitIndex, insertBeforeLessonIndex) => {
+    setDraftBuilderLessonMenuKey(null);
+    setDraftBuilderMovePickKey(null);
+    const updater = (prev) => {
+      if (!prev?.units) return prev;
+      const units = prev.units.map((u) => ({ ...u, lessons: [...(u.lessons || [])] }));
+      const fromArr = units[fromUnitIndex]?.lessons;
+      if (!fromArr || lessonIndex < 0 || lessonIndex >= fromArr.length) return prev;
+      if (toUnitIndex < 0 || toUnitIndex >= units.length) return prev;
+      const [moved] = fromArr.splice(lessonIndex, 1);
+      units[fromUnitIndex] = { ...units[fromUnitIndex], lessons: fromArr };
+      const toArr = [...units[toUnitIndex].lessons];
+      let insertAt =
+        insertBeforeLessonIndex === null || insertBeforeLessonIndex === undefined
+          ? toArr.length
+          : insertBeforeLessonIndex;
+      if (insertAt < 0) insertAt = 0;
+      if (insertAt > toArr.length) insertAt = toArr.length;
+      if (fromUnitIndex === toUnitIndex) {
+        if (lessonIndex < insertAt) insertAt -= 1;
+      }
+      toArr.splice(insertAt, 0, moved);
+      units[toUnitIndex] = { ...units[toUnitIndex], lessons: toArr };
+      return { ...prev, units: resequenceDraftUnits(units) };
+    };
+    if (draftData) setDraftData(updater);
+    else if (manualDraft) setManualDraft(updater);
+  }, [draftData, manualDraft]);
+
+  const mergeDraftUnitWithAdjacent = useCallback((unitIndex, direction) => {
+    setDraftBuilderUnitMenuKey(null);
+    const updater = (prev) => {
+      if (!prev?.units || prev.units.length < 2) return prev;
+      const units = prev.units.map((u) => ({ ...u, lessons: [...(u.lessons || [])] }));
+      if (direction === 'prev') {
+        if (unitIndex <= 0) return prev;
+        units[unitIndex - 1].lessons = [...units[unitIndex - 1].lessons, ...units[unitIndex].lessons];
+        units.splice(unitIndex, 1);
+      } else {
+        if (unitIndex >= units.length - 1) return prev;
+        units[unitIndex].lessons = [...units[unitIndex].lessons, ...units[unitIndex + 1].lessons];
+        units.splice(unitIndex + 1, 1);
+      }
+      return { ...prev, units: resequenceDraftUnits(units) };
+    };
+    if (draftData) setDraftData(updater);
+    else if (manualDraft) setManualDraft(updater);
+    setExpandedUnits((prev) => {
+      const next = new Set();
+      if (direction === 'prev') {
+        prev.forEach((idx) => {
+          if (idx === unitIndex) return;
+          if (idx > unitIndex) next.add(idx - 1);
+          else next.add(idx);
+        });
+        if (unitIndex > 0) next.add(unitIndex - 1);
+      } else {
+        prev.forEach((idx) => {
+          if (idx === unitIndex + 1) return;
+          if (idx > unitIndex + 1) next.add(idx - 1);
+          else next.add(idx);
+        });
+        next.add(unitIndex);
+      }
+      return next;
+    });
+  }, [draftData, manualDraft]);
+
+  const addDraftUnitBelowIndex = useCallback((unitIndex) => {
+    setDraftBuilderUnitMenuKey(null);
+    const updater = (prev) => {
+      if (!prev?.units) return prev;
+      const units = prev.units.map((u) => ({ ...u, lessons: [...(u.lessons || [])] }));
+      const newUnit = {
+        temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: `Unit ${unitIndex + 2}`,
+        sequence_index: unitIndex + 2,
+        description: null,
+        lessons: [],
+      };
+      units.splice(unitIndex + 1, 0, newUnit);
+      return { ...prev, units: resequenceDraftUnits(units) };
+    };
+    if (draftData) setDraftData(updater);
+    else if (manualDraft) setManualDraft(updater);
+    setExpandedUnits((prev) => {
+      const next = new Set();
+      prev.forEach((idx) => {
+        if (idx > unitIndex) next.add(idx + 1);
+        else next.add(idx);
+      });
+      next.add(unitIndex + 1);
+      return next;
+    });
+  }, [draftData, manualDraft]);
+
   const recalculateTimeoutRef = useRef(null);
   const scrollRef = useRef(null);
   const scheduleSectionYRef = useRef(0);
@@ -1049,6 +1684,15 @@ export default function PlanYearModal({
     unitFocusSubjectId ||
     (effectiveSubjectIds.length === 1 ? effectiveSubjectIds[0] : null);
 
+  /** When scope picker is ambiguous but cadence has exactly one real subject, use it for curriculum fetch + preview zip. */
+  const singleBlockSubjectId = useMemo(() => {
+    const ids = (blocks || []).map((b) => b.subject_id).filter(Boolean);
+    const uniq = [...new Set(ids.map(String))];
+    return uniq.length === 1 ? uniq[0] : null;
+  }, [blocks]);
+
+  const curriculumFetchSubjectId = unitPipelineSubjectId || singleBlockSubjectId;
+
   /** Multi-subject plans must scope units to one subject before opening unit structure (cadence row link or picker below). */
   const ensureUnitSubjectForUnitStructure = useCallback((candidateSubjectId) => {
     const resolvedSubject =
@@ -1065,46 +1709,244 @@ export default function PlanYearModal({
     return true;
   }, [effectiveSubjectIds.length, initialSubjectId, unitFocusSubjectId, toast]);
 
+  /** Restore paste_plain / upload WIP from sessionStorage (web). */
+  const hydrateImportDraftFromStorage = useCallback(
+    (subjectIdForKey, { requireSource } = {}) => {
+      if (!familyId || Platform.OS !== 'web') return false;
+      const sid =
+        subjectIdForKey != null && String(subjectIdForKey).trim() !== '' ? String(subjectIdForKey) : 'none';
+      if (requireSource !== 'paste_plain' && requireSource !== 'upload') return false;
+      const st = readPlanYearImportDraft(familyId, sid, requireSource);
+      if (!st || st.v !== 1) return false;
+      if (st.planSource !== 'paste_plain' && st.planSource !== 'upload') return false;
+      if (requireSource && st.planSource !== requireSource) return false;
+      const hasContent =
+        (st.rawText && String(st.rawText).trim() !== '') ||
+        (st.draftData && Array.isArray(st.draftData.units) && st.draftData.units.length > 0);
+      if (!hasContent) return false;
+
+      setPlanSource(st.planSource);
+      setRawText(st.rawText ?? '');
+      setDraftData(st.draftData ?? null);
+      let step = st.unitStructureStep || 'input';
+      if (step === 'saving') step = 'draft';
+      if (step !== 'input' && step !== 'draft' && step !== 'paste_input') step = 'input';
+      setUnitStructureStep(step);
+      if (st.sourceTitle != null) setSourceTitle(String(st.sourceTitle));
+      if (st.sourceType) setSourceType(st.sourceType);
+      if (st.parseMode) setParseMode(st.parseMode);
+      if (typeof st.detectDates === 'boolean') setDetectDates(st.detectDates);
+      if (typeof st.preserveHeadings === 'boolean') setPreserveHeadings(st.preserveHeadings);
+      if (typeof st.ignorePolicyText === 'boolean') setIgnorePolicyText(st.ignorePolicyText);
+      if (typeof st.extractAssignments === 'boolean') setExtractAssignments(st.extractAssignments);
+      if (typeof st.extractAssessments === 'boolean') setExtractAssessments(st.extractAssessments);
+      if (st.specialInstructionsParse != null) setSpecialInstructionsParse(String(st.specialInstructionsParse));
+      const ex = Array.isArray(st.expandedUnitIndices)
+        ? st.expandedUnitIndices.map(Number).filter((n) => !Number.isNaN(n))
+        : [];
+      setExpandedUnits(new Set(ex.length > 0 ? ex : [0]));
+      if (st.planSource === 'upload' && st.selectedMaterialId != null) {
+        setSelectedMaterialId(st.selectedMaterialId);
+      }
+      return true;
+    },
+    [familyId],
+  );
+
+  const importDraftPersistDepsRef = useRef({});
+  const importDraftFlushRef = useRef(() => {});
+  const importDraftPersistTimerRef = useRef(null);
+
+  importDraftPersistDepsRef.current = {
+    familyId,
+    unitPipelineSubjectId,
+    planSource,
+    rawText,
+    draftData,
+    unitStructureStep,
+    sourceTitle,
+    sourceType,
+    parseMode,
+    detectDates,
+    preserveHeadings,
+    ignorePolicyText,
+    extractAssignments,
+    extractAssessments,
+    specialInstructionsParse,
+    expandedUnits,
+    selectedMaterialId,
+  };
+
+  importDraftFlushRef.current = () => {
+    if (Platform.OS !== 'web') return;
+    const d = importDraftPersistDepsRef.current;
+    if (!d.familyId) return;
+    if (d.planSource !== 'paste_plain' && d.planSource !== 'upload') return;
+    const sid =
+      d.unitPipelineSubjectId != null && String(d.unitPipelineSubjectId).trim() !== ''
+        ? String(d.unitPipelineSubjectId)
+        : 'none';
+    const hasContent =
+      (d.rawText && String(d.rawText).trim() !== '') ||
+      (d.draftData && Array.isArray(d.draftData.units) && d.draftData.units.length > 0);
+    if (!hasContent) {
+      clearPlanYearImportDraft(d.familyId, sid, d.planSource);
+      return;
+    }
+    let step = d.unitStructureStep === 'saving' ? 'draft' : d.unitStructureStep;
+    if (step !== 'input' && step !== 'draft' && step !== 'paste_input') step = 'input';
+    const ex = d.expandedUnits instanceof Set ? [...d.expandedUnits] : [];
+    writePlanYearImportDraft(d.familyId, sid, d.planSource, {
+      v: 1,
+      planSource: d.planSource,
+      rawText: d.rawText ?? '',
+      draftData: d.draftData,
+      unitStructureStep: step,
+      sourceTitle: d.sourceTitle ?? '',
+      sourceType: d.sourceType,
+      parseMode: d.parseMode,
+      detectDates: d.detectDates,
+      preserveHeadings: d.preserveHeadings,
+      ignorePolicyText: d.ignorePolicyText,
+      extractAssignments: d.extractAssignments,
+      extractAssessments: d.extractAssessments,
+      specialInstructionsParse: d.specialInstructionsParse ?? '',
+      expandedUnitIndices: ex,
+      selectedMaterialId: d.planSource === 'upload' ? d.selectedMaterialId : null,
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      importDraftFlushRef.current();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (importDraftPersistTimerRef.current) {
+      clearTimeout(importDraftPersistTimerRef.current);
+      importDraftPersistTimerRef.current = null;
+    }
+    importDraftPersistTimerRef.current = setTimeout(() => {
+      importDraftPersistTimerRef.current = null;
+      importDraftFlushRef.current();
+    }, 400);
+    return () => {
+      if (importDraftPersistTimerRef.current) {
+        clearTimeout(importDraftPersistTimerRef.current);
+        importDraftPersistTimerRef.current = null;
+      }
+    };
+  }, [
+    familyId,
+    unitPipelineSubjectId,
+    planSource,
+    rawText,
+    draftData,
+    unitStructureStep,
+    sourceTitle,
+    sourceType,
+    parseMode,
+    detectDates,
+    preserveHeadings,
+    ignorePolicyText,
+    extractAssignments,
+    extractAssessments,
+    specialInstructionsParse,
+    expandedUnits,
+    selectedMaterialId,
+  ]);
+
   /** Logistics-first: open unit-structure modal with the same init as the Method step tiles (per subject row). */
   const openCadenceUnitMethod = useCallback(
     (subjectId, method) => {
       if (!ensureUnitSubjectForUnitStructure(subjectId)) return;
       setUnitFocusSubjectId(subjectId);
-      setDraftData(null);
       setParsedContent(null);
       setParseContentError(null);
       setParsingContent(false);
-      setUnitStructureData(null);
-      setLastSavedUnitSubjectId(null);
-      if (method === 'paste') {
+
+      const hasUnits = (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0);
+      const savedMethod = mapEventSourceToCadenceMethod(savedContentSource);
+      const sameMethod = Boolean(savedMethod && savedMethod === method);
+      const shouldOpenEmptyDifferentMethod = hasUnits && savedMethod && !sameMethod;
+
+      if (shouldOpenEmptyDifferentMethod) {
+        let prevLabel = '';
+        if (savedMethod === 'paste') prevLabel = s('planMyYear.sections.useASource.options.paste.label');
+        else if (savedMethod === 'paste_plain') prevLabel = s('planMyYear.sections.useASource.options.pastePlain.label');
+        else if (savedMethod === 'upload') prevLabel = s('planMyYear.sections.useASource.options.upload.label');
+        else if (savedMethod === 'generate') prevLabel = s('planMyYear.multiSubjectUnits.cadenceGenerateLabel');
+        setCadenceDifferentMethodNotice({
+          previousMethodLabel: prevLabel || s('planMyYear.multiSubjectUnits.savedUnitsUnknownMethod'),
+        });
+        suppressManualCurriculumHydrateRef.current = true;
+      } else {
+        setCadenceDifferentMethodNotice(null);
         suppressManualCurriculumHydrateRef.current = false;
+      }
+
+      if (method === 'paste') {
         setPlanSource('paste');
+        setDraftData(null);
         setRawText('');
         setUnitStructureStep('input');
-        setManualDraft(null);
-        setExpandedUnitIndexManual(0);
-        setExpandedUnits(new Set());
+        if (shouldOpenEmptyDifferentMethod) {
+          setManualDraft(createInitialManualDraft());
+          setExpandedUnitIndexManual(0);
+          setExpandedUnits(new Set([0]));
+        } else {
+          setManualDraft(null);
+          setExpandedUnitIndexManual(0);
+          setExpandedUnits(new Set());
+        }
       } else if (method === 'paste_plain') {
-        setPlanSource('paste_plain');
         setManualDraft(null);
-        setUnitStructureStep('input');
-        setRawText('');
-        setExpandedUnits(new Set());
-        setExpandedUnitIndexManual(0);
+        if (shouldOpenEmptyDifferentMethod) {
+          setPlanSource('paste_plain');
+          setDraftData(null);
+          setUnitStructureStep('input');
+          setRawText('');
+          setExpandedUnits(new Set());
+          setExpandedUnitIndexManual(0);
+        } else if (!hydrateImportDraftFromStorage(subjectId, { requireSource: 'paste_plain' })) {
+          setPlanSource('paste_plain');
+          setDraftData(null);
+          setUnitStructureStep('input');
+          setRawText('');
+          setExpandedUnits(new Set());
+          setExpandedUnitIndexManual(0);
+        }
       } else if (method === 'upload') {
-        setPlanSource('upload');
         setManualDraft(null);
-        setUnitStructureStep('input');
-        setRawText('');
+        if (shouldOpenEmptyDifferentMethod) {
+          setPlanSource('upload');
+          setDraftData(null);
+          setUnitStructureStep('input');
+          setRawText('');
+        } else if (!hydrateImportDraftFromStorage(subjectId, { requireSource: 'upload' })) {
+          setPlanSource('upload');
+          setDraftData(null);
+          setUnitStructureStep('input');
+          setRawText('');
+        }
       } else if (method === 'generate') {
         setPlanSource('generate');
         setManualDraft(null);
+        setDraftData(null);
         setUnitStructureStep('input');
         setRawText('');
       }
       setPlanStep('unit_structure');
     },
-    [ensureUnitSubjectForUnitStructure],
+    [
+      ensureUnitSubjectForUnitStructure,
+      hydrateImportDraftFromStorage,
+      savedContentSource,
+      unitStructureData,
+      s,
+    ],
   );
 
   // Merge: planSubjectTargetsOverride (user edits) > plan > subject defaults
@@ -1158,8 +2000,110 @@ export default function PlanYearModal({
     target_hours: planConstraintMode === 'hours' ? (parseFloat(planTargetHours) || null) : null,
   }), [planConstraintMode, planTargetDays, planTargetHours]);
 
+  /** True when Planning Preferences includes a real day/hour target (overall or per subject). */
+  const hasPlanningPreferenceTargets = useMemo(() => {
+    if (targetScopeFromSettings === 'overall') {
+      if (planConstraintMode === 'none') return false;
+      if (planConstraintMode === 'days') {
+        const n = parseInt(String(planTargetDays || '').replace(/[^\d]/g, ''), 10);
+        return Number.isFinite(n) && n > 0;
+      }
+      if (planConstraintMode === 'hours') {
+        const th = parseFloat(planTargetHours);
+        const hd = parseFloat(hoursPerDay);
+        return Number.isFinite(th) && th > 0 && Number.isFinite(hd) && hd > 0;
+      }
+      return false;
+    }
+    if (targetScopeFromSettings === 'per_subject') {
+      for (const subjectId of effectiveSubjectIds) {
+        const subj = baseSubjectList.find((s) => String(s.id) === String(subjectId));
+        const o = planSubjectTargetsOverride[subjectId];
+        const rowMode =
+          o?.mode ??
+          (subj?.default_constraint_mode ||
+            (subj?.default_target_days != null ? 'days' : subj?.default_target_hours != null ? 'hours' : 'none'));
+        if (rowMode === 'none') continue;
+        if (rowMode === 'days') {
+          const daysStr = o?.days ?? (subj?.default_target_days != null ? String(subj.default_target_days) : '');
+          const n = parseInt(String(daysStr).replace(/[^\d]/g, ''), 10);
+          if (Number.isFinite(n) && n > 0) return true;
+        }
+        if (rowMode === 'hours') {
+          const hoursStr = o?.hours ?? (subj?.default_target_hours != null ? String(subj.default_target_hours) : '');
+          const h = parseFloat(String(hoursStr));
+          if (Number.isFinite(h) && h > 0) return true;
+        }
+      }
+      return false;
+    }
+    return false;
+  }, [
+    targetScopeFromSettings,
+    planConstraintMode,
+    planTargetDays,
+    planTargetHours,
+    hoursPerDay,
+    effectiveSubjectIds,
+    planSubjectTargetsOverride,
+    baseSubjectList,
+  ]);
+
+  /** Projected instructional hours per subject (for per-subject hour targets). */
+  const projectedHoursBySubjectId = useMemo(() => {
+    if (!startDate || !endDate || !blocks.length) return {};
+    const exclusionRanges = [
+      ...(customHolidays || []).map((h) => [h.date, h.date]),
+      ...(customBreaks || [])
+        .map((b) => [b.start || b.startDate, b.end || b.endDate].filter(Boolean))
+        .filter((r) => r.length === 2),
+    ];
+    const map = {};
+    blocks.forEach((block) => {
+      if (!block.subject_id) return;
+      const sid = String(block.subject_id);
+      const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
+      const mins = blockMinutesForPlanYearBlock(block);
+      const h = (dates.length * mins) / 60;
+      map[sid] = (map[sid] || 0) + h;
+    });
+    return map;
+  }, [blocks, startDate, endDate, customHolidays, customBreaks]);
+
   // Effective subject targets for apply: always use merged result (plan override + subject defaults)
   const effectiveSubjectTargetsForApply = effectiveSubjectTargets;
+
+  /** Per-subject lines for inline target vs plan (per_subject scope). */
+  const planningTargetPerSubjectLines = useMemo(() => {
+    if (targetScopeFromSettings !== 'per_subject' || !effectiveSubjectTargetsForApply) return [];
+    const sp = schedulePotential;
+    if (!sp) return [];
+    const out = [];
+    Object.entries(effectiveSubjectTargetsForApply).forEach(([sid, tgt]) => {
+      const name = baseSubjectList.find((s) => String(s.id) === String(sid))?.name || 'Subject';
+      const pk = String(sid);
+      if (tgt.target_days != null) {
+        const proj = sp.per_subject?.[pk]?.projected_days ?? 0;
+        out.push({ key: `${pk}-d`, name, kind: 'days', projected: proj, target: tgt.target_days });
+      } else if (tgt.target_hours != null) {
+        const proj = projectedHoursBySubjectId[pk] ?? 0;
+        out.push({
+          key: `${pk}-h`,
+          name,
+          kind: 'hours',
+          projected: Math.round(proj * 10) / 10,
+          target: tgt.target_hours,
+        });
+      }
+    });
+    return out;
+  }, [
+    targetScopeFromSettings,
+    effectiveSubjectTargetsForApply,
+    schedulePotential,
+    baseSubjectList,
+    projectedHoursBySubjectId,
+  ]);
 
   /** Matches schedule_potential request inputs so we can reuse a snapshot when re-opening edit logistics. */
   const schedulePotentialRequestKey = useMemo(
@@ -1225,53 +2169,20 @@ export default function PlanYearModal({
   }, [customHolidays, customBreaks, exclusionsFromSettings]);
 
   // Preview: exact dates and times that will get slots (for display under "X eligible days" and on preview screen)
-  const previewSlotLines = useMemo(() => {
-    if (!startDate || !endDate || blocks.length === 0) return [];
-    const exclusionRanges = [
-      ...(customHolidays || []).map((h) => [h.date, h.date]),
-      ...(customBreaks || []).map((b) => [b.start || b.startDate, b.end || b.endDate].filter(Boolean)).filter((r) => r.length === 2),
-    ];
-    const lines = [];
-    const childList = children || [];
-    blocks.forEach((block) => {
-      const subj = (baseSubjectList || []).find((s) => String(s.id) === String(block.subject_id));
-      const subjectName = subj?.name || 'Subject';
-      const timeLabel = block.all_day ? 'All day' : formatTimeRange(block.start_time, block.end_time);
-      const blockChildIds =
-        Array.isArray(block.child_ids) && block.child_ids.length > 0
-          ? block.child_ids
-          : block.subject_id
-            ? getChildIdsForSubject(subj, childList)
-            : allFamilyChildIds;
-      const childNames = blockChildIds.length > 0
-        ? blockChildIds.map((cid) => childList.find((c) => String(c.id) === String(cid))?.first_name || childList.find((c) => String(c.id) === String(cid))?.name || 'Child').join(', ')
-        : 'Whole family';
-      const assigneeShortLabel =
-        blockChildIds.length === 1
-          ? (
-              String(
-                childList.find((c) => String(c.id) === String(blockChildIds[0]))?.first_name ||
-                  childList.find((c) => String(c.id) === String(blockChildIds[0]))?.name ||
-                  'Child',
-              ).trim() || 'Child'
-            )
-          : childNames;
-      const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
-      dates.forEach((ymd) => {
-        lines.push({
-          date: ymd,
-          dateLabel: formatDateDisplay(ymd),
-          timeLabel,
-          subjectName,
-          subjectId: block.subject_id ?? null,
-          childNames,
-          assigneeShortLabel,
-        });
-      });
-    });
-    lines.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
-    return lines;
-  }, [blocks, startDate, endDate, customHolidays, customBreaks, baseSubjectList, children, allFamilyChildIds]);
+  const previewSlotLines = useMemo(
+    () =>
+      buildPreviewSlotLinesForPlanYear({
+        startDate,
+        endDate,
+        blocks,
+        customHolidays,
+        customBreaks,
+        baseSubjectList,
+        children,
+        allFamilyChildIds,
+      }),
+    [blocks, startDate, endDate, customHolidays, customBreaks, baseSubjectList, children, allFamilyChildIds],
+  );
 
   /** True when date range + cadence produce at least one class occurrence (instructional slot preview). */
   const cadenceYieldsInstructionalSlots = previewSlotLines.length > 0;
@@ -1282,7 +2193,9 @@ export default function PlanYearModal({
     const flatSaved = flattenUnitLessonsForPreview(unitStructureData?.units);
     const lessons = flatDraft.length > 0 ? flatDraft : flatSaved;
     const curriculumSubjectId =
-      flatDraft.length > 0 ? unitPipelineSubjectId : lastSavedUnitSubjectId || unitPipelineSubjectId;
+      flatDraft.length > 0
+        ? unitPipelineSubjectId || singleBlockSubjectId
+        : lastSavedUnitSubjectId || unitPipelineSubjectId || singleBlockSubjectId;
     const built = buildLessonSchedulePreviewRows(
       previewSlotLines,
       lessons,
@@ -1299,8 +2212,154 @@ export default function PlanYearModal({
     draftData,
     unitStructureData,
     unitPipelineSubjectId,
+    singleBlockSubjectId,
     lastSavedUnitSubjectId,
   ]);
+
+  const lessonOverflowExtendEndDate = useMemo(
+    () =>
+      findExtendedEndDateForLessonOverflow({
+        startDate,
+        endDate,
+        overflowCount: lessonSchedulePreviewPlan.overflowCount,
+        curriculumSubjectId: lessonSchedulePreviewPlan.curriculumSubjectId,
+        blocks,
+        customHolidays,
+        customBreaks,
+        baseSubjectList,
+        children,
+        allFamilyChildIds,
+      }),
+    [
+      startDate,
+      endDate,
+      lessonSchedulePreviewPlan.overflowCount,
+      lessonSchedulePreviewPlan.curriculumSubjectId,
+      blocks,
+      customHolidays,
+      customBreaks,
+      baseSubjectList,
+      children,
+      allFamilyChildIds,
+    ],
+  );
+
+  const applyExtendedPlanEndDate = useCallback(
+    (extYmd) => {
+      if (!extYmd || !/^\d{4}-\d{2}-\d{2}$/.test(extYmd)) return;
+      setEndDate(extYmd);
+      if (familyId && startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+        setPlanBuildLogisticsDatesCache(familyId, startDate, extYmd);
+      }
+    },
+    [familyId, startDate],
+  );
+
+  /** YYYY-MM-DD sent to apply_to_calendar when applying partial updates; null = full range. */
+  const resolvedApplyFromDateForPayload = useMemo(() => {
+    if (applyFromMode === 'entire') return null;
+    if (applyFromMode === 'today') {
+      const t = toLocalYYYYMMDD(new Date());
+      if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) && t < startDate) return startDate;
+      if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) && t > endDate) return endDate;
+      return t;
+    }
+    if (applyFromMode === 'date') return applyFromDate || null;
+    return null;
+  }, [applyFromMode, applyFromDate, startDate, endDate]);
+
+  /** Per block subject: whether saved curriculum has lessons (for Step 2 “Add units” vs “Change units”). */
+  const subjectIdsKeyForCadenceFetch = useMemo(() => {
+    const ids = (blocks || []).map((b) => b.subject_id).filter(Boolean);
+    return [...new Set(ids.map(String))].sort().join(',');
+  }, [blocks]);
+
+  const [savedCurriculumHasLessonsBySubjectId, setSavedCurriculumHasLessonsBySubjectId] = useState({});
+
+  useEffect(() => {
+    if (!PLAN_MY_YEAR_LOGISTICS_FIRST || planStep !== 'logistics') return;
+    if (!familyId) return;
+    if (openForNewPlan) {
+      setSavedCurriculumHasLessonsBySubjectId({});
+      return;
+    }
+    if (!initialAcademicYearId && !academicYearId) {
+      setSavedCurriculumHasLessonsBySubjectId({});
+      return;
+    }
+    const subjectIds = subjectIdsKeyForCadenceFetch.split(',').filter(Boolean);
+    if (subjectIds.length === 0) {
+      setSavedCurriculumHasLessonsBySubjectId({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const next = {};
+      await Promise.all(
+        subjectIds.map(async (sid) => {
+          try {
+            const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid);
+            if (cancelled) return;
+            if (error) {
+              next[sid] = false;
+              return;
+            }
+            const units = Array.isArray(data?.units) ? data.units : [];
+            next[sid] = units.some((u) => (u.lessons || []).length > 0);
+          } catch (_) {
+            if (!cancelled) next[sid] = false;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setSavedCurriculumHasLessonsBySubjectId((prev) => {
+          const merged = { ...prev };
+          Object.keys(next).forEach((k) => {
+            merged[k] = next[k];
+          });
+          return merged;
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    PLAN_MY_YEAR_LOGISTICS_FIRST,
+    planStep,
+    familyId,
+    openForNewPlan,
+    initialAcademicYearId,
+    academicYearId,
+    subjectIdsKeyForCadenceFetch,
+  ]);
+
+  useEffect(() => {
+    if (!lastSavedUnitSubjectId) return;
+    setSavedCurriculumHasLessonsBySubjectId((prev) => ({
+      ...prev,
+      [String(lastSavedUnitSubjectId)]: true,
+    }));
+  }, [lastSavedUnitSubjectId]);
+
+  const cadenceShowChangeUnitsForSubject = useCallback(
+    (subjectId) => {
+      if (!subjectId) return false;
+      if (openForNewPlan) return false;
+      if (!initialAcademicYearId && !academicYearId) return false;
+      return savedCurriculumHasLessonsBySubjectId[String(subjectId)] === true;
+    },
+    [openForNewPlan, initialAcademicYearId, academicYearId, savedCurriculumHasLessonsBySubjectId],
+  );
+
+  const flatLessonSlotTimes = useMemo(
+    () =>
+      buildFlatLessonSlotTimes(
+        lessonSchedulePreviewPlan,
+        s('planMyYear.multiSubjectUnits.availableInstructionalSlot'),
+      ),
+    [lessonSchedulePreviewPlan],
+  );
 
   const handleOpenCadenceUnitMethod = useCallback(
     (subjectId, method) => {
@@ -1372,6 +2431,14 @@ export default function PlanYearModal({
     return getPlanEditListTimesForPlans(familyId, rows !== null ? rows : []);
   });
 
+  const editPlanListRows = useMemo(
+    () =>
+      (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
+        planRowSubjectsStillExist(ay, baseSubjectList),
+      ),
+    [previousPlans, baseSubjectList],
+  );
+
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;
     const fromModule = getPlanYearFullDataFromCache(familyId, yearId);
@@ -1403,6 +2470,77 @@ export default function PlanYearModal({
         summaryFetchInFlightRef.current.delete(yearId);
       });
   }, [familyId]);
+
+  /** Refetch academic year rows for YOUR PLANS / Edit plan list (keeps module cache in sync after create or apply). */
+  const refreshPreviousPlansList = useCallback(async () => {
+    if (!familyId) return;
+    const { data: rows, error: err } = await supabase
+      .from('academic_years')
+      .select('id, year_name, start_date, end_date, updated_at')
+      .eq('family_id', familyId)
+      .order('start_date', { ascending: false });
+    if (err) return;
+    const next = Array.isArray(rows) ? rows : [];
+    setAcademicYearsPickerCache(familyId, next);
+    setPreviousPlans(next);
+    setPreviousPlansListFetched(true);
+    const cancelledRef = { get current() { return false; } };
+    next
+      .map((r) => r.id)
+      .filter(Boolean)
+      .forEach((id) => prefetchYearSummaryForEditList(id, cancelledRef));
+  }, [familyId, prefetchYearSummaryForEditList]);
+
+  /** After plan slots, dates, or curriculum change: drop stale caches, refresh calendar (incl. home), plan health, open summary. */
+  const bumpPlanSurfacesAfterMutation = useCallback(
+    (yearIdOverride) => {
+      if (!familyId) return;
+      const yid =
+        yearIdOverride != null && String(yearIdOverride).trim() !== ''
+          ? String(yearIdOverride)
+          : null;
+      if (yid) {
+        dropPlanYearFullDataCacheEntry(familyId, yid);
+        dropPlanEditListTimesCacheEntry(familyId, yid);
+        planSummaryCacheRef.current.delete(yid);
+        summaryFetchInFlightRef.current.delete(yid);
+        const cancelledRef = { get current() { return false; } };
+        prefetchYearSummaryForEditList(yid, cancelledRef);
+      }
+      invalidatePlanHealthCache();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        const startYmd = startDate && String(startDate).trim();
+        const detail = { forceInvalidate: true, skipHomeRefresh: false };
+        if (startYmd && /^\d{4}-\d{2}-\d{2}$/.test(startYmd)) {
+          const [y, m] = startYmd.split('-').map(Number);
+          detail.targetYear = y;
+          detail.targetMonth = m - 1;
+        }
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail }));
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
+        }, 200);
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent('refreshCalendar', {
+              detail: { ...detail, skipHomeRefresh: true, forceInvalidate: true },
+            }),
+          );
+        }, 450);
+      }
+      if (yid && planSummaryYearId && String(planSummaryYearId) === String(yid)) {
+        getAcademicYear(yid).then(({ data: fresh, error }) => {
+          if (!error && fresh) {
+            mergePlanYearFullDataCache(familyId, yid, fresh);
+            planSummaryCacheRef.current.set(yid, fresh);
+            setPlanSummaryData(fresh);
+          }
+        });
+      }
+    },
+    [familyId, startDate, planSummaryYearId, prefetchYearSummaryForEditList],
+  );
 
   useEffect(() => {
     if (!visible || !familyId) return;
@@ -1479,21 +2617,21 @@ export default function PlanYearModal({
 
   // Fill time sublines from module cache when plans appear; fetch any missing summaries (deduped with list prefetch).
   useEffect(() => {
-    if (!familyId || !previousPlans.length || !previousPlansListFetched) return;
+    if (!familyId || !editPlanListRows.length || !previousPlansListFetched) return;
     let stale = false;
     const cancelledRef = { get current() { return stale; } };
-    const fromModule = getPlanEditListTimesForPlans(familyId, previousPlans);
+    const fromModule = getPlanEditListTimesForPlans(familyId, editPlanListRows);
     if (Object.keys(fromModule).length > 0) {
       setPlanListRowTimesById((prev) => ({ ...fromModule, ...prev }));
     }
-    previousPlans
+    editPlanListRows
       .map((ay) => ay.id)
       .filter(Boolean)
       .forEach((id) => prefetchYearSummaryForEditList(id, cancelledRef));
     return () => {
       stale = true;
     };
-  }, [familyId, previousPlans, previousPlansListFetched, prefetchYearSummaryForEditList]);
+  }, [familyId, editPlanListRows, previousPlansListFetched, prefetchYearSummaryForEditList]);
 
   // When modal closes, defer clearing plan summary state until after close animation so we don't flash YOUR PLANS list
   useEffect(() => {
@@ -1517,14 +2655,6 @@ export default function PlanYearModal({
     }
   }, [visible, fromSubjectDetail, openToEditPlanList]);
 
-  // When opening from "Plan My Year" in toolbar, go straight to first planning step (logistics-first → logistics, else method)
-  useEffect(() => {
-    if (visible && openDirectlyToScope) {
-      setStartCreatingNew(true);
-      setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
-    }
-  }, [visible, openDirectlyToScope]);
-
   // When opening from subject details and no plan exists, default to first step with one-subject preselected
   useEffect(() => {
     if (visible && fromSubjectDetail && previousPlansListFetched && previousPlans.length === 0) {
@@ -1538,7 +2668,7 @@ export default function PlanYearModal({
   useEffect(() => {
     if (!visible || !fromSubjectDetail || !initialSubjectId || !familyId) return;
     if (!previousPlansListFetched) return;
-    if (previousPlans.length === 0) {
+    if (editPlanListRows.length === 0) {
       subjectPlanResolvedRef.current = true;
       return;
     }
@@ -1547,7 +2677,7 @@ export default function PlanYearModal({
     let cancelled = false;
     (async () => {
       const subjectId = String(initialSubjectId);
-      for (const ay of previousPlans) {
+      for (const ay of editPlanListRows) {
         if (!ay?.id || cancelled) break;
         let cached = planSummaryCacheRef.current.get(ay.id);
         if (!cached) {
@@ -1581,7 +2711,7 @@ export default function PlanYearModal({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, fromSubjectDetail, initialSubjectId, familyId, previousPlans, previousPlansListFetched]);
+  }, [visible, fromSubjectDetail, initialSubjectId, familyId, editPlanListRows, previousPlansListFetched]);
 
   // When opening from event details (Edit Plan) or plan health with a specific plan, go straight to plan summary view
   const openedToPlanSummaryRef = useRef(false);
@@ -1698,6 +2828,36 @@ export default function PlanYearModal({
     planSummaryGhostLinesRef.current = new Map();
   }, []);
 
+  // Toolbar "Build plan": drop plan-summary / edit drill-down so the structured build wizard shows (not the prior plan).
+  useEffect(() => {
+    if (!visible || !openDirectlyToScope) return;
+    if (renderInline && openForNewPlan) {
+      goBackPlanSummaryToList();
+      setShowPlanManagerView(false);
+    }
+    setStartCreatingNew(true);
+    setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+  }, [visible, openDirectlyToScope, renderInline, openForNewPlan, goBackPlanSummaryToList]);
+
+  /** Right toolbar "Edit plan" while drilled into a plan summary or logistics: show YOUR PLANS list again. */
+  const resetInlineEditPlanDrillDown = useCallback(() => {
+    if (!renderInline) return;
+    goBackPlanSummaryToList();
+    setShowPlanManagerView(true);
+    setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+    setStartCreatingNew(false);
+  }, [renderInline, goBackPlanSummaryToList]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || Platform.OS !== 'web' || !renderInline) return;
+    const handler = () => {
+      if (!visible) return;
+      resetInlineEditPlanDrillDown();
+    };
+    window.addEventListener('planYearReturnToEditPlanList', handler);
+    return () => window.removeEventListener('planYearReturnToEditPlanList', handler);
+  }, [visible, renderInline, resetInlineEditPlanDrillDown]);
+
   const goBackFromLogisticsToPlanList = useCallback(() => {
     if (!academicYearId) return;
     if (openForNewPlan) {
@@ -1762,6 +2922,7 @@ export default function PlanYearModal({
     const yearIdToLoad = initialAcademicYearId || academicYearId;
     if (!visible || !yearIdToLoad || !familyId) return;
     if (loadedYearIdRef.current === yearIdToLoad) return;
+    setCadenceBaselineKey(null);
     let cancelled = false;
 
     const applyYearPayload = (data) => {
@@ -1816,7 +2977,7 @@ export default function PlanYearModal({
           }
         }
         if (planBlocks.length > 0) {
-          setBlocks(planBlocks.map((b) => ({
+          const mappedBlocks = planBlocks.map((b) => ({
             block_id: b.block_id || (crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${b.subject_id}`),
             subject_id: b.subject_id,
             child_ids: Array.isArray(b.child_ids) ? b.child_ids : [],
@@ -1824,7 +2985,9 @@ export default function PlanYearModal({
             start_time: b.start_time || '09:00',
             end_time: b.end_time || '10:00',
             all_day: !!b.all_day,
-          })));
+          }));
+          setBlocks(mappedBlocks);
+          setCadenceBaselineKey(serializeCadenceSnapshot(mappedBlocks));
         }
       }
       const customHols = Array.isArray(data.holidays)
@@ -1898,6 +3061,7 @@ export default function PlanYearModal({
     if (!visible) {
       loadedYearIdRef.current = null;
       savedTargetsAppliedRef.current = false;
+      setCadenceBaselineKey(null);
       setLoadError(null);
       setPlanCreatedAt(null);
       setPlanUpdatedAt(null);
@@ -2158,21 +3322,31 @@ export default function PlanYearModal({
     }
   }, [planStep, planSource, familyId, materials.length, loadingMaterials]);
   
-  // Load unit structure data when entering unit_structure step (only if no draft data)
+  // Load unit structure when opening unit builder, or on logistics (preview) so slot↔lesson mapping includes units
   useEffect(() => {
-    if (planStep === 'unit_structure' && unitPipelineSubjectId && familyId && !unitStructureData && !loadingUnitStructure && !draftData && !manualDraft) {
+    const loadOnLogistics = PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics';
+    if (
+      (planStep === 'unit_structure' || loadOnLogistics) &&
+      curriculumFetchSubjectId &&
+      familyId &&
+      !unitStructureData &&
+      !loadingUnitStructure &&
+      !draftData &&
+      !manualDraft
+    ) {
       const loadUnitStructure = async () => {
         setLoadingUnitStructure(true);
         try {
-          const subjectId = unitPipelineSubjectId;
+          const subjectId = curriculumFetchSubjectId;
           const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
           if (error) throw error;
           const units = Array.isArray(data?.units) ? data.units : [];
+          setSavedContentSource(data?.saved_content_source ?? null);
           setUnitStructureData({ units });
           if (units.some((u) => (u.lessons || []).length > 0)) {
             setLastSavedUnitSubjectId(subjectId);
           }
-          if (units.length > 0) {
+          if (units.length > 0 && planStep === 'unit_structure') {
             setExpandedUnits(new Set([0]));
           }
         } catch (err) {
@@ -2183,7 +3357,24 @@ export default function PlanYearModal({
       };
       loadUnitStructure();
     }
-  }, [planStep, unitPipelineSubjectId, familyId, unitStructureData, loadingUnitStructure, draftData, manualDraft]);
+  }, [planStep, curriculumFetchSubjectId, familyId, unitStructureData, loadingUnitStructure, draftData, manualDraft]);
+
+  // Keep saved curriculum source in sync on logistics (even when unitStructureData was already loaded)
+  useEffect(() => {
+    if (!PLAN_MY_YEAR_LOGISTICS_FIRST || planStep !== 'logistics') return;
+    if (!familyId || !curriculumFetchSubjectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, curriculumFetchSubjectId);
+        if (cancelled || error) return;
+        setSavedContentSource(data?.saved_content_source ?? null);
+      } catch (_) {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [planStep, familyId, curriculumFetchSubjectId]);
 
   // Load materials when upload is selected (for inline select)
   const loadMaterialsForUpload = useCallback(async () => {
@@ -2424,6 +3615,26 @@ export default function PlanYearModal({
 
   const showPlanEditingModeBanner =
     PLAN_MY_YEAR_LOGISTICS_FIRST && hideStructuredClassPlansIntro && planStep === 'logistics';
+
+  const cadenceDirty = useMemo(() => {
+    if (cadenceBaselineKey == null || cadenceBaselineKey === '') return false;
+    return serializeCadenceSnapshot(blocks) !== cadenceBaselineKey;
+  }, [blocks, cadenceBaselineKey]);
+
+  useEffect(() => {
+    if (cadenceDirty) return;
+    setApplyFromMode('entire');
+    setApplyFromDate(null);
+  }, [cadenceDirty]);
+
+  /** If plan load did not set blocks in applyYearPayload, establish baseline once blocks appear (e.g. sync). */
+  useEffect(() => {
+    if (!academicYearId) return;
+    if (loadedYearIdRef.current !== academicYearId) return;
+    if (blocks.length === 0) return;
+    if (cadenceBaselineKey != null && cadenceBaselineKey !== '') return;
+    setCadenceBaselineKey(serializeCadenceSnapshot(blocks));
+  }, [academicYearId, blocks, cadenceBaselineKey]);
 
   // Compute schedule potential when block structure / dates / exclusions / targets change — not when only cadence (weekdays, times) changes
   const triggerSchedulePotential = useCallback((immediate = false) => {
@@ -2777,9 +3988,9 @@ export default function PlanYearModal({
         }) : [],
         subject_targets: effectiveSubjectTargetsForApply ?? effectiveSubjectTargets ?? undefined,
         year_name,
-        // When editing: apply block changes only from this date forward (optional)
-        ...(applyFromMode === 'today' && { apply_from_date: toLocalYYYYMMDD(new Date()) }),
-        ...(applyFromMode === 'date' && applyFromDate && { apply_from_date: applyFromDate }),
+        ...(cadenceDirty && resolvedApplyFromDateForPayload
+          ? { apply_from_date: resolvedApplyFromDateForPayload }
+          : {}),
         // When user chose "Create new plan" from picker, always create a new academic year so it appears in the list
         force_new_plan: startCreatingNew,
         // Always send timezone so plan times (e.g. 9 AM) are stored correctly; never fall back to UTC
@@ -2797,48 +4008,62 @@ export default function PlanYearModal({
       const { data, error: applyError } = await applyToCalendar(payload);
       if (applyError) throw applyError;
 
-      invalidatePlanHealthCache();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+      if (data?.academic_year_id) {
+        setAcademicYearId(data.academic_year_id);
       }
-      const { data: healthData } = await getPlanHealth(familyId, academicYearId ?? undefined);
+      await refreshPreviousPlansList();
+
+      const effectiveYearIdForBump = data?.academic_year_id ?? academicYearId ?? null;
+      bumpPlanSurfacesAfterMutation(effectiveYearIdForBump);
+
+      const { data: healthData } = await getPlanHealth(
+        familyId,
+        effectiveYearIdForBump ?? undefined,
+      );
       if (healthData) setPlanHealth(healthData);
 
-      const added = data?.totals?.inserted ?? data?.created ?? 0;
-      const message = added === 1 ? '1 new lesson added' : `${added} new lessons added`;
-      const toastType = 'success';
-      loadedYearIdRef.current = null;
-      if (typeof window !== 'undefined') {
-        // Force immediate calendar refetch so new plan events show without page refresh
-        const startYmd = startDate && String(startDate).trim();
-        const detail = { forceInvalidate: true, skipHomeRefresh: true };
-        if (startYmd && /^\d{4}-\d{2}-\d{2}$/.test(startYmd)) {
-          const [y, m] = startYmd.split('-').map(Number);
-          detail.targetYear = y;
-          detail.targetMonth = m - 1; // 0-based
+      const totals = data?.totals;
+      let applyToastMessage;
+      if (totals && typeof totals === 'object') {
+        const u = Number(totals.updated) || 0;
+        const i = Number(totals.inserted) || 0;
+        const d = Number(totals.deleted) || 0;
+        if (u === 0 && i === 0 && d === 0) {
+          applyToastMessage = t('planMyYear.toasts.generated');
+        } else if (i === 0 && d === 0 && u > 0) {
+          applyToastMessage =
+            u === 1 ? t('planMyYear.toasts.updated') : t('planMyYear.toasts.slotsUpdatedCount', { count: u });
+        } else if (u === 0 && d === 0 && i > 0) {
+          applyToastMessage =
+            i === 1 ? t('planMyYear.toasts.slotAddedOne') : t('planMyYear.toasts.slotsAddedCount', { count: i });
+        } else if (u === 0 && i === 0 && d > 0) {
+          applyToastMessage =
+            d === 1 ? t('planMyYear.toasts.slotRemovedOne') : t('planMyYear.toasts.slotsRemovedCount', { count: d });
+        } else {
+          const bits = [];
+          if (u > 0) bits.push(t('planMyYear.toasts.applyPartUpdated', { count: u }));
+          if (i > 0) bits.push(t('planMyYear.toasts.applyPartInserted', { count: i }));
+          if (d > 0) bits.push(t('planMyYear.toasts.applyPartRemoved', { count: d }));
+          applyToastMessage = bits.length ? `${bits.join(', ')}.` : t('planMyYear.toasts.generated');
         }
-        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail }));
-        // Tell open event modal to refetch so plan time updates show immediately (delay so DB commit is visible)
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
-        }, 350);
-        // Delayed refresh so planner shows new events after modal closes and DB is committed
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { ...detail, forceInvalidate: true } }));
-        }, 400);
-        // Also refetch visible month so planner updates regardless of which month is in view
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true, skipHomeRefresh: true } }));
-        }, 600);
+      } else {
+        const created = Number(data?.created) || 0;
+        applyToastMessage =
+          created === 1
+            ? t('planMyYear.toasts.slotAddedOne')
+            : t('planMyYear.toasts.slotsAddedCount', { count: created });
       }
-      toast.push(message, toastType);
+      loadedYearIdRef.current = null;
+      setCadenceBaselineKey(serializeCadenceSnapshot(blocksRef.current || []));
+      toast.push(applyToastMessage, 'success');
       // Refetch placeholder count for eligibility / health copy if user stays in modal
-      if (academicYearId && familyId) {
+      const yearIdForCount = data?.academic_year_id ?? academicYearId;
+      if (yearIdForCount && familyId) {
         const { count, error: countErr } = await supabase
           .from('events')
           .select('*', { count: 'exact', head: true })
           .eq('family_id', familyId)
-          .eq('academic_year_id', academicYearId)
+          .eq('academic_year_id', yearIdForCount)
           .eq('generated_by', 'plan_year')
           .is('deleted_at', null);
         if (!countErr && count != null) setExistingPlaceholdersCount(count);
@@ -2857,6 +4082,150 @@ export default function PlanYearModal({
       setSaving(false);
     }
   };
+
+  const onApplyFromModePress = useCallback((mode) => {
+    setApplyFromMode(mode);
+    if (mode !== 'date') {
+      setApplyFromDate(null);
+    } else {
+      setShowApplyFromDatePicker(true);
+    }
+  }, []);
+
+  /** Dot-separated links under cadence (same pattern as Step 2 add content). */
+  const renderApplyFromScopeCadenceInline = useCallback(() => {
+    if (!academicYearId) return null;
+    const links = [
+      { mode: 'entire', label: t('planMyYear.applyFrom.linkFullPlanScope') },
+      { mode: 'today', label: t('planMyYear.applyFrom.linkTodayGoingForward') },
+      {
+        mode: 'date',
+        label:
+          applyFromMode === 'date' && applyFromDate
+            ? formatDateDisplay(applyFromDate).replace(/,?\s*\d{4}$/, '').trim()
+            : t('planMyYear.applyFrom.linkSpecificRange'),
+      },
+    ];
+    return (
+      <View
+        style={{
+          marginTop: 12,
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+        }}
+      >
+        <Text style={{ fontSize: 12, color: MUTED, marginRight: 6, marginBottom: 4 }}>
+          {t('planMyYear.applyFrom.applyToPlanLabel')}
+        </Text>
+        {links.map((opt, optIdx) => {
+          const selected = applyFromMode === opt.mode;
+          const color = selected ? ACCENT : MUTED;
+          return (
+            <React.Fragment key={opt.mode}>
+              {optIdx > 0 ? (
+                <Text style={{ fontSize: 12, color: MUTED, marginHorizontal: 6, marginBottom: 4 }}>·</Text>
+              ) : null}
+              <TouchableOpacity
+                onPress={() => onApplyFromModePress(opt.mode)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                style={{ marginBottom: 4, paddingVertical: 2 }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color,
+                    textDecorationLine: 'underline',
+                    fontWeight: selected ? '700' : '400',
+                  }}
+                >
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            </React.Fragment>
+          );
+        })}
+      </View>
+    );
+  }, [academicYearId, applyFromMode, applyFromDate, onApplyFromModePress, t]);
+
+  /** When editing an existing plan, scope calendar regeneration (backend already supports apply_from_date). */
+  const renderApplyFromScopeCard = useCallback(() => {
+    if (!academicYearId) return null;
+    const optionRow = (mode, label, sublabel) => {
+      const selected = applyFromMode === mode;
+      return (
+        <TouchableOpacity
+          key={mode}
+          onPress={() => onApplyFromModePress(mode)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderRadius: 8,
+            marginBottom: 6,
+            borderWidth: 1,
+            borderColor: selected ? ACCENT : BORDER_SUBTLE,
+            backgroundColor: selected ? ACCENT_LIGHT : 'transparent',
+          }}
+          activeOpacity={0.85}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          {selected ? <Check size={16} color={ACCENT} style={{ marginRight: 8 }} /> : <View style={{ width: 24 }} />}
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: FG }}>{label}</Text>
+            {sublabel ? (
+              <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 2 }}>{sublabel}</Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      );
+    };
+    return (
+      <View
+        style={{
+          marginTop: 20,
+          marginBottom: 16,
+          paddingVertical: 12,
+          paddingHorizontal: 12,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: BORDER_SUBTLE,
+          backgroundColor: ELIGIBILITY_CARD_BG,
+        }}
+      >
+        <Text style={{ fontSize: 13, fontWeight: '700', color: FG, marginBottom: 6 }}>{t('planMyYear.applyFrom.title')}</Text>
+        <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginBottom: 10, lineHeight: 17 }}>
+          {t('planMyYear.applyFrom.hint')}
+        </Text>
+        {optionRow('entire', t('planMyYear.applyFrom.entirePlan'), null)}
+        {optionRow('today', t('planMyYear.applyFrom.fromToday'), null)}
+        {optionRow(
+          'date',
+          t('planMyYear.applyFrom.fromDate'),
+          applyFromDate ? formatDateDisplay(applyFromDate) : null,
+        )}
+        {applyFromMode === 'date' && applyFromDate ? (
+          <TouchableOpacity
+            onPress={() => setShowApplyFromDatePicker(true)}
+            style={{ alignSelf: 'flex-start', marginTop: 2, marginLeft: 32 }}
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+              {t('planMyYear.applyFrom.changeDate')}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }, [academicYearId, applyFromMode, applyFromDate, onApplyFromModePress, t]);
 
   const scrollToDatesSection = useCallback(() => {
     setSectionDatesExpanded(true);
@@ -3010,6 +4379,10 @@ export default function PlanYearModal({
       );
       return;
     }
+    if (academicYearId && applyFromMode === 'date' && !applyFromDate) {
+      setError(t('planMyYear.applyFrom.dateRequired'));
+      return;
+    }
 
     if (existingPlaceholdersCount > 0) {
       await runApplyToCalendar(true);
@@ -3122,9 +4495,7 @@ export default function PlanYearModal({
         throw new Error('Server did not return commit result.');
       }
 
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshCalendar'));
-      }
+      bumpPlanSurfacesAfterMutation(academicYearId ?? null);
 
       const slotsUsed = commitData?.slots_used ?? 0;
       const eventsCreated = commitData?.events_created ?? 0;
@@ -3177,6 +4548,7 @@ export default function PlanYearModal({
     setError(null);
     
     try {
+      let saveReturnedYearId;
       if (!isHomeschool) {
         if (fastPathYearId) {
           const input = {
@@ -3230,13 +4602,15 @@ export default function PlanYearModal({
         };
         const { data, error: saveErr } = await saveAcademicYear(input);
         if (saveErr) throw saveErr;
-        if (data?.academic_year_id) setAcademicYearId(data.academic_year_id);
+        if (data?.academic_year_id) {
+          setAcademicYearId(data.academic_year_id);
+          saveReturnedYearId = data.academic_year_id;
+        }
       }
-      invalidatePlanHealthCache();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-      }
-      const { data: healthData } = await getPlanHealth(familyId, academicYearId ?? data?.academic_year_id ?? undefined);
+      await refreshPreviousPlansList();
+      const healthYearId = saveReturnedYearId ?? academicYearId ?? (!isHomeschool ? fastPathYearId : undefined) ?? undefined;
+      bumpPlanSurfacesAfterMutation(healthYearId ?? null);
+      const { data: healthData } = await getPlanHealth(familyId, healthYearId);
       if (healthData) setPlanHealth(healthData);
       Alert.alert('Success', 'Academic year saved successfully', [
         { text: 'OK', onPress: () => { onComplete?.(); onClose(); }},
@@ -3375,6 +4749,10 @@ export default function PlanYearModal({
       setEndDate('');
       setPlanSubjectTargetsOverride({});
       setTargetScopeFromSettings('overall');
+      setSavedCurriculumHasLessonsBySubjectId({});
+      setApplyFromMode('entire');
+      setApplyFromDate(null);
+      setShowApplyFromDatePicker(false);
     }
   }, [visible]);
 
@@ -3409,22 +4787,34 @@ export default function PlanYearModal({
   const unitFocusSubjectNameForHeader = unitPipelineSubjectId
     ? (baseSubjectList || []).find((s) => String(s.id) === String(unitPipelineSubjectId))?.name
     : null;
-  const lastSavedSubjectNameForHeader = lastSavedUnitSubjectId
-    ? (baseSubjectList || []).find((s) => String(s.id) === String(lastSavedUnitSubjectId))?.name
-    : null;
   const unitHeaderSubtitle =
     unitFocusSubjectNameForHeader && effectiveSubjectIds.length > 1 && (planStep === 'source' || planStep === 'unit_structure')
       ? t('planMyYear.multiSubjectUnits.headerUnitsFor', { subjectName: unitFocusSubjectNameForHeader })
-      : lastSavedSubjectNameForHeader &&
-          (planStep === 'preview' || (PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics'))
-        ? t('planMyYear.multiSubjectUnits.reviewLastSavedUnits', { subjectName: lastSavedSubjectNameForHeader })
-        : null;
+      : null;
   const unitStructureSaveDraftLabel = PLAN_MY_YEAR_LOGISTICS_FIRST
     ? t('planMyYear.multiSubjectUnits.footerSaveDraftLogisticsFirst')
     : t('planMyYear.multiSubjectUnits.footerSaveDraftClassic');
   const unitStructureSkipDraftLabel = PLAN_MY_YEAR_LOGISTICS_FIRST
     ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
     : t('planMyYear.multiSubjectUnits.footerSkipClassic');
+  const hideFooterSkipForPasteImportInput =
+    ((planSource === 'paste_plain' && unitStructureStep === 'input') ||
+      (planSource === 'upload' && unitStructureStep === 'paste_input')) &&
+    !draftData &&
+    !manualDraft;
+
+  /** Clear parsed draft UI but keep pasted source text so users can edit or re-run Preview structure (paste_plain / upload). */
+  const leaveParsedDraftForTextEditor = useCallback(() => {
+    if (planSource === 'upload') {
+      setUnitStructureStep('paste_input');
+    } else if (planSource === 'paste_plain') {
+      setUnitStructureStep('input');
+    } else {
+      setUnitStructureStep('input');
+      setRawText('');
+    }
+  }, [planSource]);
+
   const hasPersistedManualCurriculum = useMemo(
     () =>
       planSource === 'paste' &&
@@ -3432,6 +4822,44 @@ export default function PlanYearModal({
       (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0),
     [planSource, unitPipelineSubjectId, unitStructureData],
   );
+
+  // Manual input: open straight into the builder when there is no saved curriculum (no “Start building” step).
+  useEffect(() => {
+    if (!visible) return;
+    if (planStep !== 'unit_structure') return;
+    if (planSource !== 'paste') return;
+    if (unitStructureStep !== 'input') return;
+    if (draftData) return;
+    if (manualDraft) return;
+    if (!unitPipelineSubjectId || !familyId) return;
+    if (loadingUnitStructure) return;
+    if (suppressManualCurriculumHydrateRef.current) return;
+    const persisted = (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0);
+    if (persisted) {
+      const loaded = manualDraftFromUnitStructureData(unitStructureData);
+      if (loaded) {
+        setManualDraft(loaded);
+        setExpandedUnitIndexManual(0);
+        setExpandedUnits(new Set([0]));
+      }
+      return;
+    }
+    setManualDraft(createInitialManualDraft());
+    setExpandedUnitIndexManual(0);
+    setExpandedUnits(new Set([0]));
+  }, [
+    visible,
+    planStep,
+    planSource,
+    unitStructureStep,
+    draftData,
+    manualDraft,
+    unitPipelineSubjectId,
+    familyId,
+    loadingUnitStructure,
+    unitStructureData,
+  ]);
+
   const unitStructureSaveManualChangesLabel = t('planMyYear.multiSubjectUnits.footerSaveManualChanges');
 
   const stepScopeComplete = !!planningScope;
@@ -3469,7 +4897,230 @@ export default function PlanYearModal({
     !showPlanManagerView &&
     !openToEditPlanList;
 
+  const closeWebDraftLessonMenu = useCallback(() => {
+    setDraftBuilderLessonMenuKey(null);
+    setDraftBuilderMovePickKey(null);
+    setWebDraftLessonMenuLayout(null);
+  }, []);
+
+  const closeWebDraftUnitMenu = useCallback(() => {
+    setDraftBuilderUnitMenuKey(null);
+    setWebDraftUnitMenuLayout(null);
+  }, []);
+
+  const renderWebDraftLessonMenuPortal = () => {
+    if (Platform.OS !== 'web' || draftBuilderLessonMenuKey == null || !webDraftLessonMenuLayout) return null;
+    const currentUnits = (draftData || manualDraft)?.units;
+    if (!currentUnits?.length) return null;
+    const keyStr = String(draftBuilderLessonMenuKey);
+    const dashIdx = keyStr.indexOf('-');
+    if (dashIdx < 0) return null;
+    const unitIdx = parseInt(keyStr.slice(0, dashIdx), 10);
+    const lessonIdx = parseInt(keyStr.slice(dashIdx + 1), 10);
+    if (Number.isNaN(unitIdx) || Number.isNaN(lessonIdx)) return null;
+    const lessonMenuKey = keyStr;
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return null;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) return null;
+
+    const menuPanel = (
+      <>
+        {draftBuilderMovePickKey === lessonMenuKey ? (
+          <>
+            <TouchableOpacity
+              onPress={() => setDraftBuilderMovePickKey(null)}
+              style={{ paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: BORDER }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '600', color: ACCENT }}>
+                {s('planMyYear.multiSubjectUnits.draftMoveLessonBack')}
+              </Text>
+            </TouchableOpacity>
+            {currentUnits.map((uOpt, oi) =>
+              oi !== unitIdx ? (
+                <TouchableOpacity
+                  key={uOpt.temp_id || `portal-u-${oi}`}
+                  onPress={() => moveDraftLessonToUnit(unitIdx, lessonIdx, oi, null)}
+                  style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ fontSize: 14, color: FG }} numberOfLines={2}>
+                    {uOpt.title?.trim() || `Unit ${oi + 1}`}
+                  </Text>
+                </TouchableOpacity>
+              ) : null,
+            )}
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              onPress={() => insertUnitBreakAboveLesson(unitIdx, lessonIdx)}
+              style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftInsertUnitBreakAbove')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => moveDraftLessonToNewUnit(unitIdx, lessonIdx)}
+              style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftMoveLessonToNewUnit')}</Text>
+            </TouchableOpacity>
+            {currentUnits.length > 1 ? (
+              <TouchableOpacity
+                onPress={() => setDraftBuilderMovePickKey(lessonMenuKey)}
+                style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftMoveLessonToUnit')}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              onPress={() => {
+                deleteDraftLesson(unitIdx, lessonIdx);
+                closeWebDraftLessonMenu();
+              }}
+              style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{ fontSize: 14, color: ERROR }}>{s('planMyYear.multiSubjectUnits.draftDeleteLesson')}</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </>
+    );
+
+    return ReactDOM.createPortal(
+      <>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={closeWebDraftLessonMenu}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 100000,
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'default' })}
+        />
+        <View
+          style={{
+            position: 'fixed',
+            top: webDraftLessonMenuLayout.top,
+            right: webDraftLessonMenuLayout.right,
+            minWidth: 220,
+            maxWidth: 320,
+            backgroundColor: '#ffffff',
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: BORDER,
+            paddingVertical: 4,
+            zIndex: 100001,
+            ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(15,23,42,0.16)' } : {}),
+          }}
+        >
+          {menuPanel}
+        </View>
+      </>,
+      document.body,
+    );
+  };
+
+  const renderWebDraftUnitMenuPortal = () => {
+    if (Platform.OS !== 'web' || draftBuilderUnitMenuKey === null || !webDraftUnitMenuLayout) return null;
+    const currentUnits = (draftData || manualDraft)?.units;
+    if (!currentUnits?.length) return null;
+    const unitIdx = draftBuilderUnitMenuKey;
+    if (unitIdx < 0 || unitIdx >= currentUnits.length) return null;
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return null;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) return null;
+
+    return ReactDOM.createPortal(
+      <>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={closeWebDraftUnitMenu}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 100000,
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'default' })}
+        />
+        <View
+          style={{
+            position: 'fixed',
+            top: webDraftUnitMenuLayout.top,
+            right: webDraftUnitMenuLayout.right,
+            minWidth: 216,
+            maxWidth: 320,
+            backgroundColor: '#ffffff',
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: BORDER,
+            paddingVertical: 4,
+            zIndex: 100001,
+            ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(15,23,42,0.16)' } : {}),
+          }}
+        >
+          {unitIdx > 0 ? (
+            <TouchableOpacity
+              onPress={() => mergeDraftUnitWithAdjacent(unitIdx, 'prev')}
+              style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithPrevious')}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {unitIdx < currentUnits.length - 1 ? (
+            <TouchableOpacity
+              onPress={() => mergeDraftUnitWithAdjacent(unitIdx, 'next')}
+              style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithNext')}</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => {
+              addDraftLesson(unitIdx);
+              closeWebDraftUnitMenu();
+            }}
+            style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddLesson')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => addDraftUnitBelowIndex(unitIdx)}
+            style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
+          </TouchableOpacity>
+        </View>
+      </>,
+      document.body,
+    );
+  };
+
   const renderPlanYearUnitStructureScroll = (overlayCompactHeader = false) => (
+    <>
             <ScrollView
               style={styles.content}
               contentContainerStyle={
@@ -3486,7 +5137,7 @@ export default function PlanYearModal({
                 if (!availableSubject) {
                   return (
                     <View style={{ paddingVertical: 24, paddingHorizontal: 4 }}>
-                      <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>{s('planMyYear.multiSubjectUnits.chooseSubjectEmptyTitle')}</Text>
+                      <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>{s('planMyYear.multiSubjectUnits.chooseSubjectEmptyTitle')}</Text>
                       <Text style={[styles.mutedText, { marginBottom: 20, lineHeight: 20 }]}>
                         {s('planMyYear.multiSubjectUnits.chooseSubjectEmptyBody')}
                       </Text>
@@ -3510,7 +5161,16 @@ export default function PlanYearModal({
                   );
                 }
 
-                if (loadingUnitStructure && !draftData && !manualDraft) {
+                // Don’t block paste / upload / generate / manual entry UIs on structure fetch — avoids a flash before “Import from text”, etc.
+                const unitStructureContentEntryIdle =
+                  !draftData &&
+                  !manualDraft &&
+                  ((planSource === 'paste_plain' && unitStructureStep === 'input') ||
+                    (planSource === 'generate' && unitStructureStep === 'input') ||
+                    (planSource === 'paste' && unitStructureStep === 'input') ||
+                    (planSource === 'upload' &&
+                      (unitStructureStep === 'input' || unitStructureStep === 'paste_input')));
+                if (loadingUnitStructure && !unitStructureContentEntryIdle) {
                   return (
                     <View style={{ paddingVertical: 40, alignItems: 'center', paddingHorizontal: 16 }}>
                       <ActivityIndicator size="small" color={ACCENT} />
@@ -3543,7 +5203,28 @@ export default function PlanYearModal({
                       </Text>
                     </View>
                   ) : null;
-                
+
+                const cadenceDifferentMethodBannerEl =
+                  cadenceDifferentMethodNotice && PLAN_MY_YEAR_LOGISTICS_FIRST ? (
+                    <View
+                      style={{
+                        marginBottom: 14,
+                        paddingVertical: 12,
+                        paddingHorizontal: 14,
+                        backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: 'rgba(59, 130, 246, 0.22)',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, color: FG, lineHeight: 19 }}>
+                        {t('planMyYear.multiSubjectUnits.cadenceDifferentMethodBanner', {
+                          method: cadenceDifferentMethodNotice.previousMethodLabel,
+                        })}
+                      </Text>
+                    </View>
+                  ) : null;
+
                 // If we have draft data (after parsing/generating), show the structure editor
                 const currentDraft = draftData || manualDraft;
                 if (currentDraft && currentDraft.units && currentDraft.units.length > 0) {
@@ -3554,10 +5235,26 @@ export default function PlanYearModal({
                   const unitCardTint = 'rgba(241, 246, 255, 0.85)';
                   const unitInnerBg = 'rgba(255, 255, 255, 0.65)';
                   const timelineColor = '#bfdbfe';
+                  const isParsedFromTextDraft =
+                    Boolean(draftData) && !manualDraft && (planSource === 'paste_plain' || planSource === 'upload');
+                  const flatLessonsForParsedPreview = flattenUnitLessonsForPreview(units);
+                  const reviewFlagCount =
+                    isParsedFromTextDraft && rawText.trim().length >= 14
+                      ? estimateImportReviewFlagCount(rawText)
+                      : 0;
+                  const parsedHintLabel = isParsedFromTextDraft
+                    ? importParseHintLabelFromKey(detectPastedStructureHintKey(rawText))
+                    : null;
+                  const sidPreview = String(lessonSchedulePreviewPlan.curriculumSubjectId || '');
+                  const subjectSlotRowsForPreview = lessonSchedulePreviewPlan.rows.filter(
+                    (r) => String(r.line.subjectId || '') === sidPreview,
+                  );
+                  const availSlotLblParsed = s('planMyYear.multiSubjectUnits.availableInstructionalSlot');
 
                   return (
                     <>
                       {unitSubjectBanner}
+                      {cadenceDifferentMethodBannerEl}
                       {PLAN_MY_YEAR_LOGISTICS_FIRST && !cadenceYieldsInstructionalSlots && (
                         <View
                           style={{
@@ -3575,92 +5272,221 @@ export default function PlanYearModal({
                           </Text>
                         </View>
                       )}
-                      {/* Summary — progress-oriented */}
-                      <View style={{ marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: BORDER }}>
-                        <Text style={[styles.sectionTitle, { fontSize: 16, marginBottom: 0, lineHeight: 22 }]}>
-                          {units.length} {units.length === 1 ? 'unit' : 'units'} · {totalLessons} {totalLessons === 1 ? 'lesson' : 'lessons'}
-                          {totalAssessments > 0
-                            ? ` · ${totalAssessments} ${totalAssessments === 1 ? 'assessment' : 'assessments'}`
-                            : ''}{' '}
-                          built
-                        </Text>
-                        {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && (
-                          <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 8, lineHeight: 18 }}>
-                            {previewSlotLines.length === 1
-                              ? s('planMyYear.multiSubjectUnits.instructionalSlotsAvailableOne')
-                              : t('planMyYear.multiSubjectUnits.instructionalSlotsAvailableMany', {
-                                  count: previewSlotLines.length,
-                                })}
-                          </Text>
-                        )}
-                      </View>
-                      {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && totalLessons > 0 && (
-                        <View
-                          style={{
-                            marginBottom: 14,
-                            paddingVertical: 10,
-                            paddingHorizontal: 12,
-                            backgroundColor: ELIGIBILITY_CARD_BG,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: ELIGIBILITY_CARD_BORDER,
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 8 }}>
-                            {lessonSchedulePreviewPlan.hasCurriculumMapping
-                              ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
-                              : s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
-                          </Text>
-                          {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
-                            <ScrollView
-                              style={{ maxHeight: 220 }}
-                              nestedScrollEnabled
-                              showsVerticalScrollIndicator
-                            >
-                              {lessonSchedulePreviewPlan.rows
-                                .filter(
-                                  ({ line }) =>
-                                    String(line.subjectId || '') ===
-                                    String(lessonSchedulePreviewPlan.curriculumSubjectId || ''),
-                                )
-                                .map(({ line, detailLine }, idx) => (
-                                  <View
-                                    key={`unit-overlay-slot-${line.date}-${idx}`}
-                                    style={{
-                                      marginBottom: 10,
-                                      paddingBottom: 8,
-                                      borderBottomWidth: 1,
-                                      borderBottomColor: BORDER,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>
-                                      {line.dateLabel}, {line.timeLabel}
-                                    </Text>
-                                    <Text style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
-                                      {detailLine ??
-                                        `${line.subjectName}${line.childNames ? ` · ${line.childNames}` : ''}`}
-                                    </Text>
-                                  </View>
-                                ))}
-                              {lessonSchedulePreviewPlan.overflowCount > 0 ? (
-                                <Text style={{ fontSize: 11, color: TEXT_SECONDARY, marginTop: 4 }}>
-                                  {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
-                                    count: lessonSchedulePreviewPlan.overflowCount,
-                                  })}
-                                </Text>
-                              ) : null}
-                            </ScrollView>
-                          ) : (
-                            <Text style={{ fontSize: 12, color: MUTED, lineHeight: 18 }}>
-                              {s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
+                      {isParsedFromTextDraft ? (
+                        <>
+                          <View style={{ marginBottom: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: BORDER }}>
+                            <Text style={[styles.unitStructureModalTitle, { fontSize: 18, marginBottom: 6, lineHeight: 24 }]}>
+                              {s('planMyYear.multiSubjectUnits.parsedPreviewTitle')}
                             </Text>
+                            <Text style={[styles.mutedText, { marginBottom: 10, lineHeight: 20 }]}>
+                              {s('planMyYear.multiSubjectUnits.parsedPreviewSubtitle')}
+                            </Text>
+                            {parsedHintLabel ? (
+                              <Text style={{ fontSize: 13, color: TEXT_SECONDARY, marginBottom: 6, lineHeight: 18 }}>
+                                ✓ {s('planMyYear.multiSubjectUnits.pasteDetectedPrefix')} {parsedHintLabel}
+                              </Text>
+                            ) : null}
+                            {reviewFlagCount >= 2 ? (
+                              <Text style={{ fontSize: 13, color: '#b45309', marginBottom: 8, lineHeight: 18 }}>
+                                ⚠{' '}
+                                {t('planMyYear.multiSubjectUnits.parsedPreviewMayNeedReview', {
+                                  count: reviewFlagCount,
+                                })}
+                              </Text>
+                            ) : null}
+                            <Text style={{ fontSize: 14, fontWeight: '600', color: FG, lineHeight: 20 }}>
+                              {units.length} {units.length === 1 ? 'unit' : 'units'} · {totalLessons}{' '}
+                              {totalLessons === 1 ? 'lesson' : 'lessons'}
+                            </Text>
+                          </View>
+                          {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && totalLessons > 0 ? (
+                            <View
+                              style={{
+                                marginBottom: 14,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                backgroundColor: ELIGIBILITY_CARD_BG,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: ELIGIBILITY_CARD_BORDER,
+                              }}
+                            >
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: FG, marginBottom: 10 }}>
+                                {s('planMyYear.multiSubjectUnits.parsedSchedulePreviewTitle')}
+                              </Text>
+                              {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
+                                <ScrollView
+                                  style={{ maxHeight: 240 }}
+                                  nestedScrollEnabled
+                                  showsVerticalScrollIndicator
+                                >
+                                  {(() => {
+                                    const nMax = Math.max(
+                                      flatLessonsForParsedPreview.length,
+                                      subjectSlotRowsForPreview.length,
+                                    );
+                                    const lines = [];
+                                    for (let i = 0; i < nMax; i++) {
+                                      const slotLine = subjectSlotRowsForPreview[i]?.line;
+                                      const les = flatLessonsForParsedPreview[i];
+                                      const lineNo = i + 1;
+                                      const timePart = slotLine ? `${slotLine.dateLabel}, ${slotLine.timeLabel}` : null;
+                                      if (les && timePart) {
+                                        lines.push(
+                                          <Text
+                                            key={`parsed-slot-${i}`}
+                                            style={{ fontSize: 12, color: FG, lineHeight: 20, marginBottom: 8 }}
+                                          >
+                                            {`${lineNo}. ${timePart}  →  Lesson ${les.index}: ${les.title}`}
+                                          </Text>,
+                                        );
+                                      } else if (!les && timePart) {
+                                        lines.push(
+                                          <Text
+                                            key={`parsed-slot-${i}`}
+                                            style={{ fontSize: 12, color: MUTED, lineHeight: 20, marginBottom: 8 }}
+                                          >
+                                            {`${lineNo}. ${timePart}  →  ${availSlotLblParsed}`}
+                                          </Text>,
+                                        );
+                                      } else if (les && !timePart) {
+                                        lines.push(
+                                          <Text
+                                            key={`parsed-slot-${i}`}
+                                            style={{ fontSize: 12, color: FG, lineHeight: 20, marginBottom: 8 }}
+                                          >
+                                            {`${lineNo}. ${t('planMyYear.multiSubjectUnits.draftLessonUnscheduled')}  →  Lesson ${les.index}: ${les.title}`}
+                                          </Text>,
+                                        );
+                                      }
+                                    }
+                                    return lines;
+                                  })()}
+                                  <LessonOverflowFollowUp
+                                    textStyle={{ fontSize: 11, color: TEXT_SECONDARY }}
+                                    overflowCount={lessonSchedulePreviewPlan.overflowCount}
+                                    extendEndYmd={lessonOverflowExtendEndDate}
+                                    curriculumSubjectId={lessonSchedulePreviewPlan.curriculumSubjectId}
+                                    hasCurriculumMapping={lessonSchedulePreviewPlan.hasCurriculumMapping}
+                                    onApplyExtend={applyExtendedPlanEndDate}
+                                    t={t}
+                                  />
+                                </ScrollView>
+                              ) : (
+                                <Text style={{ fontSize: 12, color: MUTED, lineHeight: 18 }}>
+                                  {s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
+                                </Text>
+                              )}
+                            </View>
+                          ) : null}
+                          <Text style={[styles.mutedText, { fontSize: 12, lineHeight: 18, marginBottom: 12 }]}>
+                            {s('planMyYear.multiSubjectUnits.parsedPreviewEditTip')}
+                          </Text>
+                        </>
+                      ) : (
+                        <>
+                          <View style={{ marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: BORDER }}>
+                            {manualDraft && !draftData ? (
+                              <Text style={[styles.unitStructureModalTitle, { marginBottom: 10 }]}>
+                                {s('planMyYear.multiSubjectUnits.unitInputModalTitle')}
+                              </Text>
+                            ) : null}
+                            <Text
+                              style={[
+                                styles.unitStructureModalTitle,
+                                { fontSize: 16, marginBottom: 0, lineHeight: 22, textTransform: 'none', letterSpacing: 0 },
+                              ]}
+                            >
+                              {units.length} {units.length === 1 ? 'unit' : 'units'} · {totalLessons}{' '}
+                              {totalLessons === 1 ? 'lesson' : 'lessons'}
+                              {totalAssessments > 0
+                                ? ` · ${totalAssessments} ${totalAssessments === 1 ? 'assessment' : 'assessments'}`
+                                : ''}{' '}
+                              built
+                            </Text>
+                            {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && (
+                              <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 8, lineHeight: 18 }}>
+                                {previewSlotLines.length === 1
+                                  ? s('planMyYear.multiSubjectUnits.instructionalSlotsAvailableOne')
+                                  : t('planMyYear.multiSubjectUnits.instructionalSlotsAvailableMany', {
+                                      count: previewSlotLines.length,
+                                    })}
+                              </Text>
+                            )}
+                          </View>
+                          {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && totalLessons > 0 && (
+                            <View
+                              style={{
+                                marginBottom: 14,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                backgroundColor: ELIGIBILITY_CARD_BG,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: ELIGIBILITY_CARD_BORDER,
+                              }}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 8 }}>
+                                {lessonSchedulePreviewPlan.hasCurriculumMapping
+                                  ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
+                                  : s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
+                              </Text>
+                              {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
+                                <ScrollView
+                                  style={{ maxHeight: 220 }}
+                                  nestedScrollEnabled
+                                  showsVerticalScrollIndicator
+                                >
+                                  {lessonSchedulePreviewPlan.rows
+                                    .filter(
+                                      ({ line }) =>
+                                        String(line.subjectId || '') ===
+                                        String(lessonSchedulePreviewPlan.curriculumSubjectId || ''),
+                                    )
+                                    .map(({ line, detailLine }, idx) => (
+                                      <View
+                                        key={`unit-overlay-slot-${line.date}-${idx}`}
+                                        style={{
+                                          marginBottom: 10,
+                                          paddingBottom: 8,
+                                          borderBottomWidth: 1,
+                                          borderBottomColor: BORDER,
+                                        }}
+                                      >
+                                        <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>
+                                          {line.dateLabel}, {line.timeLabel}
+                                        </Text>
+                                        <Text style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                                          {detailLine ??
+                                            `${line.subjectName}${line.childNames ? ` · ${line.childNames}` : ''}`}
+                                        </Text>
+                                      </View>
+                                    ))}
+                                  <LessonOverflowFollowUp
+                                    textStyle={{ fontSize: 11, color: TEXT_SECONDARY }}
+                                    overflowCount={lessonSchedulePreviewPlan.overflowCount}
+                                    extendEndYmd={lessonOverflowExtendEndDate}
+                                    curriculumSubjectId={lessonSchedulePreviewPlan.curriculumSubjectId}
+                                    hasCurriculumMapping={lessonSchedulePreviewPlan.hasCurriculumMapping}
+                                    onApplyExtend={applyExtendedPlanEndDate}
+                                    t={t}
+                                  />
+                                </ScrollView>
+                              ) : (
+                                <Text style={{ fontSize: 12, color: MUTED, lineHeight: 18 }}>
+                                  {s('planMyYear.multiSubjectUnits.draftLessonSlotMapIntro')}
+                                </Text>
+                              )}
+                            </View>
                           )}
-                        </View>
+                        </>
                       )}
 
                       {/* Units list */}
                       <View style={{ gap: 14 }}>
-                        {units.map((unit, unitIdx) => {
+                        {(() => {
+                          let lessonGlobalIdx = 0;
+                          return units.map((unit, unitIdx) => {
                           const isExpanded = expandedUnits.has(unitIdx);
                           const lessons = unit.lessons || [];
                           const lessonCount = lessons.filter(l => l.lesson_type === 'lesson' || l.lesson_type === 'project' || l.lesson_type === 'activity').length;
@@ -3674,27 +5500,40 @@ export default function PlanYearModal({
                                 borderColor: BORDER,
                                 borderRadius: 12,
                                 backgroundColor: unitCardTint,
-                                overflow: 'hidden',
+                                overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
                                 ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(15,23,42,0.06)' } : {}),
                               }}
                             >
                               {/* Unit header (container) */}
-                              <TouchableOpacity
-                                onPress={() => {
-                                  const newExpanded = new Set(expandedUnits);
-                                  if (isExpanded) {
-                                    newExpanded.delete(unitIdx);
-                                  } else {
-                                    newExpanded.add(unitIdx);
-                                  }
-                                  setExpandedUnits(newExpanded);
+                              <View
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  paddingVertical: 12,
+                                  paddingHorizontal: 14,
+                                  gap: 8,
+                                  ...(Platform.OS !== 'web' && draftBuilderUnitMenuKey === unitIdx
+                                    ? { zIndex: 80, elevation: 24 }
+                                    : {}),
                                 }}
-                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10 }}
-                                activeOpacity={0.7}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                               >
-                                {isExpanded ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
-                                <View style={{ flex: 1 }}>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const newExpanded = new Set(expandedUnits);
+                                    if (isExpanded) {
+                                      newExpanded.delete(unitIdx);
+                                    } else {
+                                      newExpanded.add(unitIdx);
+                                    }
+                                    setExpandedUnits(newExpanded);
+                                  }}
+                                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                                  style={{ padding: 4 }}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  {isExpanded ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
+                                </TouchableOpacity>
+                                <View style={{ flex: 1, minWidth: 0 }}>
                                   <TextInput
                                     style={[styles.input, { fontSize: 15, fontWeight: '700', paddingVertical: 4, paddingHorizontal: 4, marginBottom: 2, backgroundColor: 'transparent' }]}
                                     value={unit.title || ''}
@@ -3708,17 +5547,107 @@ export default function PlanYearModal({
                                     {assessmentCount > 0 && ` · ${assessmentCount} ${assessmentCount === 1 ? 'assessment' : 'assessments'}`}
                                   </Text>
                                 </View>
+                                <View style={{ position: 'relative', zIndex: 20 }}>
+                                  <TouchableOpacity
+                                    onPress={(e) => {
+                                      setDraftBuilderLessonMenuKey(null);
+                                      setDraftBuilderMovePickKey(null);
+                                      if (Platform.OS === 'web') {
+                                        const prev = draftBuilderUnitMenuKey;
+                                        const closing = prev === unitIdx;
+                                        if (closing) {
+                                          setWebDraftUnitMenuLayout(null);
+                                          setDraftBuilderUnitMenuKey(null);
+                                          return;
+                                        }
+                                        const el =
+                                          e?.currentTarget ||
+                                          e?.nativeEvent?.currentTarget ||
+                                          e?.nativeEvent?.target;
+                                        const r = el?.getBoundingClientRect?.();
+                                        if (r) {
+                                          setWebDraftUnitMenuLayout({
+                                            top: r.bottom + 4,
+                                            right: typeof window !== 'undefined' ? window.innerWidth - r.right : 0,
+                                          });
+                                          setDraftBuilderUnitMenuKey(unitIdx);
+                                        }
+                                        return;
+                                      }
+                                      setDraftBuilderUnitMenuKey((k) => (k === unitIdx ? null : unitIdx));
+                                    }}
+                                    style={{ padding: 6 }}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    accessibilityLabel={s('planMyYear.multiSubjectUnits.draftLessonMore')}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <MoreVertical size={18} color={MUTED} />
+                                  </TouchableOpacity>
+                                  {draftBuilderUnitMenuKey === unitIdx && Platform.OS !== 'web' ? (
+                                    <View
+                                      style={{
+                                        position: 'absolute',
+                                        right: 0,
+                                        top: '100%',
+                                        marginTop: 4,
+                                        minWidth: 216,
+                                        backgroundColor: BG,
+                                        borderRadius: 10,
+                                        borderWidth: 1,
+                                        borderColor: BORDER,
+                                        paddingVertical: 4,
+                                        zIndex: 2000,
+                                        ...(Platform.OS === 'web'
+                                          ? { boxShadow: '0 8px 24px rgba(15,23,42,0.12)' }
+                                          : { elevation: 8 }),
+                                      }}
+                                    >
+                                      {unitIdx > 0 ? (
+                                        <TouchableOpacity
+                                          onPress={() => mergeDraftUnitWithAdjacent(unitIdx, 'prev')}
+                                          style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithPrevious')}</Text>
+                                        </TouchableOpacity>
+                                      ) : null}
+                                      {unitIdx < units.length - 1 ? (
+                                        <TouchableOpacity
+                                          onPress={() => mergeDraftUnitWithAdjacent(unitIdx, 'next')}
+                                          style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithNext')}</Text>
+                                        </TouchableOpacity>
+                                      ) : null}
+                                      <TouchableOpacity
+                                        onPress={() => {
+                                          addDraftLesson(unitIdx);
+                                          setDraftBuilderUnitMenuKey(null);
+                                        }}
+                                        style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddLesson')}</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        onPress={() => addDraftUnitBelowIndex(unitIdx)}
+                                        style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                  ) : null}
+                                </View>
                                 <TouchableOpacity
-                                  onPress={(e) => {
-                                    e.stopPropagation();
-                                    deleteDraftUnit(unitIdx);
-                                  }}
+                                  onPress={() => deleteDraftUnit(unitIdx)}
                                   style={{ padding: 4 }}
                                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                 >
                                   <Trash2 size={16} color={ERROR} />
                                 </TouchableOpacity>
-                              </TouchableOpacity>
+                              </View>
 
                               {/* Lessons — timeline list inside unit */}
                               {isExpanded && (
@@ -3736,6 +5665,10 @@ export default function PlanYearModal({
                                         updateDraftLesson(unitIdx, lessonIdx, 'cadence_metadata', { ...cur, ...partial });
                                       };
 
+                                      const lessonMenuKey = detailKey;
+                                      const lessonMenuOpen = draftBuilderLessonMenuKey === lessonMenuKey;
+                                      const rowPrefixPad = Platform.OS === 'web' ? 40 : 52;
+
                                       return (
                                         <View
                                           key={lesson.temp_id || lessonIdx}
@@ -3745,29 +5678,73 @@ export default function PlanYearModal({
                                             borderTopWidth: lessonIdx > 0 ? 1 : 0,
                                             borderTopColor: 'rgba(15,23,42,0.06)',
                                             paddingTop: lessonIdx > 0 ? 8 : 0,
+                                            ...(Platform.OS !== 'web' && lessonMenuOpen
+                                              ? { zIndex: 60, elevation: 20 }
+                                              : {}),
                                           }}
+                                          {...(Platform.OS === 'web'
+                                            ? {
+                                                onDragOver: (ev) => {
+                                                  ev?.preventDefault?.();
+                                                },
+                                                onDrop: (ev) => {
+                                                  ev?.preventDefault?.();
+                                                  const p = readDraftLessonDragPayload(ev);
+                                                  if (!p) return;
+                                                  if (p.fromUnit === unitIdx && p.fromLesson === lessonIdx) return;
+                                                  moveDraftLessonToUnit(p.fromUnit, p.fromLesson, unitIdx, lessonIdx);
+                                                },
+                                              }
+                                            : {})}
                                         >
                                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                            <View style={{ alignItems: 'center', justifyContent: 'center', gap: 0, paddingRight: 2 }}>
-                                              <TouchableOpacity
-                                                onPress={() => moveDraftLesson(unitIdx, lessonIdx, -1)}
-                                                disabled={lessonIdx === 0}
-                                                style={{ padding: 2 }}
-                                                accessibilityLabel={s('planMyYear.multiSubjectUnits.draftReorderA11y')}
-                                                {...(Platform.OS === 'web' && { cursor: lessonIdx === 0 ? 'default' : 'pointer', title: 'Move up' })}
+                                            {Platform.OS === 'web' ? (
+                                              <View
+                                                draggable
+                                                onDragStart={(ev) => {
+                                                  try {
+                                                    const dt = ev?.nativeEvent?.dataTransfer ?? ev?.dataTransfer;
+                                                    if (dt?.setData) {
+                                                      dt.setData(
+                                                        DRAFT_LESSON_DRAG_MIME,
+                                                        JSON.stringify({ fromUnit: unitIdx, fromLesson: lessonIdx }),
+                                                      );
+                                                      dt.effectAllowed = 'move';
+                                                    }
+                                                  } catch (_) {}
+                                                }}
+                                                style={{
+                                                  paddingVertical: 6,
+                                                  paddingHorizontal: 2,
+                                                  justifyContent: 'center',
+                                                  ...(Platform.OS === 'web' ? { cursor: 'grab' } : {}),
+                                                }}
+                                                accessibilityLabel={s('planMyYear.multiSubjectUnits.draftDragLessonA11y')}
                                               >
-                                                <ChevronUp size={14} color={lessonIdx === 0 ? '#e5e7eb' : MUTED} />
-                                              </TouchableOpacity>
-                                              <TouchableOpacity
-                                                onPress={() => moveDraftLesson(unitIdx, lessonIdx, 1)}
-                                                disabled={lessonIdx === lessons.length - 1}
-                                                style={{ padding: 2 }}
-                                                accessibilityLabel={s('planMyYear.multiSubjectUnits.draftReorderA11y')}
-                                                {...(Platform.OS === 'web' && { cursor: lessonIdx === lessons.length - 1 ? 'default' : 'pointer', title: 'Move down' })}
-                                              >
-                                                <ChevronDown size={14} color={lessonIdx === lessons.length - 1 ? '#e5e7eb' : MUTED} />
-                                              </TouchableOpacity>
-                                            </View>
+                                                <GripVertical size={16} color={MUTED} />
+                                              </View>
+                                            ) : (
+                                              <View style={{ alignItems: 'center', justifyContent: 'center', gap: 0, paddingRight: 2 }}>
+                                                <TouchableOpacity
+                                                  onPress={() => moveDraftLesson(unitIdx, lessonIdx, -1)}
+                                                  disabled={lessonIdx === 0}
+                                                  style={{ padding: 2 }}
+                                                  accessibilityLabel={s('planMyYear.multiSubjectUnits.draftReorderA11y')}
+                                                  {...(Platform.OS === 'web' && { cursor: lessonIdx === 0 ? 'default' : 'pointer', title: 'Move up' })}
+                                                >
+                                                  <ChevronUp size={14} color={lessonIdx === 0 ? '#e5e7eb' : MUTED} />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                  onPress={() => moveDraftLesson(unitIdx, lessonIdx, 1)}
+                                                  disabled={lessonIdx === lessons.length - 1}
+                                                  style={{ padding: 2 }}
+                                                  accessibilityLabel={s('planMyYear.multiSubjectUnits.draftReorderA11y')}
+                                                  {...(Platform.OS === 'web' && { cursor: lessonIdx === lessons.length - 1 ? 'default' : 'pointer', title: 'Move down' })}
+                                                >
+                                                  <ChevronDown size={14} color={lessonIdx === lessons.length - 1 ? '#e5e7eb' : MUTED} />
+                                                </TouchableOpacity>
+                                              </View>
+                                            )}
                                             <Text style={{ color: MUTED, fontSize: 14, fontWeight: '700', width: 12, textAlign: 'center', marginRight: 2 }}>•</Text>
                                             <TextInput
                                               style={[styles.input, { flex: 1, fontSize: 14, paddingVertical: 6, paddingHorizontal: 8, minWidth: 0 }]}
@@ -3800,16 +5777,147 @@ export default function PlanYearModal({
                                             >
                                               {detailsOpen ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
                                             </TouchableOpacity>
-                                            <TouchableOpacity
-                                              onPress={() => deleteDraftLesson(unitIdx, lessonIdx)}
-                                              style={{ padding: 4 }}
-                                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                            >
-                                              <Trash2 size={14} color={ERROR} />
-                                            </TouchableOpacity>
+                                            <View style={{ position: 'relative', zIndex: 15 }}>
+                                              <TouchableOpacity
+                                                onPress={(e) => {
+                                                  setDraftBuilderUnitMenuKey(null);
+                                                  if (Platform.OS === 'web') {
+                                                    const prevKey = draftBuilderLessonMenuKey;
+                                                    const closing = prevKey === lessonMenuKey;
+                                                    if (closing) {
+                                                      setWebDraftLessonMenuLayout(null);
+                                                      setDraftBuilderMovePickKey(null);
+                                                      setDraftBuilderLessonMenuKey(null);
+                                                      return;
+                                                    }
+                                                    setDraftBuilderMovePickKey(null);
+                                                    const el =
+                                                      e?.currentTarget ||
+                                                      e?.nativeEvent?.currentTarget ||
+                                                      e?.nativeEvent?.target;
+                                                    const r = el?.getBoundingClientRect?.();
+                                                    if (r) {
+                                                      setWebDraftLessonMenuLayout({
+                                                        top: r.bottom + 4,
+                                                        right: typeof window !== 'undefined' ? window.innerWidth - r.right : 0,
+                                                      });
+                                                      setDraftBuilderLessonMenuKey(lessonMenuKey);
+                                                    }
+                                                    return;
+                                                  }
+                                                  setDraftBuilderMovePickKey(null);
+                                                  setDraftBuilderLessonMenuKey((k) => (k === lessonMenuKey ? null : lessonMenuKey));
+                                                }}
+                                                style={{ padding: 4 }}
+                                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                                accessibilityLabel={s('planMyYear.multiSubjectUnits.draftLessonMore')}
+                                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                              >
+                                                <MoreVertical size={16} color={MUTED} />
+                                              </TouchableOpacity>
+                                              {lessonMenuOpen && Platform.OS !== 'web' ? (
+                                                <View
+                                                  style={{
+                                                    position: 'absolute',
+                                                    right: 0,
+                                                    top: '100%',
+                                                    marginTop: 4,
+                                                    minWidth: 220,
+                                                    backgroundColor: BG,
+                                                    borderRadius: 10,
+                                                    borderWidth: 1,
+                                                    borderColor: BORDER,
+                                                    paddingVertical: 4,
+                                                    zIndex: 2000,
+                                                    ...(Platform.OS === 'web'
+                                                      ? { boxShadow: '0 8px 24px rgba(15,23,42,0.12)' }
+                                                      : { elevation: 8 }),
+                                                  }}
+                                                >
+                                                  {draftBuilderMovePickKey === lessonMenuKey ? (
+                                                    <>
+                                                      <TouchableOpacity
+                                                        onPress={() => setDraftBuilderMovePickKey(null)}
+                                                        style={{ paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                      >
+                                                        <Text style={{ fontSize: 13, fontWeight: '600', color: ACCENT }}>
+                                                          {s('planMyYear.multiSubjectUnits.draftMoveLessonBack')}
+                                                        </Text>
+                                                      </TouchableOpacity>
+                                                      {units.map((uOpt, oi) =>
+                                                        oi !== unitIdx ? (
+                                                          <TouchableOpacity
+                                                            key={uOpt.temp_id || `u-${oi}`}
+                                                            onPress={() => moveDraftLessonToUnit(unitIdx, lessonIdx, oi, null)}
+                                                            style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                          >
+                                                            <Text style={{ fontSize: 14, color: FG }} numberOfLines={2}>
+                                                              {uOpt.title?.trim() || `Unit ${oi + 1}`}
+                                                            </Text>
+                                                          </TouchableOpacity>
+                                                        ) : null,
+                                                      )}
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <TouchableOpacity
+                                                        onPress={() => insertUnitBreakAboveLesson(unitIdx, lessonIdx)}
+                                                        style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                      >
+                                                        <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftInsertUnitBreakAbove')}</Text>
+                                                      </TouchableOpacity>
+                                                      <TouchableOpacity
+                                                        onPress={() => moveDraftLessonToNewUnit(unitIdx, lessonIdx)}
+                                                        style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                      >
+                                                        <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftMoveLessonToNewUnit')}</Text>
+                                                      </TouchableOpacity>
+                                                      {units.length > 1 ? (
+                                                        <TouchableOpacity
+                                                          onPress={() => setDraftBuilderMovePickKey(lessonMenuKey)}
+                                                          style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                        >
+                                                          <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftMoveLessonToUnit')}</Text>
+                                                        </TouchableOpacity>
+                                                      ) : null}
+                                                      <TouchableOpacity
+                                                        onPress={() => {
+                                                          deleteDraftLesson(unitIdx, lessonIdx);
+                                                          setDraftBuilderLessonMenuKey(null);
+                                                          setDraftBuilderMovePickKey(null);
+                                                        }}
+                                                        style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                                      >
+                                                        <Text style={{ fontSize: 14, color: ERROR }}>{s('planMyYear.multiSubjectUnits.draftDeleteLesson')}</Text>
+                                                      </TouchableOpacity>
+                                                    </>
+                                                  )}
+                                                </View>
+                                              ) : null}
+                                            </View>
                                           </View>
+                                          {isParsedFromTextDraft ? (() => {
+                                            const si = lessonGlobalIdx;
+                                            lessonGlobalIdx += 1;
+                                            if (!cadenceYieldsInstructionalSlots || !lessonSchedulePreviewPlan.hasCurriculumMapping) {
+                                              return null;
+                                            }
+                                            const slotAt = flatLessonSlotTimes[si];
+                                            const label = slotAt
+                                              ? `→ ${slotAt.dateLabel}, ${slotAt.timeLabel}`
+                                              : `→ ${availSlotLblParsed}`;
+                                            return (
+                                              <Text style={{ marginLeft: rowPrefixPad, marginTop: 4, fontSize: 12, color: MUTED, lineHeight: 18 }}>{label}</Text>
+                                            );
+                                          })() : null}
                                           {detailsOpen && (
-                                            <View style={{ marginTop: 8, marginLeft: 52, gap: 8 }}>
+                                            <View style={{ marginTop: 8, marginLeft: rowPrefixPad, gap: 8 }}>
                                               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                                                 {['lesson', ...DRAFT_EXTRA_TYPES].map((type) => (
                                                   <TouchableOpacity
@@ -3886,6 +5994,24 @@ export default function PlanYearModal({
                                         </View>
                                       );
                                     })}
+                                    {Platform.OS === 'web' ? (
+                                      <View
+                                        style={{
+                                          minHeight: 14,
+                                          marginTop: 6,
+                                          marginBottom: 4,
+                                          borderRadius: 6,
+                                          backgroundColor: 'rgba(15,23,42,0.04)',
+                                        }}
+                                        onDragOver={(ev) => ev?.preventDefault?.()}
+                                        onDrop={(ev) => {
+                                          ev?.preventDefault?.();
+                                          const p = readDraftLessonDragPayload(ev);
+                                          if (!p) return;
+                                          moveDraftLessonToUnit(p.fromUnit, p.fromLesson, unitIdx, null);
+                                        }}
+                                      />
+                                    ) : null}
                                     <TouchableOpacity
                                       onPress={() => addDraftLesson(unitIdx)}
                                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingTop: 10, gap: 6 }}
@@ -3899,7 +6025,8 @@ export default function PlanYearModal({
                               )}
                             </View>
                           );
-                        })}
+                        });
+                        })()}
                       </View>
 
                       {/* Add unit — inline, same family as Add lesson */}
@@ -3936,7 +6063,8 @@ export default function PlanYearModal({
                   return (
                     <View>
                       {unitSubjectBanner}
-                      <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Upload material</Text>
+                      {cadenceDifferentMethodBannerEl}
+                      <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>Upload material</Text>
                       <Text style={[styles.mutedText, { marginBottom: 16 }]}>Select a material to parse into curriculum structure.</Text>
                       {loadingMaterials ? (
                         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
@@ -4056,102 +6184,6 @@ export default function PlanYearModal({
                             return dropdownContent;
                           })()}
                           
-                          {/* Configuration sections (same as Import & extract) */}
-                          <View style={{ marginTop: 24, gap: 16 }}>
-                            <View>
-                              <Text style={[styles.label, { marginBottom: 8 }]}>Source type</Text>
-                              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                                <View style={{ flexDirection: 'row', gap: 8 }}>
-                                  {SOURCE_TYPES.map((opt) => (
-                                    <TouchableOpacity
-                                      key={opt.value}
-                                      style={[
-                                        {
-                                          paddingHorizontal: 12,
-                                          paddingVertical: 8,
-                                          borderRadius: 16,
-                                          borderWidth: 1,
-                                          borderColor: sourceType === opt.value ? ACCENT : BORDER,
-                                          backgroundColor: sourceType === opt.value ? ACCENT_LIGHT : BG,
-                                        },
-                                      ]}
-                                      onPress={() => setSourceType(opt.value)}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={[styles.radioLabel, { fontSize: 13, color: sourceType === opt.value ? ACCENT : MUTED }]}>
-                                        {s(`courseStructure.importExtract.${opt.labelKey}`) || opt.value}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  ))}
-                                </View>
-                              </ScrollView>
-                            </View>
-                            
-                            <View>
-                              <Text style={[styles.label, { marginBottom: 8 }]}>Parse mode</Text>
-                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                                {PARSE_MODES.map((opt) => (
-                                  <TouchableOpacity
-                                    key={opt.value}
-                                    style={[
-                                      {
-                                        paddingHorizontal: 12,
-                                        paddingVertical: 8,
-                                        borderRadius: 16,
-                                        borderWidth: 1,
-                                        borderColor: parseMode === opt.value ? ACCENT : BORDER,
-                                        backgroundColor: parseMode === opt.value ? ACCENT_LIGHT : BG,
-                                      },
-                                    ]}
-                                    onPress={() => setParseMode(opt.value)}
-                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                  >
-                                    <Text style={[styles.radioLabel, { fontSize: 13, color: parseMode === opt.value ? ACCENT : MUTED }]}>
-                                      {s(`courseStructure.importExtract.${opt.labelKey}`) || opt.value}
-                                    </Text>
-                                  </TouchableOpacity>
-                                ))}
-                              </View>
-                            </View>
-                            
-                            <View style={{ gap: 12 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text style={styles.label}>Detect dates from text</Text>
-                                <Switch value={detectDates} onValueChange={setDetectDates} />
-                              </View>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text style={styles.label}>Preserve source headings</Text>
-                                <Switch value={preserveHeadings} onValueChange={setPreserveHeadings} />
-                              </View>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text style={styles.label}>Ignore policy / admin text</Text>
-                                <Switch value={ignorePolicyText} onValueChange={setIgnorePolicyText} />
-                              </View>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text style={styles.label}>Extract assignments</Text>
-                                <Switch value={extractAssignments} onValueChange={setExtractAssignments} />
-                              </View>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text style={styles.label}>Extract assessments</Text>
-                                <Switch value={extractAssessments} onValueChange={setExtractAssessments} />
-                              </View>
-                            </View>
-                            
-                            <View>
-                              <Text style={[styles.label, { marginBottom: 8 }]}>Special instructions (optional)</Text>
-                              <TextInput
-                                style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
-                                placeholder="Any specific parsing instructions..."
-                                placeholderTextColor={MUTED}
-                                value={specialInstructionsParse}
-                                onChangeText={setSpecialInstructionsParse}
-                                multiline
-                                numberOfLines={2}
-                                {...(Platform.OS === 'web' && { cursor: 'text' })}
-                              />
-                            </View>
-                          </View>
-                          
                           {selectedMaterialId && (
                             <TouchableOpacity
                               onPress={() => {
@@ -4174,193 +6206,163 @@ export default function PlanYearModal({
                   (planSource === 'upload' && unitStructureStep === 'paste_input') ||
                   (planSource === 'paste_plain' && unitStructureStep === 'input')
                 ) {
+                  const runParsePlainTextPreview = async () => {
+                    if (!availableSubject || !familyId || !rawText.trim()) {
+                      setUnitStructureError(availableSubject ? 'Please paste some content to parse.' : 'Subject not found.');
+                      return;
+                    }
+                    const pastedSnapshot = rawText;
+                    setParsing(true);
+                    setUnitStructureError(null);
+                    setImportParseStreamPreview('');
+                    let streamed = '';
+                    try {
+                      const { data, error: err } = await parsePlainTextStream(
+                        {
+                          subject_id: availableSubject?.id,
+                          family_id: familyId,
+                          subject_name: availableSubject?.name || '',
+                          raw_text: pastedSnapshot.trim(),
+                          source_title: sourceTitle.trim() || null,
+                          source_type: sourceType === 'auto_detect' ? null : sourceType,
+                          parse_mode: parseMode === 'auto_detect' ? null : parseMode,
+                          detect_dates: detectDates,
+                          preserve_source_headings: preserveHeadings,
+                          ignore_policy_text: ignorePolicyText,
+                          extract_assignments: extractAssignments,
+                          extract_assessments: extractAssessments,
+                          special_instructions: specialInstructionsParse.trim() || null,
+                        },
+                        {
+                          onDelta: (chunk) => {
+                            streamed += chunk;
+                            setImportParseStreamPreview(buildImportStreamPreviewDisplay(streamed));
+                          },
+                        }
+                      );
+                      if (err || !data) {
+                        setUnitStructureError(err?.message || 'Failed to parse content');
+                        return;
+                      }
+                      setRawText(data.raw_text || pastedSnapshot);
+                      setDraftData(data);
+                      setUnitStructureStep('draft');
+                      if (data.units && data.units.length > 0) {
+                        setExpandedUnits(new Set([0]));
+                      }
+                    } catch (err) {
+                      setUnitStructureError(err.message || 'Failed to parse content');
+                    } finally {
+                      setImportParseStreamPreview('');
+                      setParsing(false);
+                    }
+                  };
+                  const pasteHintLabel = importParseHintLabelFromKey(detectPastedStructureHintKey(rawText));
                   return (
                     <View>
                       {unitSubjectBanner}
-                      <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Import & extract</Text>
-                      <Text style={[styles.mutedText, { marginBottom: 16 }]}>Paste a syllabus, lesson list, or pacing guide and extract units, lessons, assignments, and dates.</Text>
-                      
-                      <View style={{ gap: 16 }}>
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Paste your content</Text>
-                          <TextInput
-                            style={[styles.input, { minHeight: 200, textAlignVertical: 'top' }]}
-                            placeholder="Paste syllabus, outline, or lesson list here..."
-                            placeholderTextColor={MUTED}
-                            value={rawText}
-                            onChangeText={setRawText}
-                            multiline
-                            numberOfLines={10}
-                            editable={!parsing}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
+                      {cadenceDifferentMethodBannerEl}
+                      <Text style={[styles.unitStructureModalTitle, { marginBottom: 6 }]}>
+                        {s('planMyYear.multiSubjectUnits.importFromTextTitle')}
+                      </Text>
+                      <Text style={[styles.mutedText, { marginBottom: 6, lineHeight: 20 }]}>
+                        {s('planMyYear.multiSubjectUnits.importFromTextIntro')}
+                      </Text>
+
+                      <View style={{ gap: 14 }}>
+                        <View style={{ paddingBottom: 2 }}>
+                          <Text style={[styles.mutedText, { fontSize: 12, fontWeight: '600', marginBottom: 6 }]}>
+                            {s('planMyYear.multiSubjectUnits.importPasteTipTitle')}
+                          </Text>
+                          <Text style={[styles.mutedText, { fontSize: 12, lineHeight: 18 }]}>
+                            {`• ${s('planMyYear.multiSubjectUnits.importPasteTipBulletUnit')}\n• ${s('planMyYear.multiSubjectUnits.importPasteTipBulletLesson')}\n• ${s('planMyYear.multiSubjectUnits.importPasteTipBulletSchedule')}`}
+                          </Text>
                         </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Source title (optional)</Text>
-                          <TextInput
-                            style={styles.input}
-                            placeholder="e.g. Spring Biology Syllabus"
-                            placeholderTextColor={MUTED}
-                            value={sourceTitle}
-                            onChangeText={setSourceTitle}
-                            editable={!parsing}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Source type</Text>
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                            <View style={{ flexDirection: 'row', gap: 8 }}>
-                              {SOURCE_TYPES.map((opt) => (
-                                <TouchableOpacity
-                                  key={opt.value}
-                                  style={[
-                                    {
-                                      paddingHorizontal: 12,
-                                      paddingVertical: 8,
-                                      borderRadius: 16,
-                                      borderWidth: 1,
-                                      borderColor: sourceType === opt.value ? ACCENT : BORDER,
-                                      backgroundColor: sourceType === opt.value ? ACCENT_LIGHT : BG,
-                                    },
-                                  ]}
-                                  onPress={() => setSourceType(opt.value)}
-                                  disabled={parsing}
-                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                >
-                                  <Text style={[styles.radioLabel, { fontSize: 13, color: sourceType === opt.value ? ACCENT : MUTED }]}>
-                                    {s(`courseStructure.importExtract.${opt.labelKey}`) || opt.value}
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          </ScrollView>
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Parse mode</Text>
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                            {PARSE_MODES.map((opt) => (
-                              <TouchableOpacity
-                                key={opt.value}
-                                style={[
-                                  {
-                                    paddingHorizontal: 12,
-                                    paddingVertical: 8,
-                                    borderRadius: 16,
-                                    borderWidth: 1,
-                                    borderColor: parseMode === opt.value ? ACCENT : BORDER,
-                                    backgroundColor: parseMode === opt.value ? ACCENT_LIGHT : BG,
-                                  },
-                                ]}
-                                onPress={() => setParseMode(opt.value)}
-                                disabled={parsing}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.radioLabel, { fontSize: 13, color: parseMode === opt.value ? ACCENT : MUTED }]}>
-                                  {s(`courseStructure.importExtract.${opt.labelKey}`) || opt.value}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
+
+                        {!parsing ? (
+                          <View
+                            style={{
+                              borderRadius: 10,
+                              padding: pasteTextFlash ? 2 : 0,
+                              backgroundColor: pasteTextFlash ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+                            }}
+                          >
+                            <TextInput
+                              style={[styles.input, { minHeight: 280, textAlignVertical: 'top', fontSize: 15, lineHeight: 22 }]}
+                              placeholder={
+                                'Week 1: Fractions\nLesson 1: Intro to fractions\nLesson 2: Equivalent fractions\n\nWeek 2:\nLesson 3: Fractions on a number line'
+                              }
+                              placeholderTextColor={MUTED}
+                              value={rawText}
+                              onChangeText={(v) => {
+                                if (Platform.OS === 'web' && v.length - prevRawTextLenRef.current > 35) {
+                                  setPasteTextFlash(true);
+                                  setTimeout(() => setPasteTextFlash(false), 480);
+                                }
+                                prevRawTextLenRef.current = v.length;
+                                setRawText(v);
+                              }}
+                              multiline
+                              numberOfLines={14}
+                              editable
+                              {...(Platform.OS === 'web' && { cursor: 'text' })}
+                            />
                           </View>
-                        </View>
-                        
-                        <View style={{ gap: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Detect dates from text</Text>
-                            <Switch value={detectDates} onValueChange={setDetectDates} disabled={parsing} />
+                        ) : (
+                          <View
+                            style={{
+                              borderRadius: 10,
+                              padding: 14,
+                              minHeight: 280,
+                              backgroundColor: '#f8fafc',
+                              borderWidth: 1,
+                              borderColor: '#e2e8f0',
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: TEXT_SECONDARY, marginBottom: 8 }}>
+                              {t('planMyYear.multiSubjectUnits.importStreamAssistantLabel')}
+                            </Text>
+                            <ScrollView
+                              style={{ flexGrow: 0, maxHeight: 232 }}
+                              contentContainerStyle={{ paddingBottom: 4 }}
+                              keyboardShouldPersistTaps="handled"
+                            >
+                              <Text style={{ fontSize: 15, lineHeight: 22, color: '#0f172a' }}>
+                                {importParseStreamPreview
+                                  ? importParseStreamPreview
+                                  : t('planMyYear.multiSubjectUnits.importStreamWaiting')}
+                              </Text>
+                            </ScrollView>
                           </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Preserve source headings</Text>
-                            <Switch value={preserveHeadings} onValueChange={setPreserveHeadings} disabled={parsing} />
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Ignore policy / admin text</Text>
-                            <Switch value={ignorePolicyText} onValueChange={setIgnorePolicyText} disabled={parsing} />
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Extract assignments</Text>
-                            <Switch value={extractAssignments} onValueChange={setExtractAssignments} disabled={parsing} />
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Extract assessments</Text>
-                            <Switch value={extractAssessments} onValueChange={setExtractAssessments} disabled={parsing} />
-                          </View>
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Special instructions (optional)</Text>
-                          <TextInput
-                            style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
-                            placeholder="Any specific parsing instructions..."
-                            placeholderTextColor={MUTED}
-                            value={specialInstructionsParse}
-                            onChangeText={setSpecialInstructionsParse}
-                            multiline
-                            numberOfLines={2}
-                            editable={!parsing}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
-                        </View>
-                        
+                        )}
+
+                        {!parsing && rawText.trim().length >= 14 && pasteHintLabel ? (
+                          <Text style={{ fontSize: 13, color: TEXT_SECONDARY, lineHeight: 18 }}>
+                            {s('planMyYear.multiSubjectUnits.pasteDetectedPrefix')} {pasteHintLabel}
+                          </Text>
+                        ) : null}
+
                         {unitStructureError && (
                           <View style={{ padding: 12, backgroundColor: '#fee2e2', borderRadius: 8 }}>
                             <Text style={{ fontSize: 14, color: ERROR }}>{unitStructureError}</Text>
                           </View>
                         )}
-                        
+
                         <TouchableOpacity
-                          onPress={async () => {
-                            if (!availableSubject || !familyId || !rawText.trim()) {
-                              setUnitStructureError(availableSubject ? 'Please paste some content to parse.' : 'Subject not found.');
-                              return;
-                            }
-                            setParsing(true);
-                            setUnitStructureError(null);
-                            try {
-                              const { data, error: err } = await parsePlainText({
-                                subject_id: availableSubject?.id,
-                                family_id: familyId,
-                                subject_name: availableSubject?.name || '',
-                                raw_text: rawText.trim(),
-                                source_title: sourceTitle.trim() || null,
-                                source_type: sourceType === 'auto_detect' ? null : sourceType,
-                                parse_mode: parseMode === 'auto_detect' ? null : parseMode,
-                                detect_dates: detectDates,
-                                preserve_source_headings: preserveHeadings,
-                                ignore_policy_text: ignorePolicyText,
-                                extract_assignments: extractAssignments,
-                                extract_assessments: extractAssessments,
-                                special_instructions: specialInstructionsParse.trim() || null,
-                              });
-                              if (err || !data) {
-                                setUnitStructureError(err?.message || 'Failed to parse content');
-                                return;
-                              }
-                              setDraftData(data);
-                              setUnitStructureStep('draft');
-                              if (data.units && data.units.length > 0) {
-                                setExpandedUnits(new Set([0]));
-                              }
-                            } catch (err) {
-                              setUnitStructureError(err.message || 'Failed to parse content');
-                            } finally {
-                              setParsing(false);
-                            }
-                          }}
-                          style={[styles.primaryButton, { alignSelf: 'flex-start' }]}
+                          onPress={runParsePlainTextPreview}
+                          style={[styles.primaryButton, { width: '100%', alignSelf: 'stretch', marginTop: 4 }]}
                           disabled={parsing || !rawText.trim()}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
                           {parsing ? (
                             <>
                               <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
-                              <Text style={styles.primaryButtonText}>Extracting...</Text>
+                              <Text style={styles.primaryButtonText}>
+                                {t('planMyYear.multiSubjectUnits.importPreviewStructureLoading')}
+                              </Text>
                             </>
                           ) : (
-                            <Text style={styles.primaryButtonText}>Extract structure</Text>
+                            <Text style={styles.primaryButtonText}>{t('planMyYear.multiSubjectUnits.importPreviewStructure')}</Text>
                           )}
                         </TouchableOpacity>
                       </View>
@@ -4373,7 +6375,8 @@ export default function PlanYearModal({
                   return (
                     <View>
                       {unitSubjectBanner}
-                      <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Generate curriculum</Text>
+                      {cadenceDifferentMethodBannerEl}
+                      <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>Generate curriculum</Text>
                       <Text style={[styles.mutedText, { marginBottom: 16 }]}>AI will create structured units and lessons with objectives, materials, and pacing suggestions based on your subject and preferences.</Text>
                       
                       <View style={{ gap: 16 }}>
@@ -4619,77 +6622,15 @@ export default function PlanYearModal({
                   );
                 }
                 
-                // Paste mode: Full Manual Builder interface (after clearing draft, show start state — do not auto-init manualDraft in useEffect or Back appears broken)
+                // Paste mode: Full Manual Builder (useEffect hydrates manualDraft from saved unitStructureData when present).
                 if (planSource === 'paste' && unitStructureStep === 'input' && !draftData) {
-                  if (!manualDraft && hasPersistedManualCurriculum) {
-                    const savedUnits = unitStructureData?.units || [];
-                    const totalLessons = savedUnits.reduce((sum, u) => sum + (u.lessons || []).length, 0);
-                    return (
-                      <View>
-                        {unitSubjectBanner}
-                        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>
-                          {t('planMyYear.multiSubjectUnits.savedManualCurriculumTitle')}
-                        </Text>
-                        <Text style={[styles.mutedText, { marginBottom: 16, lineHeight: 20 }]}>
-                          {t('planMyYear.multiSubjectUnits.savedManualCurriculumHint')}
-                        </Text>
-                        <View style={{ marginBottom: 16, gap: 12 }}>
-                          {savedUnits.map((u, uIdx) => (
-                            <View
-                              key={`saved-summary-${uIdx}`}
-                              style={{
-                                borderWidth: 1,
-                                borderColor: BORDER,
-                                borderRadius: 8,
-                                padding: 14,
-                                backgroundColor: 'rgba(248,250,252,0.95)',
-                              }}
-                            >
-                              <Text style={{ fontSize: 15, fontWeight: '600', color: FG, marginBottom: 8 }}>
-                                {u.title || `Unit ${uIdx + 1}`}
-                              </Text>
-                              {(u.lessons || []).map((le, li) => (
-                                <Text
-                                  key={String(le.id || `${uIdx}-${li}`)}
-                                  style={{ fontSize: 13, color: SUB, marginBottom: 4 }}
-                                >
-                                  {li + 1}. {le.title || 'Lesson'}
-                                  {le.date ? ` · ${le.date}` : ''}
-                                </Text>
-                              ))}
-                            </View>
-                          ))}
-                        </View>
-                        <Text style={[styles.mutedText, { fontSize: 12 }]}>
-                          {savedUnits.length} {savedUnits.length === 1 ? 'unit' : 'units'} · {totalLessons}{' '}
-                          {totalLessons === 1 ? 'lesson' : 'lessons'}
-                        </Text>
-                      </View>
-                    );
-                  }
                   if (!manualDraft) {
                     return (
-                      <View>
-                        {unitSubjectBanner}
-                        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Add unit manually</Text>
-                        <Text style={[styles.mutedText, { marginBottom: 20 }]}>
-                          Start a new structure, or use Back below to return to method.
+                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color={ACCENT} />
+                        <Text style={[styles.mutedText, { marginTop: 12, textAlign: 'center' }]}>
+                          {s('planMyYear.multiSubjectUnits.loadingCurriculum')}
                         </Text>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setManualDraft({
-                              title: null,
-                              units: [{ temp_id: `temp-${Date.now()}`, title: 'Unit 1', sequence_index: 1, description: null, lessons: [] }],
-                            });
-                            setExpandedUnitIndexManual(0);
-                            setExpandedUnits(new Set([0]));
-                          }}
-                          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderWidth: 2, borderColor: BORDER, borderStyle: 'dashed', borderRadius: 8, gap: 8 }}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Plus size={18} color={MUTED} />
-                          <Text style={{ fontSize: 14, color: MUTED }}>Start building</Text>
-                        </TouchableOpacity>
                       </View>
                     );
                   }
@@ -4697,7 +6638,8 @@ export default function PlanYearModal({
                   return (
                     <View>
                       {unitSubjectBanner}
-                      <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Add unit manually</Text>
+                      {cadenceDifferentMethodBannerEl}
+                      <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>Add unit manually</Text>
                       
                       {/* Tip banner */}
                       <View style={{ padding: 12, backgroundColor: '#f0f9ff', borderRadius: 8, marginBottom: 16, borderWidth: 1, borderColor: '#bae6fd' }}>
@@ -4718,7 +6660,11 @@ export default function PlanYearModal({
                               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                             >
                               {expandedUnitIndexManual === uIdx ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
-                              <Text style={[styles.sectionTitle, { fontSize: 15 }]}>{unit.title || `Unit ${uIdx + 1}`}</Text>
+                              <Text
+                                style={[styles.unitStructureModalTitle, { fontSize: 15, textTransform: 'none', letterSpacing: 0 }]}
+                              >
+                                {unit.title || `Unit ${uIdx + 1}`}
+                              </Text>
                               <Text style={[styles.mutedText, { fontSize: 13 }]}>({(unit.lessons || []).length})</Text>
                             </TouchableOpacity>
                             {manualDraft.units.length > 1 && (
@@ -4925,6 +6871,7 @@ export default function PlanYearModal({
                 return (
                   <View style={{ paddingVertical: 48, paddingHorizontal: 8, alignItems: 'stretch' }}>
                     {unitSubjectBanner}
+                    {cadenceDifferentMethodBannerEl}
                     <Text style={[styles.mutedText, { fontSize: 14, textAlign: 'center' }]}>
                       {planSource === 'placeholders' 
                         ? 'No unit structure needed for cadence-only plans.'
@@ -4934,6 +6881,9 @@ export default function PlanYearModal({
                 );
               })()}
             </ScrollView>
+      {renderWebDraftLessonMenuPortal()}
+      {renderWebDraftUnitMenuPortal()}
+    </>
   );
 
   const modalContent = (
@@ -5081,7 +7031,13 @@ export default function PlanYearModal({
                         const label = planSlotLabels.find(
                           (l) => l.date_ymd === ymd && String(l.subject_id) === String(block.subject_id) && (startLocal == null ? l.start_local == null : (l.start_local === startLocal || (l.start_local && startLocal && l.start_local.replace(/^0/, '') === startLocal.replace(/^0/, ''))))
                         );
-                        if (label && (label.unit || '').trim()) line.unitTopic = (label.unit || '').trim();
+                        if (label) {
+                          if ((label.unit || '').trim()) line.unitTopic = (label.unit || '').trim();
+                          if ((label.lesson || '').trim()) line.lessonTitle = (label.lesson || '').trim();
+                          if (label.open_plan_slot) {
+                            line.lessonTitle = s('planMyYear.multiSubjectUnits.availableInstructionalSlot');
+                          }
+                        }
                         const matchingEvent = planEventDates.find((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local) === key);
                         if (matchingEvent && matchingEvent.has_attachment) line.hasAttachment = true;
                         const evId = matchingEvent?.event_id ?? matchingEvent?.id;
@@ -5206,6 +7162,7 @@ export default function PlanYearModal({
                                         {line.timeLabel ? ` · ${line.timeLabel}` : ''}
                                         {line.subjectName ? ` · ${line.subjectName}` : ''}
                                         {line.unitTopic ? ` · ${line.unitTopic}` : ''}
+                                        {line.lessonTitle ? ` · ${line.lessonTitle}` : ''}
                                       </Text>
                                     </TouchableOpacity>
                                     <View style={styles.planSummaryDateRowActions}>
@@ -5313,13 +7270,15 @@ export default function PlanYearModal({
                     </Text>
                   </View>
                 ))}
-                {lessonSchedulePreviewPlan.overflowCount > 0 ? (
-                  <Text style={[styles.mutedText, { fontSize: 12, marginTop: 4, color: TEXT_SECONDARY }]}>
-                    {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
-                      count: lessonSchedulePreviewPlan.overflowCount,
-                    })}
-                  </Text>
-                ) : null}
+                <LessonOverflowFollowUp
+                  textStyle={[styles.mutedText, { fontSize: 12, color: TEXT_SECONDARY }]}
+                  overflowCount={lessonSchedulePreviewPlan.overflowCount}
+                  extendEndYmd={lessonOverflowExtendEndDate}
+                  curriculumSubjectId={lessonSchedulePreviewPlan.curriculumSubjectId}
+                  hasCurriculumMapping={lessonSchedulePreviewPlan.hasCurriculumMapping}
+                  onApplyExtend={applyExtendedPlanEndDate}
+                  t={t}
+                />
               </ScrollView>
             </View>
           ) : showEntryChoice ? (
@@ -5397,7 +7356,7 @@ export default function PlanYearModal({
               <View style={styles.pickerBody}>
                 {!previousPlansListFetched && previousPlans.length === 0 ? (
                   <View style={{ minHeight: 80 }} />
-                ) : previousPlans.length > 0 ? (
+                ) : editPlanListRows.length > 0 ? (
                   <>
                     <ScrollView
                       style={{ maxHeight: 320 }}
@@ -5406,7 +7365,7 @@ export default function PlanYearModal({
                       keyboardShouldPersistTaps="handled"
                     >
                       <View style={{ gap: 20 }}>
-                      {previousPlans.map((ay) => {
+                      {editPlanListRows.map((ay) => {
                         const lines = parsePlanCardLines(ay);
                         const isSelected = planSummaryYearId === ay.id;
                         const timesLine = planListRowTimesById[ay.id] || '';
@@ -5535,8 +7494,6 @@ export default function PlanYearModal({
                           setDraftData(null);
                           setRawText('');
                           setUnitStructureStep('input');
-                          setUnitStructureData(null);
-                          setLastSavedUnitSubjectId(null);
                           setManualDraft(null);
                           setExpandedUnitIndexManual(0);
                           setExpandedUnits(new Set());
@@ -5582,13 +7539,15 @@ export default function PlanYearModal({
                       <TouchableOpacity
                         onPress={() => {
                           if (!ensureUnitSubjectForUnitStructure()) return;
-                          setPlanSource('paste_plain');
-                          setDraftData(null);
                           setManualDraft(null);
-                          setUnitStructureStep('input');
-                          setRawText('');
-                          setExpandedUnits(new Set());
-                          setExpandedUnitIndexManual(0);
+                          if (!hydrateImportDraftFromStorage(unitPipelineSubjectId, { requireSource: 'paste_plain' })) {
+                            setPlanSource('paste_plain');
+                            setDraftData(null);
+                            setUnitStructureStep('input');
+                            setRawText('');
+                            setExpandedUnits(new Set());
+                            setExpandedUnitIndexManual(0);
+                          }
                           setPlanStep('unit_structure');
                         }}
                         activeOpacity={0.9}
@@ -5631,11 +7590,13 @@ export default function PlanYearModal({
                       <TouchableOpacity
                         onPress={() => {
                           if (!ensureUnitSubjectForUnitStructure()) return;
-                          setPlanSource('upload');
-                          setDraftData(null);
                           setManualDraft(null);
-                          setUnitStructureStep('input');
-                          setRawText('');
+                          if (!hydrateImportDraftFromStorage(unitPipelineSubjectId, { requireSource: 'upload' })) {
+                            setPlanSource('upload');
+                            setDraftData(null);
+                            setUnitStructureStep('input');
+                            setRawText('');
+                          }
                           setPlanStep('unit_structure');
                         }}
                         activeOpacity={0.9}
@@ -5978,7 +7939,7 @@ export default function PlanYearModal({
                         activeOpacity={0.85}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text style={[styles.radioLabel, { fontSize: 13 }, targetScopeFromSettings === 'overall' && styles.radioLabelActive]}>Overall</Text>
+                        <Text style={[styles.radioLabel, targetScopeFromSettings === 'overall' && styles.radioLabelActive]}>Overall</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[styles.radioOption, targetScopeFromSettings === 'per_subject' && styles.radioOptionActive]}
@@ -5986,7 +7947,7 @@ export default function PlanYearModal({
                         activeOpacity={0.85}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text style={[styles.radioLabel, { fontSize: 13 }, targetScopeFromSettings === 'per_subject' && styles.radioLabelActive]}>Per subject</Text>
+                        <Text style={[styles.radioLabel, targetScopeFromSettings === 'per_subject' && styles.radioLabelActive]}>Per subject</Text>
                       </TouchableOpacity>
                     </View>
                     {targetScopeFromSettings === 'overall' && (
@@ -6002,7 +7963,7 @@ export default function PlanYearModal({
                             activeOpacity={0.85}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <Text style={[styles.radioLabel, { fontSize: 13 }, planConstraintMode === 'none' && styles.radioLabelActive]}>None</Text>
+                            <Text style={[styles.radioLabel, planConstraintMode === 'none' && styles.radioLabelActive]}>None</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={[styles.radioOption, planConstraintMode === 'days' && styles.radioOptionActive]}
@@ -6013,7 +7974,7 @@ export default function PlanYearModal({
                             activeOpacity={0.85}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <Text style={[styles.radioLabel, { fontSize: 13 }, planConstraintMode === 'days' && styles.radioLabelActive]}>
+                            <Text style={[styles.radioLabel, planConstraintMode === 'days' && styles.radioLabelActive]}>
                               {STRINGS.planMyYear?.sections?.targets?.fields?.days ?? 'Days'}
                             </Text>
                           </TouchableOpacity>
@@ -6026,7 +7987,7 @@ export default function PlanYearModal({
                             activeOpacity={0.85}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <Text style={[styles.radioLabel, { fontSize: 13 }, planConstraintMode === 'hours' && styles.radioLabelActive]}>
+                            <Text style={[styles.radioLabel, planConstraintMode === 'hours' && styles.radioLabelActive]}>
                               {STRINGS.planMyYear?.sections?.targets?.fields?.hours ?? 'Hours'}
                             </Text>
                           </TouchableOpacity>
@@ -6110,25 +8071,25 @@ export default function PlanYearModal({
                                 </Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                   <TouchableOpacity
-                                    style={[styles.radioOption, { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32, height: undefined }, rowMode === 'none' && styles.radioOptionActive]}
+                                    style={[styles.weekdayChipSmall, rowMode === 'none' && styles.weekdayChipSmallActive]}
                                     onPress={() => setRow({ mode: 'none', days: '', hours: '' })}
                                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                   >
-                                    <Text style={[styles.radioLabel, { fontSize: 12 }, rowMode === 'none' && styles.radioLabelActive]}>None</Text>
+                                    <Text style={[styles.weekdayChipSmallText, rowMode === 'none' && styles.weekdayChipSmallTextActive]}>None</Text>
                                   </TouchableOpacity>
                                   <TouchableOpacity
-                                    style={[styles.radioOption, { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32, height: undefined }, rowMode === 'days' && styles.radioOptionActive]}
+                                    style={[styles.weekdayChipSmall, rowMode === 'days' && styles.weekdayChipSmallActive]}
                                     onPress={() => setRow({ mode: 'days', days: daysStr || '90', hours: '' })}
                                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                   >
-                                    <Text style={[styles.radioLabel, { fontSize: 12 }, rowMode === 'days' && styles.radioLabelActive]}>Days</Text>
+                                    <Text style={[styles.weekdayChipSmallText, rowMode === 'days' && styles.weekdayChipSmallTextActive]}>Days</Text>
                                   </TouchableOpacity>
                                   <TouchableOpacity
-                                    style={[styles.radioOption, { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32, height: undefined }, rowMode === 'hours' && styles.radioOptionActive]}
+                                    style={[styles.weekdayChipSmall, rowMode === 'hours' && styles.weekdayChipSmallActive]}
                                     onPress={() => setRow({ mode: 'hours', days: '', hours: hoursStr || '120' })}
                                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                   >
-                                    <Text style={[styles.radioLabel, { fontSize: 12 }, rowMode === 'hours' && styles.radioLabelActive]}>Hours</Text>
+                                    <Text style={[styles.weekdayChipSmallText, rowMode === 'hours' && styles.weekdayChipSmallTextActive]}>Hours</Text>
                                   </TouchableOpacity>
                                 </View>
                                 {rowMode === 'days' && (
@@ -6300,6 +8261,183 @@ export default function PlanYearModal({
                   )}
                 </View>
 
+                {PLAN_MY_YEAR_LOGISTICS_FIRST &&
+                  planStep === 'logistics' &&
+                  hasPlanningPreferenceTargets &&
+                  startDate &&
+                  endDate && (
+                    <View
+                      style={{
+                        marginTop: 12,
+                        marginBottom: 4,
+                        paddingVertical: 12,
+                        paddingHorizontal: 14,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: BORDER_SUBTLE,
+                        backgroundColor: ELIGIBILITY_CARD_BG,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: '700',
+                          letterSpacing: 0.6,
+                          color: TEXT_SECONDARY,
+                          textTransform: 'uppercase',
+                          marginBottom: 6,
+                        }}
+                      >
+                        {t('planMyYear.planningTargetProgress.title')}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 17 }}>
+                        {t('planMyYear.planningTargetProgress.subtitle')}
+                      </Text>
+                      {computingPotential ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <ActivityIndicator size="small" color={ACCENT} />
+                          <Text style={{ fontSize: 13, color: MUTED, marginLeft: 10 }}>
+                            {t('planMyYear.planningTargetProgress.loading')}
+                          </Text>
+                        </View>
+                      ) : !schedulePotential ? (
+                        <Text style={{ fontSize: 13, color: MUTED, lineHeight: 18 }}>
+                          {t('planMyYear.planningTargetProgress.needCadence')}
+                        </Text>
+                      ) : targetScopeFromSettings === 'overall' ? (
+                        <View>
+                          {planConstraintMode === 'days' && effectivePlanTarget.target_days != null ? (
+                            <>
+                              <Text style={{ fontSize: 13, color: FG, marginBottom: 4, lineHeight: 19 }}>
+                                {t('planMyYear.planningTargetProgress.overallDaysLead', {
+                                  projected: schedulePotential.projected_days,
+                                })}
+                              </Text>
+                              <Text style={{ fontSize: 13, color: FG, marginBottom: 4, lineHeight: 19 }}>
+                                {t('planMyYear.planningTargetProgress.overallDaysTarget', {
+                                  target: effectivePlanTarget.target_days,
+                                })}
+                              </Text>
+                              {schedulePotential.delta_days != null && (
+                                <Text
+                                  style={{
+                                    fontSize: 13,
+                                    marginBottom: 6,
+                                    lineHeight: 19,
+                                    color:
+                                      schedulePotential.delta_days === 0
+                                        ? ACCENT
+                                        : schedulePotential.delta_days > 0
+                                          ? FG
+                                          : ERROR,
+                                  }}
+                                >
+                                  {schedulePotential.delta_days > 0
+                                    ? t('planMyYear.planningTargetProgress.deltaOverDays', {
+                                        n: schedulePotential.delta_days,
+                                      })
+                                    : schedulePotential.delta_days < 0
+                                      ? t('planMyYear.planningTargetProgress.deltaUnderDays', {
+                                          n: Math.abs(schedulePotential.delta_days),
+                                        })
+                                      : t('planMyYear.planningTargetProgress.deltaMetDays')}
+                                </Text>
+                              )}
+                              {schedulePotential.suggested_end_date ? (
+                                <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginBottom: 4, lineHeight: 17 }}>
+                                  {t('planMyYear.planningTargetProgress.suggestedEnd', {
+                                    date: formatDateDisplay(schedulePotential.suggested_end_date),
+                                  })}
+                                </Text>
+                              ) : null}
+                              {followGlobalHolidays &&
+                              schedulePotential.days_excluded_holidays != null &&
+                              schedulePotential.days_excluded_holidays > 0 ? (
+                                <Text style={{ fontSize: 12, color: MUTED, marginBottom: 4, lineHeight: 17 }}>
+                                  {t('planMyYear.planningTargetProgress.excludedPublicHolidays', {
+                                    count: schedulePotential.days_excluded_holidays,
+                                  })}
+                                </Text>
+                              ) : null}
+                              {schedulePotential.cadence_suggestion?.message ? (
+                                <Text style={{ fontSize: 12, color: MUTED, lineHeight: 17 }}>
+                                  {t('planMyYear.planningTargetProgress.cadenceHint', {
+                                    message: schedulePotential.cadence_suggestion.message,
+                                  })}
+                                </Text>
+                              ) : null}
+                            </>
+                          ) : planConstraintMode === 'hours' && effectivePlanTarget.target_hours != null ? (
+                            <>
+                              <Text style={{ fontSize: 13, color: FG, marginBottom: 4, lineHeight: 19 }}>
+                                {t('planMyYear.planningTargetProgress.overallHoursLead', {
+                                  projected: schedulePotential.projected_hours,
+                                })}
+                              </Text>
+                              <Text style={{ fontSize: 13, color: FG, marginBottom: 4, lineHeight: 19 }}>
+                                {t('planMyYear.planningTargetProgress.overallHoursTarget', {
+                                  target: effectivePlanTarget.target_hours,
+                                })}
+                              </Text>
+                              {schedulePotential.delta_hours != null && (
+                                <Text
+                                  style={{
+                                    fontSize: 13,
+                                    marginBottom: 4,
+                                    lineHeight: 19,
+                                    color:
+                                      schedulePotential.delta_hours === 0
+                                        ? ACCENT
+                                        : schedulePotential.delta_hours > 0
+                                          ? FG
+                                          : ERROR,
+                                  }}
+                                >
+                                  {schedulePotential.delta_hours > 0
+                                    ? t('planMyYear.planningTargetProgress.deltaOverHours', {
+                                        n: Math.round(schedulePotential.delta_hours * 10) / 10,
+                                      })
+                                    : schedulePotential.delta_hours < 0
+                                      ? t('planMyYear.planningTargetProgress.deltaUnderHours', {
+                                          n: Math.round(Math.abs(schedulePotential.delta_hours) * 10) / 10,
+                                        })
+                                      : t('planMyYear.planningTargetProgress.deltaMetHours')}
+                                </Text>
+                              )}
+                            </>
+                          ) : null}
+                        </View>
+                      ) : (
+                        <View>
+                          {planningTargetPerSubjectLines.length === 0 ? (
+                            <Text style={{ fontSize: 13, color: MUTED, lineHeight: 18 }}>
+                              {t('planMyYear.planningTargetProgress.needCadence')}
+                            </Text>
+                          ) : (
+                            planningTargetPerSubjectLines.map((row) => (
+                              <Text
+                                key={row.key}
+                                style={{ fontSize: 13, color: FG, marginBottom: 6, lineHeight: 19 }}
+                              >
+                                {row.kind === 'days'
+                                  ? t('planMyYear.planningTargetProgress.subjectRowDays', {
+                                      name: row.name,
+                                      projected: row.projected,
+                                      target: row.target,
+                                    })
+                                  : t('planMyYear.planningTargetProgress.subjectRowHours', {
+                                      name: row.name,
+                                      projected: row.projected,
+                                      target: row.target,
+                                    })}
+                              </Text>
+                            ))
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  )}
+
                 {/* Scheduled class days / cadence — show when subjects selected OR placeholder-only scope */}
                 {(effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
                   <View style={[styles.fieldSection, { marginTop: 16, marginBottom: 16 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
@@ -6318,7 +8456,7 @@ export default function PlanYearModal({
                           {s('planMyYear.multiSubjectUnits.step1SetSchedule')}
                         </Text>
                       )}
-                      <Text style={[styles.logisticsLabel, { marginBottom: 8 }]}>Cadence <Text style={{ color: ERROR }}>*</Text></Text>
+                      <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 8 }]}>Cadence <Text style={{ color: ERROR }}>*</Text></Text>
                       {PLAN_MY_YEAR_MULTI_SUBJECT_CADENCE &&
                         showMultiSubjectCadenceHint(PLAN_MY_YEAR_LOGISTICS_FIRST, effectiveSubjectIds.length) && (
                           <Text style={[styles.mutedText, { marginBottom: 10, fontSize: 12, lineHeight: 18 }]}>
@@ -6468,6 +8606,9 @@ export default function PlanYearModal({
                         </View>
                       );
                     })}
+                    {showPlanEditingModeBanner && academicYearId && blocks.length > 0 && cadenceDirty
+                      ? renderApplyFromScopeCadenceInline()
+                      : null}
                     </View>
                     {isPlaceholderOnlyScope && (
                       <TouchableOpacity
@@ -6479,6 +8620,103 @@ export default function PlanYearModal({
                         <Plus size={16} color={ACCENT} style={{ marginRight: 6 }} />
                         <Text style={styles.editButtonText}>Add learning block</Text>
                       </TouchableOpacity>
+                    )}
+                    {PLAN_MY_YEAR_LOGISTICS_FIRST && (
+                      <View
+                        style={{
+                          borderTopWidth: 1,
+                          borderTopColor: BORDER_SUBTLE,
+                          paddingTop: 16,
+                          marginTop: 12,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            fontWeight: '700',
+                            letterSpacing: 0.6,
+                            color: TEXT_SECONDARY,
+                            textTransform: 'uppercase',
+                            marginBottom: 6,
+                          }}
+                        >
+                          {s('planMyYear.multiSubjectUnits.step2AddContent')}
+                        </Text>
+                        {blocks
+                          .filter((b) => b.subject_id)
+                          .map((block) => {
+                            const subj = baseSubjectList.find((s) => s.id === block.subject_id);
+                            const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
+                            const linkColor = cadenceYieldsInstructionalSlots ? ACCENT : MUTED;
+                            return (
+                              <View
+                                key={`step2-add-${block.block_id}`}
+                                style={{
+                                  marginBottom: 10,
+                                  flexDirection: 'row',
+                                  flexWrap: 'wrap',
+                                  alignItems: 'center',
+                                  alignSelf: 'flex-start',
+                                  maxWidth: '100%',
+                                }}
+                              >
+                                {blocks.filter((b) => b.subject_id).length > 1 ? (
+                                  <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginRight: 6, marginBottom: 4 }}>{blockSubjectLabel}</Text>
+                                ) : null}
+                                <Text style={{ fontSize: 12, color: MUTED, marginRight: 6, marginBottom: 4 }}>
+                                  {cadenceShowChangeUnitsForSubject(block.subject_id)
+                                    ? s('planMyYear.multiSubjectUnits.cadenceChangeUnitsInlinePrompt')
+                                    : s('planMyYear.multiSubjectUnits.cadenceAddUnitsInlinePrompt')}
+                                </Text>
+                                {[
+                                  { method: 'paste', label: s('planMyYear.sections.useASource.options.paste.label') },
+                                  { method: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label') },
+                                  { method: 'upload', label: s('planMyYear.sections.useASource.options.upload.label') },
+                                  { method: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel') },
+                                ].map((opt, optIdx) => (
+                                  <React.Fragment key={`${block.block_id}-${opt.method}`}>
+                                    {optIdx > 0 ? (
+                                      <Text style={{ fontSize: 12, color: MUTED, marginHorizontal: 6, marginBottom: 4 }}>
+                                        ·
+                                      </Text>
+                                    ) : null}
+                                    <TouchableOpacity
+                                      onPress={() => handleOpenCadenceUnitMethod(block.subject_id, opt.method)}
+                                      activeOpacity={0.7}
+                                      accessibilityRole="button"
+                                      accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {
+                                        methodLabel: opt.label,
+                                        subjectName: blockSubjectLabel,
+                                      })}
+                                      style={{ marginBottom: 4, paddingVertical: 2 }}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={{ fontSize: 13, color: linkColor, textDecorationLine: 'underline' }}>{opt.label}</Text>
+                                    </TouchableOpacity>
+                                  </React.Fragment>
+                                ))}
+                              </View>
+                            );
+                          })}
+                        {addContentCadenceInlineHint && !cadenceYieldsInstructionalSlots && (
+                          <View
+                            style={{
+                              marginTop: 4,
+                              marginBottom: 0,
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                              backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                              borderWidth: 1,
+                              borderColor: 'rgba(217, 119, 6, 0.25)',
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
+                              {s('planMyYear.multiSubjectUnits.addContentBeforeCadenceInline')}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                     )}
                   </View>
                 )}
@@ -6540,7 +8778,7 @@ export default function PlanYearModal({
                 )}
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && (
-                  <View style={{ marginTop: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: BORDER_SUBTLE }}>
+                  <View style={{ marginTop: 20 }}>
                     {cadenceYieldsInstructionalSlots && (
                       <>
                         <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>
@@ -6564,109 +8802,23 @@ export default function PlanYearModal({
                             </Text>
                           </View>
                         ))}
-                        {lessonSchedulePreviewPlan.overflowCount > 0 ? (
-                          <Text style={[styles.mutedText, { fontSize: 12, marginTop: 4, color: TEXT_SECONDARY }]}>
-                            {t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
-                              count: lessonSchedulePreviewPlan.overflowCount,
-                            })}
-                          </Text>
-                        ) : null}
+                        <LessonOverflowFollowUp
+                          textStyle={[styles.mutedText, { fontSize: 12, color: TEXT_SECONDARY }]}
+                          overflowCount={lessonSchedulePreviewPlan.overflowCount}
+                          extendEndYmd={lessonOverflowExtendEndDate}
+                          curriculumSubjectId={lessonSchedulePreviewPlan.curriculumSubjectId}
+                          hasCurriculumMapping={lessonSchedulePreviewPlan.hasCurriculumMapping}
+                          onApplyExtend={applyExtendedPlanEndDate}
+                          t={t}
+                        />
                       </>
                     )}
-                    <Text
-                      style={[
-                        styles.sectionTitle,
-                        {
-                          marginBottom: 8,
-                          marginTop: cadenceYieldsInstructionalSlots ? 20 : 0,
-                          textTransform: 'none',
-                          fontSize: 16,
-                        },
-                      ]}
-                    >
-                      {s('planMyYear.multiSubjectUnits.step2AddContent')}
-                    </Text>
-                    {!cadenceYieldsInstructionalSlots && (
-                      <Text style={[styles.mutedText, { marginBottom: 12, fontSize: 13, lineHeight: 19 }]}>
-                        {s('planMyYear.multiSubjectUnits.addContentSetCadenceHint')}
-                      </Text>
-                    )}
-                    {blocks
-                      .filter((b) => b.subject_id)
-                      .map((block) => {
-                        const subj = baseSubjectList.find((s) => s.id === block.subject_id);
-                        const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
-                        const linkColor = cadenceYieldsInstructionalSlots ? ACCENT : MUTED;
-                        return (
-                          <View
-                            key={`step2-add-${block.block_id}`}
-                            style={{
-                              marginBottom: 10,
-                              flexDirection: 'row',
-                              flexWrap: 'wrap',
-                              alignItems: 'center',
-                              alignSelf: 'flex-start',
-                              maxWidth: '100%',
-                            }}
-                          >
-                            {blocks.filter((b) => b.subject_id).length > 1 ? (
-                              <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginRight: 6, marginBottom: 4 }}>{blockSubjectLabel}</Text>
-                            ) : null}
-                            <Text style={{ fontSize: 12, color: MUTED, marginRight: 6, marginBottom: 4 }}>
-                              {s('planMyYear.multiSubjectUnits.cadenceAddUnitsInlinePrompt')}
-                            </Text>
-                            {[
-                              { method: 'paste', label: s('planMyYear.sections.useASource.options.paste.label') },
-                              { method: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label') },
-                              { method: 'upload', label: s('planMyYear.sections.useASource.options.upload.label') },
-                              { method: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel') },
-                            ].map((opt, optIdx) => (
-                              <React.Fragment key={`${block.block_id}-${opt.method}`}>
-                                {optIdx > 0 ? (
-                                  <Text style={{ fontSize: 12, color: MUTED, marginHorizontal: 6, marginBottom: 4 }}>
-                                    ·
-                                  </Text>
-                                ) : null}
-                                <TouchableOpacity
-                                  onPress={() => handleOpenCadenceUnitMethod(block.subject_id, opt.method)}
-                                  activeOpacity={0.7}
-                                  accessibilityRole="button"
-                                  accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {
-                                    methodLabel: opt.label,
-                                    subjectName: blockSubjectLabel,
-                                  })}
-                                  style={{ marginBottom: 4, paddingVertical: 2 }}
-                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                >
-                                  <Text style={{ fontSize: 13, color: linkColor, textDecorationLine: 'underline' }}>{opt.label}</Text>
-                                </TouchableOpacity>
-                              </React.Fragment>
-                            ))}
-                          </View>
-                        );
-                      })}
-                    {addContentCadenceInlineHint && !cadenceYieldsInstructionalSlots && (
-                      <View
-                        style={{
-                          marginTop: 4,
-                          marginBottom: 12,
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 8,
-                          backgroundColor: 'rgba(217, 119, 6, 0.08)',
-                          borderWidth: 1,
-                          borderColor: 'rgba(217, 119, 6, 0.25)',
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
-                          {s('planMyYear.multiSubjectUnits.addContentBeforeCadenceInline')}
-                        </Text>
-                      </View>
-                    )}
+                    {academicYearId && !showPlanEditingModeBanner && cadenceDirty ? renderApplyFromScopeCard() : null}
                     <TouchableOpacity
                       style={[
                         styles.primaryButton,
                         styles.planYearGenerateCta,
+                        cadenceYieldsInstructionalSlots && { marginTop: 20 },
                         (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled,
                       ]}
                       onPress={handleApplyToCalendar}
@@ -6692,6 +8844,8 @@ export default function PlanYearModal({
               transparent
               visible
               onRequestClose={() => {
+                setCadenceDifferentMethodNotice(null);
+                suppressManualCurriculumHydrateRef.current = false;
                 if (planSource === 'paste' && (draftData || manualDraft)) {
                   setDraftData(null);
                   setManualDraft(null);
@@ -6704,13 +8858,23 @@ export default function PlanYearModal({
                   return;
                 }
                 if (draftData || manualDraft) {
+                  if (Platform.OS === 'web' && (planSource === 'paste_plain' || planSource === 'upload')) {
+                    importDraftFlushRef.current();
+                  }
                   suppressManualCurriculumHydrateRef.current = true;
                   setDraftData(null);
-                  setManualDraft(null);
-                  setUnitStructureStep('input');
-                  setRawText('');
-                  setExpandedUnits(new Set());
-                  setExpandedUnitIndexManual(0);
+                  if (planSource === 'paste' && !hasPersistedManualCurriculum) {
+                    setManualDraft(createInitialManualDraft());
+                    setExpandedUnitIndexManual(0);
+                    setExpandedUnits(new Set([0]));
+                  } else {
+                    setManualDraft(null);
+                    setExpandedUnits(new Set());
+                    setExpandedUnitIndexManual(0);
+                  }
+                  leaveParsedDraftForTextEditor();
+                  setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                  setUnitFocusSubjectId(null);
                 } else {
                   setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
                   setUnitFocusSubjectId(null);
@@ -6741,6 +8905,8 @@ export default function PlanYearModal({
                 >
                   <TouchableOpacity
                     onPress={() => {
+                      setCadenceDifferentMethodNotice(null);
+                      suppressManualCurriculumHydrateRef.current = false;
                       if (planSource === 'paste' && (draftData || manualDraft)) {
                         setDraftData(null);
                         setManualDraft(null);
@@ -6753,13 +8919,23 @@ export default function PlanYearModal({
                         return;
                       }
                       if (draftData || manualDraft) {
+                        if (Platform.OS === 'web' && (planSource === 'paste_plain' || planSource === 'upload')) {
+                          importDraftFlushRef.current();
+                        }
                         suppressManualCurriculumHydrateRef.current = true;
                         setDraftData(null);
-                        setManualDraft(null);
-                        setUnitStructureStep('input');
-                        setRawText('');
-                        setExpandedUnits(new Set());
-                        setExpandedUnitIndexManual(0);
+                        if (planSource === 'paste' && !hasPersistedManualCurriculum) {
+                          setManualDraft(createInitialManualDraft());
+                          setExpandedUnitIndexManual(0);
+                          setExpandedUnits(new Set([0]));
+                        } else {
+                          setManualDraft(null);
+                          setExpandedUnits(new Set());
+                          setExpandedUnitIndexManual(0);
+                        }
+                        leaveParsedDraftForTextEditor();
+                        setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                        setUnitFocusSubjectId(null);
                       } else {
                         setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
                         setUnitFocusSubjectId(null);
@@ -6792,8 +8968,8 @@ export default function PlanYearModal({
                   <View
                     style={{
                       paddingHorizontal: 24,
-                      paddingTop: 4,
-                      paddingBottom: Platform.OS === 'web' ? 28 : 24,
+                      paddingTop: 0,
+                      paddingBottom: Platform.OS === 'web' ? 20 : 18,
                       backgroundColor: BG,
                     }}
                   >
@@ -6803,6 +8979,7 @@ export default function PlanYearModal({
                       </View>
                     ) : null}
                     {(draftData || manualDraft) ? (
+                      <View style={{ width: '100%' }}>
                       <TouchableOpacity
                         onPress={async () => {
                           const availableSubjectId = unitPipelineSubjectId;
@@ -6815,13 +8992,22 @@ export default function PlanYearModal({
                           setUnitStructureError(null);
                           try {
                             if (manualDraft) {
+                              const availSlot =
+                                s('planMyYear.multiSubjectUnits.availableInstructionalSlot') || 'Available slot';
+                              const draftForCommit = mergeManualDraftWithInstructionalSlotDates(
+                                JSON.parse(JSON.stringify(manualDraft)),
+                                lessonSchedulePreviewPlan,
+                                availSlot,
+                              );
                               const { data, error: err } = await commitManualDraft({
                                 subject_id: availableSubject?.id,
                                 family_id: familyId,
                                 subject_name: availableSubject?.name || '',
-                                draft: manualDraft,
+                                draft: draftForCommit,
                                 builder_mode: 'rich_units',
                                 replace_existing: true,
+                                academic_year_id: academicYearId || undefined,
+                                student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
                               });
                               if (err || !data) {
                                 setUnitStructureError(
@@ -6836,12 +9022,21 @@ export default function PlanYearModal({
                                 family_id: familyId,
                                 subject_name: availableSubject?.name || '',
                                 draft: draftData,
+                                academic_year_id: academicYearId || undefined,
+                                student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
                               });
                               if (err || !data) {
                                 setUnitStructureError(err?.message || 'Failed to save curriculum');
                                 setUnitStructureStep('draft');
                                 return;
                               }
+                              clearPlanYearImportDraft(
+                                familyId,
+                                availableSubjectId != null && String(availableSubjectId).trim() !== ''
+                                  ? String(availableSubjectId)
+                                  : 'none',
+                                planSource,
+                              );
                             } else if (planSource === 'generate' && draftData) {
                               const { data, error: err } = await commitGeneratedDraft({
                                 subject_id: availableSubject?.id,
@@ -6874,12 +9069,16 @@ export default function PlanYearModal({
                                 const { data: structureData, error: structureErr } =
                                   await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
                                 if (!structureErr && Array.isArray(structureData?.units)) {
+                                  setSavedContentSource(structureData?.saved_content_source ?? null);
                                   setUnitStructureData({ units: structureData.units });
                                 }
                               } finally {
                                 setLoadingUnitStructure(false);
                               }
                             }
+                            setCadenceDifferentMethodNotice(null);
+                            suppressManualCurriculumHydrateRef.current = false;
+                            bumpPlanSurfacesAfterMutation(academicYearId ?? null);
                           } catch (err) {
                             setUnitStructureError(err.message || 'Failed to save curriculum');
                             setUnitStructureStep('draft');
@@ -6924,6 +9123,7 @@ export default function PlanYearModal({
                           </Text>
                         )}
                       </TouchableOpacity>
+                      </View>
                     ) : hasPersistedManualCurriculum ? (
                       <View
                         style={{
@@ -6953,13 +9153,23 @@ export default function PlanYearModal({
                               return;
                             }
                             if (draftData || manualDraft) {
+                              if (Platform.OS === 'web' && (planSource === 'paste_plain' || planSource === 'upload')) {
+                                importDraftFlushRef.current();
+                              }
                               suppressManualCurriculumHydrateRef.current = true;
                               setDraftData(null);
-                              setManualDraft(null);
-                              setUnitStructureStep('input');
-                              setRawText('');
-                              setExpandedUnits(new Set());
-                              setExpandedUnitIndexManual(0);
+                              if (planSource === 'paste' && !hasPersistedManualCurriculum) {
+                                setManualDraft(createInitialManualDraft());
+                                setExpandedUnitIndexManual(0);
+                                setExpandedUnits(new Set([0]));
+                              } else {
+                                setManualDraft(null);
+                                setExpandedUnits(new Set());
+                                setExpandedUnitIndexManual(0);
+                              }
+                              leaveParsedDraftForTextEditor();
+                              setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                              setUnitFocusSubjectId(null);
                             } else {
                               setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
                               setUnitFocusSubjectId(null);
@@ -7011,7 +9221,7 @@ export default function PlanYearModal({
                           </TouchableOpacity>
                         </View>
                       </View>
-                    ) : (
+                    ) : hideFooterSkipForPasteImportInput ? null : (
                       <TouchableOpacity
                         onPress={() => {
                           setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
@@ -7046,19 +9256,29 @@ export default function PlanYearModal({
                             return;
                           }
                           if (draftData || manualDraft) {
+                            if (Platform.OS === 'web' && (planSource === 'paste_plain' || planSource === 'upload')) {
+                              importDraftFlushRef.current();
+                            }
                             suppressManualCurriculumHydrateRef.current = true;
                             setDraftData(null);
-                            setManualDraft(null);
-                            setUnitStructureStep('input');
-                            setRawText('');
-                            setExpandedUnits(new Set());
-                            setExpandedUnitIndexManual(0);
+                            if (planSource === 'paste' && !hasPersistedManualCurriculum) {
+                              setManualDraft(createInitialManualDraft());
+                              setExpandedUnitIndexManual(0);
+                              setExpandedUnits(new Set([0]));
+                            } else {
+                              setManualDraft(null);
+                              setExpandedUnits(new Set());
+                              setExpandedUnitIndexManual(0);
+                            }
+                            leaveParsedDraftForTextEditor();
+                            setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
+                            setUnitFocusSubjectId(null);
                           } else {
                             setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
                             setUnitFocusSubjectId(null);
                           }
                         }}
-                        style={{ alignSelf: 'center', marginTop: 14, paddingVertical: 8, paddingHorizontal: 12 }}
+                        style={{ alignSelf: 'center', marginTop: 6, paddingVertical: 6, paddingHorizontal: 12 }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <Text style={{ fontSize: 15, fontWeight: '500', color: TEXT_SECONDARY }}>{s('global.actions.cancel')}</Text>
@@ -7516,7 +9736,7 @@ export default function PlanYearModal({
                   </View>
                   <View style={styles.calendarYearRow}>
                     <TouchableOpacity onPress={() => { const d = new Date(applyFromDateCalendarMonth); d.setFullYear(d.getFullYear() - 1); setApplyFromDateCalendarMonth(d); }} style={styles.calendarNavButton}><Text style={styles.calendarYearLink}>← Year</Text></TouchableOpacity>
-                    <TouchableOpacity onPress={() => { const today = new Date(); setApplyFromDateCalendarMonth(today); setApplyFromDate(toLocalYYYYMMDD(today)); setShowApplyFromDatePicker(false); }} style={styles.calendarNavButton}><Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => { const today = new Date(); setApplyFromDateCalendarMonth(today); setApplyFromDate(toLocalYYYYMMDD(today)); setApplyFromMode('date'); setShowApplyFromDatePicker(false); }} style={styles.calendarNavButton}><Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text></TouchableOpacity>
                     <TouchableOpacity onPress={() => { const d = new Date(applyFromDateCalendarMonth); d.setFullYear(d.getFullYear() + 1); setApplyFromDateCalendarMonth(d); }} style={styles.calendarNavButton}><Text style={styles.calendarYearLink}>Year →</Text></TouchableOpacity>
                   </View>
                   <View style={styles.calendarDayHeaders}>{WEEKDAY_LABELS.map((day) => (<View key={day} style={styles.calendarDayHeader}><Text style={styles.calendarDayHeaderText}>{day}</Text></View>))}</View>
@@ -7528,7 +9748,7 @@ export default function PlanYearModal({
                     return (<View>{[0, 1, 2, 3, 4, 5].map((week) => (<View key={week} style={styles.calendarWeekRow}>{days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
                       const isCurrentMonth = day.getMonth() === month; const ymd = toLocalYYYYMMDD(day); const isSelected = applyFromDate === ymd; const isToday = ymd === toLocalYYYYMMDD(new Date());
                       const dayTime = day.getTime(); const inRange = dayTime >= planStart.getTime() && dayTime <= planEnd.getTime();
-                      return (<TouchableOpacity key={idx} onPress={() => { if (inRange) { setApplyFromDate(ymd); setShowApplyFromDatePicker(false); } }} style={[styles.calendarDayCell, isSelected && styles.calendarDayCellSelected, isToday && !isSelected && styles.calendarDayCellToday, !inRange && { opacity: 0.4 }]} disabled={!inRange}>
+                      return (<TouchableOpacity key={idx} onPress={() => { if (inRange) { setApplyFromDate(ymd); setApplyFromMode('date'); setShowApplyFromDatePicker(false); } }} style={[styles.calendarDayCell, isSelected && styles.calendarDayCellSelected, isToday && !isSelected && styles.calendarDayCellToday, !inRange && { opacity: 0.4 }]} disabled={!inRange}>
                         <Text style={[styles.calendarDayText, isSelected && styles.calendarDayTextSelected, !isCurrentMonth && styles.calendarDayTextMuted]}>{day.getDate()}</Text>
                       </TouchableOpacity>); })}</View>))}</View>);
                   })()}
@@ -7541,36 +9761,39 @@ export default function PlanYearModal({
           {!showEntryChoice && !planSummaryYearId && !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'unit_structure') && !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' && isHomeschool) && (
           <View style={[styles.footer, pickerOnly && styles.pickerFooter]}>
             {planStep === 'preview' ? (
-              <View style={styles.planYearPreviewFooterRow}>
-                <View style={[styles.planYearPreviewFooterSide, { alignItems: 'flex-start' }]}>
+              <View style={{ width: '100%' }}>
+                {cadenceDirty ? renderApplyFromScopeCard() : null}
+                <View style={styles.planYearPreviewFooterRow}>
+                  <View style={[styles.planYearPreviewFooterSide, { alignItems: 'flex-start' }]}>
+                    <TouchableOpacity
+                      onPress={() =>
+                        setPlanStep(
+                          getPreviewBackStep(
+                            PLAN_MY_YEAR_LOGISTICS_FIRST,
+                            Boolean(unitStructureData?.units?.length) || Boolean(draftData || manualDraft),
+                          ),
+                        )
+                      }
+                      style={styles.cancelButton}
+                    >
+                      <Text style={styles.cancelText}>Back</Text>
+                    </TouchableOpacity>
+                  </View>
                   <TouchableOpacity
-                    onPress={() =>
-                      setPlanStep(
-                        getPreviewBackStep(
-                          PLAN_MY_YEAR_LOGISTICS_FIRST,
-                          Boolean(unitStructureData?.units?.length) || Boolean(draftData || manualDraft),
-                        ),
-                      )
-                    }
-                    style={styles.cancelButton}
+                    style={[styles.primaryButton, styles.planYearGenerateCtaFooter, (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled]}
+                    onPress={handleApplyToCalendar}
+                    disabled={saving || loading || !preconditionsMet || !feasible}
                   >
-                    <Text style={styles.cancelText}>Back</Text>
+                    {saving ? (
+                      <ActivityIndicator size="small" color={BG} />
+                    ) : (
+                      <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
+                        {academicYearId ? STRINGS.planMyYear.primaryActions.updateSlots : STRINGS.planMyYear.primaryActions.generateSlots}
+                      </Text>
+                    )}
                   </TouchableOpacity>
+                  <View style={styles.planYearPreviewFooterSide} />
                 </View>
-                <TouchableOpacity
-                  style={[styles.primaryButton, styles.planYearGenerateCtaFooter, (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled]}
-                  onPress={handleApplyToCalendar}
-                  disabled={saving || loading || !preconditionsMet || !feasible}
-                >
-                  {saving ? (
-                    <ActivityIndicator size="small" color={BG} />
-                  ) : (
-                    <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
-                      {academicYearId ? STRINGS.planMyYear.primaryActions.updateSlots : STRINGS.planMyYear.primaryActions.generateSlots}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-                <View style={styles.planYearPreviewFooterSide} />
               </View>
             ) : pickerOnly ? (
               <>
@@ -7625,7 +9848,7 @@ export default function PlanYearModal({
               <>
                 <TouchableOpacity
                   onPress={() => {
-                    // Manual input: Back always goes to step 1 (Method), not the intermediate "Start building" screen
+                    // Manual input: Back from in-progress draft returns to logistics/method (not the builder).
                     if (planSource === 'paste' && (draftData || manualDraft)) {
                       setDraftData(null);
                       setManualDraft(null);
@@ -7637,13 +9860,23 @@ export default function PlanYearModal({
                       return;
                     }
                     if (draftData || manualDraft) {
+                      if (Platform.OS === 'web' && (planSource === 'paste_plain' || planSource === 'upload')) {
+                        importDraftFlushRef.current();
+                      }
                       suppressManualCurriculumHydrateRef.current = true;
                       setDraftData(null);
-                      setManualDraft(null);
-                      setUnitStructureStep('input');
-                      setRawText('');
-                      setExpandedUnits(new Set());
-                      setExpandedUnitIndexManual(0);
+                      if (planSource === 'paste' && !hasPersistedManualCurriculum) {
+                        setManualDraft(createInitialManualDraft());
+                        setExpandedUnitIndexManual(0);
+                        setExpandedUnits(new Set([0]));
+                      } else {
+                        setManualDraft(null);
+                        setExpandedUnits(new Set());
+                        setExpandedUnitIndexManual(0);
+                      }
+                      leaveParsedDraftForTextEditor();
+                      setPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST ? PLAN_STEP_KEYS.LOGISTICS : 'source');
+                      setUnitFocusSubjectId(null);
                     } else {
                       setPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST ? PLAN_STEP_KEYS.LOGISTICS : 'source');
                     }
@@ -7658,6 +9891,7 @@ export default function PlanYearModal({
                   </Text>
                 </TouchableOpacity>
                 {(draftData || manualDraft) ? (
+                  <View style={{ alignItems: 'stretch', flex: 1, minWidth: 0 }}>
                   <TouchableOpacity
                     onPress={async () => {
                       const availableSubjectId = unitPipelineSubjectId;
@@ -7671,13 +9905,22 @@ export default function PlanYearModal({
                       setUnitStructureError(null);
                       try {
                         if (manualDraft) {
+                          const availSlot =
+                            s('planMyYear.multiSubjectUnits.availableInstructionalSlot') || 'Available slot';
+                          const draftForCommit = mergeManualDraftWithInstructionalSlotDates(
+                            JSON.parse(JSON.stringify(manualDraft)),
+                            lessonSchedulePreviewPlan,
+                            availSlot,
+                          );
                           const { data, error: err } = await commitManualDraft({
                             subject_id: availableSubject?.id,
                             family_id: familyId,
                             subject_name: availableSubject?.name || '',
-                            draft: manualDraft,
+                            draft: draftForCommit,
                             builder_mode: 'rich_units',
                             replace_existing: true,
+                            academic_year_id: academicYearId || undefined,
+                            student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
                           });
                           if (err || !data) {
                             setUnitStructureError(
@@ -7693,12 +9936,21 @@ export default function PlanYearModal({
                             family_id: familyId,
                             subject_name: availableSubject?.name || '',
                             draft: draftData,
+                            academic_year_id: academicYearId || undefined,
+                            student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
                           });
                           if (err || !data) {
                             setUnitStructureError(err?.message || 'Failed to save curriculum');
                             setUnitStructureStep('draft');
                             return;
                           }
+                          clearPlanYearImportDraft(
+                            familyId,
+                            availableSubjectId != null && String(availableSubjectId).trim() !== ''
+                              ? String(availableSubjectId)
+                              : 'none',
+                            planSource,
+                          );
                         } else if (planSource === 'generate' && draftData) {
                           const { data, error: err } = await commitGeneratedDraft({
                             subject_id: availableSubject?.id,
@@ -7734,12 +9986,16 @@ export default function PlanYearModal({
                             const { data: structureData, error: structureErr } =
                               await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
                             if (!structureErr && Array.isArray(structureData?.units)) {
+                              setSavedContentSource(structureData?.saved_content_source ?? null);
                               setUnitStructureData({ units: structureData.units });
                             }
                           } finally {
                             setLoadingUnitStructure(false);
                           }
                         }
+                        setCadenceDifferentMethodNotice(null);
+                        suppressManualCurriculumHydrateRef.current = false;
+                        bumpPlanSurfacesAfterMutation(academicYearId ?? null);
                       } catch (err) {
                         setUnitStructureError(err.message || 'Failed to save curriculum');
                         setUnitStructureStep('draft');
@@ -7776,6 +10032,7 @@ export default function PlanYearModal({
                       </Text>
                     )}
                   </TouchableOpacity>
+                  </View>
                 ) : hasPersistedManualCurriculum ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <TouchableOpacity
@@ -7816,7 +10073,7 @@ export default function PlanYearModal({
                       </Text>
                     </TouchableOpacity>
                   </View>
-                ) : (
+                ) : hideFooterSkipForPasteImportInput ? null : (
                   <TouchableOpacity
                     onPress={() => setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST))}
                     style={styles.primaryButton}
@@ -8805,8 +11062,8 @@ const styles = StyleSheet.create({
   /** Logistics-first unit overlay: align summary row with top-right close control (FAB top 14, h 40). */
   contentContainerUnitStructureOverlay: {
     paddingTop: 18,
-    /** Less inset than main flow — footer sits directly under scroll; avoids a tall gap above primary CTA. */
-    paddingBottom: 32,
+    /** Tight bottom so in-scroll primary CTA (e.g. Preview structure) sits closer to footer Cancel. */
+    paddingBottom: 12,
   },
   /** Match attendance YearHeatmapGrid “Year at a glance” title + help (TOKENS.sectionTitle / sectionHelp). */
   planYearGlanceHeaderWrap: {
@@ -8895,6 +11152,19 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  /** Unit structure overlay / in-flow: headings only (League Spartan + all caps on web). */
+  unitStructureModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: FG,
+    marginBottom: 4,
+    marginTop: 0,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   description: {
@@ -9469,8 +11739,9 @@ const styles = StyleSheet.create({
     backgroundColor: SURFACE_SUBTLE,
   },
   weekdayChipSmallActive: {
-    borderColor: '#60a5fa',
-    backgroundColor: '#dbeafe',
+    borderColor: CHIP_SELECTED_BORDER,
+    backgroundColor: CHIP_SELECTED_BG,
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(107,179,232,0.2)' }),
   },
   weekdayChipSmallText: {
     fontSize: 12,
@@ -9481,8 +11752,8 @@ const styles = StyleSheet.create({
     }),
   },
   weekdayChipSmallTextActive: {
-    color: '#2563eb',
-    fontWeight: '600',
+    color: CHIP_SELECTED_TEXT,
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -9611,19 +11882,18 @@ const styles = StyleSheet.create({
   },
   radioRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 6,
     marginTop: 4,
   },
+  /** Match weekdayChipSmall — compact chips for Planning Preferences & shared patterns */
   radioOption: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    height: 36,
-    minHeight: 36,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: BORDER_SUBTLE,
     borderRadius: 20,
-    backgroundColor: BG,
+    backgroundColor: SURFACE_SUBTLE,
   },
   radioOptionActive: {
     backgroundColor: CHIP_SELECTED_BG,
@@ -9768,7 +12038,7 @@ const styles = StyleSheet.create({
     right: 20,
   },
   radioLabel: {
-    fontSize: 13,
+    fontSize: 12,
     color: SUB,
     fontWeight: '500',
     ...(Platform.OS === 'web' && {

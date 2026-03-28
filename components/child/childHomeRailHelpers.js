@@ -199,6 +199,58 @@ export function partitionComingUpEvents(events) {
   return buckets;
 }
 
+/** Parent home "Coming up": assignment-style types only (not generic lessons). */
+const COMING_UP_EVENT_TYPES = new Set(['assignment', 'exam', 'project', 'activity']);
+
+export function isComingUpRailEventType(eventType) {
+  if (!eventType || typeof eventType !== 'string') return false;
+  return COMING_UP_EVENT_TYPES.has(eventType.trim().toLowerCase());
+}
+
+/**
+ * Calendar event IDs tied to parent-pushed work ("Send to student": assignments with assigned_by + linked_event_ids).
+ */
+export function collectParentAssignedLinkedEventIds(assignments) {
+  const ids = new Set();
+  for (const a of assignments || []) {
+    if (!a?.assigned_by) continue;
+    const raw = a?.linked_event_ids;
+    if (raw == null) continue;
+    if (Array.isArray(raw)) {
+      for (const id of raw) {
+        if (id) ids.add(String(id));
+      }
+      continue;
+    }
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const id of parsed) {
+            if (id) ids.add(String(id));
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * Coming up rail: scheduled schoolwork that is either an assignment-like type OR was sent to the student from a calendar event.
+ * Due line in UI should use event.start_ts (scheduled date/time).
+ */
+export function filterEventsForComingUpRail(events, parentAssignedEventIds) {
+  const linked = parentAssignedEventIds instanceof Set ? parentAssignedEventIds : new Set(parentAssignedEventIds || []);
+  return (events || []).filter((e) => {
+    if (!e?.id) return false;
+    if (linked.has(String(e.id))) return true;
+    return isComingUpRailEventType(e.event_type);
+  });
+}
+
 function startOfToday() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);

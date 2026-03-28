@@ -344,6 +344,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   const [homeLoading, setHomeLoading] = useState(false); // WebContent home fetch runs in background; shell must not wait on it
   const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
+  /** Direct /planner entry: keep AppLoader up until first month grid fetch completes (no empty-then-pop-in). */
+  const [initialPathWasPlanner] = useState(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+    const p = (window.location.pathname || '').replace(/\/$/, '') || '/';
+    return p === '/planner';
+  });
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState([]);
   const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
   const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
@@ -369,7 +375,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       (onboardingBlocked &&
         (!onboardingUiReady || !onboardingModalReady)) ||
       !shellAssetsReady ||
-      !homeReady)
+      !homeReady ||
+      (initialPathWasPlanner && sessionFamilyId && plannerLoading))
   );
 
   useEffect(() => {
@@ -452,11 +459,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   };
   
   const [defaultView, setDefaultViewState] = useState(() => getDefaultView());
-  
-  // Log state changes for debugging
-  useEffect(() => {
-    console.log('[ViewDropdown] State changed to:', showViewDropdown);
-  }, [showViewDropdown]);
   
   // Get current view from URL params, localStorage default, or 'month'
   const [currentView, setCurrentView] = useState(() => {
@@ -871,8 +873,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             top: rect.bottom + 4,
             left: rect.left, // Align left edge of dropdown with left edge of button
           };
-          console.log('[ViewDropdown] Button rect:', rect);
-          console.log('[ViewDropdown] Setting dropdown position:', newPosition);
           setDropdownPosition(newPosition);
           
           // Directly update DOM element styles for immediate effect
@@ -895,20 +895,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   domElement.style.top = `${newPosition.top}px`;
                   domElement.style.left = `${newPosition.left}px`;
                   domElement.style.zIndex = '10000';
-                  console.log('[ViewDropdown] Directly set DOM styles on element:', domElement, {
-                    position: 'fixed',
-                    top: `${newPosition.top}px`,
-                    left: `${newPosition.left}px`,
-                    zIndex: '10000'
-                  });
-                } else {
-                  console.log('[ViewDropdown] Could not find style property on element:', domElement);
                 }
-              } else {
-                console.log('[ViewDropdown] Menu ref current is null');
               }
-            } else {
-              console.log('[ViewDropdown] Menu ref not set yet');
             }
           }, 0);
         }
@@ -931,13 +919,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setContextMenuView(null);
     }
   }, [showViewDropdown]);
-  
-  // Debug context menu state
-  useEffect(() => {
-    if (contextMenuView) {
-      console.log('[WebLayout] Context menu opened for view:', contextMenuView, 'Position:', contextMenuPosition);
-    }
-  }, [contextMenuView, contextMenuPosition]);
 
   // Listen for openQuickReschedule event from right-click menu or conflict banner
   useEffect(() => {
@@ -1031,11 +1012,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Close view dropdown when clicking outside
   useEffect(() => {
-    console.log('[ViewDropdown] useEffect triggered, showViewDropdown:', showViewDropdown, 'Platform:', Platform.OS);
     if (!showViewDropdown || Platform.OS !== 'web' || typeof document === 'undefined') {
       // Clean up handler if dropdown is closed
       if (viewDropdownHandlerRef.current) {
-        console.log('[ViewDropdown] Removing existing click outside listener (dropdown closed)');
         document.removeEventListener('mousedown', viewDropdownHandlerRef.current);
         viewDropdownHandlerRef.current = null;
       }
@@ -1100,15 +1079,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
         }
         
-        console.log('[ViewDropdown] Click detected, isInside:', isInside, 'target:', event.target);
-        
         if (!isInside && isDropdownVisible) {
-          console.log('[ViewDropdown] Closing dropdown (clicked outside)');
           setShowViewDropdown(false);
           setContextMenuView(null);
-        } else if (isInside) {
-          console.log('[ViewDropdown] Click inside dropdown - allowing onPress to handle');
-          // Don't prevent default - let React Native's onPress handle it
         }
       };
       
@@ -1126,13 +1099,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
       
       viewDropdownHandlerRef.current = delayedHandler;
-      console.log('[ViewDropdown] Adding click outside listener');
       // Use bubble phase so React Native's onPress fires first
       document.addEventListener('click', delayedHandler);
     }, 200);
     
     return () => {
-      console.log('[ViewDropdown] Cleanup: clearing timeout and removing listener');
       clearTimeout(timeoutId);
       if (viewDropdownHandlerRef.current) {
         document.removeEventListener('click', viewDropdownHandlerRef.current);
@@ -3616,6 +3587,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }
                     setActiveRightTool('edit-plan');
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      // From a specific plan's summary or logistics: jump back to the "Select a plan" list first.
+                      if (currentView === 'edit-year') {
+                        window.dispatchEvent(new CustomEvent('planYearReturnToEditPlanList'));
+                      }
                       window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'toolbar', academicYearId: null, openToEditList: true } }));
                     } else {
                       planYearReturnViewRef.current = currentView;

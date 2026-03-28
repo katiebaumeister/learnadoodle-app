@@ -1017,6 +1017,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   // Ref to store refreshCalendarData function for event listener
   const refreshCalendarDataRef = useRef(null);
+  /** Same-month requests (preload + planner tab) share one promise so get_month_view is not called twice. */
+  const monthCalendarFetchRef = useRef(new Map());
   
   // Initialize the ref and global function - this will be set when refreshCalendarData is defined
   // We'll set it up in a useEffect that depends on refreshCalendarData being available
@@ -2339,121 +2341,138 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // options.preserveEventId: when set (e.g. after drag-drop), keep this event's position from current state
   // so a stale refetch doesn't overwrite the optimistic update and make the event "jump back".
   // options.background: when true (e.g. post-drag refetch), skip loading state so UI stays responsive.
+  // options.force: when true, bypass in-flight dedupe (rare).
   const refreshCalendarData = useCallback(async (dateOrNull, options = {}) => {
     if (!familyId) return Promise.resolve();
     const dropStartTime = options.dropStartTime;
     const background = options.background === true;
-    if (dropStartTime != null && typeof performance !== 'undefined') {
-      console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData started');
-    }
     const date = dateOrNull && (dateOrNull instanceof Date ? !isNaN(dateOrNull.getTime()) : true)
       ? (dateOrNull instanceof Date ? dateOrNull : new Date(dateOrNull))
       : new Date();
     const year = date.getFullYear();
     const month = date.getMonth();
     const monthKey = `${year}-${month}`;
-    const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-    const preserveEventId = options.preserveEventId || null;
-    const allChildren = options.allChildren === true; // when true, fetch all family events (e.g. for plan summary slot lookup)
-    if (!background) setCalendarDataLoading(true);
-    try {
-      const [monthResult, holidaysResult] = await Promise.all([
-        supabase.rpc('get_month_view', {
-          _family_id: familyId,
-          _year: year,
-          _month: month + 1,
-          _child_ids: allChildren ? null : (propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null),
-        }),
-        getHolidaysForRange(familyId, start, end),
-      ]);
+
+    if (!options.force) {
+      const inflight = monthCalendarFetchRef.current.get(monthKey);
+      if (inflight) return inflight;
+    }
+
+    const run = (async () => {
       if (dropStartTime != null && typeof performance !== 'undefined') {
-        console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData fetch done');
+        console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData started');
       }
-      const { data, error } = monthResult;
-      if (error) throw error;
-      const eventsByDate = data?.events_by_date || {};
-      // Normalize: RPC returns date_local -> array of events; ensure each event has id, time for MonthGrid
-      const byDate = {};
-      Object.keys(eventsByDate).forEach((dateKey) => {
-        const dayEvents = eventsByDate[dateKey];
-        const list = Array.isArray(dayEvents) ? dayEvents : (dayEvents && dayEvents.events ? dayEvents.events : []);
-        byDate[dateKey] = (list || []).map((e) => ({
-          ...e,
-          id: e.id,
-          time: e.start_local || e.time,
-          start_local: e.start_local,
-          date_local: dateKey,
-          child_id: e.child_id,
-          child_ids: Array.isArray(e.child_ids) ? e.child_ids : undefined,
-          childId: e.child_id,
-          subject_name: e.subject_name,
-          subjectName: e.subject_name,
-          status: e.status,
-          source: e.source,
-        }));
-      });
-      setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
-      setCalendarEvents((prev) => {
-        let merged = { ...prev, ...byDate };
-        // Re-apply optimistic positions for any in-flight drags so a slow month refetch
-        // (e.g. first planner open) cannot snap events back to stale server rows.
-        const idsToPreserve = new Set();
-        if (preserveEventId) idsToPreserve.add(preserveEventId);
-        try {
-          pendingOptimisticUpdatesRef.current.forEach((id) => {
-            if (id) idsToPreserve.add(id);
-          });
-        } catch (_) {}
-        idsToPreserve.forEach((eventId) => {
-          let optimisticEvent = null;
-          let optimisticDateKey = null;
-          for (const key of Object.keys(prev)) {
-            const arr = prev[key];
-            if (!Array.isArray(arr)) continue;
-            const e = arr.find((ev) => ev && ev.id === eventId);
-            if (!e) continue;
-            const dl = e.date_local && String(e.date_local).trim().slice(0, 10);
-            if (dl && String(key) === dl) {
-              optimisticEvent = e;
-              optimisticDateKey = key;
-              break;
-            }
-          }
-          if (!optimisticEvent) {
+      const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const preserveEventId = options.preserveEventId || null;
+      const allChildren = options.allChildren === true; // when true, fetch all family events (e.g. for plan summary slot lookup)
+      if (!background) setCalendarDataLoading(true);
+      try {
+        const [monthResult, holidaysResult] = await Promise.all([
+          supabase.rpc('get_month_view', {
+            _family_id: familyId,
+            _year: year,
+            _month: month + 1,
+            _child_ids: allChildren ? null : (propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null),
+          }),
+          getHolidaysForRange(familyId, start, end),
+        ]);
+        if (dropStartTime != null && typeof performance !== 'undefined') {
+          console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData fetch done');
+        }
+        const { data, error } = monthResult;
+        if (error) throw error;
+        const eventsByDate = data?.events_by_date || {};
+        // Normalize: RPC returns date_local -> array of events; ensure each event has id, time for MonthGrid
+        const byDate = {};
+        Object.keys(eventsByDate).forEach((dateKey) => {
+          const dayEvents = eventsByDate[dateKey];
+          const list = Array.isArray(dayEvents) ? dayEvents : (dayEvents && dayEvents.events ? dayEvents.events : []);
+          byDate[dateKey] = (list || []).map((e) => ({
+            ...e,
+            id: e.id,
+            time: e.start_local || e.time,
+            start_local: e.start_local,
+            date_local: dateKey,
+            child_id: e.child_id,
+            child_ids: Array.isArray(e.child_ids) ? e.child_ids : undefined,
+            childId: e.child_id,
+            subject_name: e.subject_name,
+            subjectName: e.subject_name,
+            status: e.status,
+            source: e.source,
+          }));
+        });
+        setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
+        setCalendarEvents((prev) => {
+          let merged = { ...prev, ...byDate };
+          // Re-apply optimistic positions for any in-flight drags so a slow month refetch
+          // (e.g. first planner open) cannot snap events back to stale server rows.
+          const idsToPreserve = new Set();
+          if (preserveEventId) idsToPreserve.add(preserveEventId);
+          try {
+            pendingOptimisticUpdatesRef.current.forEach((id) => {
+              if (id) idsToPreserve.add(id);
+            });
+          } catch (_) {}
+          idsToPreserve.forEach((eventId) => {
+            let optimisticEvent = null;
+            let optimisticDateKey = null;
             for (const key of Object.keys(prev)) {
               const arr = prev[key];
               if (!Array.isArray(arr)) continue;
               const e = arr.find((ev) => ev && ev.id === eventId);
-              if (e) {
+              if (!e) continue;
+              const dl = e.date_local && String(e.date_local).trim().slice(0, 10);
+              if (dl && String(key) === dl) {
                 optimisticEvent = e;
                 optimisticDateKey = key;
                 break;
               }
             }
-          }
-          if (optimisticEvent && optimisticDateKey) {
-            Object.keys(merged).forEach((k) => {
-              merged[k] = (merged[k] || []).filter((ev) => ev && ev.id !== eventId);
-            });
-            merged[optimisticDateKey] = [...(merged[optimisticDateKey] || []), optimisticEvent];
-          }
+            if (!optimisticEvent) {
+              for (const key of Object.keys(prev)) {
+                const arr = prev[key];
+                if (!Array.isArray(arr)) continue;
+                const e = arr.find((ev) => ev && ev.id === eventId);
+                if (e) {
+                  optimisticEvent = e;
+                  optimisticDateKey = key;
+                  break;
+                }
+              }
+            }
+            if (optimisticEvent && optimisticDateKey) {
+              Object.keys(merged).forEach((k) => {
+                merged[k] = (merged[k] || []).filter((ev) => ev && ev.id !== eventId);
+              });
+              merged[optimisticDateKey] = [...(merged[optimisticDateKey] || []), optimisticEvent];
+            }
+          });
+          return merged;
         });
-        return merged;
-      });
-      const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
-      setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
-      setIsCalendarDataLoaded(true);
-    } catch (err) {
-      console.error('[WebContent] refreshCalendarData failed:', err);
-      setCalendarDataCache((prev) => ({ ...prev, [monthKey]: {} }));
-    } finally {
-      if (dropStartTime != null && typeof performance !== 'undefined') {
-        console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData finished');
+        const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
+        setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
+        setIsCalendarDataLoaded(true);
+      } catch (err) {
+        console.error('[WebContent] refreshCalendarData failed:', err);
+        setCalendarDataCache((prev) => ({ ...prev, [monthKey]: {} }));
+      } finally {
+        if (dropStartTime != null && typeof performance !== 'undefined') {
+          console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData finished');
+        }
+        if (!background) setCalendarDataLoading(false);
       }
-      if (!background) setCalendarDataLoading(false);
-    }
+    })();
+
+    monthCalendarFetchRef.current.set(monthKey, run);
+    run.finally(() => {
+      if (monthCalendarFetchRef.current.get(monthKey) === run) {
+        monthCalendarFetchRef.current.delete(monthKey);
+      }
+    });
+    return run;
   }, [familyId, propSelectedCalendarChildren]);
 
   useEffect(() => {
@@ -3522,6 +3541,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         // Load in background
         getSubjectDetail(subject.id, familyId, null, propSession)
           .then(detailData => {
+            if (detailData == null) {
+              preloadingDetailsRef.current.delete(subject.id);
+              return;
+            }
             setSubjectDetailCache(prevCache => {
               // Double-check it's still not cached (race condition protection)
               if (prevCache[subject.id]) {
@@ -7406,7 +7429,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
-    // Always show planner with current cache (no full-page loading); data updates in place when refetches complete
+    const pv = String(propPlannerView || 'month').toLowerCase();
+    const isMonthPlannerShell = pv === 'month';
+    const plannerVisibleMonthKey = `${date.getFullYear()}-${date.getMonth()}`;
+    const monthDataHydrated = Object.prototype.hasOwnProperty.call(calendarDataCache, plannerVisibleMonthKey);
+    const showPlannerMonthHydrating =
+      !!familyId &&
+      isMonthPlannerShell &&
+      (activeTab === 'planner' || activeTab === 'calendar') &&
+      !monthDataHydrated;
     return (
       <View
         style={{
@@ -7420,6 +7451,19 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
       >
         <PlanHealthBanner familyId={familyId} visible={!plannerReadOnly && (activeTab === 'planner' || activeTab === 'calendar')} initialHealth={propPreloadedPlanHealth} />
+        {showPlannerMonthHydrating ? (
+          <View
+            style={{
+              flex: 1,
+              minHeight: 280,
+              alignItems: 'center',
+              justifyContent: 'center',
+              ...(Platform.OS === 'web' ? { minHeight: 'min(60vh, 480px)' } : null),
+            }}
+          >
+            <ActivityIndicator size="large" />
+          </View>
+        ) : (
         <CenterPane
         date={date}
         events={plannerEventsForMonth}
@@ -7500,6 +7544,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         preloadedTrashEvents={plannerPreloadedTrash}
         plannerAttendanceSnapshot={plannerAttendanceSnapshot}
       />
+        )}
       </View>
     );
   };

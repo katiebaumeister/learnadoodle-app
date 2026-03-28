@@ -3,6 +3,10 @@ Deterministic pre-parser for plain-text curriculum extraction (Import & extract)
 Tags lines, detects structure (units, lessons, weeks, dates, assignments, admin text),
 produces a structured pre-parse result for the LLM extraction step.
 Does NOT invent content; only classifies what is present.
+
+Section boundaries include common syllabus shapes: Unit/Week/Module/Chapter plus Part, Section,
+Topic/Theme/Strand, Quarter/Term/Semester, Q1, Phase/Stage, Block/Session/Period, markdown ## headers,
+and similar — so multi-section pastes can be split for parallel extraction.
 """
 import re
 from dataclasses import dataclass, field
@@ -75,6 +79,40 @@ MODULE_PATTERNS = [
 ]
 CHAPTER_PATTERNS = [
     re.compile(r"^\s*chapter\s+(\d+)[\s.:\-—]", re.I),
+]
+
+# Broader syllabus / outline boundaries (treated as unit_heading for parallel extract + structure).
+# Optional ### markdown after optional indent; keep patterns specific to reduce false positives ("part of").
+_SYLLABUS_MD = r"\s*(?:#{1,3}\s+)?"
+SYLLABUS_SECTION_PATTERNS = [
+    # Part 1:, Part II., Part One —
+    re.compile(
+        rf"^{_SYLLABUS_MD}part\s+(\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b[\s.:\-—]",
+        re.I,
+    ),
+    re.compile(rf"^{_SYLLABUS_MD}part\s+(\d+|[ivxlcdm]+)\s*$", re.I),
+    # Section 1:, Section A., Section I —
+    re.compile(rf"^{_SYLLABUS_MD}section\s+(\d+|[a-z]|[ivxlcdm]+)\b[\s.:\-—]", re.I),
+    re.compile(rf"^{_SYLLABUS_MD}section\s+(\d+|[a-z]|[ivxlcdm]+)\s*$", re.I),
+    # Topic / theme / strand / domain (curriculum maps)
+    re.compile(
+        rf"^{_SYLLABUS_MD}(topic|theme|strand|domain|big\s+idea|essential\s+question|unit\s+essential)\s+(\d+|[a-z])\b[\s.:\-—]",
+        re.I,
+    ),
+    # Quarter 1, Term 2, Semester 1, Trimester 3, Q1:
+    re.compile(rf"^{_SYLLABUS_MD}(quarter|term|semester|trimester)\s+\d+\b[\s.:\-—]?", re.I),
+    re.compile(rf"^{_SYLLABUS_MD}q\s*\d+\b[\s.:\-—]", re.I),
+    # Phase 1, Stage 2 (course design)
+    re.compile(rf"^{_SYLLABUS_MD}(phase|stage)\s+\d+\b[\s.:\-—]", re.I),
+    # Block 1, Session 3, Period 2 (schedules)
+    re.compile(rf"^{_SYLLABUS_MD}(block|session|period)\s+\d+\b[\s.:\-—]", re.I),
+    # Pacing: "Days 1–5", "Days 1-5" at line start
+    re.compile(rf"^{_SYLLABUS_MD}days?\s+\d+\s*[\-–—]\s*\d+\b", re.I),
+    # Explicit markdown: ## Unit 2, ### Week 3, # Part 1
+    re.compile(
+        r"^\s{0,3}#{1,3}\s+(unit|part|section|chapter|module|quarter|semester|topic|theme)\s+",
+        re.I,
+    ),
 ]
 
 # Assignment / assessment keywords
@@ -194,6 +232,18 @@ def _tag_line(line: PreParsedLine) -> None:
         if pat.match(raw):
             line.heuristic_tag = "unit_heading"
             line.confidence = 0.8
+            return
+
+    # Markdown week headings (keep week_heading for structure stats)
+    if re.match(r"^\s{0,3}#{1,3}\s+week\s+", raw, re.I):
+        line.heuristic_tag = "week_heading"
+        line.confidence = 0.88
+        return
+
+    for pat in SYLLABUS_SECTION_PATTERNS:
+        if pat.match(raw):
+            line.heuristic_tag = "unit_heading"
+            line.confidence = 0.82
             return
 
     # Assignment / assessment by keyword at start

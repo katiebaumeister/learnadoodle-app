@@ -14,6 +14,10 @@ import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { colors } from '../../theme/colors';
+import {
+  collectParentAssignedLinkedEventIds,
+  filterEventsForComingUpRail,
+} from '../child/childHomeRailHelpers';
 
 
 const SECTIONS = [
@@ -56,7 +60,11 @@ export default function EmbeddedNotificationCenter({
         if (familyId) loadData();
       };
       window.addEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
-      return () => window.removeEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
+      window.addEventListener('refreshCalendar', onParentRefresh);
+      return () => {
+        window.removeEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
+        window.removeEventListener('refreshCalendar', onParentRefresh);
+      };
     }
   }, [session, familyId, hideOnboardingCards, viewerChildId]);
 
@@ -157,9 +165,23 @@ export default function EmbeddedNotificationCenter({
   const loadUpcomingEvents = async () => {
     try {
       const now = new Date();
-      const sevenDaysLater = new Date(now);
-      sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
-      sevenDaysLater.setHours(23, 59, 59, 999);
+      const horizon = new Date(now);
+      horizon.setDate(horizon.getDate() + 30);
+      horizon.setHours(23, 59, 59, 999);
+
+      let assignQ = supabase
+        .from('assignments')
+        .select('linked_event_ids, assigned_by')
+        .eq('family_id', familyId)
+        .not('assigned_by', 'is', null);
+      if (viewerChildId) {
+        assignQ = assignQ.eq('child_id', viewerChildId);
+      }
+      const { data: assignRows, error: assignErr } = await assignQ;
+      if (assignErr && assignErr.code !== '42P01' && assignErr.code !== 'PGRST200') {
+        console.error('[EmbeddedNotificationCenter] Error loading linked assignments:', assignErr);
+      }
+      const parentAssignedEventIds = collectParentAssignedLinkedEventIds(assignRows || []);
 
       let eventsQ = supabase
         .from('events')
@@ -172,15 +194,16 @@ export default function EmbeddedNotificationCenter({
           child_id,
           subject_id,
           status,
+          event_type,
           child:child_id (id, first_name, avatar)
         `)
         .eq('family_id', familyId)
         .gte('start_ts', now.toISOString())
-        .lte('start_ts', sevenDaysLater.toISOString())
+        .lte('start_ts', horizon.toISOString())
         .in('status', ['scheduled', 'in_progress'])
         .is('deleted_at', null)
         .order('start_ts', { ascending: true })
-        .limit(50);
+        .limit(80);
       if (viewerChildId) {
         eventsQ = eventsQ.eq('child_id', viewerChildId);
       }
@@ -209,13 +232,13 @@ export default function EmbeddedNotificationCenter({
         }
       }
 
-      // Attach subject data to events
       const eventsWithSubjects = (data || []).map(event => ({
         ...event,
         subject: event.subject_id ? subjectsMap[event.subject_id] : null,
       }));
 
-      setUpcomingEvents(eventsWithSubjects);
+      const comingUpOnly = filterEventsForComingUpRail(eventsWithSubjects, parentAssignedEventIds);
+      setUpcomingEvents(comingUpOnly);
     } catch (error) {
       console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
       setUpcomingEvents([]);
@@ -521,9 +544,10 @@ export default function EmbeddedNotificationCenter({
                 ) : null}
                 {selectedSection === 'needs_revision' ? (
                   <View style={styles.emptyCaughtUp}>
-                    <Text style={styles.emptyCaughtUpTitle}>Nothing scheduled</Text>
+                    <Text style={styles.emptyCaughtUpTitle}>Nothing coming up</Text>
                     <Text style={styles.emptyCaughtUpHint}>
-                      Assign events to children to populate this.
+                      This list shows assignments, exams, projects, and activities—or any class event you sent to a
+                      student. Dates use the scheduled time on the calendar.
                     </Text>
                   </View>
                 ) : null}
@@ -543,6 +567,15 @@ export default function EmbeddedNotificationCenter({
                       <TouchableOpacity
                         key={event.id}
                         style={styles.item}
+                        onPress={() => {
+                          if (Platform.OS === 'web' && typeof window !== 'undefined' && event?.id) {
+                            window.dispatchEvent(
+                              new CustomEvent('openEventModal', {
+                                detail: { eventId: String(event.id), initialEvent: null },
+                              })
+                            );
+                          }
+                        }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <View style={styles.itemLeft}>

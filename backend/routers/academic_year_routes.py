@@ -1690,7 +1690,7 @@ async def get_event_for_plan_slot(
             local_tz = None
         events_res = (
             supabase.table("events")
-            .select("id, start_ts, end_ts, title, subject_id, child_id, child_ids, status, event_type, unit, source, is_placeholder, generated_by, academic_year_id")
+            .select("id, start_ts, end_ts, title, subject_id, child_id, child_ids, status, event_type, unit, lesson, curriculum_unit_title, source, is_placeholder, generated_by, academic_year_id")
             .eq("family_id", family_id)
             .eq("academic_year_id", academic_year_id)
             .eq("subject_id", subject_id)
@@ -1892,15 +1892,42 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
                 end_upper = (end_dt + timedelta(days=1)).isoformat()
                 tz_name = "America/New_York"
                 local_tz = ZoneInfo(tz_name)
-                ev_resp = supabase.table("events").select("start_ts, subject_id, unit").eq(
+                ev_resp = supabase.table("events").select(
+                    "start_ts, subject_id, unit, lesson, curriculum_unit_title, title, curriculum_metadata, generated_by, is_curriculum_related"
+                ).eq(
                     "family_id", family_id
-                ).eq("academic_year_id", academic_year_id).gte(
+                ).eq("academic_year_id", academic_year_id).is_(
+                    "deleted_at", "null"
+                ).gte(
                     "start_ts", f"{start_str}T00:00:00"
                 ).lt("start_ts", f"{end_upper}T00:00:00").execute()
                 for ev in (ev_resp.data or []):
-                    unit = (ev.get("unit") or "").strip()
-                    if not unit:
-                        continue
+                    unit = (ev.get("unit") or ev.get("curriculum_unit_title") or "").strip()
+                    meta = ev.get("curriculum_metadata")
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except (json.JSONDecodeError, TypeError):
+                            meta = {}
+                    elif not isinstance(meta, dict):
+                        meta = {}
+                    lesson = str(meta.get("lesson_label") or "").strip()
+                    if not lesson:
+                        lesson = str(ev.get("lesson") or "").strip()
+                    if not lesson and unit:
+                        lesson = str(ev.get("title") or "").strip()
+                    subj_raw = ev.get("subject_id")
+                    gen_by = str(ev.get("generated_by") or "").strip()
+                    is_cr = bool(ev.get("is_curriculum_related"))
+                    # Filled curriculum (import/manual) sets is_curriculum_related; do not label as "open" placeholder.
+                    has_curriculum = bool(unit or lesson) or is_cr
+                    # Empty plan_year slots only have subject title on the event — still list them in summary
+                    if not has_curriculum:
+                        if not subj_raw or gen_by != "plan_year":
+                            continue
+                        open_plan_slot = True
+                    else:
+                        open_plan_slot = False
                     start_ts = ev.get("start_ts")
                     if not start_ts:
                         continue
@@ -1916,8 +1943,10 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
                         plan_slot_labels.append({
                             "date_ymd": date_ymd,
                             "start_local": start_local,
-                            "subject_id": str(ev.get("subject_id") or ""),
-                            "unit": unit,
+                            "subject_id": str(subj_raw or ""),
+                            "unit": unit or None,
+                            "lesson": lesson or None,
+                            "open_plan_slot": open_plan_slot,
                         })
                     except (ValueError, TypeError):
                         continue

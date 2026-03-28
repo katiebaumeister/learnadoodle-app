@@ -51,6 +51,122 @@ def _event_date_from_start_ts(ev: Dict[str, Any]) -> Optional[date]:
     return None
 
 
+def _normalized_child_id_set(raw: Any) -> Set[str]:
+    if not isinstance(raw, list):
+        return set()
+    return {str(c).strip() for c in raw if c is not None and str(c).strip()}
+
+
+def _whole_family_child_assignees_match(row_child_ids: Any, expected: Set[str]) -> bool:
+    """Whole-family row: child_id null; child_ids overlaps expected assignees (or both empty)."""
+    row_set = _normalized_child_id_set(row_child_ids)
+    if not expected and not row_set:
+        return True
+    if expected and row_set == expected:
+        return True
+    if expected and row_set and (row_set & expected):
+        return True
+    return False
+
+
+def _find_existing_whole_family_plan_slot_same_day(
+    supabase,
+    family_id: str,
+    academic_year_id: str,
+    subject_id: Any,
+    day: date,
+    expected_child_ids: List[Any],
+) -> Optional[str]:
+    """
+    If apply_to_calendar runs with a new block_id, existing_by_key misses older plan_year rows
+    (different source_block_id). Find a whole-family instructional slot on the same calendar day
+    so we update it instead of inserting a duplicate History row.
+    """
+    if subject_id is None:
+        return None
+    want = _normalized_child_id_set(expected_child_ids)
+    range_start_ts = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(day, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+    res = (
+        supabase.table("events")
+        .select("id, child_id, child_ids, curriculum_lesson_id")
+        .eq("family_id", family_id)
+        .eq("academic_year_id", academic_year_id)
+        .eq("subject_id", subject_id)
+        .eq("generated_by", "plan_year")
+        .is_("deleted_at", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+        .execute()
+    )
+    matches: List[Dict[str, Any]] = []
+    for e in res.data or []:
+        if e.get("child_id") is not None:
+            continue
+        if not _whole_family_child_assignees_match(e.get("child_ids"), want):
+            continue
+        matches.append(e)
+    if not matches:
+        return None
+
+    def _has_curriculum_slot(ev: Dict[str, Any]) -> bool:
+        cl = ev.get("curriculum_lesson_id")
+        return cl is not None and str(cl).strip() != ""
+
+    # Prefer an empty slot; if the user already pasted curriculum, adopt that row (update times/block) instead of inserting a duplicate.
+    matches.sort(key=lambda r: (1 if _has_curriculum_slot(r) else 0, str(r.get("id") or "")))
+    return str(matches[0]["id"])
+
+
+def _dedupe_empty_whole_family_slots_for_day(
+    supabase,
+    family_id: str,
+    academic_year_id: str,
+    subject_id: Any,
+    day: date,
+    expected_child_ids: List[Any],
+) -> int:
+    """Soft-delete extra empty whole-family plan_year rows on the same day (same subject, assignees)."""
+    if subject_id is None:
+        return 0
+    want = _normalized_child_id_set(expected_child_ids)
+    range_start_ts = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(day, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+    res = (
+        supabase.table("events")
+        .select("id, child_id, child_ids, curriculum_lesson_id")
+        .eq("family_id", family_id)
+        .eq("academic_year_id", academic_year_id)
+        .eq("subject_id", subject_id)
+        .eq("generated_by", "plan_year")
+        .is_("deleted_at", "null")
+        .is_("curriculum_lesson_id", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+        .execute()
+    )
+    empties: List[Dict[str, Any]] = []
+    for e in res.data or []:
+        if e.get("child_id") is not None:
+            continue
+        if not _whole_family_child_assignees_match(e.get("child_ids"), want):
+            continue
+        empties.append(e)
+    if len(empties) <= 1:
+        return 0
+    empties.sort(key=lambda r: str(r.get("id") or ""))
+    keep_id = str(empties[0]["id"])
+    remove_ids = [str(x["id"]) for x in empties[1:] if str(x["id"]) != keep_id]
+    if not remove_ids:
+        return 0
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("events").update({"deleted_at": now}).in_("id", remove_ids).eq("family_id", family_id).execute()
+    except Exception:
+        return 0
+    return len(remove_ids)
+
+
 def regenerate_block(
     supabase,
     family_id: str,
@@ -213,6 +329,41 @@ def regenerate_block(
                         "counts_toward_plan": True,
                     })
 
+    # New block_id would miss older plan_year rows in existing_by_key → duplicate whole-family events on the same day.
+    # Reconcile: update an existing same-day whole-family slot (prefer empty; else adopt filled) instead of inserting.
+    if is_whole_family and to_insert:
+        reconciled: List[Dict[str, Any]] = []
+        for ins in to_insert:
+            if ins.get("child_id") is not None:
+                reconciled.append(ins)
+                continue
+            d_ins = _event_date_from_start_ts(ins)
+            if d_ins is None:
+                reconciled.append(ins)
+                continue
+            dup_id = _find_existing_whole_family_plan_slot_same_day(
+                supabase,
+                family_id,
+                academic_year_id,
+                ins.get("subject_id"),
+                d_ins,
+                child_ids,
+            )
+            if dup_id:
+                to_update.append({
+                    "id": dup_id,
+                    "start_ts": ins["start_ts"],
+                    "end_ts": ins["end_ts"],
+                    "subject_id": ins["subject_id"],
+                    "title": ins["title"],
+                    "generation_batch_id": ins["generation_batch_id"],
+                    "source_block_id": ins.get("source_block_id"),
+                    "child_ids": ins.get("child_ids"),
+                })
+            else:
+                reconciled.append(ins)
+        to_insert = reconciled
+
     # Only delete events that fall within the regeneration window (>= start_date) and are no longer desired
     for (d, cid), e in existing_by_key.items():
         if d >= start_date and (d, cid) not in desired_keys:
@@ -234,6 +385,10 @@ def regenerate_block(
                 "title": row["title"],
                 "generation_batch_id": row["generation_batch_id"],
             }
+            if row.get("source_block_id") is not None:
+                payload["source_block_id"] = row["source_block_id"]
+            if "child_ids" in row and row["child_ids"] is not None:
+                payload["child_ids"] = row["child_ids"]
             # Undelete if this plan event was soft-deleted so plan_health sees it again
             if row.get("deleted_at"):
                 payload["deleted_at"] = None
@@ -251,7 +406,6 @@ def regenerate_block(
     if to_delete_ids:
         # Soft delete (events table has deleted_at)
         try:
-            from datetime import datetime, timezone
             supabase.table("events").update({
                 "deleted_at": datetime.now(timezone.utc).isoformat(),
             }).in_("id", to_delete_ids).eq("family_id", family_id).execute()
@@ -262,6 +416,14 @@ def regenerate_block(
                 deleted_count = len(to_delete_ids)
             except Exception:
                 pass
+
+    if is_whole_family and occ_dates:
+        sid = block.get("subject_id")
+        if sid is not None:
+            for d in occ_dates:
+                deleted_count += _dedupe_empty_whole_family_slots_for_day(
+                    supabase, family_id, academic_year_id, sid, d, child_ids
+                )
 
     if log_event_fn and user_id:
         log_event_fn(

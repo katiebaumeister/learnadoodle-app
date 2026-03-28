@@ -20,7 +20,8 @@ import {
 } from 'react-native';
 import { X, FileText, ChevronDown, ChevronUp, Save, AlertTriangle } from 'lucide-react';
 import { STRINGS } from '../lib/i18n/strings';
-import { parsePlainText, commitParsedDraft } from '../lib/services/curriculumClient';
+import { parsePlainTextStream, commitParsedDraft } from '../lib/services/curriculumClient';
+import { buildImportStreamPreviewDisplay } from '../lib/parseStreamHumanPreview';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 
@@ -64,6 +65,7 @@ export default function ParsePlainTextModal({
   useModalStackElevation(overlayRef, visible, 10002);
   const [step, setStep] = useState('form');
   const [parsing, setParsing] = useState(false);
+  const [parseStreamPreview, setParseStreamPreview] = useState('');
   const [error, setError] = useState(null);
   const [rawText, setRawText] = useState('');
   const [sourceTitle, setSourceTitle] = useState('');
@@ -105,30 +107,42 @@ export default function ParsePlainTextModal({
     }
     setError(null);
     setParsing(true);
+    setParseStreamPreview('');
+    let streamed = '';
     try {
-      const { data, error: err } = await parsePlainText({
-        subject_id: subjectId,
-        family_id: familyId,
-        subject_name: subjectName,
-        raw_text: text,
-        source_title: sourceTitle.trim() || null,
-        source_type: sourceType === 'auto_detect' ? null : sourceType,
-        parse_mode: parseMode === 'auto_detect' ? null : parseMode,
-        detect_dates: detectDates,
-        preserve_source_headings: preserveHeadings,
-        ignore_policy_text: ignorePolicyText,
-        extract_assignments: extractAssignments,
-        extract_assessments: extractAssessments,
-        special_instructions: specialInstructions.trim() || null,
-      });
+      const { data, error: err } = await parsePlainTextStream(
+        {
+          subject_id: subjectId,
+          family_id: familyId,
+          subject_name: subjectName,
+          raw_text: text,
+          source_title: sourceTitle.trim() || null,
+          source_type: sourceType === 'auto_detect' ? null : sourceType,
+          parse_mode: parseMode === 'auto_detect' ? null : parseMode,
+          detect_dates: detectDates,
+          preserve_source_headings: preserveHeadings,
+          ignore_policy_text: ignorePolicyText,
+          extract_assignments: extractAssignments,
+          extract_assessments: extractAssessments,
+          special_instructions: specialInstructions.trim() || null,
+        },
+        {
+          onDelta: (chunk) => {
+            streamed += chunk;
+            setParseStreamPreview(buildImportStreamPreviewDisplay(streamed));
+          },
+        }
+      );
       if (err || !data) {
         setError(err?.message || s('courseStructure.importExtract.errorParse'));
         return;
       }
+      setRawText(data.raw_text || rawText);
       setDraft(data);
       setStep('draft');
       setExpandedUnitIndex(0);
     } finally {
+      setParseStreamPreview('');
       setParsing(false);
     }
   }, [
@@ -234,18 +248,48 @@ export default function ParsePlainTextModal({
             <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
               <Text style={styles.helper}>{s('courseStructure.importExtract.helper')}</Text>
               <View style={styles.formGroup}>
-                <Text style={styles.label}>{s('courseStructure.importExtract.pasteLabel')}</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={rawText}
-                  onChangeText={setRawText}
-                  placeholder={s('courseStructure.importExtract.pastePlaceholder')}
-                  placeholderTextColor="#9ca3af"
-                  multiline
-                  numberOfLines={10}
-                  textAlignVertical="top"
-                  editable={!parsing}
-                />
+                {!parsing ? (
+                  <>
+                    <Text style={styles.label}>{s('courseStructure.importExtract.pasteLabel')}</Text>
+                    <TextInput
+                      style={[styles.input, styles.textArea]}
+                      value={rawText}
+                      onChangeText={setRawText}
+                      placeholder={s('courseStructure.importExtract.pastePlaceholder')}
+                      placeholderTextColor="#9ca3af"
+                      multiline
+                      numberOfLines={10}
+                      textAlignVertical="top"
+                      editable
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.label}>{s('courseStructure.importExtract.streamAssistantLabel')}</Text>
+                    <View
+                      style={[
+                        styles.input,
+                        styles.textArea,
+                        {
+                          padding: 14,
+                          backgroundColor: '#f8fafc',
+                          borderWidth: 1,
+                          borderColor: '#e2e8f0',
+                        },
+                      ]}
+                    >
+                      <ScrollView
+                        style={{ maxHeight: 132 }}
+                        keyboardShouldPersistTaps="handled"
+                        nestedScrollEnabled
+                      >
+                        <Text style={{ fontSize: 15, lineHeight: 22, color: '#0f172a' }}>
+                          {parseStreamPreview ? parseStreamPreview : s('courseStructure.importExtract.streamWaiting')}
+                        </Text>
+                      </ScrollView>
+                    </View>
+                  </>
+                )}
               </View>
               <View style={styles.formGroup}>
                 <Text style={styles.label}>{s('courseStructure.importExtract.sourceTitleLabel')}</Text>

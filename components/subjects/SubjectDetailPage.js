@@ -89,6 +89,10 @@ export default function SubjectDetailPage({
     try {
       // Pass session for role-based filtering
       const data = await getSubjectDetail(subjectId, familyId, null, session);
+      if (data == null) {
+        if (typeof onBack === 'function') onBack();
+        return;
+      }
       setSubjectData(data);
       if (onSubjectDataUpdate) {
         onSubjectDataUpdate(data);
@@ -100,7 +104,7 @@ export default function SubjectDetailPage({
       setLoading(false);
       loadingRef.current = false;
     }
-  }, [subjectId, familyId, onSubjectDataUpdate]);
+  }, [subjectId, familyId, onSubjectDataUpdate, onBack, session]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -697,15 +701,13 @@ export default function SubjectDetailPage({
 
         {/* Section 1: Progress - next 7 days only; then link to Planner */}
         <View id="progress-section" style={styles.section}>
-          <View style={[styles.attendanceSectionHeader, styles.attendanceSectionHeaderMultiLine]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
-              {hasProgressAttention && isParentViewer ? (
-                <Text style={styles.attentionHintText} accessibilityRole="text">
-                  * Open the listed event for a help request or submission review.
-                </Text>
-              ) : null}
-            </View>
+          <View
+            style={[
+              styles.attendanceSectionHeader,
+              { marginBottom: hasProgressAttention && isParentViewer ? 6 : 16 },
+            ]}
+          >
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
             {onNavigateToPlanner && (
               <TouchableOpacity
                 style={styles.exportIconButton}
@@ -719,6 +721,11 @@ export default function SubjectDetailPage({
               </TouchableOpacity>
             )}
           </View>
+          {hasProgressAttention && isParentViewer ? (
+            <Text style={[styles.attentionHintText, { marginBottom: 10 }]} accessibilityRole="text">
+              * Open the listed event for a help request or submission review.
+            </Text>
+          ) : null}
           <View style={styles.attendanceChips}>
             <TouchableOpacity
               style={styles.attendanceChip}
@@ -782,13 +789,13 @@ export default function SubjectDetailPage({
               </View>
               {hasMoreBeyond7Days && onNavigateToPlanner && (
                 <TouchableOpacity
-                  style={styles.attendanceViewTotalBtn}
+                  style={[styles.emptyStateButton, { marginTop: 12 }]}
                   onPress={() => onNavigateToPlanner({ subjectId: subject.id, view: 'month' })}
                   activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Calendar size={16} color={colors.accent || '#4F46E5'} />
-                  <Text style={styles.attendanceViewTotalText}>View more in Planner</Text>
-                  <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>View more in Planner</Text>
                 </TouchableOpacity>
               )}
             </>
@@ -802,13 +809,13 @@ export default function SubjectDetailPage({
                   </Text>
                   <View style={styles.emptyStateButtonRow}>
                     <TouchableOpacity
-                      style={styles.attendanceViewTotalBtn}
+                      style={styles.emptyStateButton}
                       onPress={() => onNavigateToPlanner({ subjectId: subject.id, view: 'month' })}
                       activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Calendar size={16} color={colors.accent || '#4F46E5'} />
-                      <Text style={styles.attendanceViewTotalText}>View in Planner</Text>
-                      <ChevronRight size={16} color={colors.muted || '#6B7280'} />
+                      <Calendar size={18} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>View in Planner</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.emptyStateButton} onPress={handleOpenPlanYear} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                       <Calendar size={18} color="#6B7280" />
@@ -1739,28 +1746,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   attendanceShowMoreText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.accent || '#4F46E5',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  attendanceViewTotalBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border || '#e5e7eb',
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  attendanceViewTotalText: {
-    flex: 1,
     fontSize: 14,
     fontWeight: '500',
     color: colors.accent || '#4F46E5',

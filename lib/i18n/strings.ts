@@ -215,6 +215,30 @@ export const STRINGS = {
       },
     },
 
+    planningTargetProgress: {
+      title: "Target vs this plan",
+      subtitle:
+        "Counts use your date range, cadence, and exclusions (trips, breaks, and optional public holidays).",
+      loading: "Calculating…",
+      needCadence: "Select subjects and set cadence to compare this plan to your targets.",
+      overallDaysLead: "Instructional days in this plan: {projected}",
+      overallDaysTarget: "Planning target: {target} days",
+      overallHoursLead: "Instructional hours in this plan: {projected}",
+      overallHoursTarget: "Planning target: {target} hours",
+      deltaOverDays: "{n} over target",
+      deltaUnderDays: "{n} under target",
+      deltaMetDays: "On target for days",
+      deltaOverHours: "{n} h over target",
+      deltaUnderHours: "{n} h under target",
+      deltaMetHours: "On target for hours",
+      suggestedEnd: "End date that would match your day target: {date}",
+      excludedPublicHolidays:
+        "{count} weekdays in range fall on a U.S. public holiday (not counted as instructional).",
+      cadenceHint: "{message}",
+      subjectRowDays: "{name}: {projected} of {target} class days",
+      subjectRowHours: "{name}: {projected} of {target} instructional hours",
+    },
+
     multiSubjectUnits: {
       subjectPickerTitle: "Subject for units & lessons",
       subjectPickerHint:
@@ -236,7 +260,11 @@ export const STRINGS = {
         "Choose which subject you’re adding units for—pick a chip below, or go back to Cadence and tap Manual, Paste, Upload, or Generate under that subject’s row.",
       cadenceRowHint:
         "Each subject has its own row—set weekdays and class times per subject.",
-      cadenceAddUnitsInlinePrompt: "Add units:",
+      cadenceAddUnitsInlinePrompt: "Add units",
+      cadenceChangeUnitsInlinePrompt: "Change units",
+      cadenceDifferentMethodBanner:
+        "You previously saved units and lessons using {method}. Open that method to edit your previous inputs, or build a new unit structure below. Your calendar stays as-is until you save.",
+      savedUnitsUnknownMethod: "a previous method",
       step1SetSchedule: "Step 1 — Set schedule",
       step2AddContent: "Step 2 — Add content",
       addContentSetCadenceHint:
@@ -265,6 +293,9 @@ export const STRINGS = {
       availableInstructionalSlot: "Available slot",
       lessonsOverflowPastRange:
         "{count} lessons don't have available dates in this range",
+      lessonsOverflowExtendSuggestion:
+        "Add {extraDays} more class day(s) on your current weekdays and class times by extending your plan end date to {endDate}.",
+      lessonsOverflowExtendCta: "Extend end date to {endDate}",
       clearManualCurriculumConfirmTitle: "Clear curriculum?",
       clearManualCurriculumConfirmMessage:
         "This removes all manual units and lessons you saved for this subject. This cannot be undone.",
@@ -274,9 +305,48 @@ export const STRINGS = {
       draftLessonMore: "More",
       draftLessonReferenceDate: "Reference date",
       draftReorderA11y: "Reorder lessons",
+      draftInsertUnitBreakAbove: "Insert unit break above",
+      draftMoveLessonToNewUnit: "Move to new unit",
+      draftMoveLessonToUnit: "Move to…",
+      draftMoveLessonBack: "Back",
+      draftDeleteLesson: "Delete lesson",
+      draftUnitMergeWithPrevious: "Merge with previous unit",
+      draftUnitMergeWithNext: "Merge with next unit",
+      draftUnitAddLesson: "Add lesson",
+      draftUnitAddUnitBelow: "Add unit below",
+      draftDragLessonA11y: "Drag to reorder or move to another unit",
       footerSaveDraftClassic: "Save & Continue → Schedule",
       footerSkipLogisticsFirst: "Continue to review",
       footerSkipClassic: "Continue → Schedule",
+      /** Paste plain text / upload → paste: primary action (parse + go to preview) */
+      importPreviewStructure: "Preview structure →",
+      importPreviewStructureLoading: "Parsing…",
+      importStreamAssistantLabel: "Live preview",
+      importStreamWaiting: "Reading your outline…",
+      importFromTextTitle: "Import from text",
+      importFromTextIntro:
+        "Paste your syllabus, lesson list, or plan. We'll organize it into units and lessons.",
+      importPasteTipTitle: "Tip: Works best with formats like:",
+      importPasteTipBulletUnit: "“Unit 1: …”",
+      importPasteTipBulletLesson: "“Lesson 1: …”",
+      importPasteTipBulletSchedule: "Weekly or dated lists",
+      importRefineParsing: "Refine parsing",
+      importRefineParsingHint: "Didn't look right?",
+      importSourceTitleOptional: "Source title (optional)",
+      pasteDetectedPrefix: "Detected:",
+      importParseHintLessonBased: "lesson-based structure",
+      importParseHintUnitBased: "unit-based structure",
+      importParseHintWeekBased: "week-based structure",
+      importParseHintDateBased: "date-based structure",
+      importParseHintOutline: "structured outline",
+      parsedPreviewTitle: "Units & lessons",
+      parsedPreviewSubtitle: "Parsed from your text",
+      parsedPreviewMayNeedReview: "{count} items may need review",
+      parsedSchedulePreviewTitle: "Lesson schedule preview",
+      parsedPreviewEditTip:
+        "Tip: You can edit lesson names or reorder them. They'll automatically update on your schedule.",
+      parsedPreviewUpdatePreview: "Update preview",
+      draftLessonUnscheduled: "Unscheduled",
       nextChooseMethod: "Next: Choose method",
       nextContinueToReview: "Next: Review",
       loadingCurriculum: "Loading existing curriculum…",
@@ -294,11 +364,19 @@ export const STRINGS = {
     },
 
     applyFrom: {
-      title: "Apply block changes",
-      entirePlan: "Entire plan",
+      title: "Apply schedule changes to calendar",
+      entirePlan: "Entire plan (all dates in range)",
       fromToday: "From today forward",
-      fromDate: "From date forward",
+      fromDate: "From a chosen date forward",
       pickDate: "Pick date",
+      changeDate: "Change date",
+      dateRequired: "Pick a date for “From a chosen date forward”, or choose another option.",
+      hint:
+        "Only affects how far forward instructional slots from this cadence (days and times) are updated on the calendar. Pick full plan scope to refresh the whole date range; otherwise past dates stay as they are.",
+      applyToPlanLabel: "Apply to plan",
+      linkFullPlanScope: "Full plan scope",
+      linkTodayGoingForward: "Today going forward",
+      linkSpecificRange: "Specific range",
     },
 
     confirmations: {
@@ -321,8 +399,17 @@ export const STRINGS = {
       generated: "Instructional slots generated.",
       updated: "Instructional slots updated.",
       generatedWithCounts: "Generated {count} instructional slots.",
+      slotsUpdatedCount: "Updated {count} instructional slots.",
+      slotAddedOne: "1 new instructional slot added.",
+      slotsAddedCount: "Added {count} new instructional slots.",
+      slotRemovedOne: "1 instructional slot removed.",
+      slotsRemovedCount: "Removed {count} instructional slots.",
       updatedWithCounts:
         "Updated {updated} slots, added {inserted}, removed {deleted}.",
+      /** Pieces for apply-to-calendar when more than one of updated/inserted/deleted is non-zero */
+      applyPartUpdated: "{count} slot(s) updated",
+      applyPartInserted: "{count} added",
+      applyPartRemoved: "{count} removed",
       skippedFilled: "Scheduled lessons were kept unchanged.",
     },
 
@@ -567,6 +654,8 @@ export const STRINGS = {
       specialInstructionsPlaceholder: "e.g. Treat each week as a unit; ignore grading policy",
       extractButton: "Extract",
       extracting: "Extracting…",
+      streamAssistantLabel: "Live preview",
+      streamWaiting: "Reading your outline…",
       reviewTitle: "Review extracted structure",
       reviewSubtitle: "Edit titles and move items if needed, then save to add to your course.",
       warnings: "Parser warnings",

@@ -6,8 +6,9 @@ Does NOT generate or invent content; only extracts what is present.
 Implementation note (Import & extract feature):
 - Raw text is received: POST /api/curriculum/parse-text (curriculum_routes.py) receives raw_text in body.
 - Pre-parsing: services/plain_text_preparser.py preparse_plain_text() runs first (line tagging, structure hints).
-- OpenAI extraction: extract_curriculum_from_plain_text() in this module builds prompt with pre-parse summary
-  and raw text, calls OpenAI with strict extraction-only instructions.
+- OpenAI extraction: extract_curriculum_from_plain_text() (single response) or stream_extract_curriculum_from_plain_text()
+  (NDJSON stream for UI) builds prompt with pre-parse summary and raw text; POST /api/curriculum/parse-text-stream
+  streams deltas then the normalized draft.
 - Validation/normalization: _validate_and_normalize_parsed() in this module normalizes LLM output into
   ParsedDraftCurriculum shape; fallback single unit for flat lesson lists when needed.
 - Source rows saved: POST /api/curriculum/commit-parsed-draft inserts into syllabus_imports (raw_text, metadata).
@@ -16,15 +17,36 @@ Implementation note (Import & extract feature):
 - Scheduling hook: Later, Plan My Year or commit engine can list curriculum_lessons by subject (subject_tags)
   and map onto placeholder slots or set events.curriculum_lesson_id.
 """
+import asyncio
 import json
+import os
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
+from logger import log_event
 from services.plain_text_preparser import PreParseResult, preparse_plain_text
+
+# Faster models (e.g. gpt-4o) can be set via env; parallel chunking does more for multi-unit pastes.
+_DEFAULT_PARSE_MODEL = "gpt-4o-mini"
+_MAX_PARALLEL_CHUNKS = 4
+_MIN_CHUNK_CHARS = 280
 
 
 ALLOWED_LESSON_TYPES = {"lesson", "assignment", "project", "assessment", "reading", "lab", "review", "activity"}
+
+
+def _parse_llm_json_content(content: str) -> Dict[str, Any]:
+    content = (content or "").strip()
+    if not content:
+        raise ValueError("Empty response from extraction.")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise ValueError(f"Invalid JSON from extraction: {e}") from e
 
 
 def _ensure_temp_id() -> str:
@@ -108,50 +130,298 @@ def _build_user_prompt(
     if special_instructions:
         parts.insert(-2, f"Special instructions: {special_instructions}")
 
+    # Compact schema = much shorter model output → faster than verbose null-heavy JSON (closer to chat TTFT).
     schema = """
-Return a single JSON object with this structure (no other top-level keys):
+Return one JSON object only (no markdown). Use compact output — omit empty arrays, omit unknown fields, do NOT emit null placeholders.
+
+Required shape:
 {
-  "summary": "optional one-line summary of what was extracted",
+  "summary": "short one-line summary of this text (optional)",
   "units": [
     {
-      "temp_id": "unique-string",
-      "source_label": "optional original heading text",
       "title": "unit title",
-      "description": null,
       "sequence_index": 1,
-      "inferred_from": ["optional line numbers or text refs"],
+      "source_label": "optional heading from source",
       "lessons": [
         {
-          "temp_id": "unique-string",
           "title": "lesson title",
-          "objective": null,
-          "notes": null,
           "sequence_index": 1,
-          "minutes_est": null,
-          "modality": null,
-          "lesson_type": "lesson|assignment|project|assessment|reading|lab|review|activity",
-          "date_text": null,
-          "suggested_date": null,
-          "inferred_from": null,
-          "confidence": 0.0-1.0
+          "lesson_type": "lesson|assignment|project|assessment|reading|lab|review|activity"
         }
-      ],
-      "assignments": [],
-      "assessments": []
+      ]
     }
   ],
-  "unassigned_items": [
-    { "temp_id": "string", "raw_text": "string", "inferred_type": null, "confidence": 0.5, "reason": "why unassigned" }
-  ],
-  "ignored_items": [
-    { "raw_text": "string", "reason": "e.g. policy text" }
-  ],
-  "parser_warnings": ["string"]
+  "unassigned_items": [ { "temp_id": "t1", "raw_text": "line", "reason": "uncertain" } ],
+  "ignored_items": [ { "raw_text": "snippet", "reason": "policy" } ],
+  "parser_warnings": []
 }
 
-Rules: Only include units/lessons that are clearly present. Use unassigned_items for uncertain lines. Use ignored_items for policy/admin when ignore_policy is true.
+Rules:
+- Include date_text on a lesson ONLY if a date appears next to that item in the source.
+- Only add objective/notes/minutes_est/modality/confidence/inferred_from if the source explicitly gives them (otherwise omit).
+- Only include units/lessons clearly present. unassigned_items for uncertain lines; ignored_items for policy/admin when ignore_policy is true.
+- temp_id on unassigned_items: short unique string if you use that array.
 """
     return "\n".join(parts) + "\n\n" + schema.strip()
+
+
+def _parse_model_name() -> str:
+    m = (os.environ.get("CURRICULUM_PARSE_MODEL") or "").strip()
+    return m if m else _DEFAULT_PARSE_MODEL
+
+
+def split_raw_into_parallel_chunks(pre_parse: PreParseResult) -> Optional[List[str]]:
+    """
+    If the paste has 2+ unit/week headings, return text slices for parallel extraction.
+    Otherwise None (use a single model call).
+    """
+    cleaned = (pre_parse.cleaned_text or "").strip()
+    if not cleaned or not pre_parse.lines:
+        return None
+    line_strs = cleaned.split("\n")
+    if len(line_strs) != len(pre_parse.lines):
+        return None
+    boundaries = [
+        i
+        for i, ln in enumerate(pre_parse.lines)
+        if ln.heuristic_tag in ("unit_heading", "week_heading")
+    ]
+    if len(boundaries) < 2:
+        return None
+    raw_chunks: List[str] = []
+    for bi, start in enumerate(boundaries):
+        end = boundaries[bi + 1] if bi + 1 < len(boundaries) else len(line_strs)
+        segment = "\n".join(line_strs[start:end]).strip()
+        if segment:
+            raw_chunks.append(segment)
+    if boundaries[0] > 0 and raw_chunks:
+        preamble = "\n".join(line_strs[: boundaries[0]]).strip()
+        if preamble:
+            raw_chunks[0] = f"{preamble}\n\n{raw_chunks[0]}"
+    if len(raw_chunks) < 2:
+        return None
+    # Merge very small sections so each request has enough context
+    merged: List[str] = []
+    acc = raw_chunks[0]
+    for c in raw_chunks[1:]:
+        if len(acc) < _MIN_CHUNK_CHARS:
+            acc = f"{acc}\n\n{c}"
+        else:
+            merged.append(acc)
+            acc = c
+    merged.append(acc)
+    if len(merged) >= 2 and len(merged[-1]) < _MIN_CHUNK_CHARS // 2:
+        merged[-2] = f"{merged[-2]}\n\n{merged[-1]}"
+        merged.pop()
+    if len(merged) < 2:
+        return None
+    return merged
+
+
+def _merge_raw_extractions(partials: List[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {
+        "summary": None,
+        "units": [],
+        "unassigned_items": [],
+        "ignored_items": [],
+        "parser_warnings": [],
+    }
+    summaries: List[str] = []
+    for p in partials:
+        if not isinstance(p, dict):
+            continue
+        units = p.get("units")
+        if isinstance(units, list):
+            merged["units"].extend(units)
+        for key in ("unassigned_items", "ignored_items", "parser_warnings"):
+            block = p.get(key)
+            if isinstance(block, list):
+                merged[key].extend(block)
+        s = (p.get("summary") or "").strip()
+        if s:
+            summaries.append(s)
+    if summaries:
+        merged["summary"] = " ".join(summaries[:5])
+    return merged
+
+
+async def _openai_extract_json_string(
+    client: Any,
+    model: str,
+    system_content: str,
+    user_content: str,
+    *,
+    stream: bool,
+    timeout: float = 150.0,
+) -> str:
+    if stream:
+        stream_resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            stream=True,
+            timeout=timeout,
+        )
+        pieces: List[str] = []
+        async for chunk in stream_resp:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta and delta.content:
+                pieces.append(delta.content)
+        return "".join(pieces)
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.1,
+        response_format={"type": "json_object"},
+        timeout=timeout,
+    )
+    return response.choices[0].message.content or ""
+
+
+def _preview_text_from_normalized_result(result: Dict[str, Any]) -> str:
+    """Human-readable lines for synthetic streaming after parallel extract."""
+    lines: List[str] = []
+    summary = (result.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+        lines.append("")
+    n = 1
+    for u in result.get("units") or []:
+        if not isinstance(u, dict):
+            continue
+        for le in u.get("lessons") or []:
+            if not isinstance(le, dict):
+                continue
+            t = (le.get("title") or "").strip()
+            if t:
+                lines.append(f"{n}. {t}")
+                n += 1
+    return "\n".join(lines).strip()
+
+
+def _preview_text_from_merge_raw(merged: Dict[str, Any]) -> str:
+    """Lesson preview from merged raw LLM JSON (before full validation). Same shape as merge output."""
+    lines: List[str] = []
+    summary = (merged.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+        lines.append("")
+    n = 1
+    for u in merged.get("units") or []:
+        if not isinstance(u, dict):
+            continue
+        for le in u.get("lessons") or []:
+            if not isinstance(le, dict):
+                continue
+            t = (le.get("title") or "").strip()
+            if t:
+                lines.append(f"{n}. {t}")
+                n += 1
+    return "\n".join(lines).strip()
+
+
+async def _openai_extract_one_plain_text_chunk(
+    client: Any,
+    model: str,
+    system_content: str,
+    chunk_text: str,
+    *,
+    subject_name: str,
+    source_type: Optional[str],
+    parse_mode: Optional[str],
+    detect_dates: bool,
+    preserve_source_headings: bool,
+    ignore_policy_text: bool,
+    extract_assignments: bool,
+    extract_assessments: bool,
+    special_instructions: Optional[str],
+) -> Dict[str, Any]:
+    text = (chunk_text or "").strip()
+    if len(text) > 25000:
+        text = text[:25000]
+    pp = preparse_plain_text(text)
+    user_content = _build_user_prompt(
+        raw_text=text,
+        pre_parse=pp,
+        subject_name=subject_name,
+        source_type=source_type,
+        parse_mode=parse_mode,
+        detect_dates=detect_dates,
+        preserve_headings=preserve_source_headings,
+        ignore_policy=ignore_policy_text,
+        extract_assignments=extract_assignments,
+        extract_assessments=extract_assessments,
+        special_instructions=special_instructions,
+    )
+    content = await _openai_extract_json_string(
+        client, model, system_content, user_content, stream=False, timeout=120.0
+    )
+    return _parse_llm_json_content(content)
+
+
+async def _extract_parallel_chunks(
+    chunks: List[str],
+    *,
+    subject_id: str,
+    family_id: str,
+    subject_name: str,
+    full_raw_text: str,
+    source_type: Optional[str],
+    parse_mode: Optional[str],
+    detect_dates: bool,
+    preserve_source_headings: bool,
+    ignore_policy_text: bool,
+    extract_assignments: bool,
+    extract_assessments: bool,
+    special_instructions: Optional[str],
+) -> Dict[str, Any]:
+    from openai import AsyncOpenAI
+
+    model = _parse_model_name()
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    system_content = _build_system_prompt()
+    sem = asyncio.Semaphore(_MAX_PARALLEL_CHUNKS)
+    log_event(
+        "curriculum.parse_text.parallel",
+        family_id=family_id,
+        subject_id=subject_id,
+        fragments=len(chunks),
+        model=model,
+    )
+
+    async def one_fragment(text: str) -> Dict[str, Any]:
+        async with sem:
+            return await _openai_extract_one_plain_text_chunk(
+                client,
+                model,
+                system_content,
+                text,
+                subject_name=subject_name,
+                source_type=source_type,
+                parse_mode=parse_mode,
+                detect_dates=detect_dates,
+                preserve_source_headings=preserve_source_headings,
+                ignore_policy_text=ignore_policy_text,
+                extract_assignments=extract_assignments,
+                extract_assessments=extract_assessments,
+                special_instructions=special_instructions,
+            )
+
+    partials = await asyncio.gather(*[one_fragment(c) for c in chunks])
+    merged_raw = _merge_raw_extractions(list(partials))
+    return _validate_and_normalize_parsed(
+        merged_raw, subject_id=subject_id, family_id=family_id, raw_text=full_raw_text
+    )
 
 
 def _validate_and_normalize_parsed(raw: Dict[str, Any], subject_id: str, family_id: str, raw_text: str) -> Dict[str, Any]:
@@ -297,6 +567,7 @@ async def extract_curriculum_from_plain_text(
 ) -> Dict[str, Any]:
     """
     Run pre-parse then LLM extraction; validate and return parsed draft.
+    Multi–unit/week pastes use parallel fragment calls (wall time ~ slowest fragment).
     Raises ValueError if text is empty or extraction fails.
     """
     raw_text = (raw_text or "").strip()
@@ -304,10 +575,163 @@ async def extract_curriculum_from_plain_text(
         raise ValueError("Raw text is required for extraction.")
 
     pre_parse = preparse_plain_text(raw_text)
-    import os
-    from openai import AsyncOpenAI
-    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    chunks_opt = split_raw_into_parallel_chunks(pre_parse)
+    if chunks_opt and len(chunks_opt) >= 2:
+        return await _extract_parallel_chunks(
+            chunks_opt,
+            subject_id=subject_id,
+            family_id=family_id,
+            subject_name=subject_name,
+            full_raw_text=raw_text,
+            source_type=source_type,
+            parse_mode=parse_mode,
+            detect_dates=detect_dates,
+            preserve_source_headings=preserve_source_headings,
+            ignore_policy_text=ignore_policy_text,
+            extract_assignments=extract_assignments,
+            extract_assessments=extract_assessments,
+            special_instructions=special_instructions,
+        )
 
+    from openai import AsyncOpenAI
+
+    model = _parse_model_name()
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    user_content = _build_user_prompt(
+        raw_text=raw_text,
+        pre_parse=pre_parse,
+        subject_name=subject_name,
+        source_type=source_type,
+        parse_mode=parse_mode,
+        detect_dates=detect_dates,
+        preserve_headings=preserve_source_headings,
+        ignore_policy=ignore_policy_text,
+        extract_assignments=extract_assignments,
+        extract_assessments=extract_assessments,
+        special_instructions=special_instructions,
+    )
+    system_content = _build_system_prompt()
+    content = await _openai_extract_json_string(
+        client, model, system_content, user_content, stream=False, timeout=150.0
+    )
+    raw = _parse_llm_json_content(content)
+    return _validate_and_normalize_parsed(raw, subject_id=subject_id, family_id=family_id, raw_text=raw_text)
+
+
+async def stream_extract_curriculum_from_plain_text(
+    subject_id: str,
+    family_id: str,
+    subject_name: str,
+    raw_text: str,
+    *,
+    source_title: Optional[str] = None,
+    source_type: Optional[str] = None,
+    parse_mode: Optional[str] = None,
+    detect_dates: bool = True,
+    preserve_source_headings: bool = True,
+    ignore_policy_text: bool = True,
+    extract_assignments: bool = True,
+    extract_assessments: bool = True,
+    learner_stage: Optional[str] = None,
+    special_instructions: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> AsyncIterator[bytes]:
+    """
+    Streams NDJSON: delta lines, then complete draft.
+    Multi-unit pastes run parallel non-streaming extracts, then emit synthetic deltas from the merged result
+    (faster wall-clock than one huge JSON stream). Single-unit pastes stream the model response.
+    """
+    raw_text = (raw_text or "").strip()
+    if not raw_text:
+        raise ValueError("Raw text is required for extraction.")
+
+    pre_parse = preparse_plain_text(raw_text)
+    chunks_opt = split_raw_into_parallel_chunks(pre_parse)
+    if chunks_opt and len(chunks_opt) >= 2:
+        # Parallel LLM calls: stream preview as each fragment finishes (merge in chunk order for stable numbering).
+        from openai import AsyncOpenAI
+
+        n_chunks = len(chunks_opt)
+        yield (
+            json.dumps(
+                {
+                    "type": "delta",
+                    "text": f"Reading {n_chunks} sections of your outline…\n\n",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+
+        model = _parse_model_name()
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        system_content = _build_system_prompt()
+        sem = asyncio.Semaphore(_MAX_PARALLEL_CHUNKS)
+        log_event(
+            "curriculum.parse_text.parallel",
+            family_id=family_id,
+            subject_id=subject_id,
+            fragments=n_chunks,
+            model=model,
+        )
+
+        async def one_idx(i: int, ch: str):
+            async with sem:
+                data = await _openai_extract_one_plain_text_chunk(
+                    client,
+                    model,
+                    system_content,
+                    ch,
+                    subject_name=subject_name,
+                    source_type=source_type,
+                    parse_mode=parse_mode,
+                    detect_dates=detect_dates,
+                    preserve_source_headings=preserve_source_headings,
+                    ignore_policy_text=ignore_policy_text,
+                    extract_assignments=extract_assignments,
+                    extract_assessments=extract_assessments,
+                    special_instructions=special_instructions,
+                )
+                return i, data
+
+        tasks = [asyncio.create_task(one_idx(i, c)) for i, c in enumerate(chunks_opt)]
+        partials_buf: List[Optional[Dict[str, Any]]] = [None] * n_chunks
+        last_preview_len = 0
+        stream_piece = 56
+
+        for done in asyncio.as_completed(tasks):
+            idx, raw_part = await done
+            partials_buf[idx] = raw_part
+            merge_in = [partials_buf[j] for j in range(n_chunks) if partials_buf[j] is not None]
+            merged_raw = _merge_raw_extractions(merge_in)
+            preview = _preview_text_from_merge_raw(merged_raw)
+            if len(preview) > last_preview_len:
+                piece = preview[last_preview_len:]
+                last_preview_len = len(preview)
+                for off in range(0, len(piece), stream_piece):
+                    chunk_out = piece[off : off + stream_piece]
+                    line = json.dumps({"type": "delta", "text": chunk_out}, ensure_ascii=False) + "\n"
+                    yield line.encode("utf-8")
+
+        merged_final = _merge_raw_extractions([partials_buf[j] for j in range(n_chunks) if partials_buf[j] is not None])
+        result = _validate_and_normalize_parsed(
+            merged_final, subject_id=subject_id, family_id=family_id, raw_text=raw_text
+        )
+        log_event(
+            "curriculum.parse_text_stream.ok",
+            family_id=family_id,
+            subject_id=subject_id,
+            units_count=len(result.get("units", [])),
+            user_id=user_id or "",
+        )
+        done_line = json.dumps({"type": "complete", "data": result}, ensure_ascii=False) + "\n"
+        yield done_line.encode("utf-8")
+        return
+
+    from openai import AsyncOpenAI
+
+    model = _parse_model_name()
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     user_content = _build_user_prompt(
         raw_text=raw_text,
         pre_parse=pre_parse,
@@ -323,27 +747,37 @@ async def extract_curriculum_from_plain_text(
     )
     system_content = _build_system_prompt()
 
-    response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+    stream = await client.chat.completions.create(
+        model=model,
         messages=[
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.2,
+        temperature=0.1,
         response_format={"type": "json_object"},
-        timeout=90.0,
+        stream=True,
+        timeout=150.0,
     )
-    content = response.choices[0].message.content
-    if not content or not content.strip():
-        raise ValueError("Empty response from extraction.")
 
-    try:
-        raw = json.loads(content)
-    except json.JSONDecodeError as e:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if match:
-            raw = json.loads(match.group(0))
-        else:
-            raise ValueError(f"Invalid JSON from extraction: {e}") from e
+    pieces: List[str] = []
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            pieces.append(delta.content)
+            line = json.dumps({"type": "delta", "text": delta.content}, ensure_ascii=False) + "\n"
+            yield line.encode("utf-8")
 
-    return _validate_and_normalize_parsed(raw, subject_id=subject_id, family_id=family_id, raw_text=raw_text)
+    full = "".join(pieces)
+    raw = _parse_llm_json_content(full)
+    result = _validate_and_normalize_parsed(raw, subject_id=subject_id, family_id=family_id, raw_text=raw_text)
+    log_event(
+        "curriculum.parse_text_stream.ok",
+        family_id=family_id,
+        subject_id=subject_id,
+        units_count=len(result.get("units", [])),
+        user_id=user_id or "",
+    )
+    done_line = json.dumps({"type": "complete", "data": result}, ensure_ascii=False) + "\n"
+    yield done_line.encode("utf-8")

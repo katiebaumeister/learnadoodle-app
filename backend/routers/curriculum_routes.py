@@ -3,9 +3,11 @@ FastAPI routes for Curriculum Builder
 Creates structured curriculum units with lessons and pacing
 """
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Query
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal
-from datetime import datetime, date, timedelta, timezone
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Dict, Any, Literal, Tuple, Set
+from collections import deque
+from datetime import datetime, date, time, timedelta, timezone
 import sys
 from pathlib import Path
 import json
@@ -176,6 +178,42 @@ class CommitGeneratedCurriculumResponse(BaseModel):
 
 # --- Parse plain text / Import & extract ---
 
+
+def _coerce_inferred_from_list(v: Any) -> Optional[List[str]]:
+    """LLM/parser may emit objects or numbers in inferred_from; API contract is List[str]."""
+    if v is None:
+        return None
+    if not isinstance(v, list):
+        return None
+    out: List[str] = []
+    for item in v:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(s)
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            out.append(str(item))
+        elif isinstance(item, dict):
+            picked = None
+            for key in ("text", "line", "source", "snippet", "value", "raw"):
+                val = item.get(key)
+                if isinstance(val, str) and val.strip():
+                    picked = val.strip()
+                    break
+            if picked is not None:
+                out.append(picked)
+            else:
+                try:
+                    out.append(json.dumps(item, ensure_ascii=False))
+                except (TypeError, ValueError):
+                    out.append(str(item))
+        else:
+            out.append(str(item))
+    return out if out else None
+
+
 class ParsePlainTextRequest(BaseModel):
     """Request for plain-text curriculum extraction (extract structure only, do not generate)."""
     subject_id: str = Field(..., description="Subject ID")
@@ -208,6 +246,11 @@ class ParsedDraftLesson(BaseModel):
     inferred_from: Optional[List[str]] = None
     confidence: Optional[float] = None
 
+    @field_validator("inferred_from", mode="before")
+    @classmethod
+    def _coerce_lesson_inferred_from(cls, v: Any) -> Optional[List[str]]:
+        return _coerce_inferred_from_list(v)
+
 
 class ParsedDraftUnit(BaseModel):
     temp_id: str
@@ -219,6 +262,11 @@ class ParsedDraftUnit(BaseModel):
     lessons: List[ParsedDraftLesson] = Field(default_factory=list)
     assignments: Optional[List[Dict[str, Any]]] = None
     assessments: Optional[List[Dict[str, Any]]] = None
+
+    @field_validator("inferred_from", mode="before")
+    @classmethod
+    def _coerce_unit_inferred_from(cls, v: Any) -> Optional[List[str]]:
+        return _coerce_inferred_from_list(v)
 
 
 class ParsedDraftUnassignedItem(BaseModel):
@@ -246,11 +294,19 @@ class ParsedDraftCurriculum(BaseModel):
 
 
 class CommitParsedDraftRequest(BaseModel):
-    """Approved parsed draft to persist (syllabus_imports + curriculum_units + curriculum_lessons)."""
+    """Approved parsed draft to persist (syllabus_imports + curriculum_units + curriculum_lessons + events)."""
     subject_id: str
     family_id: str
     subject_name: str = Field(..., description="For curriculum_units.subject_tags")
     draft: ParsedDraftCurriculum
+    academic_year_id: Optional[str] = Field(
+        None, description="When set with student_ids (or all family children), lessons map onto Plan Year slots"
+    )
+    student_ids: Optional[List[str]] = Field(None, description="Child IDs for slot matching")
+    replace_existing_events: bool = Field(
+        True,
+        description="Remove prior is_curriculum_related events for this subject with source=plain_text_parsed before insert",
+    )
 
 
 class CommitParsedDraftResponse(BaseModel):
@@ -261,6 +317,8 @@ class CommitParsedDraftResponse(BaseModel):
     lesson_ids: List[str]
     subject_id: str
     source_type: str = "plain_text_parsed"
+    events_created: int = 0
+    calendar_event_ids: List[str] = Field(default_factory=list)
 
 
 # --- Manual curriculum (Add unit manually) ---
@@ -300,6 +358,14 @@ class CommitManualDraftRequest(BaseModel):
     subject_name: str = Field(..., description="For curriculum_units.subject_tags")
     builder_mode: Literal["rich_units", "class_days"] = "rich_units"
     draft: ManualDraftPayload
+    academic_year_id: Optional[str] = Field(
+        default=None,
+        description="When set, links manual curriculum events to this academic year (plan summaries, slot labels).",
+    )
+    student_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Child IDs for matching plan_year calendar slots; if omitted with academic_year_id, all family children are used.",
+    )
     replace_existing: bool = Field(
         False,
         description="If true, delete existing manual curriculum events for this subject before inserting (edit/save).",
@@ -604,10 +670,11 @@ async def get_subject_curriculum_events_structure(
                     minutes = max(1, min(480, int(me))) if me is not None else 60
                 except (TypeError, ValueError):
                     minutes = 60
+            lesson_display = (meta.get("lesson_label") or "").strip() or (ev.get("title") or "").strip() or "Lesson"
             units_map[utitle].append(
                 {
                     "id": str(ev["id"]),
-                    "title": ev.get("title") or "Lesson",
+                    "title": lesson_display,
                     "type": lesson_type,
                     "sequence": int(ev.get("curriculum_lesson_sequence") or 0),
                     "date": _curriculum_event_display_date(ev),
@@ -620,7 +687,30 @@ async def get_subject_curriculum_events_structure(
             lessons.sort(key=lambda x: (x.get("sequence") or 0, x.get("title") or ""))
             units_out.append({"title": title, "lessons": lessons})
         units_out.sort(key=lambda u: u.get("title") or "")
-        return {"units": units_out}
+        # How curriculum was last materialized (for Plan Year cadence: same-method vs empty replace UX)
+        src_res = (
+            supabase.table("events")
+            .select("source")
+            .eq("family_id", family_id)
+            .eq("subject_id", subject_id)
+            .eq("is_curriculum_related", True)
+            .is_("deleted_at", "null")
+            .limit(80)
+            .execute()
+        )
+        sources = []
+        for r in src_res.data or []:
+            sval = (r.get("source") or "").strip()
+            if sval and sval not in sources:
+                sources.append(sval)
+        saved_content_source = None
+        for pref in ("manual", "plain_text_parsed"):
+            if pref in sources:
+                saved_content_source = pref
+                break
+        if not saved_content_source and sources:
+            saved_content_source = sources[0]
+        return {"units": units_out, "saved_content_source": saved_content_source}
     except HTTPException:
         raise
     except Exception as e:
@@ -1047,6 +1137,81 @@ async def parse_plain_text_endpoint(
         raise HTTPException(status_code=500, detail="Failed to extract structure from text")
 
 
+@router.post("/parse-text-stream")
+async def parse_plain_text_stream_endpoint(
+    body: ParsePlainTextRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Same as parse-text but streams model output as NDJSON (delta lines + final complete object).
+    Client shows deltas in the paste field, then applies the complete draft to the preview step.
+    """
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+
+    from services.curriculum_parse_service import stream_extract_curriculum_from_plain_text
+
+    async def ndjson_gen():
+        try:
+            async for chunk in stream_extract_curriculum_from_plain_text(
+                subject_id=body.subject_id,
+                family_id=body.family_id,
+                subject_name=body.subject_name,
+                raw_text=body.raw_text,
+                source_title=body.source_title,
+                source_type=body.source_type,
+                parse_mode=body.parse_mode,
+                detect_dates=body.detect_dates,
+                preserve_source_headings=body.preserve_source_headings,
+                ignore_policy_text=body.ignore_policy_text,
+                extract_assignments=body.extract_assignments,
+                extract_assessments=body.extract_assessments,
+                learner_stage=body.learner_stage,
+                special_instructions=body.special_instructions,
+                user_id=user["id"],
+            ):
+                yield chunk
+        except ValueError as e:
+            log_event("curriculum.parse_text_stream.validation_error", error=str(e), family_id=body.family_id)
+            yield (json.dumps({"type": "error", "message": str(e)}) + "\n").encode("utf-8")
+        except Exception as e:
+            log_event("curriculum.parse_text_stream.error", error=str(e), family_id=body.family_id)
+            yield (
+                json.dumps({"type": "error", "message": "Failed to extract structure from text"}) + "\n"
+            ).encode("utf-8")
+
+    return StreamingResponse(
+        ndjson_gen(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _parsed_lesson_reference_cadence(le: Any) -> Dict[str, Any]:
+    """If suggested_date / date_text looks like YYYY-MM-DD, use as reference_date for event placement."""
+    for attr in ("suggested_date", "date_text"):
+        val = getattr(le, attr, None)
+        if not val:
+            continue
+        t = str(val).strip()[:10]
+        if (
+            len(t) == 10
+            and t[4] == "-"
+            and t[7] == "-"
+            and t[:4].isdigit()
+            and t[5:7].isdigit()
+            and t[8:10].isdigit()
+        ):
+            return {"reference_date": t}
+    return {}
+
+
 @router.post("/commit-parsed-draft", response_model=CommitParsedDraftResponse)
 async def commit_parsed_draft_endpoint(
     body: CommitParsedDraftRequest,
@@ -1054,8 +1219,9 @@ async def commit_parsed_draft_endpoint(
     _: None = Depends(rate_limiter),
 ):
     """
-    Persist approved parsed draft: save raw source to syllabus_imports, then curriculum_units
-    and curriculum_lessons with source_ref to the import. Does not create calendar events.
+    Persist approved parsed draft: syllabus_imports + curriculum_units + curriculum_lessons, then
+    materialize the same lessons as is_curriculum_related calendar events (source=plain_text_parsed)
+    so Plan Year and the planner see them. Uses academic_year_id + student_ids to fill Plan Year slots when set.
     """
     try:
         family_id = get_family_id_for_user(user["id"])
@@ -1087,11 +1253,13 @@ async def commit_parsed_draft_endpoint(
 
         unit_ids: List[str] = []
         lesson_ids: List[str] = []
-        for u in draft.units:
+        flat_for_events: List[Dict[str, Any]] = []
+        for ui, u in enumerate(draft.units):
+            unit_title = (u.title or "").strip() or "Untitled Unit"
             unit_row = {
                 "family_id": body.family_id,
                 "created_by_uid": user["id"],
-                "title": (u.title or "").strip() or "Untitled Unit",
+                "title": unit_title,
                 "source_type": "plain_text_parsed",
                 "source_ref": source_ref,
                 "grade_band": None,
@@ -1125,8 +1293,59 @@ async def commit_parsed_draft_endpoint(
                     "links": [],
                 }
                 les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
+                lid_str = None
                 if les_ins.data and len(les_ins.data) > 0:
-                    lesson_ids.append(les_ins.data[0]["id"])
+                    lid_str = str(les_ins.data[0]["id"])
+                    lesson_ids.append(lid_str)
+                lt = (le.lesson_type or "lesson").strip().lower()
+                if lt not in MANUAL_LESSON_TYPES:
+                    lt = "lesson"
+                minutes = le.minutes_est if le.minutes_est is not None else 60
+                if not isinstance(minutes, int):
+                    try:
+                        minutes = int(minutes) if minutes is not None else 60
+                    except (TypeError, ValueError):
+                        minutes = 60
+                minutes = max(1, min(480, minutes))
+                cadence_meta = _parsed_lesson_reference_cadence(le)
+                flat_for_events.append(
+                    {
+                        "unit_title": unit_title,
+                        "seq": seq,
+                        "lesson_title": (le.title or "").strip() or "Untitled Lesson",
+                        "lesson_type": lt,
+                        "modality": modality,
+                        "minutes": minutes,
+                        "objective": (le.objective or "").strip() or None,
+                        "notes": (le.notes or "").strip() or None,
+                        "materials": [],
+                        "is_placeholder": False,
+                        "cadence_metadata": cadence_meta,
+                        "curriculum_lesson_id": lid_str,
+                        "metadata_extra": {
+                            "import_source": "plain_text_parse",
+                            "syllabus_import_id": syllabus_import_id,
+                        },
+                    }
+                )
+
+        calendar_event_ids: List[str] = []
+        slots_filled = 0
+        if flat_for_events:
+            ay_body = (body.academic_year_id or "").strip() if body.academic_year_id else ""
+            sids = [str(s).strip() for s in (body.student_ids or []) if s]
+            calendar_event_ids, slots_filled, _ = _materialize_plan_year_curriculum_events(
+                supabase,
+                family_id=body.family_id,
+                subject_id=body.subject_id,
+                subject_name=subject_name,
+                academic_year_id=ay_body,
+                student_ids=sids,
+                event_source="plain_text_parsed",
+                builder_mode_label="plain_text_parsed",
+                flat_lessons=flat_for_events,
+                replace_existing=body.replace_existing_events,
+            )
 
         log_event(
             "curriculum.commit_parsed.ok",
@@ -1135,6 +1354,8 @@ async def commit_parsed_draft_endpoint(
             syllabus_import_id=syllabus_import_id,
             units_created=len(unit_ids),
             lessons_created=len(lesson_ids),
+            events_created=len(calendar_event_ids),
+            plan_slots_filled=slots_filled,
             user_id=user["id"],
         )
         return CommitParsedDraftResponse(
@@ -1145,6 +1366,8 @@ async def commit_parsed_draft_endpoint(
             lesson_ids=lesson_ids,
             subject_id=body.subject_id,
             source_type="plain_text_parsed",
+            events_created=len(calendar_event_ids),
+            calendar_event_ids=calendar_event_ids,
         )
     except HTTPException:
         raise
@@ -1176,6 +1399,278 @@ MANUAL_MODALITY_MAP = {
 _MANUAL_CURRICULUM_PLACEHOLDER_ANCHOR = datetime(2099, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 
+def _manual_lesson_type_to_event_type(lesson_type: str) -> str:
+    """Map manual builder lesson_type to events.event_type (matches Event Details chips)."""
+    m = {
+        "lesson": "Lesson",
+        "assignment": "Assignment",
+        "project": "Project",
+        "assessment": "Exam",
+        "review": "Lesson",
+        "activity": "Activity",
+        "reading": "Lesson",
+        "lab": "Activity",
+        "placeholder": "Lesson",
+    }
+    key = (lesson_type or "lesson").strip().lower()
+    return m.get(key, "Lesson")
+
+
+def _materialize_plan_year_curriculum_events(
+    supabase,
+    *,
+    family_id: str,
+    subject_id: str,
+    subject_name: str,
+    academic_year_id: str,
+    student_ids: List[str],
+    event_source: str,
+    builder_mode_label: str,
+    flat_lessons: List[Dict[str, Any]],
+    replace_existing: bool,
+) -> Tuple[List[str], int, int]:
+    """
+    Create or update calendar events for Plan Year curriculum (manual or import-from-text).
+    flat_lessons rows: unit_title, seq, lesson_title, lesson_type, modality, minutes, objective, notes,
+    materials (list), is_placeholder (bool), cadence_metadata (dict), curriculum_lesson_id (optional str),
+    metadata_extra (dict merged into curriculum_metadata).
+    """
+    if replace_existing:
+        supabase.table("events").delete().eq("family_id", family_id).eq("subject_id", subject_id).eq(
+            "is_curriculum_related", True
+        ).eq("source", event_source).is_("deleted_at", "null").execute()
+
+    ay_id = (academic_year_id or "").strip() if academic_year_id else ""
+    sid_list = [str(s).strip() for s in (student_ids or []) if s]
+    if ay_id and not sid_list:
+        ch_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
+        sid_list = [str(r["id"]) for r in (ch_res.data or []) if r.get("id")]
+
+    slot_queue: deque = deque()
+    if ay_id and sid_list:
+        ay_res = (
+            supabase.table("academic_years")
+            .select("start_date, end_date")
+            .eq("id", ay_id)
+            .eq("family_id", family_id)
+            .limit(1)
+            .execute()
+        )
+        ay_rows = ay_res.data or []
+        if ay_rows:
+            row0 = ay_rows[0]
+            sd = str(row0.get("start_date", ""))[:10]
+            ed = str(row0.get("end_date", ""))[:10]
+            if len(sd) >= 10 and len(ed) >= 10:
+                empty_slots = _get_eligible_plan_slots(
+                    supabase,
+                    family_id,
+                    sid_list,
+                    sd,
+                    ed,
+                    subject_id=subject_id,
+                    academic_year_id=ay_id,
+                )
+                refill_slots: List[Dict[str, Any]] = []
+                if (
+                    replace_existing
+                    and event_source == "plain_text_parsed"
+                    and subject_id
+                    and str(subject_id).strip()
+                ):
+                    refill_slots = _get_refillable_plain_text_plan_slots(
+                        supabase,
+                        family_id,
+                        sid_list,
+                        sd,
+                        ed,
+                        str(subject_id).strip(),
+                        ay_id,
+                    )
+                slot_queue = _merge_plan_curriculum_slot_queues(empty_slots, refill_slots)
+
+    event_ids: List[str] = []
+    slots_filled = 0
+    placeholder_lesson_index = 0
+    lesson_made = 0
+    used_slot_ids: Set[str] = set()
+
+    for row in flat_lessons:
+        unit_title = (row.get("unit_title") or "").strip() or "Unit"
+        seq = int(row.get("seq") or 0) or 1
+        lesson_title = (row.get("lesson_title") or "").strip() or f"Lesson {seq}"
+        if not lesson_title:
+            continue
+        lesson_made += 1
+
+        lt = (row.get("lesson_type") or "lesson").strip().lower()
+        if lt not in MANUAL_LESSON_TYPES:
+            lt = "lesson"
+        modality = (row.get("modality") or MANUAL_MODALITY_MAP.get(lt) or "practice").strip().lower()
+        if modality not in {"reading", "video", "hands_on", "discussion", "practice", "quiz", "project"}:
+            modality = "practice"
+        minutes = row.get("minutes")
+        if not isinstance(minutes, int):
+            try:
+                minutes = int(minutes) if minutes is not None else 60
+            except (TypeError, ValueError):
+                minutes = 60
+        minutes = max(1, min(480, minutes))
+
+        reference_date = None
+        cadence_meta = row.get("cadence_metadata") or {}
+        if isinstance(cadence_meta, dict) and cadence_meta.get("reference_date"):
+            reference_date = cadence_meta["reference_date"]
+
+        curriculum_metadata = {
+            "lesson_type": lt,
+            "modality": modality,
+            "minutes_est": minutes,
+            "objective": (row.get("objective") or "").strip() or None,
+            "notes": (row.get("notes") or "").strip() or None,
+            "materials": row["materials"] if isinstance(row.get("materials"), list) else [],
+            "builder_mode": builder_mode_label,
+        }
+        if row.get("is_placeholder"):
+            curriculum_metadata["is_placeholder"] = True
+        if isinstance(cadence_meta, dict) and cadence_meta:
+            curriculum_metadata["cadence_metadata"] = cadence_meta
+        curriculum_metadata["lesson_label"] = lesson_title
+        extra_meta = row.get("metadata_extra") or {}
+        if isinstance(extra_meta, dict) and extra_meta:
+            curriculum_metadata.update(extra_meta)
+
+        event_type_ev = _manual_lesson_type_to_event_type(lt)
+        cl_id = row.get("curriculum_lesson_id")
+        cl_id_str = str(cl_id).strip() if cl_id else None
+
+        slot_ev = slot_queue.popleft() if slot_queue else None
+        if (
+            slot_ev is None
+            and reference_date
+            and ay_id
+            and sid_list
+            and subject_id
+            and str(subject_id).strip()
+        ):
+            try:
+                rd0 = str(reference_date).strip()
+                ymd = rd0[:10] if len(rd0) >= 10 else ""
+                if len(ymd) == 10 and ymd[4] == "-" and ymd[7] == "-":
+                    found = _find_plan_year_slot_for_reference_day(
+                        supabase,
+                        family_id=family_id,
+                        academic_year_id=ay_id,
+                        subject_id=str(subject_id).strip(),
+                        student_ids=sid_list,
+                        date_ymd=ymd,
+                        replace_existing=replace_existing,
+                        event_source=event_source,
+                        exclude_ids=used_slot_ids,
+                    )
+                    if found:
+                        slot_ev = found
+            except (ValueError, TypeError):
+                pass
+
+        if slot_ev:
+            cm_slot = dict(curriculum_metadata)
+            cm_slot.pop("unscheduled_placeholder", None)
+            update_payload: Dict[str, Any] = {
+                "title": subject_name,
+                "unit": unit_title,
+                "lesson": lesson_title,
+                "curriculum_unit_title": unit_title,
+                "description": (row.get("objective") or "").strip() or None,
+                "event_type": event_type_ev,
+                "modality": modality,
+                "is_curriculum_related": True,
+                "is_reference_date": False,
+                "curriculum_lesson_sequence": seq,
+                "curriculum_metadata": cm_slot,
+                "counts_toward_plan": True,
+            }
+            if cl_id_str:
+                update_payload["curriculum_lesson_id"] = cl_id_str
+            upd = (
+                supabase.table("events")
+                .update(update_payload)
+                .eq("id", slot_ev["id"])
+                .eq("family_id", family_id)
+                .execute()
+            )
+            err_upd = getattr(upd, "error", None)
+            if err_upd:
+                raise RuntimeError(f"events update failed for slot {slot_ev.get('id')}: {err_upd!r}")
+            event_ids.append(str(slot_ev["id"]))
+            slots_filled += 1
+            used_slot_ids.add(str(slot_ev["id"]))
+            continue
+
+        has_real_reference_time = False
+        start_ts = None
+        end_ts = None
+        if reference_date:
+            try:
+                rd = str(reference_date).strip()
+                if "T" in rd:
+                    ref_dt = datetime.fromisoformat(rd.replace("Z", "+00:00"))
+                else:
+                    ref_dt = datetime.combine(
+                        date.fromisoformat(rd[:10]),
+                        time(12, 0),
+                        tzinfo=timezone.utc,
+                    )
+                start_ts = ref_dt.isoformat()
+                end_ts = (ref_dt + timedelta(minutes=minutes)).isoformat()
+                has_real_reference_time = True
+            except (ValueError, AttributeError):
+                pass
+
+        if not has_real_reference_time:
+            ph = _MANUAL_CURRICULUM_PLACEHOLDER_ANCHOR + timedelta(seconds=placeholder_lesson_index)
+            placeholder_lesson_index += 1
+            start_ts = ph.isoformat()
+            end_ts = (ph + timedelta(minutes=minutes)).isoformat()
+            curriculum_metadata["unscheduled_placeholder"] = True
+
+        is_ref_date = has_real_reference_time
+
+        event_record: Dict[str, Any] = {
+            "family_id": family_id,
+            "subject_id": subject_id,
+            "child_id": None,
+            "title": subject_name,
+            "unit": unit_title,
+            "lesson": lesson_title,
+            "description": (row.get("objective") or "").strip() or None,
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "status": "scheduled",
+            "source": event_source,
+            "event_type": event_type_ev,
+            "modality": modality,
+            "is_curriculum_related": True,
+            "is_reference_date": is_ref_date,
+            "curriculum_unit_title": unit_title,
+            "curriculum_lesson_sequence": seq,
+            "curriculum_metadata": curriculum_metadata,
+            "counts_toward_plan": True,
+        }
+        if ay_id:
+            event_record["academic_year_id"] = ay_id
+        if cl_id_str:
+            event_record["curriculum_lesson_id"] = cl_id_str
+
+        event_ins = supabase.table("events").insert(event_record).execute()
+        if not event_ins.data:
+            err_detail = getattr(event_ins, "error", None) or getattr(event_ins, "error_message", None)
+            raise RuntimeError(f"events insert returned no row: {err_detail!r}")
+        event_ids.append(event_ins.data[0]["id"])
+
+    return event_ids, slots_filled, lesson_made
+
+
 def _validate_manual_draft(draft: ManualDraftPayload) -> None:
     """Raise ValueError if draft is invalid."""
     if not draft.units:
@@ -1198,8 +1693,11 @@ async def commit_manual_draft_endpoint(
 ):
     """
     Persist manually entered curriculum (Add unit manually). No AI or parsing.
-    Saves to events table with is_curriculum_related=True. Reference dates are marked with is_reference_date=True.
-    All curriculum structure is stored in events table for unified data model.
+
+    When academic_year_id matches and plan_year slots exist for this subject+children, lessons are merged
+    into those calendar events in chronological order: title stays the subject name; unit / lesson live in
+    unit + curriculum fields and curriculum_metadata.lesson_label; event_type follows manual lesson_type.
+    Remaining lessons become shell events (reference date or far-future placeholder).
     """
     try:
         family_id = get_family_id_for_user(user["id"])
@@ -1208,25 +1706,20 @@ async def commit_manual_draft_endpoint(
         _validate_manual_draft(body.draft)
         subject_name = (body.subject_name or "").strip() or "Subject"
         supabase = get_admin_client()
-        if body.replace_existing:
-            supabase.table("events").delete().eq("family_id", body.family_id).eq("subject_id", body.subject_id).eq(
-                "is_curriculum_related", True
-            ).eq("source", "manual").is_("deleted_at", "null").execute()
-        event_ids: List[str] = []
-        unit_count = 0
-        lesson_count = 0
-        placeholder_lesson_index = 0
 
+        ay_id = (body.academic_year_id or "").strip() if body.academic_year_id else ""
+        sid_list = [str(s).strip() for s in (body.student_ids or []) if s]
+        if ay_id and not sid_list:
+            ch_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
+            sid_list = [str(r["id"]) for r in (ch_res.data or []) if r.get("id")]
+
+        flat_rows: List[Dict[str, Any]] = []
         for ui, u in enumerate(body.draft.units):
             unit_title = (u.title or "").strip() or f"Unit {ui + 1}"
-            unit_count += 1
-            
             for seq, le in enumerate(u.lessons, start=1):
                 lesson_title = (le.title or "").strip() or f"Lesson {seq}"
                 if not lesson_title:
                     continue
-                lesson_count += 1
-                
                 lt = (le.lesson_type or "lesson").strip().lower()
                 if lt not in MANUAL_LESSON_TYPES:
                     lt = "lesson"
@@ -1240,80 +1733,41 @@ async def commit_manual_draft_endpoint(
                     except (TypeError, ValueError):
                         minutes = 60
                 minutes = max(1, min(480, minutes))
-                
-                # Extract reference_date from cadence_metadata if present
-                reference_date = None
                 cadence_meta = getattr(le, "cadence_metadata", None) or {}
-                if isinstance(cadence_meta, dict) and cadence_meta.get("reference_date"):
-                    reference_date = cadence_meta["reference_date"]
-                
-                # Build curriculum metadata
-                curriculum_metadata = {
-                    "lesson_type": lt,
-                    "modality": modality,
-                    "minutes_est": minutes,
-                    "objective": (le.objective or "").strip() or None,
-                    "notes": (le.notes or "").strip() or None,
-                    "materials": le.materials if isinstance(le.materials, list) else [],
-                    "builder_mode": body.builder_mode,
-                }
-                if getattr(le, "is_placeholder", False):
-                    curriculum_metadata["is_placeholder"] = True
-                if cadence_meta:
-                    curriculum_metadata["cadence_metadata"] = cadence_meta
+                if not isinstance(cadence_meta, dict):
+                    cadence_meta = {}
+                flat_rows.append(
+                    {
+                        "unit_title": unit_title,
+                        "seq": seq,
+                        "lesson_title": lesson_title,
+                        "lesson_type": lt,
+                        "modality": modality,
+                        "minutes": minutes,
+                        "objective": (le.objective or "").strip() or None,
+                        "notes": (le.notes or "").strip() or None,
+                        "materials": le.materials if isinstance(le.materials, list) else [],
+                        "is_placeholder": bool(getattr(le, "is_placeholder", False)),
+                        "cadence_metadata": cadence_meta,
+                        "curriculum_lesson_id": None,
+                        "metadata_extra": {},
+                    }
+                )
 
-                # Parse syllabus reference_date to real timestamps when valid
-                has_real_reference_time = False
-                start_ts = None
-                end_ts = None
-                if reference_date:
-                    try:
-                        ref_dt = datetime.fromisoformat(reference_date.replace("Z", "+00:00")) if "T" in reference_date else datetime.combine(date.fromisoformat(reference_date), datetime.min.time()).replace(tzinfo=timezone.utc)
-                        start_ts = ref_dt.isoformat()
-                        end_ts = (ref_dt + timedelta(minutes=minutes)).isoformat()
-                        has_real_reference_time = True
-                    except (ValueError, AttributeError):
-                        pass
+        event_ids, slots_filled, lesson_count = _materialize_plan_year_curriculum_events(
+            supabase,
+            family_id=body.family_id,
+            subject_id=body.subject_id,
+            subject_name=subject_name,
+            academic_year_id=ay_id,
+            student_ids=sid_list,
+            event_source="manual",
+            builder_mode_label=body.builder_mode,
+            flat_lessons=flat_rows,
+            replace_existing=body.replace_existing,
+        )
+        unit_count = len(body.draft.units)
 
-                # DB requires non-null start_ts/end_ts; unscheduled curriculum uses placeholders + metadata flag
-                if not has_real_reference_time:
-                    ph = _MANUAL_CURRICULUM_PLACEHOLDER_ANCHOR + timedelta(seconds=placeholder_lesson_index)
-                    placeholder_lesson_index += 1
-                    start_ts = ph.isoformat()
-                    end_ts = (ph + timedelta(minutes=minutes)).isoformat()
-                    curriculum_metadata["unscheduled_placeholder"] = True
-
-                is_ref_date = has_real_reference_time
-
-                # Create event record (events.source is typically constrained to manual/ai/system/etc.; not "curriculum")
-                event_record = {
-                    "family_id": body.family_id,
-                    "subject_id": body.subject_id,
-                    "child_id": None,  # Will be assigned when scheduled
-                    "title": lesson_title,
-                    "description": (le.objective or "").strip() or None,
-                    "start_ts": start_ts,
-                    "end_ts": end_ts,
-                    # DB events_status_check does not allow "planned"; use scheduled for all rows.
-                    # Unscheduled shells use placeholder start_ts + curriculum_metadata.unscheduled_placeholder.
-                    "status": "scheduled",
-                    "source": "manual",
-                    "event_type": "Lesson",
-                    "modality": modality,
-                    "is_curriculum_related": True,
-                    "is_reference_date": is_ref_date,
-                    "curriculum_unit_title": unit_title,
-                    "curriculum_lesson_sequence": seq,
-                    "curriculum_metadata": curriculum_metadata,
-                    "counts_toward_plan": True,
-                }
-
-                event_ins = supabase.table("events").insert(event_record).execute()
-                if not event_ins.data:
-                    err_detail = getattr(event_ins, "error", None) or getattr(event_ins, "error_message", None)
-                    raise RuntimeError(f"events insert returned no row: {err_detail!r}")
-                event_ids.append(event_ins.data[0]["id"])
-        
         log_event(
             "curriculum.commit_manual.ok",
             family_id=body.family_id,
@@ -1321,6 +1775,7 @@ async def commit_manual_draft_endpoint(
             units_created=unit_count,
             lessons_created=lesson_count,
             events_created=len(event_ids),
+            plan_slots_filled=slots_filled,
             user_id=user["id"],
         )
         return CommitManualDraftResponse(
@@ -1353,32 +1808,263 @@ def _get_eligible_plan_slots(
 ) -> List[Dict[str, Any]]:
     """
     Return empty Plan My Year slots in [start_date, end_date] for the given students and optional subject.
+    Includes:
+    - Per-child slots: child_id in student_ids (one event per child per date).
+    - Whole-family slots: child_id is null and child_ids overlaps student_ids (or empty child_ids),
+      as created by block_regenerator for multi-assignee blocks.
     Used by preview_pacing and by commit (same logic). Order by start_ts ascending.
     """
     range_start_d = date.fromisoformat(start_date_str)
     range_end_d = date.fromisoformat(end_date_str)
     range_start_ts = datetime.combine(range_start_d, datetime.min.time(), tzinfo=timezone.utc).isoformat()
     range_end_ts = datetime.combine(range_end_d, datetime.max.time(), tzinfo=timezone.utc).isoformat()
-    query = (
+    sid_set = {str(s).strip() for s in (student_ids or []) if s is not None and str(s).strip()}
+    if not sid_set:
+        return []
+
+    def base_query():
+        q = (
+            supabase.table("events")
+            .select("id, start_ts, end_ts, child_id, subject_id, child_ids")
+            .eq("family_id", family_id)
+            .eq("generated_by", "plan_year")
+            .is_("curriculum_lesson_id", "null")
+            .is_("deleted_at", "null")
+            .gte("start_ts", range_start_ts)
+            .lte("start_ts", range_end_ts)
+            .order("start_ts", desc=False)
+        )
+        if subject_id:
+            q = q.eq("subject_id", subject_id)
+        else:
+            q = q.is_("subject_id", "null")
+        if academic_year_id:
+            q = q.eq("academic_year_id", academic_year_id)
+        return q
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+
+    res_pc = base_query().in_("child_id", list(sid_set)).execute()
+    for row in res_pc.data or []:
+        rid = row.get("id")
+        if rid:
+            by_id[str(rid)] = row
+
+    res_wf = base_query().is_("child_id", "null").execute()
+    for row in res_wf.data or []:
+        rid = row.get("id")
+        if not rid:
+            continue
+        raw_cids = row.get("child_ids")
+        if isinstance(raw_cids, list):
+            cid_set = {str(c).strip() for c in raw_cids if c is not None and str(c).strip()}
+        else:
+            cid_set = set()
+        # Empty child_ids on a whole-family row: treat as matching any requested student.
+        if not cid_set or (cid_set & sid_set):
+            by_id[str(rid)] = row
+
+    slots = sorted(by_id.values(), key=lambda r: (r.get("start_ts") or "", str(r.get("id") or "")))
+    return slots
+
+
+def _curriculum_metadata_is_plain_text_import(cm: Any) -> bool:
+    """True if this event was previously filled by commit-parsed-draft (Import from text)."""
+    if not isinstance(cm, dict):
+        return False
+    if cm.get("import_source") in ("plain_text_parse", "plain_text_parsed"):
+        return True
+    if cm.get("builder_mode") == "plain_text_parsed":
+        return True
+    return False
+
+
+def _event_row_matches_student_filter(row: Dict[str, Any], sid_set: Set[str]) -> bool:
+    """Whether a plan event's assignees overlap the requested student_ids (per-child or whole-family)."""
+    if not sid_set:
+        return False
+    cid = row.get("child_id")
+    if cid is not None and str(cid).strip() in sid_set:
+        return True
+    if cid is None:
+        raw_cids = row.get("child_ids")
+        if isinstance(raw_cids, list):
+            cid_set = {str(c).strip() for c in raw_cids if c is not None and str(c).strip()}
+        else:
+            cid_set = set()
+        if not cid_set or (cid_set & sid_set):
+            return True
+    return False
+
+
+def _row_accept_plain_text_curriculum_update(
+    row: Dict[str, Any],
+    *,
+    replace_existing: bool,
+    event_source: str,
+) -> bool:
+    """Empty instructional slot or prior plain-text fill we may replace when replace_existing."""
+    cl = row.get("curriculum_lesson_id")
+    is_empty = cl is None or (isinstance(cl, str) and not str(cl).strip())
+    if is_empty:
+        return True
+    if replace_existing and event_source == "plain_text_parsed" and _curriculum_metadata_is_plain_text_import(
+        row.get("curriculum_metadata")
+    ):
+        return True
+    return False
+
+
+def _find_plan_year_slot_for_reference_day(
+    supabase,
+    *,
+    family_id: str,
+    academic_year_id: str,
+    subject_id: str,
+    student_ids: List[str],
+    date_ymd: str,
+    replace_existing: bool,
+    event_source: str,
+    exclude_ids: Set[str],
+) -> Optional[Dict[str, Any]]:
+    """
+    When the chronological slot queue is exhausted but a lesson has suggested_date / reference_date,
+    attach to the plan_year calendar row on that local calendar day (same subject, plan, assignees).
+    Avoids inserting a second event on the same day as the real instructional slot.
+    """
+    sid_set = {str(s).strip() for s in (student_ids or []) if s is not None and str(s).strip()}
+    if not sid_set or len(date_ymd) < 10:
+        return None
+    try:
+        day = date.fromisoformat(date_ymd[:10])
+    except ValueError:
+        return None
+    range_start_ts = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(day, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+
+    res = (
         supabase.table("events")
-        .select("id, start_ts, end_ts, child_id, subject_id")
+        .select("id, start_ts, end_ts, child_id, child_ids, curriculum_lesson_id, curriculum_metadata")
         .eq("family_id", family_id)
+        .eq("academic_year_id", academic_year_id)
+        .eq("subject_id", subject_id)
         .eq("generated_by", "plan_year")
-        .is_("curriculum_lesson_id", "null")
         .is_("deleted_at", "null")
         .gte("start_ts", range_start_ts)
         .lte("start_ts", range_end_ts)
-        .in_("child_id", student_ids)
         .order("start_ts", desc=False)
+        .execute()
     )
-    if subject_id:
-        query = query.eq("subject_id", subject_id)
-    else:
-        query = query.is_("subject_id", "null")
-    if academic_year_id:
-        query = query.eq("academic_year_id", academic_year_id)
-    res = query.execute()
-    return list(res.data or [])
+    for row in res.data or []:
+        rid = row.get("id")
+        if not rid or str(rid) in exclude_ids:
+            continue
+        if not _event_row_matches_student_filter(row, sid_set):
+            continue
+        if not _row_accept_plain_text_curriculum_update(
+            row, replace_existing=replace_existing, event_source=event_source
+        ):
+            continue
+        return {
+            "id": rid,
+            "start_ts": row.get("start_ts"),
+            "end_ts": row.get("end_ts"),
+            "child_id": row.get("child_id"),
+            "subject_id": row.get("subject_id"),
+            "child_ids": row.get("child_ids"),
+        }
+    return None
+
+
+def _get_refillable_plain_text_plan_slots(
+    supabase,
+    family_id: str,
+    student_ids: List[str],
+    start_date_str: str,
+    end_date_str: str,
+    subject_id: str,
+    academic_year_id: str,
+) -> List[Dict[str, Any]]:
+    """
+    Plan Year slots already filled from a prior plain-text import (curriculum_lesson_id set).
+    Same child matching rules as _get_eligible_plan_slots. Used on re-commit so we UPDATE
+    these rows instead of inserting duplicate calendar events on the same dates.
+    """
+    sid_set = {str(s).strip() for s in (student_ids or []) if s is not None and str(s).strip()}
+    if not sid_set or not (subject_id or "").strip() or not (academic_year_id or "").strip():
+        return []
+    range_start_d = date.fromisoformat(start_date_str)
+    range_end_d = date.fromisoformat(end_date_str)
+    range_start_ts = datetime.combine(range_start_d, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(range_end_d, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+
+    res = (
+        supabase.table("events")
+        .select("id, start_ts, end_ts, child_id, subject_id, child_ids, curriculum_metadata")
+        .eq("family_id", family_id)
+        .eq("generated_by", "plan_year")
+        .eq("subject_id", str(subject_id).strip())
+        .eq("academic_year_id", str(academic_year_id).strip())
+        .not_.is_("curriculum_lesson_id", "null")
+        .is_("deleted_at", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+        .order("start_ts", desc=False)
+        .execute()
+    )
+    out: List[Dict[str, Any]] = []
+    for row in res.data or []:
+        if not _curriculum_metadata_is_plain_text_import(row.get("curriculum_metadata")):
+            continue
+        cid = row.get("child_id")
+        if cid is not None and str(cid).strip() in sid_set:
+            out.append(
+                {
+                    "id": row["id"],
+                    "start_ts": row.get("start_ts"),
+                    "end_ts": row.get("end_ts"),
+                    "child_id": cid,
+                    "subject_id": row.get("subject_id"),
+                    "child_ids": row.get("child_ids"),
+                }
+            )
+            continue
+        if cid is None:
+            raw_cids = row.get("child_ids")
+            if isinstance(raw_cids, list):
+                cid_set = {str(c).strip() for c in raw_cids if c is not None and str(c).strip()}
+            else:
+                cid_set = set()
+            if not cid_set or (cid_set & sid_set):
+                out.append(
+                    {
+                        "id": row["id"],
+                        "start_ts": row.get("start_ts"),
+                        "end_ts": row.get("end_ts"),
+                        "child_id": cid,
+                        "subject_id": row.get("subject_id"),
+                        "child_ids": row.get("child_ids"),
+                    }
+                )
+    return out
+
+
+def _merge_plan_curriculum_slot_queues(
+    empty_slots: List[Dict[str, Any]],
+    refill_slots: List[Dict[str, Any]],
+) -> deque:
+    """Single chronological queue; refill rows reuse event ids from prior plain-text apply."""
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for s in empty_slots:
+        eid = s.get("id")
+        if eid:
+            by_id[str(eid)] = s
+    for s in refill_slots:
+        eid = s.get("id")
+        if eid:
+            by_id[str(eid)] = s
+    ordered = sorted(by_id.values(), key=lambda r: (r.get("start_ts") or "", str(r.get("id") or "")))
+    return deque(ordered)
 
 
 @router.get("/fill_placeholders_suggestion")
@@ -1794,7 +2480,8 @@ async def commit_curriculum(
         for idx, entry in enumerate(schedule_map):
             print(f"[CURRICULUM_COMMIT] Schedule map[{idx}]: sequence_index={entry.get('sequence_index')}, day_offset={entry.get('recommended_day_offset')}")
         window_index = 0
-        
+        committed_unit_title = (unit_data.get("title") or "").strip() or None
+
         for lesson_idx, lesson_data in enumerate(lessons_data):
             if lesson_idx >= len(lesson_ids):
                 break
@@ -1833,13 +2520,18 @@ async def commit_curriculum(
                 if candidate_slots:
                     slot = candidate_slots.pop(0)
                     try:
+                        lt = (lesson_data.get("title") or "").strip() or "Lesson"
+                        utopic = (lesson_data.get("unit_topic") or "").strip() or None
+                        unit_col = utopic or committed_unit_title
                         slot_update = {
                             "curriculum_lesson_id": lesson_id,
                             "source": "curriculum",
-                            "title": lesson_data.get("title", "Lesson"),
+                            "title": lt,
                         }
-                        if lesson_data.get("unit_topic"):
-                            slot_update["unit"] = lesson_data.get("unit_topic")
+                        if committed_unit_title:
+                            slot_update["curriculum_unit_title"] = committed_unit_title
+                        if unit_col:
+                            slot_update["unit"] = unit_col
                         update_res = supabase.table("events").update(slot_update).eq("id", slot["id"]).execute()
                         if update_res.data:
                             event_ids.append(slot["id"])
@@ -1890,21 +2582,27 @@ async def commit_curriculum(
                     event_start = datetime.fromisoformat(placement["start"].replace("Z", "+00:00"))
                     event_end = event_start + timedelta(minutes=minutes)
                     
+                    lt = (lesson_data.get("title") or "").strip() or "Lesson"
+                    utopic = (lesson_data.get("unit_topic") or "").strip() or None
+                    unit_col = utopic or committed_unit_title
                     event_record = {
                         "family_id": family_id,
                         "child_id": placement["child_id"],
                         "subject_id": subject_id,
-                        "title": lesson_data.get("title", "Lesson"),
+                        "title": lt,
                         "start_ts": event_start.isoformat(),
                         "end_ts": event_end.isoformat(),
                         "status": "scheduled",
                         "source": "curriculum",
                         "curriculum_lesson_id": lesson_id,
                         "description": lesson_data.get("objective"),
-                        "modality": lesson_data.get("modality")
+                        "modality": lesson_data.get("modality"),
+                        "curriculum_metadata": {"lesson_label": lt},
                     }
-                    if lesson_data.get("unit_topic"):
-                        event_record["unit"] = lesson_data.get("unit_topic")
+                    if committed_unit_title:
+                        event_record["curriculum_unit_title"] = committed_unit_title
+                    if unit_col:
+                        event_record["unit"] = unit_col
                     
                     print(f"[CURRICULUM_COMMIT] Creating event for lesson {lesson_idx}: {event_record.get('title')}")
                     try:
@@ -2009,21 +2707,27 @@ async def commit_curriculum(
                                         
                                         if not has_conflict:
                                             # Found a non-conflicting time slot
+                                            lt_fb = (lesson_data.get("title") or "").strip() or "Lesson"
+                                            utopic_fb = (lesson_data.get("unit_topic") or "").strip() or None
+                                            unit_col_fb = utopic_fb or committed_unit_title
                                             event_record = {
                                                 "family_id": family_id,
                                                 "child_id": fallback_child_id,
                                                 "subject_id": subject_id,
-                                                "title": lesson_data.get("title", "Lesson"),
+                                                "title": lt_fb,
                                                 "start_ts": candidate_start.isoformat(),
                                                 "end_ts": candidate_end.isoformat(),
                                                 "status": "scheduled",
                                                 "source": "curriculum",
                                                 "curriculum_lesson_id": lesson_id,
                                                 "description": lesson_data.get("objective"),
-                                                "modality": lesson_data.get("modality")
+                                                "modality": lesson_data.get("modality"),
+                                                "curriculum_metadata": {"lesson_label": lt_fb},
                                             }
-                                            if lesson_data.get("unit_topic"):
-                                                event_record["unit"] = lesson_data.get("unit_topic")
+                                            if committed_unit_title:
+                                                event_record["curriculum_unit_title"] = committed_unit_title
+                                            if unit_col_fb:
+                                                event_record["unit"] = unit_col_fb
                                             print(f"[CURRICULUM_COMMIT] Creating fallback event for lesson {lesson_idx} at {candidate_start.isoformat()}")
                                             try:
                                                 event_res = supabase.table("events").insert(event_record).execute()

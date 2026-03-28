@@ -9,6 +9,7 @@ import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { apiRequest } from '../lib/apiClient';
+import { defaultRequiresSubmissionHomeForEventType } from '../lib/eventRequiresSubmissionHome';
 import { Search } from 'lucide-react';
 
 const BG = '#ffffff';
@@ -222,6 +223,7 @@ export default function TaskCreateModal({
 
   // Counts toward year plan (instructional accounting)
   const [countsTowardPlan, setCountsTowardPlan] = useState(true); // default true for Lesson
+  const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
   const [academicYears, setAcademicYears] = useState([]);
   const [selectedAcademicYearId, setSelectedAcademicYearId] = useState(null);
   const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
@@ -876,6 +878,9 @@ export default function TaskCreateModal({
       const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
       setEventType(initialEventType);
       setCountsTowardPlan(['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(initialEventType));
+      setShowRequiresSubmissionHome(
+        defaultRequiresSubmissionHomeForEventType(initialEventType === 'Scheduled Class Day' ? 'Lesson' : initialEventType)
+      );
       setSelectedMaterialId(null);
       setAttachedMaterialIds([]);
       setAttachedStandards([]);
@@ -1852,24 +1857,28 @@ export default function TaskCreateModal({
         return;
       }
 
-      // If "Count this as instructional time" was enabled, set counts_toward_plan (and optional academic_year_id)
-      if (data?.id && countsTowardPlan && placement === 'calendar') {
+      // Persist instructional fields and/or requires_submission_home after create (RPC may omit some columns)
+      if (data?.id) {
         const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
+        const updatePayload = {
+          requires_submission_home: showRequiresSubmissionHome,
+        };
+        if (countsTowardPlan && placement === 'calendar') {
+          updatePayload.academic_year_id = selectedAcademicYearId || null;
+          updatePayload.counts_toward_plan = true;
+          updatePayload.instructional_status = 'MANUAL_COUNTS';
+          updatePayload.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
+        }
         await supabase
           .from('events')
-          .update({
-            academic_year_id: selectedAcademicYearId || null,
-            counts_toward_plan: true,
-            instructional_status: 'MANUAL_COUNTS',
-            instructional_minutes: (mins != null && !Number.isNaN(mins)) ? mins : null,
-          })
+          .update(updatePayload)
           .eq('id', data.id)
           .then(({ error: updateErr }) => {
             if (updateErr) {
-              console.warn('[TaskCreateModal] Failed to set counts_toward_plan:', updateErr);
+              console.warn('[TaskCreateModal] Failed to patch event after create:', updateErr);
             }
           });
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && placement === 'calendar') {
           window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }
       }
@@ -2067,6 +2076,7 @@ export default function TaskCreateModal({
                     onPress={() => {
                       setEventType(type);
                       setCountsTowardPlan(['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(type));
+                      setShowRequiresSubmissionHome(defaultRequiresSubmissionHomeForEventType(type));
                       if (validationErrors.eventType) {
                         setValidationErrors({ ...validationErrors, eventType: null });
                       }
@@ -3138,16 +3148,39 @@ export default function TaskCreateModal({
                 <>
               {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
               {placement === 'calendar' &&
-                ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) && (
+                ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity', 'Appointment'].includes(eventType) && (
                 <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 12 }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                    <Text style={{ fontSize: 14, color: SUB, marginRight: 8 }}>Count this as instructional time</Text>
-                    <Switch
-                      value={countsTowardPlan}
-                      onValueChange={setCountsTowardPlan}
-                      trackColor={{ false: BORDER, true: '#AECBFA' }}
-                      thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
-                    />
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: 12,
+                      marginBottom: 8,
+                    }}
+                  >
+                    {['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                        <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }}>Count this as instructional time</Text>
+                        <Switch
+                          value={countsTowardPlan}
+                          onValueChange={setCountsTowardPlan}
+                          trackColor={{ false: BORDER, true: '#AECBFA' }}
+                          thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
+                        />
+                      </View>
+                    )}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                      <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
+                        Show in student home as &apos;Requires Submission&apos;
+                      </Text>
+                      <Switch
+                        value={showRequiresSubmissionHome}
+                        onValueChange={setShowRequiresSubmissionHome}
+                        trackColor={{ false: BORDER, true: '#AECBFA' }}
+                        thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
+                      />
+                    </View>
                   </View>
                   {countsTowardPlan && (
                     <>
@@ -3155,7 +3188,7 @@ export default function TaskCreateModal({
                         <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
                       ) : (
                         <>
-                          <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (option)</Text>
+                          <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                             <TouchableOpacity
                               onPress={() => setSelectedAcademicYearId(null)}
@@ -3214,7 +3247,7 @@ export default function TaskCreateModal({
                   )}
                 </View>
               )}
-              {/* Subject, Unit/Topic, Grade - always visible */}
+              {/* Subject, Unit, Grade - always visible */}
               <SafeFieldRow style={styles.fieldRow}>
                 <View style={styles.field}>
                   <Text style={styles.fieldLabel}>Subject (optional)</Text>
@@ -3384,7 +3417,7 @@ export default function TaskCreateModal({
                   </View>
                 </View>
                 <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Unit / Topic (optional)</Text>
+                  <Text style={styles.fieldLabel}>Unit (optional)</Text>
                   <TextInput
                     placeholder="e.g. Algebra I – Linear Equations"
                     placeholderTextColor={MUTED}

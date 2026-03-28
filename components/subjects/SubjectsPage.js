@@ -96,7 +96,16 @@ export default function SubjectsPage({
       // Pass session for role-based filtering (preferred) or fallback to childId
       const data = await getSubjectsWithOverview(familyId, childId, session);
       setSubjects(data);
-      
+      const idSet = new Set((data || []).map((s) => s.id));
+      setSelectedSubjectId((prev) => (prev && idSet.has(prev) ? prev : null));
+      setSubjectDetailCache((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          if (!idSet.has(k)) delete next[k];
+        }
+        return next;
+      });
+
       if (onSubjectsUpdate) {
         onSubjectsUpdate(data);
       }
@@ -113,6 +122,7 @@ export default function SubjectsPage({
             try {
               // Pass session for role-based filtering
               const detailData = await getSubjectDetail(subject.id, familyId, null, session);
+              if (detailData == null) return;
               const updatedCache = {
                 ...subjectDetailCache,
                 [subject.id]: detailData,
@@ -164,12 +174,22 @@ export default function SubjectsPage({
 
     window.addEventListener('subjectUpdated', handleSubjectUpdate);
     window.addEventListener('subjectCreated', handleSubjectUpdate);
+    window.addEventListener('refreshSubjects', handleSubjectUpdate);
     
     return () => {
       window.removeEventListener('subjectUpdated', handleSubjectUpdate);
       window.removeEventListener('subjectCreated', handleSubjectUpdate);
+      window.removeEventListener('refreshSubjects', handleSubjectUpdate);
     };
   }, [loadSubjects]);
+
+  // When parent passes a new preloaded list (e.g. after its cache reloads), stay in sync
+  useEffect(() => {
+    if (Array.isArray(preloadedSubjects)) {
+      setSubjects(preloadedSubjects);
+      setLoading(false);
+    }
+  }, [preloadedSubjects]);
 
   // Filter subjects by search query
   const filteredSubjects = useMemo(() => {
