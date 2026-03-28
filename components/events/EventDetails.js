@@ -2173,6 +2173,204 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDraftTags((prev) => prev.filter((t) => t !== tag));
   };
 
+  // Proactive schedule conflict check while editing (same rules as add-event modal)
+  useEffect(() => {
+    if (
+      !editing ||
+      readOnly ||
+      placement !== 'calendar' ||
+      allDay ||
+      !startTime?.trim() ||
+      assigneeIds.length === 0 ||
+      !dueDate ||
+      !familyId
+    ) {
+      setConflictWarning(null);
+      return;
+    }
+    if (shouldAllowOverlaps) {
+      setConflictWarning(null);
+      return;
+    }
+
+    const checkConflicts = async () => {
+      try {
+        const baseDate = new Date(dueDate);
+        baseDate.setHours(0, 0, 0, 0);
+
+        const resolvedStart = applyTimeToDate(baseDate, startTime);
+        if (!resolvedStart) {
+          setConflictWarning(null);
+          return;
+        }
+
+        const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+        let resolvedEnd;
+
+        if (isMultiDayEventType && eventEndDate) {
+          const endDateYear = eventEndDate.getFullYear();
+          const endDateMonth = eventEndDate.getMonth();
+          const endDateDay = eventEndDate.getDate();
+          resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+        } else {
+          resolvedEnd = endTime.trim()
+            ? applyTimeToDate(baseDate, endTime)
+            : new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+        }
+
+        if (!resolvedEnd || resolvedEnd <= resolvedStart) {
+          setConflictWarning(null);
+          return;
+        }
+
+        const localYear = dueDate.getFullYear();
+        const localMonth = dueDate.getMonth();
+        const localDay = dueDate.getDate();
+        const localStartOfDay = new Date(localYear, localMonth, localDay, 0, 0, 0, 0);
+
+        let localEndOfDay;
+        if (isMultiDayEventType && eventEndDate) {
+          const endDateYear = eventEndDate.getFullYear();
+          const endDateMonth = eventEndDate.getMonth();
+          const endDateDay = eventEndDate.getDate();
+          localEndOfDay = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+        } else {
+          localEndOfDay = new Date(localYear, localMonth, localDay, 23, 59, 59, 999);
+        }
+
+        const startOfDay = localStartOfDay.toISOString();
+        const endOfDay = localEndOfDay.toISOString();
+
+        let query = supabase
+          .from('events')
+          .select('*')
+          .eq('family_id', familyId)
+          .lt('start_ts', endOfDay)
+          .neq('status', 'canceled')
+          .is('canceled_at', null)
+          .is('deleted_at', null);
+
+        query = query.in('child_id', assigneeIds);
+
+        const { data: existingEventsRaw, error } = await query;
+
+        const filteredEventsRaw = (existingEventsRaw || []).filter((ev) => {
+          const eventStart = new Date(ev.start_ts);
+          const eventEnd = ev.end_ts ? new Date(ev.end_ts) : null;
+          return eventStart < resolvedEnd && (!eventEnd || eventEnd > resolvedStart);
+        });
+
+        let eventsWithChildIds = [];
+        if (assigneeIds.length > 0) {
+          const { data: eventsWithArrays, error: arrayError } = await supabase
+            .from('events')
+            .select('*')
+            .eq('family_id', familyId)
+            .lt('start_ts', endOfDay)
+            .neq('status', 'canceled')
+            .is('canceled_at', null)
+            .is('deleted_at', null)
+            .not('child_ids', 'is', null);
+
+          if (!arrayError && eventsWithArrays) {
+            eventsWithChildIds = eventsWithArrays.filter((ev) => {
+              const eventChildIds = ev.child_ids || [];
+              const hasChildOverlap = eventChildIds.some((cid) => assigneeIds.includes(cid));
+              if (!hasChildOverlap) return false;
+              const eventStart = new Date(ev.start_ts);
+              const eventEnd = ev.end_ts ? new Date(ev.end_ts) : null;
+              return eventStart < resolvedEnd && (!eventEnd || eventEnd > resolvedStart);
+            });
+          }
+        }
+
+        const allEvents = [...filteredEventsRaw];
+        const existingEventIds = new Set(allEvents.map((e) => e.id));
+        eventsWithChildIds.forEach((ev) => {
+          if (!existingEventIds.has(ev.id)) {
+            allEvents.push(ev);
+            existingEventIds.add(ev.id);
+          }
+        });
+
+        const existingEvents = allEvents;
+
+        if (error) {
+          setConflictWarning(null);
+          return;
+        }
+
+        const formatTime = (date) => {
+          let hours = date.getHours();
+          const minutes = date.getMinutes();
+          const period = hours >= 12 ? 'PM' : 'AM';
+          if (hours > 12) hours -= 12;
+          else if (hours === 0) hours = 12;
+          return minutes === 0 ? `${hours} ${period}` : `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+        };
+
+        const conflicts = [];
+        for (const otherEv of existingEvents || []) {
+          if (event?.id && otherEv.id === event.id) continue;
+
+          const eventStart = new Date(otherEv.start_ts);
+          const eventEnd = new Date(otherEv.end_ts || otherEv.start_ts);
+
+          if (resolvedStart < eventEnd && eventStart < resolvedEnd) {
+            const eventDate = new Date(otherEv.start_ts);
+            const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const dayName = dayNames[eventDate.getDay()];
+            const monthName = monthNames[eventDate.getMonth()];
+            const day = eventDate.getDate();
+
+            const startTimeStr = formatTime(eventStart);
+            const endTimeStr = formatTime(eventEnd);
+            const startTimeOnly = startTimeStr.replace(/\s*(AM|PM)$/i, '');
+            const endTimeOnly = endTimeStr.replace(/\s*(AM|PM)$/i, '');
+            const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
+            const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
+
+            conflicts.push({
+              event: otherEv,
+              message: `${otherEv.title} (${dayName} ${monthName} ${day}, ${timeRange})`,
+            });
+          }
+        }
+
+        if (conflicts.length > 0) {
+          setConflictWarning({
+            ...conflicts[0],
+            conflictCount: conflicts.length,
+            allConflicts: conflicts,
+          });
+        } else {
+          setConflictWarning(null);
+        }
+      } catch (err) {
+        console.error('[EventDetails] Error in conflict detection:', err);
+        setConflictWarning(null);
+      }
+    };
+
+    const timeoutId = setTimeout(checkConflicts, 300);
+    return () => clearTimeout(timeoutId);
+  }, [
+    editing,
+    readOnly,
+    placement,
+    allDay,
+    startTime,
+    endTime,
+    assigneeIds,
+    dueDate,
+    eventEndDate,
+    eventType,
+    familyId,
+    shouldAllowOverlaps,
+    event?.id,
+  ]);
+
   // Handle overlap errors by fetching conflicting events and showing conflict UI
   const handleOverlapError = async (errorMessage, startDate, endDate, assigneeIds) => {
     try {

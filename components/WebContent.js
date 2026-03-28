@@ -3827,6 +3827,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     eventTitle: '',
     conflictEvent: null, // Store the first conflicting event
     movedEvent: null, // Store the moved event for suggestion acceptance
+    conflictMessage: null,
     dismissed: false,
     timestamp: 0,
   });
@@ -3853,6 +3854,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         eventTitle: '',
         conflictEvent: null,
         movedEvent: null,
+        conflictMessage: null,
         dismissed: false,
         timestamp: 0,
       });
@@ -3864,6 +3866,61 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       window.removeEventListener('clearConflictBanner', handleClearConflictBanner);
     };
   }, []);
+
+  const handleDragConflictDismiss = useCallback(() => {
+    setConflictBanner((prev) => ({
+      ...prev,
+      visible: false,
+      dismissed: true,
+      timestamp: Date.now(),
+    }));
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+    }
+  }, []);
+
+  const handleDragConflictQuickReschedule = useCallback(() => {
+    const ev = conflictBanner.movedEvent;
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && ev) {
+      window.dispatchEvent(
+        new CustomEvent('openQuickReschedule', {
+          detail: { event: ev, skipToPreview: false },
+        }),
+      );
+    }
+  }, [conflictBanner.movedEvent]);
+
+  const handleDragConflictSuggestionAccepted = useCallback(
+    async (newStart, newEnd) => {
+      const id = conflictBanner.eventId;
+      if (!id || !familyId) return;
+      const { error } = await supabase
+        .from('events')
+        .update({
+          start_ts: newStart.toISOString(),
+          end_ts: newEnd.toISOString(),
+        })
+        .eq('id', id)
+        .eq('family_id', familyId);
+      if (error) throw error;
+      pendingOptimisticUpdatesRef.current.delete(id);
+      setConflictBanner({
+        visible: false,
+        eventId: null,
+        conflictCount: 0,
+        eventTitle: '',
+        conflictEvent: null,
+        movedEvent: null,
+        conflictMessage: null,
+        dismissed: false,
+        timestamp: Date.now(),
+      });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+    },
+    [conflictBanner.eventId, familyId],
+  );
 
   // Sync planner date when WebLayout nav changes month/week
   useEffect(() => {
@@ -7451,6 +7508,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
       >
         <PlanHealthBanner familyId={familyId} visible={!plannerReadOnly && (activeTab === 'planner' || activeTab === 'calendar')} initialHealth={propPreloadedPlanHealth} />
+        {Platform.OS === 'web' && familyId ? (
+          <DragDropConflictBanner
+            visible={Boolean(conflictBanner.visible && conflictBanner.eventId)}
+            conflictCount={conflictBanner.conflictCount || 0}
+            eventTitle={conflictBanner.eventTitle || ''}
+            conflictMessage={conflictBanner.conflictMessage || undefined}
+            eventId={conflictBanner.eventId}
+            conflictEvent={conflictBanner.conflictEvent}
+            familyId={familyId}
+            onQuickReschedule={handleDragConflictQuickReschedule}
+            onDismiss={handleDragConflictDismiss}
+            onSuggestionAccepted={handleDragConflictSuggestionAccepted}
+          />
+        ) : null}
         {showPlannerMonthHydrating ? (
           <View
             style={{
