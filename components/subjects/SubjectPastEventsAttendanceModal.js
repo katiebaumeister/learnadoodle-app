@@ -3,6 +3,7 @@ import {
   View,
   Text,
   TouchableOpacity,
+  Pressable,
   StyleSheet,
   Modal,
   ScrollView,
@@ -14,7 +15,14 @@ import { completeEvent } from '../../lib/services/attendanceClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { getAttendanceRecordsForEventIds } from '../../lib/services/recordsClient';
 import { useToast } from '../Toast';
-import { colors } from '../../theme/colors';
+
+/** In-memory cache so reopening the modal shows attendance badges immediately; fetch still runs to sync. */
+const pastEventsAttendanceLogsCache = new Map();
+
+function cacheKeyForAttendance(familyId, eventIds) {
+  if (!familyId || !eventIds?.length) return '';
+  return `${String(familyId)}:${[...eventIds].map(String).sort().join(',')}`;
+}
 
 function eventPrimaryMs(e) {
   const s = e?.start_ts || e?.due_ts || e?.end_ts;
@@ -48,7 +56,7 @@ function attendanceLabel(key) {
     case 'mixed':
       return 'Mixed';
     default:
-      return 'Not marked';
+      return 'Pending';
   }
 }
 
@@ -78,11 +86,11 @@ export default function SubjectPastEventsAttendanceModal({
 }) {
   const toast = useToast();
   const [attendanceLogs, setAttendanceLogs] = useState([]);
-  const [logsLoading, setLogsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [saving, setSaving] = useState(false);
   const [cutoffIndex, setCutoffIndex] = useState(null);
   const [applyingThrough, setApplyingThrough] = useState(false);
+  const [hoveredRowIndex, setHoveredRowIndex] = useState(null);
 
   const pastEvents = useMemo(() => {
     const list = (events || []).filter(
@@ -101,35 +109,46 @@ export default function SubjectPastEventsAttendanceModal({
   }, [pastEvents]);
 
   const eventIds = useMemo(() => pastEvents.map((e) => e.id).filter(Boolean), [pastEvents]);
+  const attendanceCacheKey = useMemo(
+    () => cacheKeyForAttendance(familyId, eventIds),
+    [familyId, eventIds.join(',')]
+  );
   const hasPastEvents = pastEvents.length > 0;
   const hasPendingChanges = pendingAction === 'markAll' || pendingAction === 'deleteAll';
 
   useEffect(() => {
-    if (!visible || !familyId || eventIds.length === 0) {
+    if (!visible || !attendanceCacheKey) return;
+
+    const cached = pastEventsAttendanceLogsCache.get(attendanceCacheKey);
+    if (cached != null) {
+      setAttendanceLogs(cached);
+    } else {
       setAttendanceLogs([]);
-      setLogsLoading(false);
-      return;
     }
+
     let cancelled = false;
-    setLogsLoading(true);
     (async () => {
       try {
         const rows = await getAttendanceRecordsForEventIds(familyId, eventIds);
-        if (!cancelled) setAttendanceLogs(rows || []);
+        if (cancelled) return;
+        const data = rows || [];
+        setAttendanceLogs(data);
+        pastEventsAttendanceLogsCache.set(attendanceCacheKey, data);
       } catch (err) {
         console.warn('[SubjectPastEventsAttendanceModal] attendance load:', err);
         if (!cancelled) {
-          setAttendanceLogs([]);
-          toast.push('Could not load attendance for these events.', 'error');
+          if (cached == null) {
+            setAttendanceLogs([]);
+            toast.push('Could not load attendance for these events.', 'error');
+          }
         }
-      } finally {
-        if (!cancelled) setLogsLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [visible, familyId, eventIds.join(',')]);
+  }, [visible, attendanceCacheKey]);
 
   useEffect(() => {
     if (!visible) {
@@ -137,6 +156,7 @@ export default function SubjectPastEventsAttendanceModal({
       setSaving(false);
       setCutoffIndex(null);
       setApplyingThrough(false);
+      setHoveredRowIndex(null);
     }
   }, [visible]);
 
@@ -146,13 +166,16 @@ export default function SubjectPastEventsAttendanceModal({
 
   const refreshLogs = useCallback(async () => {
     if (!familyId || eventIds.length === 0) return;
+    const key = cacheKeyForAttendance(familyId, eventIds);
     try {
       const rows = await getAttendanceRecordsForEventIds(familyId, eventIds);
-      setAttendanceLogs(rows || []);
+      const data = rows || [];
+      setAttendanceLogs(data);
+      if (key) pastEventsAttendanceLogsCache.set(key, data);
     } catch (_) {
       /* keep existing */
     }
-  }, [familyId, eventIds]);
+  }, [familyId, eventIds.join(',')]);
 
   const applyThroughCutoff = useCallback(async () => {
     if (cutoffIndex == null || cutoffIndex < 0) {
@@ -265,15 +288,44 @@ export default function SubjectPastEventsAttendanceModal({
 
   if (!visible) return null;
 
-  const showStagingActions = hasPastEvents && !logsLoading;
   const footerShowsSave = hasPendingChanges;
+
+  const selectedLesson =
+    cutoffIndex != null && cutoffIndex >= 0 ? pastEventsChronological[cutoffIndex] : null;
+  const throughDateShort = selectedLesson?.start_ts
+    ? new Date(selectedLesson.start_ts).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      })
+    : null;
+  const lessonsToMarkCount =
+    cutoffIndex != null && cutoffIndex >= 0
+      ? pastEventsChronological.slice(0, cutoffIndex + 1).filter((e) => e.status !== 'done').length
+      : 0;
+  const primaryFlowDisabled = applyingThrough || saving || cutoffIndex == null;
+  const primaryLabel =
+    cutoffIndex == null
+      ? 'Select a lesson to continue'
+      : `Mark complete through ${throughDateShort || selectedLesson?.title || 'lesson'}`;
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.overlay}>
+        <Pressable
+          style={styles.overlayBackdrop}
+          onPress={() => {
+            if (saving || applyingThrough) return;
+            handleCancel();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+          {...(Platform.OS === 'web' && {
+            cursor: saving || applyingThrough ? 'default' : 'pointer',
+          })}
+        />
         <View style={styles.card}>
           <View style={styles.header}>
-            <Text style={styles.title}>Past lessons</Text>
+            <Text style={styles.title}>Mark past lessons</Text>
             <TouchableOpacity
               onPress={handleCancel}
               style={styles.closeCircle}
@@ -286,18 +338,13 @@ export default function SubjectPastEventsAttendanceModal({
             </TouchableOpacity>
           </View>
 
-          {logsLoading ? (
-            <View style={styles.loaderWrap}>
-              <ActivityIndicator color={colors.accent || '#4F46E5'} />
-            </View>
-          ) : !hasPastEvents ? (
+          {!hasPastEvents ? (
             <Text style={styles.empty}>No past events loaded for this subject yet.</Text>
           ) : (
             <>
-              <Text style={styles.instruction}>
-                Tap the last lesson you’ve completed through — we’ll mark those lessons done and log attendance — or mark all as
-                attended below.
-              </Text>
+              <Text style={styles.headline}>Select the last lesson completed</Text>
+              <Text style={styles.subhead}>We’ll mark all earlier lessons as attended.</Text>
+
               {hasPendingChanges ? (
                 <View style={styles.pendingBanner}>
                   <Text style={styles.pendingBannerText}>
@@ -307,6 +354,7 @@ export default function SubjectPastEventsAttendanceModal({
                   </Text>
                 </View>
               ) : null}
+
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
                 {pastEventsChronological.map((ev, idx) => {
                   const att = summarizeAttendanceForEvent(ev.id, attendanceLogs);
@@ -330,23 +378,46 @@ export default function SubjectPastEventsAttendanceModal({
                       ? childIds.map((id) => getChildName(id)).filter(Boolean).join(', ')
                       : '';
                   const selected = cutoffIndex === idx;
+                  const calRaw = ev.status === 'done' ? 'Complete' : ev.status || 'scheduled';
+                  const calLabel =
+                    typeof calRaw === 'string' && calRaw.length
+                      ? calRaw.charAt(0).toUpperCase() + calRaw.slice(1).toLowerCase()
+                      : calRaw;
+                  const rowWebHover =
+                    Platform.OS === 'web'
+                      ? {
+                          onMouseEnter: () => setHoveredRowIndex(idx),
+                          onMouseLeave: () => setHoveredRowIndex((h) => (h === idx ? null : h)),
+                        }
+                      : {};
                   return (
-                    <View
+                    <TouchableOpacity
                       key={ev.id}
-                      style={[styles.row, selected && styles.rowSelected]}
+                      style={[
+                        styles.selectRow,
+                        selected && styles.selectRowSelected,
+                        Platform.OS === 'web' && hoveredRowIndex === idx && !selected && styles.selectRowHover,
+                      ]}
+                      onPress={() => {
+                        setCutoffIndex(idx);
+                        setPendingAction(null);
+                      }}
+                      activeOpacity={0.82}
+                      disabled={saving || applyingThrough}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected, disabled: saving || applyingThrough }}
+                      accessibilityLabel={`${selected ? 'Selected: ' : ''}${ev.title || 'Lesson'}, through here`}
+                      {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
+                      {...rowWebHover}
                     >
-                      <TouchableOpacity
-                        style={styles.rowTapArea}
-                        onPress={() => {
-                          setCutoffIndex(idx);
-                          setPendingAction(null);
-                        }}
-                        activeOpacity={0.75}
-                        disabled={saving || applyingThrough}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Select through ${ev.title || 'lesson'}`}
-                        {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
+                      <View
+                        style={[styles.radioOuter, selected && styles.radioOuterSelected]}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
                       >
+                        {selected ? <View style={styles.radioInner} /> : null}
+                      </View>
+                      <View style={styles.selectRowBody}>
                         <View style={styles.rowTop}>
                           <Text style={styles.rowTitle} numberOfLines={2}>
                             {ev.title || 'Lesson'}
@@ -358,85 +429,123 @@ export default function SubjectPastEventsAttendanceModal({
                           </Text>
                         </View>
                         {when ? <Text style={styles.rowMeta}>{when}</Text> : null}
-                        {childLabel ? <Text style={styles.rowChild}>{childLabel}</Text> : null}
-                        <Text style={styles.rowStatus}>
-                          Calendar: {ev.status === 'done' ? 'Complete' : ev.status || 'scheduled'}
+                        <Text style={styles.rowCompactLine}>
+                          {[childLabel, calLabel].filter(Boolean).join(' · ')}
                         </Text>
-                      </TouchableOpacity>
-                      {onOpenEvent && ev.id ? (
-                        <TouchableOpacity
-                          style={styles.rowOpenLink}
-                          onPress={() => onOpenEvent(ev.id, ev)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityRole="button"
-                          accessibilityLabel="Open event details"
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.rowOpenLinkText}>Details</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
+                        {onOpenEvent && ev.id ? (
+                          <TouchableOpacity
+                            onPress={(e) => {
+                              if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+                              onOpenEvent(ev.id, ev);
+                            }}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Open event details"
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.rowOpenLinkText}>Details</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
                   );
                 })}
               </ScrollView>
+
+              {cutoffIndex != null ? (
+                <Text style={styles.progressionHint}>
+                  {lessonsToMarkCount > 0
+                    ? `${lessonsToMarkCount} lesson${lessonsToMarkCount !== 1 ? 's' : ''} will be marked complete`
+                    : 'Selected lessons are already complete'}
+                </Text>
+              ) : null}
+
               <TouchableOpacity
                 style={[
-                  styles.markThroughBtn,
-                  (applyingThrough || cutoffIndex == null || saving) && styles.btnDisabled,
+                  styles.primaryBtn,
+                  primaryFlowDisabled && styles.primaryBtnDisabled,
+                  applyingThrough && styles.primaryBtnLoading,
                 ]}
                 onPress={applyThroughCutoff}
-                disabled={applyingThrough || cutoffIndex == null || saving}
+                disabled={primaryFlowDisabled}
                 accessibilityRole="button"
-                accessibilityLabel="Mark complete and attended through selected lesson"
+                accessibilityLabel={primaryLabel}
                 {...(Platform.OS === 'web' && {
-                  cursor: applyingThrough || cutoffIndex == null || saving ? 'default' : 'pointer',
+                  cursor: primaryFlowDisabled ? 'default' : 'pointer',
                 })}
               >
                 {applyingThrough ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.markThroughBtnText}>Mark complete & attended through here</Text>
+                  <Text
+                    style={[styles.primaryBtnText, primaryFlowDisabled && styles.primaryBtnTextDisabled]}
+                    numberOfLines={2}
+                  >
+                    {primaryLabel}
+                  </Text>
                 )}
               </TouchableOpacity>
+
+              <View style={styles.sectionRule} />
+
+              <Text style={styles.secondarySectionLabel}>Bulk actions</Text>
+
+              <View style={styles.bulkActionsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryOutlineBtn,
+                    styles.secondaryOutlineBtnHalf,
+                    pendingAction === 'markAll' && styles.secondaryOutlineBtnActive,
+                  ]}
+                  onPress={() => {
+                    setPendingAction('markAll');
+                    setCutoffIndex(null);
+                  }}
+                  disabled={saving || applyingThrough}
+                  accessibilityRole="button"
+                  accessibilityLabel="Mark all past lessons as attended"
+                  {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
+                >
+                  <CheckCircle2 size={18} color="#64748b" strokeWidth={2} />
+                  <Text style={[styles.secondaryOutlineBtnText, styles.secondaryOutlineBtnTextInRow]} numberOfLines={2}>
+                    Mark all as attended
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryOutlineBtn,
+                    styles.secondaryOutlineBtnHalf,
+                    pendingAction === 'deleteAll' && styles.secondaryOutlineDangerActive,
+                  ]}
+                  onPress={() => {
+                    setPendingAction('deleteAll');
+                    setCutoffIndex(null);
+                  }}
+                  disabled={saving || applyingThrough}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete all past events for this subject"
+                  {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
+                >
+                  <Trash2
+                    size={18}
+                    color={pendingAction === 'deleteAll' ? '#dc2626' : '#64748b'}
+                    strokeWidth={2}
+                  />
+                  <Text
+                    style={[
+                      styles.secondaryOutlineBtnText,
+                      styles.secondaryOutlineBtnTextInRow,
+                      pendingAction === 'deleteAll' && styles.secondaryOutlineDangerText,
+                    ]}
+                    numberOfLines={2}
+                  >
+                    Delete past events
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </>
           )}
-
-          {showStagingActions ? (
-            <View style={styles.stagingActions}>
-              <TouchableOpacity
-                style={[styles.actionBtnGreen, pendingAction === 'markAll' && styles.actionBtnGreenSelected]}
-                onPress={() => {
-                  setPendingAction('markAll');
-                  setCutoffIndex(null);
-                }}
-                disabled={saving || applyingThrough}
-                accessibilityRole="button"
-                accessibilityLabel="Stage mark all past lessons as attended"
-                {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
-              >
-                <CheckCircle2 size={20} color="#15803d" strokeWidth={2} />
-                <Text style={[styles.actionBtnGreenText, pendingAction === 'markAll' && styles.actionBtnGreenTextSelected]}>
-                  Mark all as attended
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtnRed, pendingAction === 'deleteAll' && styles.actionBtnRedSelected]}
-                onPress={() => {
-                  setPendingAction('deleteAll');
-                  setCutoffIndex(null);
-                }}
-                disabled={saving || applyingThrough}
-                accessibilityRole="button"
-                accessibilityLabel="Stage delete all past lessons"
-                {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
-              >
-                <Trash2 size={20} color="#e11d48" strokeWidth={2} />
-                <Text style={[styles.actionBtnRedText, pendingAction === 'deleteAll' && styles.actionBtnRedTextSelected]}>
-                  Delete all past events
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
 
           <View style={styles.footer}>
             {footerShowsSave ? (
@@ -500,13 +609,18 @@ const styles = StyleSheet.create({
         }
       : {}),
   },
+  overlayBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
   card: {
     maxWidth: 520,
     width: '100%',
     alignSelf: 'center',
+    zIndex: 1,
+    elevation: 13,
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 22,
+    padding: 18,
     maxHeight: '90%',
     ...(Platform.OS === 'web'
       ? {
@@ -524,7 +638,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 10,
   },
   title: {
     fontSize: 18,
@@ -561,10 +675,20 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '500',
   },
-  instruction: {
-    fontSize: 14,
-    color: '#475569',
-    lineHeight: 21,
+  headline: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 4,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subhead: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 18,
     marginBottom: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -576,65 +700,161 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     lineHeight: 22,
   },
-  loaderWrap: {
-    paddingVertical: 28,
-    alignItems: 'center',
-    marginBottom: 4,
-  },
   list: {
-    maxHeight: 260,
-    marginBottom: 10,
+    maxHeight: 280,
+    marginBottom: 8,
   },
-  row: {
+  selectRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    marginBottom: 8,
-    overflow: 'hidden',
+    borderColor: 'rgba(148, 163, 184, 0.4)',
+    marginBottom: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' && {
+      transitionProperty: 'border-color, background-color',
+      transitionDuration: '120ms',
+    }),
   },
-  rowSelected: {
+  selectRowHover: {
+    borderColor: 'rgba(79, 70, 229, 0.35)',
+    backgroundColor: 'rgba(248, 250, 252, 1)',
+  },
+  selectRowSelected: {
     borderColor: '#4F46E5',
-    backgroundColor: 'rgba(79, 70, 229, 0.06)',
+    backgroundColor: 'rgba(79, 70, 229, 0.07)',
   },
-  rowTapArea: {
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#94a3b8',
+    marginRight: 10,
+    marginTop: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  radioOuterSelected: {
+    borderColor: '#4F46E5',
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#4F46E5',
+  },
+  selectRowBody: {
     flex: 1,
     minWidth: 0,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    paddingRight: 8,
-  },
-  rowOpenLink: {
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    justifyContent: 'center',
-    alignSelf: 'stretch',
   },
   rowOpenLinkText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#4F46E5',
+    marginTop: 6,
+    alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       textDecorationLine: 'underline',
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  markThroughBtn: {
+  progressionHint: {
+    fontSize: 13,
+    color: '#475569',
+    marginBottom: 10,
+    fontWeight: '500',
+  },
+  primaryBtn: {
     backgroundColor: '#4F46E5',
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 14,
     borderRadius: 10,
     alignItems: 'center',
-    marginBottom: 14,
+    justifyContent: 'center',
+    minHeight: 48,
+    marginBottom: 16,
   },
-  markThroughBtnText: {
+  primaryBtnDisabled: {
+    backgroundColor: '#c7d2fe',
+  },
+  primaryBtnLoading: {
+    opacity: 0.92,
+  },
+  primaryBtnText: {
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+    textAlign: 'center',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  primaryBtnTextDisabled: {
+    color: '#eef2ff',
+    opacity: 0.92,
+  },
+  sectionRule: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginBottom: 12,
+  },
+  secondarySectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  bulkActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  secondaryOutlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    marginBottom: 0,
+  },
+  secondaryOutlineBtnHalf: {
+    flex: 1,
+    minWidth: 0,
+  },
+  secondaryOutlineBtnTextInRow: {
+    textAlign: 'center',
+    flexShrink: 1,
+  },
+  secondaryOutlineBtnActive: {
+    borderColor: '#94a3b8',
+    backgroundColor: '#f8fafc',
+  },
+  secondaryOutlineBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  secondaryOutlineDangerActive: {
+    borderColor: 'rgba(220, 38, 38, 0.35)',
+    backgroundColor: 'rgba(254, 242, 242, 0.65)',
+  },
+  secondaryOutlineDangerText: {
+    color: '#b91c1c',
   },
   rowTop: {
     flexDirection: 'row',
@@ -667,92 +887,26 @@ const styles = StyleSheet.create({
   badgeMuted: {
     color: '#64748b',
     backgroundColor: '#f1f5f9',
+    fontWeight: '600',
+    textTransform: 'none',
+    letterSpacing: 0,
   },
   rowMeta: {
     fontSize: 12,
     color: '#64748b',
-    marginTop: 6,
+    marginTop: 3,
+    lineHeight: 16,
   },
-  rowChild: {
+  rowCompactLine: {
     fontSize: 12,
     color: '#94a3b8',
     marginTop: 2,
-  },
-  rowStatus: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginTop: 4,
-    textTransform: 'capitalize',
-  },
-  stagingActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 16,
-  },
-  actionBtnGreen: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    flexGrow: 1,
-    flexBasis: 0,
-    minWidth: 140,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(22, 163, 74, 0.55)',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-  },
-  actionBtnGreenSelected: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
-    borderColor: '#15803d',
-  },
-  actionBtnGreenText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#166534',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  actionBtnGreenTextSelected: {
-    color: '#14532d',
-  },
-  actionBtnRed: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    flexGrow: 1,
-    flexBasis: 0,
-    minWidth: 140,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(244, 63, 94, 0.5)',
-    backgroundColor: 'rgba(244, 63, 94, 0.08)',
-  },
-  actionBtnRedSelected: {
-    backgroundColor: 'rgba(244, 63, 94, 0.14)',
-    borderColor: '#e11d48',
-  },
-  actionBtnRedText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#be123c',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  actionBtnRedTextSelected: {
-    color: '#9f1239',
+    lineHeight: 16,
+    textTransform: 'none',
   },
   footer: {
     gap: 12,
-    marginTop: 4,
+    marginTop: 14,
   },
   saveBtnGreenOutline: {
     flexDirection: 'row',

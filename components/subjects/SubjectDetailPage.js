@@ -15,7 +15,6 @@ import {
   Calendar,
   Clock,
   FileText,
-  ExternalLink,
   Plus,
   CheckCircle,
   XCircle,
@@ -62,8 +61,6 @@ export default function SubjectDetailPage({
   onBack,
   onEditSubject,
   onNavigateToPlanner,
-  onNavigateToLibrary,
-  onNavigateToPlannerAttendance,
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
   initialScrollToSectionId = null,
@@ -633,16 +630,6 @@ export default function SubjectDetailPage({
         <View style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
-            {onNavigateToLibrary && (
-              <TouchableOpacity
-                style={styles.exportIconButton}
-                onPress={() => onNavigateToLibrary(subjectId)}
-                activeOpacity={0.7}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <ExternalLink size={18} color="#6B7280" />
-              </TouchableOpacity>
-            )}
           </View>
           <View style={styles.materialsSubsections}>
             <View style={styles.materialsSubsection}>
@@ -727,18 +714,6 @@ export default function SubjectDetailPage({
         <View id="progress-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
-            {onNavigateToPlanner && (
-              <TouchableOpacity
-                style={styles.exportIconButton}
-                onPress={() => onNavigateToPlanner({ subjectId: subject.id, view: 'month' })}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="View full schedule in Planner month view"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <ExternalLink size={18} color="#6B7280" />
-              </TouchableOpacity>
-            )}
           </View>
           {Platform.OS === 'web' ? (
             <SubjectProgressPlanSection
@@ -759,32 +734,18 @@ export default function SubjectDetailPage({
         <View id="attendance-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
-            <View style={styles.attendanceHeaderActions}>
-              {onNavigateToPlannerAttendance && (
-                <TouchableOpacity
-                  style={styles.exportIconButton}
-                  onPress={onNavigateToPlannerAttendance}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="View full attendance"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <ExternalLink size={18} color="#6B7280" />
-                </TouchableOpacity>
-              )}
-              {Platform.OS === 'web' && (
-                <TouchableOpacity
-                  style={styles.exportIconButton}
-                  onPress={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }))}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Export attendance"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Download size={18} color="#6B7280" />
-                </TouchableOpacity>
-              )}
-            </View>
+            {Platform.OS === 'web' && (
+              <TouchableOpacity
+                style={styles.exportIconButton}
+                onPress={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }))}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Export attendance"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Download size={18} color="#6B7280" />
+              </TouchableOpacity>
+            )}
           </View>
           {attendanceRecords.length > 0 ? (
             <View style={styles.emptyStateBox}>
@@ -874,25 +835,25 @@ export default function SubjectDetailPage({
 
         {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
-          <View style={[styles.attendanceSectionHeader, styles.attendanceSectionHeaderMultiLine]}>
-            <View style={{ flex: 1 }}>
+          <View style={styles.gradesSectionHeader}>
+            <View style={styles.gradesSectionTitleRow}>
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
-              {hasGradesAttention && isParentViewer ? (
-                <Text style={styles.attentionHintText} accessibilityRole="text">
-                  * Open the listed event for a help request or submission review.
-                </Text>
-              ) : null}
+              <TouchableOpacity
+                style={styles.exportIconButton}
+                onPress={() => setShowExportComingSoonModal(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Export grades"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Download size={18} color="#6B7280" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={styles.exportIconButton}
-              onPress={() => setShowExportComingSoonModal(true)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Export grades"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Download size={18} color="#6B7280" />
-            </TouchableOpacity>
+            {hasGradesAttention && isParentViewer ? (
+              <Text style={styles.attentionHintText} accessibilityRole="text">
+                * Open the listed event for a help request or submission review.
+              </Text>
+            ) : null}
           </View>
           {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
             <View style={styles.assignedToStudentBlock}>
@@ -1516,13 +1477,13 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 16,
   },
-  attendanceSectionHeaderMultiLine: {
-    alignItems: 'flex-start',
+  gradesSectionHeader: {
+    marginBottom: 16,
   },
-  attendanceHeaderActions: {
+  gradesSectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 8,
   },
   /** Past lessons CTA when attendance list is non-empty: spacing below list / show more */
   attendancePastLessonsButton: {

@@ -43,7 +43,6 @@ export default function SubjectsPage({
   onAddMaterial,
   onEditSubject,
   onNavigateToPlanner,
-  onNavigateToLibrary,
   onNavigateToPlannerAttendance,
   userRole = 'parent',
   accessibleChildren = [],
@@ -613,8 +612,6 @@ export default function SubjectsPage({
         onBack={handleBack}
         onEditSubject={onEditSubject}
         onNavigateToPlanner={handleNavigateToPlanner}
-        onNavigateToLibrary={onNavigateToLibrary}
-        onNavigateToPlannerAttendance={onNavigateToPlannerAttendance}
       />
     );
   }

@@ -1167,9 +1167,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         setEventModalEventId(match.id);
         setEventModalInitialEvent(match);
         setEventModalVisible(true);
-        // Also dispatch openEventModal so WebLayout's global EventModal opens (same as calendar event click)
+        // WebLayout EventModal: open in edit/scheduling form (pencil on plan row), not read-only details
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: match.id, initialEvent: match } }));
+          window.dispatchEvent(
+            new CustomEvent('openEventModal', {
+              detail: { eventId: match.id, initialEvent: match, schedulingMode: true },
+            })
+          );
         }
         if (__DEV__) console.log('[WebContent] openEventForPlanSlot: opened event modal', match.id);
         return;
@@ -1193,7 +1197,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             setEventModalInitialEvent(ev);
             setEventModalVisible(true);
             if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev.id, initialEvent: ev } }));
+              window.dispatchEvent(
+                new CustomEvent('openEventModal', {
+                  detail: { eventId: ev.id, initialEvent: ev, schedulingMode: true },
+                })
+              );
             }
             if (__DEV__) console.log('[WebContent] openEventForPlanSlot: opened event modal from slot API', ev.id);
             return;
@@ -7795,20 +7803,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 setTimeout(syncView, 0);
               }
             }}
-            onNavigateToLibrary={(subjectId) => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                if (onTabChange) onTabChange('materials');
-                const path = subjectId ? `/materials?subjectId=${subjectId}` : '/materials';
-                window.history.replaceState({}, '', path);
-              }
-            }}
-            onNavigateToPlannerAttendance={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                if (onTabChange) onTabChange('planner');
-                window.history.replaceState({}, '', '/planner?view=attendance');
-                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
-              }
-            }}
           />
         );
       } catch (err) {
@@ -8082,13 +8076,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   if (onTabChange) onTabChange('planner');
                   window.history.replaceState({}, '', '/planner?view=attendance');
                   window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
-                }
-              }}
-              onNavigateToLibrary={(subjectId) => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  if (onTabChange) onTabChange('materials');
-                  const path = subjectId ? `/materials?subjectId=${subjectId}` : '/materials';
-                  window.history.replaceState({}, '', path);
                 }
               }}
             />

@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, TrendingUp, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Settings } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Settings } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -181,6 +181,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
   /** null | 'help' | 'submission' — parent review inbox opens event details + matching modal */
   const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
+  /** Plan "Dates with events" row edit → open EventModal in edit form, not read-only details */
+  const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [editingChild, setEditingChild] = useState(null);
   const [taskModalDate, setTaskModalDate] = useState(new Date());
@@ -1828,17 +1830,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const eventId = detail.eventId;
       const initialEvent = detail.initialEvent || null;
       const parentEventFocus = detail.parentEventFocus ?? null;
-      
+      const schedulingMode = !!detail.schedulingMode;
+
       if (!eventId) {
         console.warn('[WebLayout] openEventModal event received but no eventId provided');
         return;
       }
-      
-      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab });
-      
+
+      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab, schedulingMode });
+
       // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
+      setEventModalSchedulingMode(schedulingMode);
       setEventModalParentFocus(
         parentEventFocus === 'help' || parentEventFocus === 'submission' ? parentEventFocus : null
       );
@@ -3923,7 +3927,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         visible={showEventModal}
         eventId={eventModalEventId}
         initialEvent={eventModalInitialEvent}
-        schedulingMode={false}
+        schedulingMode={eventModalSchedulingMode}
         familyId={familyId}
         children={children}
         viewerRole={session?.role_flags?.isTutor ? 'tutor' : undefined}
@@ -3943,6 +3947,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setEventModalEventId(null);
           setEventModalInitialEvent(null);
           setEventModalParentFocus(null);
+          setEventModalSchedulingMode(false);
         }}
         onEventUpdated={async () => {
           console.log('[WebLayout] Global EventModal onEventUpdated');

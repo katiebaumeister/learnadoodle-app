@@ -15,6 +15,7 @@ import {
   buildSubjectPlanSlotLines,
   eventExistsKey,
   formatDateDisplayYmd,
+  findEventIdForPlanSlotSupabase,
 } from '../../lib/subjectPlanSlotLines';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { clearPlaceholders, getEventForPlanSlot } from '../../lib/services/academicYearClient';
@@ -369,6 +370,19 @@ export default function SubjectProgressPlanSection({
           setPlanRowDeleteResolvingKey(null);
         }
       }
+      if (!eventId && line?.date && line?.subjectId && familyId) {
+        try {
+          const fid = await findEventIdForPlanSlotSupabase({
+            familyId,
+            dateYmd: line.date,
+            subjectId: line.subjectId,
+            startLocal: line.startLocal,
+          });
+          if (fid) eventId = fid;
+        } catch (_) {
+          /* keep toast below */
+        }
+      }
       if (!eventId) {
         toast.push(
           'No calendar event for this slot yet. Use Edit plan to adjust your schedule, or apply the plan so lessons appear on the calendar.',
@@ -460,7 +474,7 @@ export default function SubjectProgressPlanSection({
                 <Text style={styles.planHeaderRoundedBtnText}>Edit plan</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.planHeaderRoundedBtn, styles.planHeaderRoundedBtnDanger, deletingPlan && styles.btnDisabledSoft]}
+                style={[styles.planHeaderRoundedBtn, deletingPlan && styles.btnDisabledSoft]}
                 onPress={() => setShowDeletePlanConfirm(true)}
                 disabled={deletingPlan}
                 activeOpacity={0.75}
@@ -468,8 +482,8 @@ export default function SubjectProgressPlanSection({
                 accessibilityLabel="Delete plan"
                 {...webCursor}
               >
-                <Trash2 size={16} color="#be123c" strokeWidth={2} />
-                <Text style={[styles.planHeaderRoundedBtnText, styles.planHeaderRoundedBtnTextDanger]}>Delete plan</Text>
+                <Trash2 size={16} color="#64748b" strokeWidth={2} />
+                <Text style={styles.planHeaderRoundedBtnText}>Delete plan</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -517,7 +531,6 @@ export default function SubjectProgressPlanSection({
                       <TouchableOpacity
                         style={[
                           styles.rowIconBtn,
-                          styles.rowIconBtnDanger,
                           planRowDeleteResolvingKey === item.key && styles.rowIconBtnBusy,
                         ]}
                         onPress={() => requestDeletePlanRow(line, item.key)}
@@ -528,9 +541,9 @@ export default function SubjectProgressPlanSection({
                         {...webCursor}
                       >
                         {planRowDeleteResolvingKey === item.key ? (
-                          <ActivityIndicator size="small" color="#be123c" />
+                          <ActivityIndicator size="small" color="#64748b" />
                         ) : (
-                          <Trash2 size={18} color="#be123c" strokeWidth={2} />
+                          <Trash2 size={18} color="#64748b" strokeWidth={2} />
                         )}
                       </TouchableOpacity>
                     </View>
@@ -565,14 +578,14 @@ export default function SubjectProgressPlanSection({
                       <Pencil size={18} color="#64748b" strokeWidth={2} />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.rowIconBtn, styles.rowIconBtnDanger]}
+                      style={styles.rowIconBtn}
                       onPress={() => setRowPendingDelete({ eventId: r.eventId })}
                       activeOpacity={0.75}
                       accessibilityRole="button"
                       accessibilityLabel="Remove event from calendar"
                       {...webCursor}
                     >
-                      <Trash2 size={18} color="#be123c" strokeWidth={2} />
+                      <Trash2 size={18} color="#64748b" strokeWidth={2} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -633,7 +646,7 @@ export default function SubjectProgressPlanSection({
               <Text style={styles.planHeaderRoundedBtnText}>Edit plan</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.planHeaderRoundedBtn, styles.planHeaderRoundedBtnDanger, deletingPlan && styles.btnDisabledSoft]}
+              style={[styles.planHeaderRoundedBtn, deletingPlan && styles.btnDisabledSoft]}
               onPress={() => setShowDeletePlanConfirm(true)}
               disabled={deletingPlan}
               activeOpacity={0.75}
@@ -641,8 +654,8 @@ export default function SubjectProgressPlanSection({
               accessibilityLabel="Delete plan"
               {...webCursor}
             >
-              <Trash2 size={16} color="#be123c" strokeWidth={2} />
-              <Text style={[styles.planHeaderRoundedBtnText, styles.planHeaderRoundedBtnTextDanger]}>Delete plan</Text>
+              <Trash2 size={16} color="#64748b" strokeWidth={2} />
+              <Text style={styles.planHeaderRoundedBtnText}>Delete plan</Text>
             </TouchableOpacity>
           </View>
           {hasPlan && !hasUnits ? (
@@ -784,10 +797,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(148, 163, 184, 0.45)',
     backgroundColor: '#f8fafc',
   },
-  planHeaderRoundedBtnDanger: {
-    borderColor: 'rgba(244, 63, 94, 0.4)',
-    backgroundColor: 'rgba(254, 242, 242, 0.85)',
-  },
   planHeaderRoundedBtnText: {
     fontSize: 13,
     fontWeight: '600',
@@ -795,9 +804,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  planHeaderRoundedBtnTextDanger: {
-    color: '#be123c',
   },
   btnDisabledSoft: {
     opacity: 0.5,
@@ -840,11 +846,11 @@ const styles = StyleSheet.create({
   },
   unitsFooterLabel: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#9ca3af',
+    fontWeight: '600',
+    color: '#64748b',
     marginRight: 8,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   unitsFooterLink: {
@@ -903,20 +909,12 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   rowIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.4)',
-    backgroundColor: '#f8fafc',
+    padding: 8,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  rowIconBtnDanger: {
-    borderColor: 'rgba(244, 63, 94, 0.35)',
-    backgroundColor: 'rgba(254, 242, 242, 0.75)',
+    backgroundColor: 'transparent',
   },
   rowIconBtnBusy: {
-    opacity: 0.85,
+    opacity: 0.65,
   },
 });

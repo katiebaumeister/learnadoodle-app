@@ -1769,9 +1769,12 @@ const styles = StyleSheet.create({
   },
   addUnitsLabel: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#9ca3af',
+    fontWeight: '600',
+    color: '#64748b',
     marginRight: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   addUnitsLink: {
     fontSize: 14,

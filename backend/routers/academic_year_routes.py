@@ -1688,18 +1688,31 @@ async def get_event_for_plan_slot(
             local_tz = ZoneInfo(family_tz) if family_tz and family_tz.upper() != "UTC" else None
         except Exception:
             local_tz = None
-        events_res = (
+        select_cols = "id, start_ts, end_ts, title, subject_id, child_id, child_ids, status, event_type, unit, lesson, curriculum_unit_title, source, is_placeholder, generated_by, academic_year_id"
+        date_filter = (
             supabase.table("events")
-            .select("id, start_ts, end_ts, title, subject_id, child_id, child_ids, status, event_type, unit, lesson, curriculum_unit_title, source, is_placeholder, generated_by, academic_year_id")
+            .select(select_cols)
             .eq("family_id", family_id)
-            .eq("academic_year_id", academic_year_id)
             .eq("subject_id", subject_id)
             .is_("deleted_at", "null")
             .gte("start_ts", f"{start_str}T00:00:00")
             .lt("start_ts", f"{end_upper}T00:00:00")
-            .execute()
         )
+        events_res = date_filter.eq("academic_year_id", academic_year_id).execute()
         events = list(events_res.data or [])
+        # Events missing academic_year_id still need lookup (matches subject Progress row delete vs planner).
+        if not events:
+            events_res = (
+                supabase.table("events")
+                .select(select_cols)
+                .eq("family_id", family_id)
+                .eq("subject_id", subject_id)
+                .is_("deleted_at", "null")
+                .gte("start_ts", f"{start_str}T00:00:00")
+                .lt("start_ts", f"{end_upper}T00:00:00")
+                .execute()
+            )
+            events = list(events_res.data or [])
         if not events:
             return {"event": None}
         # If start_local provided, match by local time (e.g. "09:00" or "9:00")
@@ -1737,8 +1750,8 @@ async def get_event_for_plan_slot(
                     return {"event": ev}
             except (ValueError, TypeError):
                 continue
-        # No time match: if only one event on that date for this subject, return it
-        if len(events) == 1 and not target_local:
+        # No time match: if only one event that day for this subject, return it (same as planner UX)
+        if len(events) == 1:
             return {"event": events[0]}
         return {"event": None}
     except HTTPException:
