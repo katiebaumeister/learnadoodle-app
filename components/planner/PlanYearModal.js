@@ -1040,6 +1040,8 @@ export default function PlanYearModal({
   openToEditPlanList = false,
   openDirectlyToScope = false,
   fromSubjectDetail = false,
+  /** When true (e.g. Subject "Edit plan"), skip the plan-summary screen and open logistics/editing directly. */
+  skipInitialPlanSummary = false,
   highlightFromPlanHealth = false,
   initialSubjectId = null,
   initialMaterialId = null,
@@ -2720,10 +2722,10 @@ export default function PlanYearModal({
 
   // When opening from subject details or "Edit plan" in toolbar, show YOUR PLANS list directly (skip "Editing or creating?" choice)
   useEffect(() => {
-    if (visible && (fromSubjectDetail || openToEditPlanList)) {
+    if (visible && (fromSubjectDetail || openToEditPlanList) && !skipInitialPlanSummary) {
       setShowPlanManagerView(true);
     }
-  }, [visible, fromSubjectDetail, openToEditPlanList]);
+  }, [visible, fromSubjectDetail, openToEditPlanList, skipInitialPlanSummary]);
 
   // When opening from subject details and no plan exists, default to first step with one-subject preselected
   useEffect(() => {
@@ -2736,6 +2738,10 @@ export default function PlanYearModal({
 
   // When opened from subject details with a subject, find a plan that includes this subject and open its summary if any
   useEffect(() => {
+    if (skipInitialPlanSummary) {
+      subjectPlanResolvedRef.current = true;
+      return;
+    }
     if (!visible || !fromSubjectDetail || !initialSubjectId || !familyId) return;
     if (!previousPlansListFetched) return;
     if (editPlanListRows.length === 0) {
@@ -2781,7 +2787,7 @@ export default function PlanYearModal({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, fromSubjectDetail, initialSubjectId, familyId, editPlanListRows, previousPlansListFetched]);
+  }, [visible, fromSubjectDetail, initialSubjectId, familyId, editPlanListRows, previousPlansListFetched, skipInitialPlanSummary]);
 
   // When opening from event details (Edit Plan) or plan health with a specific plan, go straight to plan summary view
   const openedToPlanSummaryRef = useRef(false);
@@ -2790,7 +2796,7 @@ export default function PlanYearModal({
       openedToPlanSummaryRef.current = false;
       return;
     }
-    if (initialAcademicYearId && !openForNewPlan && !openedToPlanSummaryRef.current) {
+    if (initialAcademicYearId && !openForNewPlan && !openedToPlanSummaryRef.current && !skipInitialPlanSummary) {
       openedToPlanSummaryRef.current = true;
       if (initialPlanSummaryData && familyId) {
         mergePlanYearFullDataCache(familyId, initialAcademicYearId, initialPlanSummaryData);
@@ -2800,7 +2806,7 @@ export default function PlanYearModal({
       }
       setPlanSummaryYearId(initialAcademicYearId);
     }
-  }, [visible, initialAcademicYearId, initialPlanSummaryData, openForNewPlan, familyId]);
+  }, [visible, initialAcademicYearId, initialPlanSummaryData, openForNewPlan, familyId, skipInitialPlanSummary]);
 
   // When user selects a plan from the list, show summary from cache (ref or app-warmed module cache), then refresh in background
   useEffect(() => {
@@ -3685,6 +3691,9 @@ export default function PlanYearModal({
 
   const showPlanEditingModeBanner =
     PLAN_MY_YEAR_LOGISTICS_FIRST && hideStructuredClassPlansIntro && planStep === 'logistics';
+
+  /** Subject page opens planning as overlay (not inline planner): use rounded card + explicit close. */
+  const subjectDetailOverlayChrome = fromSubjectDetail && !renderInline;
 
   const cadenceDirty = useMemo(() => {
     if (cadenceBaselineKey == null || cadenceBaselineKey === '') return false;
@@ -7042,13 +7051,15 @@ export default function PlanYearModal({
     </>
   );
 
+  const useModalFlatLf =
+    ((PLAN_MY_YEAR_LOGISTICS_FIRST && !pickerOnly) || (renderInline && showYourPlansList)) &&
+    !subjectDetailOverlayChrome;
+
   const modalContent = (
     <TouchableOpacity
       style={[
         styles.modal,
-        (PLAN_MY_YEAR_LOGISTICS_FIRST && !pickerOnly) || (renderInline && showYourPlansList)
-          ? styles.modalFlatLf
-          : null,
+        useModalFlatLf ? styles.modalFlatLf : null,
         (renderInline && { flex: 1, minHeight: 0, width: '100%', maxWidth: '100%', alignSelf: 'stretch' }) || {},
         /* Inline YOUR PLANS: full width of planner column — do not apply pickerModal (maxWidth 640). */
         pickerOnly && !(renderInline && showYourPlansList) && styles.pickerModal,
@@ -7061,6 +7072,22 @@ export default function PlanYearModal({
       activeOpacity={1}
       onPress={() => {}}
     >
+          {subjectDetailOverlayChrome && PLAN_MY_YEAR_LOGISTICS_FIRST && !showPlanEditingModeBanner ? (
+            <View style={styles.subjectDetailPlanCloseBar} accessibilityRole="toolbar">
+              <TouchableOpacity
+                onPress={(e) => {
+                  if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+                  onClose();
+                }}
+                style={styles.subjectDetailPlanCloseCircle}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Close"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={16} color="#0f172a" strokeWidth={2.5} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
           {!pickerOnly && !PLAN_MY_YEAR_LOGISTICS_FIRST ? (
           <View style={styles.modalHeader}>
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -7893,7 +7920,22 @@ export default function PlanYearModal({
                   <View style={styles.planEditingModeBannerCenter} pointerEvents="none">
                     <Text style={styles.planEditingModeBannerLabel}>Editing mode</Text>
                   </View>
-                  <View style={styles.planEditingModeBannerRight} />
+                  <View style={styles.planEditingModeBannerRight}>
+                    {subjectDetailOverlayChrome ? (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+                          onClose();
+                        }}
+                        style={styles.subjectDetailPlanCloseCircle}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Close"
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <X size={16} color="#0f172a" strokeWidth={2.5} />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                 </View>
               </View>
             )}
@@ -11396,6 +11438,27 @@ const styles = StyleSheet.create({
   planEditingModeBannerRight: {
     flex: 1,
     minWidth: 0,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  subjectDetailPlanCloseBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 6,
+    backgroundColor: BG,
+  },
+  subjectDetailPlanCloseCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#B8D7F9',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   planEditingModeBannerLabel: {
     fontSize: 13,

@@ -92,6 +92,8 @@ export default function AddMaterialModal({
   draftSubjectForMaterial = null, // { name: string, childIds?: string[], childId?: string }
   defaultChildId = null, // Default child ID to set when opening modal
   defaultChildIds = [], // Optional array of child IDs to default-select (for multi-child subjects)
+  /** Pre-fill link URL when opening add mode (e.g. from chat / deep link) */
+  defaultProviderUrl = null,
 }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -385,6 +387,7 @@ export default function AddMaterialModal({
 
   // Separate effect for resetting form in add mode (stable deps: no array refs to avoid loop when parent passes defaultChildIds=[] or omits it)
   const defaultChildIdsKey = Array.isArray(defaultChildIds) ? defaultChildIds.join(',') : '';
+  const defaultProviderUrlTrimmed = defaultProviderUrl ? String(defaultProviderUrl).trim() : '';
   useEffect(() => {
     if (visible && !material) {
       setTitle('');
@@ -398,14 +401,14 @@ export default function AddMaterialModal({
           : (defaultChildId ? [defaultChildId] : []);
       setSelectedChildIds(initialChildIds);
       setProviderName('');
-      setProviderUrl('');
+      setProviderUrl(defaultProviderUrlTrimmed);
       setPurchaseDate(null);
       setPurchasePrice('');
       setIsSubscription(false);
       setSubscriptionFrequency('monthly');
       setUploadedFile(null);
       setUploadedFileUrl('');
-      setShowProviderInfo(false);
+      setShowProviderInfo(Boolean(defaultProviderUrlTrimmed));
       setShowPurchaseInfo(false);
       setShowReviewInfo(false);
       setReviewChildId(null);
@@ -424,6 +427,7 @@ export default function AddMaterialModal({
     defaultChildId,
     defaultChildIdsKey,
     (draftSubjectForMaterial?.name || '').trim(),
+    defaultProviderUrlTrimmed,
   ]);
 
   const handleFileSelect = () => {

@@ -13,85 +13,17 @@ import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
 import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
 import { deriveRoleFromTags, DOCUMENT_ROLES } from '../lib/docs/roles';
-import { designTokens } from '../theme/designTokens';
-import { invalidatePlanHealthCache } from '../lib/services/academicYearClient';
-import { dropAllPlanYearCachesForFamily } from '../lib/planEditListCache';
-import { prefetchPlanEditListForFamily } from '../lib/services/plannerPrefetch';
+import {
+  deleteSubjectCascade,
+  dispatchSubjectDeletedSideEffects,
+} from '../lib/services/deleteSubjectCascade';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
-/** Remove instructional blocks and per-subject targets that reference a deleted subject (Plan Year / Edit plan). */
-async function removeSubjectFromFamilyPlanRows(supabaseClient, familyId, subjectId) {
-  const sid = String(subjectId);
-  const { data: rows, error } = await supabaseClient
-    .from('academic_year_plan')
-    .select('id, blocks, subject_targets')
-    .eq('family_id', familyId);
-  if (error) {
-    console.warn('[AddSubjectModal] academic_year_plan cleanup:', error.message || error);
-    return;
-  }
-  if (!Array.isArray(rows) || rows.length === 0) return;
-  const nowIso = new Date().toISOString();
-  for (const row of rows) {
-    const blocks = Array.isArray(row.blocks) ? row.blocks : [];
-    const newBlocks = blocks.filter((b) => String(b?.subject_id || '') !== sid);
-    const st =
-      row.subject_targets && typeof row.subject_targets === 'object' ? { ...row.subject_targets } : null;
-    const hadTarget = st && Object.prototype.hasOwnProperty.call(st, sid);
-    if (hadTarget) delete st[sid];
-    const blocksChanged = newBlocks.length !== blocks.length;
-    const targetsChanged = Boolean(hadTarget);
-    if (!blocksChanged && !targetsChanged) continue;
-    const patch = { updated_at: nowIso };
-    if (blocksChanged) patch.blocks = newBlocks;
-    if (targetsChanged) patch.subject_targets = st && Object.keys(st).length > 0 ? st : {};
-    const { error: upErr } = await supabaseClient.from('academic_year_plan').update(patch).eq('id', row.id);
-    if (upErr) {
-      console.warn('[AddSubjectModal] academic_year_plan row update:', upErr.message || upErr);
-    }
-  }
-}
-
-/** Best-effort: remove imported curriculum rows tagged with this subject name (matches subject_tags). */
-async function deleteCurriculumUnitsForSubjectTag(supabaseClient, familyId, subjectName) {
-  const name = (subjectName || '').trim();
-  if (!name) return;
-  try {
-    const { data: units, error } = await supabaseClient
-      .from('curriculum_units')
-      .select('id')
-      .eq('family_id', familyId)
-      .contains('subject_tags', [name]);
-    if (error || !units?.length) return;
-    const unitIds = units.map((u) => u.id).filter(Boolean);
-    if (unitIds.length === 0) return;
-    await supabaseClient.from('curriculum_lessons').delete().in('unit_id', unitIds);
-    try {
-      await supabaseClient.from('curriculum_pacing').delete().in('unit_id', unitIds);
-    } catch (_) {
-      /* optional */
-    }
-    await supabaseClient.from('curriculum_units').delete().in('id', unitIds);
-  } catch (e) {
-    console.warn('[AddSubjectModal] curriculum cleanup:', e?.message || e);
-  }
-}
-
-async function deleteSubjectAuxiliaryRows(supabaseClient, subjectId) {
-  const sid = String(subjectId);
-  for (const tbl of ['subject_track', 'subject_goals']) {
-    try {
-      await supabaseClient.from(tbl).delete().eq('subject_id', sid);
-    } catch (_) {
-      /* optional tables */
-    }
-  }
-}
-
+/** Matches child / grade chips and primary actions (light blue). */
 const PLANNING_CHIP_SELECTED = {
-  border: designTokens.colors.primary,
-  background: designTokens.softAccents.core,
+  border: '#6BB3E8',
+  background: 'rgba(133, 196, 242, 0.2)',
 };
 
 const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
@@ -335,6 +267,32 @@ export default function AddSubjectModal({
     }
   }, [familyId, subject?.id]);
 
+  /** Same global flows as Course Structure / library: manual, paste, upload, generate. Web dispatches to WebLayout. */
+  const openAddUnitsCurriculumAction = useCallback(
+    (kind) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+      const childIds = selectedChildIds.length
+        ? selectedChildIds
+        : (children || []).map((c) => c.id).filter(Boolean);
+      const base = {
+        subjectId: subject?.id ?? null,
+        subjectName: (subjectName || '').trim() || subject?.name || 'Subject',
+        familyId,
+        childIds,
+      };
+      if (kind === 'manual') {
+        window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', { detail: base }));
+      } else if (kind === 'paste') {
+        window.dispatchEvent(new CustomEvent('openParsePlainTextModal', { detail: base }));
+      } else if (kind === 'generate') {
+        window.dispatchEvent(new CustomEvent('openGenerateCurriculumModal', { detail: base }));
+      } else if (kind === 'upload') {
+        window.dispatchEvent(new CustomEvent('openAddMaterialModal', { detail: { ...base, role: null } }));
+      }
+    },
+    [subject?.id, subject?.name, subjectName, familyId, selectedChildIds, children]
+  );
+
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     if (!visible || !familyId) return;
@@ -541,47 +499,10 @@ export default function AddSubjectModal({
     setDeletingSubject(true);
     try {
       const deletedName = subject.name || subjectName || 'Subject';
-      await removeSubjectFromFamilyPlanRows(supabase, familyId, subject.id);
-      await deleteSubjectAuxiliaryRows(supabase, subject.id);
-      const deletedAt = new Date().toISOString();
-      const { error: evErr } = await supabase
-        .from('events')
-        .update({ deleted_at: deletedAt })
-        .eq('subject_id', subject.id)
-        .eq('family_id', familyId)
-        .is('deleted_at', null);
-      if (evErr) throw evErr;
-      await supabase.from('materials').delete().eq('subject_id', subject.id);
-      const { data: syllabi } = await supabase.from('syllabi').select('id').eq('subject_id', subject.id);
-      if (syllabi && syllabi.length > 0) {
-        const syllabusIds = syllabi.map(s => s.id);
-        await supabase.from('syllabus_sections').delete().in('syllabus_id', syllabusIds);
-        await supabase.from('syllabi').delete().eq('subject_id', subject.id);
-      }
-      await deleteCurriculumUnitsForSubjectTag(supabase, familyId, deletedName);
-      const { error } = await supabase.from('subject').delete().eq('id', subject.id).eq('family_id', familyId);
-      if (error) throw error;
-      invalidatePlanHealthCache();
-      dropAllPlanYearCachesForFamily(familyId);
-      prefetchPlanEditListForFamily(familyId).catch(() => {});
+      const result = await deleteSubjectCascade(supabase, familyId, subject.id, deletedName);
+      if (!result.ok) throw new Error(result.error || 'Delete failed');
+      dispatchSubjectDeletedSideEffects(familyId);
       if (toast?.push) toast.push(`"${deletedName}" has been deleted.`, 'success');
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        window.dispatchEvent(
-          new CustomEvent('refreshCalendar', {
-            detail: { forceInvalidate: true, skipHomeRefresh: false },
-          }),
-        );
-        window.dispatchEvent(new CustomEvent('refreshEvents'));
-        if (familyId) {
-          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
-        }
-        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
-        }, 200);
-      }
       onClose();
     } catch (err) {
       if (toast?.push) toast.push('Failed to delete subject: ' + (err.message || 'Unknown error'), 'error');
@@ -1107,7 +1028,28 @@ export default function AddSubjectModal({
                 </View>
               );
 
+              const addUnitsLinkWeb = Platform.OS === 'web' ? { cursor: 'pointer' } : {};
+
               return (
+                <>
+                  <View style={styles.addUnitsRow}>
+                    <Text style={styles.addUnitsLabel}>Add units</Text>
+                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                      <Text style={styles.addUnitsLink}>Manual input</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.addUnitsSep}>·</Text>
+                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                      <Text style={styles.addUnitsLink}>Paste plain text</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.addUnitsSep}>·</Text>
+                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                      <Text style={styles.addUnitsLink}>Upload material</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.addUnitsSep}>·</Text>
+                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                      <Text style={styles.addUnitsLink}>Generate curriculum</Text>
+                    </TouchableOpacity>
+                  </View>
                 <View style={styles.accordionSection}>
                   <TouchableOpacity
                     onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
@@ -1241,6 +1183,7 @@ export default function AddSubjectModal({
                     </View>
                   )}
                 </View>
+                </>
               );
             })()}
 
@@ -1287,11 +1230,11 @@ export default function AddSubjectModal({
                   </View>
 
                   <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
-                    <Text style={[styles.label, { marginBottom: 6 }]}>Learning goals</Text>
-                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                    <Text style={styles.planningPrefSectionLabel}>Learning goals</Text>
+                    <View style={styles.planningPrefChipRow}>
                       <TouchableOpacity
                         style={[
-                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
+                          styles.planningPrefChip,
                           goalModeForSubject === 'overall'
                             ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
                             : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
@@ -1300,18 +1243,20 @@ export default function AddSubjectModal({
                         activeOpacity={0.8}
                       >
                         <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: goalModeForSubject === 'overall' ? '600' : '500',
-                            color: goalModeForSubject === 'overall' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
-                          }}
+                          style={[
+                            styles.planningPrefChipText,
+                            {
+                              fontWeight: goalModeForSubject === 'overall' ? '600' : '500',
+                              color: goalModeForSubject === 'overall' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
+                            },
+                          ]}
                         >
                           Overall
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[
-                          { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
+                          styles.planningPrefChip,
                           goalModeForSubject === 'per_subject'
                             ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
                             : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
@@ -1320,11 +1265,13 @@ export default function AddSubjectModal({
                         activeOpacity={0.8}
                       >
                         <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: goalModeForSubject === 'per_subject' ? '600' : '500',
-                            color: goalModeForSubject === 'per_subject' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
-                          }}
+                          style={[
+                            styles.planningPrefChipText,
+                            {
+                              fontWeight: goalModeForSubject === 'per_subject' ? '600' : '500',
+                              color: goalModeForSubject === 'per_subject' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
+                            },
+                          ]}
                         >
                           Per subject
                         </Text>
@@ -1354,11 +1301,11 @@ export default function AddSubjectModal({
 
                   {goalModeForSubject === 'per_subject' && (
                     <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
-                      <Text style={[styles.label, { marginBottom: 6 }]}>Target</Text>
-                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+                      <Text style={styles.planningPrefSectionLabel}>Target</Text>
+                      <View style={[styles.planningPrefChipRow, { marginBottom: 8 }]}>
                         <TouchableOpacity
                           style={[
-                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
+                            styles.planningPrefChip,
                             targetMode === 'none'
                               ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
                               : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
@@ -1367,18 +1314,20 @@ export default function AddSubjectModal({
                           activeOpacity={0.8}
                         >
                           <Text
-                            style={{
-                              fontSize: 14,
-                              fontWeight: targetMode === 'none' ? '600' : '500',
-                              color: targetMode === 'none' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
-                            }}
+                            style={[
+                              styles.planningPrefChipText,
+                              {
+                                fontWeight: targetMode === 'none' ? '600' : '500',
+                                color: targetMode === 'none' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
+                              },
+                            ]}
                           >
                             None
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[
-                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
+                            styles.planningPrefChip,
                             targetMode === 'days'
                               ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
                               : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
@@ -1387,18 +1336,20 @@ export default function AddSubjectModal({
                           activeOpacity={0.8}
                         >
                           <Text
-                            style={{
-                              fontSize: 14,
-                              fontWeight: targetMode === 'days' ? '600' : '500',
-                              color: targetMode === 'days' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
-                            }}
+                            style={[
+                              styles.planningPrefChipText,
+                              {
+                                fontWeight: targetMode === 'days' ? '600' : '500',
+                                color: targetMode === 'days' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
+                              },
+                            ]}
                           >
                             Days
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[
-                            { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
+                            styles.planningPrefChip,
                             targetMode === 'hours'
                               ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
                               : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
@@ -1407,11 +1358,13 @@ export default function AddSubjectModal({
                           activeOpacity={0.8}
                         >
                           <Text
-                            style={{
-                              fontSize: 14,
-                              fontWeight: targetMode === 'hours' ? '600' : '500',
-                              color: targetMode === 'hours' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
-                            }}
+                            style={[
+                              styles.planningPrefChipText,
+                              {
+                                fontWeight: targetMode === 'hours' ? '600' : '500',
+                                color: targetMode === 'hours' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
+                              },
+                            ]}
                           >
                             Hours
                           </Text>
@@ -1784,6 +1737,55 @@ const styles = StyleSheet.create({
   },
   planningDefaultsStack: {
     marginTop: 8,
+  },
+  planningPrefChipRow: {
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  planningPrefChip: {
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  planningPrefChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  planningPrefSectionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text || '#0f172a',
+    marginBottom: 5,
+  },
+  addUnitsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 0,
+  },
+  addUnitsLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#9ca3af',
+    marginRight: 8,
+  },
+  addUnitsLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      textDecorationLine: 'underline',
+    }),
+  },
+  addUnitsSep: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginHorizontal: 6,
+    fontWeight: '400',
   },
   accordionSection: {
     borderWidth: 1,

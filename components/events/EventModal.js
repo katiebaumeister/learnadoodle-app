@@ -16,7 +16,11 @@ export default function EventModal({
   familyId,
   children = [],
   schedulingMode = false,
-  preloadedAcademicYears = [],
+  preloadedAcademicYears = null,
+  /** Subjects loaded with WebLayout (id, name, child_id) — seeds EventDetails before refetch */
+  preloadedSubjects = null,
+  /** Family assignment rows from WebLayout — seeds help/submission UI in EventDetails */
+  preloadedFamilyAssignments = null,
   /** 'tutor' = read-first event details; no schedule ownership affordances */
   viewerRole = null,
   /** Child/tutor: parent disabled add/edit events in User Controls */
@@ -332,6 +336,8 @@ export default function EventModal({
                   readOnly={isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit}
                   viewerRole={viewerRole}
                   preloadedAcademicYears={preloadedAcademicYears}
+                  preloadedSubjects={preloadedSubjects}
+                  preloadedFamilyAssignments={preloadedFamilyAssignments}
                   parentEventFocus={parentEventFocus}
                   onParentEventFocusConsumed={onParentEventFocusConsumed}
                 />

@@ -852,6 +852,7 @@ export default function SubjectsPage({
               children={safeChildren}
               selectedChildFilter={selectedChildFilter}
               onCardClick={handleSubjectClick}
+              onNeedsHelpPress={(s) => openSubjectToSection(s.id, 'needs-help-section')}
               onNavigateToPlanner={handleNavigateToPlanner}
               onAddSyllabus={handleAddSyllabus}
               onAddEvent={handleAddEvent}

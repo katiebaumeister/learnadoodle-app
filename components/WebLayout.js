@@ -251,9 +251,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearOpenToEditList, setPlanYearOpenToEditList] = useState(false);
   const [planYearOpenDirectlyToScope, setPlanYearOpenDirectlyToScope] = useState(false);
   const [planYearFromSubjectDetail, setPlanYearFromSubjectDetail] = useState(false);
+  /** Subject "Edit plan": open logistics/editing UI without the intermediate plan-summary screen. */
+  const [planYearSkipInitialPlanSummary, setPlanYearSkipInitialPlanSummary] = useState(false);
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
   const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
+  /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
+  const planYearModalReturnSubjectIdRef = useRef(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [showPlanYearDropdown, setShowPlanYearDropdown] = useState(false);
   const planYearDropdownButtonRef = useRef(null);
@@ -268,6 +272,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setPlanYearOpenForNewPlan(false);
     setPlanYearOpenToEditList(false);
     setPlanYearOpenDirectlyToScope(false);
+    setPlanYearSkipInitialPlanSummary(false);
     setPlanYearInitialSubjectId(null);
     setPlanYearInitialMaterialId(null);
   }, []);
@@ -350,7 +355,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const p = (window.location.pathname || '').replace(/\/$/, '') || '/';
     return p === '/planner';
   });
-  const [preloadedAcademicYears, setPreloadedAcademicYears] = useState([]);
+  /** null until first fetch — matches EventDetails query (deduped, limit 24) for Add to plan? chips */
+  const [preloadedAcademicYears, setPreloadedAcademicYears] = useState(null);
+  /** null = not loaded yet; rows seed EventModal help/submission strips without a blocking fetch */
+  const [preloadedFamilyAssignments, setPreloadedFamilyAssignments] = useState(null);
   const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
   const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
   // Derived: must come after session/state used below (avoid TDZ)
@@ -1443,7 +1451,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         .select('id, start_date, end_date, year_name')
         .eq('family_id', session.family_id)
         .order('updated_at', { ascending: false })
-        .limit(10);
+        .limit(24);
       if (!mounted) return;
       if (error) {
         setPreloadedAcademicYears([]);
@@ -1460,10 +1468,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       });
       setPreloadedAcademicYears(list);
     };
+    const fetchFamilyAssignments = async () => {
+      const { data, error } = await supabase
+        .from('assignments')
+        .select(
+          '*, child:child_id (id, first_name, avatar), subject:related_subject (id, name)'
+        )
+        .eq('family_id', session.family_id)
+        .order('updated_at', { ascending: false })
+        .limit(200);
+      if (!mounted) return;
+      if (error) {
+        setPreloadedFamilyAssignments([]);
+        return;
+      }
+      setPreloadedFamilyAssignments(data || []);
+    };
+    setPreloadedFamilyAssignments(null);
+    setPreloadedAcademicYears(null);
     Promise.all([
       fetchFamilyMembers(),
       fetchFamilyData(),
-      fetchAcademicYears().catch(() => {}),
+      fetchAcademicYears().catch(() => {
+        if (mounted) setPreloadedAcademicYears([]);
+      }),
+      fetchFamilyAssignments().catch(() => {
+        if (mounted) setPreloadedFamilyAssignments([]);
+      }),
       prefetchPlanEditListForFamily(session.family_id).catch(() => {}),
     ]).catch(() => {});
     return () => { mounted = false; };
@@ -1902,11 +1933,57 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const subjectId = detail.subjectId ?? null;
       const materialId = detail.materialId ?? null;
       const openToEditList = detail.openToEditList === true;
-      console.log('[WebLayout] openPlanYearModal event', { from, yearIdFromEvent, subjectId, materialId, openToEditList });
+      const openAsModal = detail.openAsModal === true;
+      const skipPlanSummary = detail.skipPlanSummary === true;
+      const fromEventDetails = from === 'event_details';
+      const onPlannerLikeShell =
+        activeTabRef.current === 'planner' || activeTabRef.current === 'calendar';
+      const effectiveOpenAsModal = fromEventDetails ? !onPlannerLikeShell : openAsModal;
+      console.log('[WebLayout] openPlanYearModal event', {
+        from,
+        yearIdFromEvent,
+        subjectId,
+        materialId,
+        openToEditList,
+        openAsModal,
+        effectiveOpenAsModal,
+        skipPlanSummary,
+      });
       setPlanYearHighlightFromHealth(from === 'plan_health_over');
-      setPlanYearFromSubjectDetail(from === 'subject_detail');
+      setPlanYearFromSubjectDetail(
+        from === 'subject_detail' || (fromEventDetails && effectiveOpenAsModal)
+      );
       setPlanYearInitialSubjectId(subjectId);
       setPlanYearInitialMaterialId(materialId);
+
+      if (effectiveOpenAsModal) {
+        planYearModalReturnSubjectIdRef.current = subjectId || null;
+        setPlanYearSkipInitialPlanSummary(skipPlanSummary);
+        if (yearIdFromEvent) {
+          setPlanYearInitialAcademicYearId(yearIdFromEvent);
+          setPlanYearInitialPlanSummaryData(detail.planSummaryData ?? null);
+          setPlanYearOpenForNewPlan(false);
+          setPlanYearOpenToEditList(openToEditList);
+        } else {
+          setPlanYearInitialAcademicYearId(null);
+          setPlanYearInitialPlanSummaryData(null);
+          setPlanYearOpenForNewPlan(
+            openToEditList ||
+              materialId != null ||
+              subjectId != null ||
+              from === 'library' ||
+              from === 'generate_curriculum' ||
+              from === 'magic_extract'
+          );
+          setPlanYearOpenToEditList(false);
+        }
+        setPlanYearOpenDirectlyToScope(!!detail.openDirectlyToScope && !openToEditList);
+        setShowPlanningModal(true);
+        return;
+      }
+
+      planYearModalReturnSubjectIdRef.current = null;
+      setPlanYearSkipInitialPlanSummary(skipPlanSummary);
       if (yearIdFromEvent) {
         setPlanYearInitialAcademicYearId(yearIdFromEvent);
         setPlanYearInitialPlanSummaryData(detail.planSummaryData ?? null);
@@ -3493,13 +3570,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     initialPlanSummaryData={planYearInitialPlanSummaryData}
                     openForNewPlan={planYearOpenForNewPlan}
                     openToEditPlanList={currentView === 'edit-year' || planYearOpenToEditList}
-                    openDirectlyToScope={planYearOpenDirectlyToScope}
-                    fromSubjectDetail={planYearFromSubjectDetail}
-                    highlightFromPlanHealth={planYearHighlightFromHealth}
-                    initialSubjectId={planYearInitialSubjectId}
-                    initialMaterialId={planYearInitialMaterialId}
-                    onOpenBuildCurriculum={(params) => {
-                      setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
+        openDirectlyToScope={planYearOpenDirectlyToScope}
+        fromSubjectDetail={planYearFromSubjectDetail}
+        skipInitialPlanSummary={planYearSkipInitialPlanSummary}
+        highlightFromPlanHealth={planYearHighlightFromHealth}
+        initialSubjectId={planYearInitialSubjectId}
+        initialMaterialId={planYearInitialMaterialId}
+        onOpenBuildCurriculum={(params) => {
+          setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
                       setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
                       setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
                       setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
@@ -3703,6 +3781,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         key={planYearInitialAcademicYearId || 'unified-planning-modal'}
         visible={showPlanningModal}
         onClose={() => {
+          const sid = planYearModalReturnSubjectIdRef.current;
+          planYearModalReturnSubjectIdRef.current = null;
+          if (sid && Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
+          }
           setShowPlanningModal(false);
           setTimeout(() => {
             setPlanYearHighlightFromHealth(false);
@@ -3712,6 +3795,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setPlanYearOpenForNewPlan(false);
             setPlanYearOpenToEditList(false);
             setPlanYearOpenDirectlyToScope(false);
+            setPlanYearSkipInitialPlanSummary(false);
             setPlanYearInitialSubjectId(null);
             setPlanYearInitialMaterialId(null);
           }, 300);
@@ -3726,6 +3810,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         openToEditPlanList={planYearOpenToEditList}
         openDirectlyToScope={planYearOpenDirectlyToScope}
         fromSubjectDetail={planYearFromSubjectDetail}
+        skipInitialPlanSummary={planYearSkipInitialPlanSummary}
         highlightFromPlanHealth={planYearHighlightFromHealth}
         initialSubjectId={planYearInitialSubjectId}
         initialMaterialId={planYearInitialMaterialId}
@@ -3744,11 +3829,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setShowRebalanceModal(true);
         }}
         onComplete={async () => {
+          const sid = planYearModalReturnSubjectIdRef.current;
+          planYearModalReturnSubjectIdRef.current = null;
           setShowPlanningModal(false);
           await fetchFamilyData();
           if (Platform.OS === 'web') {
             window.dispatchEvent(new CustomEvent('refreshChildren'));
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            if (sid) {
+              window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
+            }
           }
         }}
       />
@@ -3839,6 +3929,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         viewerRole={session?.role_flags?.isTutor ? 'tutor' : undefined}
         denyFamilyEventEdit={denyFamilyEventEdit}
         preloadedAcademicYears={preloadedAcademicYears}
+        preloadedSubjects={fullSubjects}
+        preloadedFamilyAssignments={preloadedFamilyAssignments}
         familyMembers={children.map(child => ({
           id: child.id,
           name: child.first_name || child.name || 'Unknown',

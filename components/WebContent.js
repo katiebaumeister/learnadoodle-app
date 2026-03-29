@@ -633,6 +633,8 @@ import TemplatePicker from './templates/TemplatePicker'
 import { getSubjectRecommendations, processLiveClass, analyzeProgress, chatWithDoodleBot } from '../lib/aiProcessor.js'
 import { AIConversationService } from '../lib/aiConversationService.js'
 import { processDoodleMessage, executeTool, getDisplayMessage, getToolName, getToolParams } from '../lib/doodleAssistant.js'
+import { CHAT_COMMIT_KINDS, getPendingCommit, buildChatbotAuditPayload } from '../lib/assistant/chatCommit.js'
+import { getDisambiguation } from '../lib/assistant/responseContract.js'
 import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
@@ -1247,13 +1249,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         ? detail.childIds
         : (detail.childId ? [detail.childId] : []);
       const role = detail.role && typeof detail.role === 'string' ? detail.role : null;
+      const defaultProviderUrl =
+        detail.defaultProviderUrl && typeof detail.defaultProviderUrl === 'string'
+          ? detail.defaultProviderUrl.trim()
+          : null;
 
-      console.log('[WebContent] openAddMaterialModal event received:', { subjectId, subjectName, childIds, role, activeTab });
+      console.log('[WebContent] openAddMaterialModal event received:', { subjectId, subjectName, childIds, role, activeTab, defaultProviderUrl });
 
       setAddMaterialModalDefaultRole(role);
       setAddMaterialModalDefaultSubjectId(subjectId);
       setAddMaterialModalDefaultSubjectName(subjectName);
       setAddMaterialModalDefaultChildIds(childIds);
+      setAddMaterialModalDefaultProviderUrl(defaultProviderUrl || null);
       setShowAddMaterialModal(true);
     };
     
@@ -3587,23 +3594,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (Platform.OS !== 'web') return;
     const handleRefresh = () => {
       setSubjectsOverviewCache(null); // Clear overview cache to force reload
-      setSubjectDetailCache({}); // Clear detail cache to force reload
+      // Keep subjectDetailCache: clearing it caused a full loading flash on Subject Detail when modals/planner sync.
+      // SubjectDetailPage refetches on refreshSubjects / refreshSubjectDetail with silent background updates.
     };
-    const handleSubjectDetailRefresh = (e) => {
-      // Clear cache for specific subject
-      if (e.detail?.subjectId) {
-        setSubjectDetailCache(prev => {
-          const updated = { ...prev };
-          delete updated[e.detail.subjectId];
-          return updated;
-        });
-      }
-    };
+    // refreshSubjectDetail: SubjectDetailPage refetches and calls onSubjectDataUpdate — do not clear cache here.
+    // Clearing cache made preloadedSubjectData undefined and forced a full-page loading flash when closing modals.
     window.addEventListener('refreshSubjects', handleRefresh);
-    window.addEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
     return () => {
       window.removeEventListener('refreshSubjects', handleRefresh);
-      window.removeEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
     };
   }, []);
 
@@ -3714,6 +3712,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [doodleLoading, setDoodleLoading] = useState(false)
   const [doodleInput, setDoodleInput] = useState('')
   const [doodleConversationId, setDoodleConversationId] = useState(null)
+  const doodleConversationIdRef = useRef(null)
   const [tasksData, setTasksData] = useState({ todo: [], inProgress: [], done: [] })
   // NOTE: schedule_overrides removed - Schedule Rules feature disabled
   // const [scheduleRulesModalOpen, setScheduleRulesModalOpen] = useState(false)
@@ -3818,6 +3817,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [addMaterialModalDefaultSubjectId, setAddMaterialModalDefaultSubjectId] = useState(null);
   const [addMaterialModalDefaultSubjectName, setAddMaterialModalDefaultSubjectName] = useState(null);
   const [addMaterialModalDefaultChildIds, setAddMaterialModalDefaultChildIds] = useState([]);
+  const [addMaterialModalDefaultProviderUrl, setAddMaterialModalDefaultProviderUrl] = useState(null);
   
   // Drag-drop conflict banner state
   const [conflictBanner, setConflictBanner] = useState({
@@ -7246,13 +7246,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (!profile?.family_id) throw new Error('No family_id found for user');
       const familyId = profile.family_id;
 
-      let conversationId = doodleConversationId;
+      let conversationId = doodleConversationIdRef.current || doodleConversationId;
       if (!conversationId) {
         conversationId = await AIConversationService.createConversation(
           familyId,
           'doodlebot',
           'DoodleBot Assistant'
         );
+        doodleConversationIdRef.current = conversationId;
         setDoodleConversationId(conversationId);
       }
 
@@ -7267,6 +7268,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 I can help you with:
 • Quick questions → direct answers
 • Log homework/activities → add_activity
+• Save a **web link** to your Library (paste https://… and say add to library)
 • Check recent progress → progress_summary
 • Request short-term schedule shifts → queue_reschedule
 • Suggest subjects for a child/year
@@ -7281,14 +7283,21 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       }
       
       // Recent messages for short-term conversational memory (e.g. "And science?")
-      const recentMessages = doodleMessages.map((m) => ({ role: m.role, content: m.content }));
+      const recentMessages = doodleMessages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.disambiguation ? { disambiguation: m.disambiguation } : {}),
+      }));
       const response = await processDoodleMessage(message, familyId, conversationId, { recentMessages });
 
       let displayText = getDisplayMessage(response);
 
-      // Handle tool execution if needed
+      const pendingCommit = getPendingCommit(response);
+      const disambiguation = getDisambiguation(response);
+
+      // Handle tool execution if needed (deferred commits run only after confirm in Ask Doodle modal)
       const toolName = getToolName(response);
-      if (toolName) {
+      if (toolName && !pendingCommit) {
         try {
           const toolResult = await executeTool(toolName, getToolParams(response), familyId);
           if (toolResult.success && toolResult.userMessage) {
@@ -7349,15 +7358,63 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (error) {
           console.warn('[WebContent] Doodle createEvent RPC failed:', error);
           displayText += '\n\nSorry, I couldn’t save that event. Please try adding it from the planner.';
-        } else if (created?.length > 0 && Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('refreshCalendar'));
-          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
-          if (invalidateHomeDataCache && famId) invalidateHomeDataCache(famId);
+        } else if (created?.length > 0) {
+          try {
+            await AIConversationService.recordAction(
+              conversationId,
+              CHAT_COMMIT_KINDS.CREATE_EVENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.CREATE_EVENT,
+                { eventData, familyId: famId, childIds },
+                { event_ids: created.map((c) => c.id) },
+                { client: 'web_content_legacy_createEventInBackground' }
+              ),
+              'completed'
+            );
+          } catch (e) {
+            console.warn('[WebContent] record_ai_action failed:', e);
+          }
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+            if (invalidateHomeDataCache && famId) invalidateHomeDataCache(famId);
+          }
         }
+      } else if (
+        pendingCommit &&
+        !response.createEventInBackground &&
+        (pendingCommit.kind === CHAT_COMMIT_KINDS.CREATE_EVENT ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.ADD_ACTIVITY ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.QUEUE_RESCHEDULE ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.DELETE_EVENT ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_EVENT ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.MARK_ATTENDANCE ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.LOG_GRADE ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.DELETE_MATERIAL ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_MATERIAL ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.ADD_MATERIAL_LINK ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_CHILD ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.ARCHIVE_CHILD ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.DELETE_CHILD_PERMANENT ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.ADD_SUBJECT ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.DELETE_SUBJECT ||
+          pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_SUBJECT)
+      ) {
+        displayText +=
+          '\n\nOpen **Ask Learnadoodle** (floating button) to review and confirm — nothing is saved until you tap the button there.';
       }
 
       await AIConversationService.addMessage(conversationId, 'assistant', displayText);
-      setDoodleMessages(prev => [...prev, { role: 'assistant', content: displayText, timestamp: Date.now() }])
+      setDoodleMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: displayText,
+          timestamp: Date.now(),
+          ...(disambiguation ? { disambiguation } : {}),
+          ...(pendingCommit && !response.createEventInBackground ? { pendingCommit } : {}),
+        },
+      ]);
       
     } catch (error) {
       console.error('Error chatting with Doodle:', error)
@@ -8147,6 +8204,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           setAddMaterialModalDefaultSubjectId(null);
           setAddMaterialModalDefaultSubjectName(null);
           setAddMaterialModalDefaultChildIds([]);
+          setAddMaterialModalDefaultProviderUrl(null);
         }}
         onSaved={() => {
           setShowAddMaterialModal(false);
@@ -8154,6 +8212,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           setAddMaterialModalDefaultSubjectId(null);
           setAddMaterialModalDefaultSubjectName(null);
           setAddMaterialModalDefaultChildIds([]);
+          setAddMaterialModalDefaultProviderUrl(null);
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('materialSaved'));
         }}
         familyId={familyId}
@@ -8162,6 +8221,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         defaultSubjectId={addMaterialModalDefaultSubjectId}
         defaultSubjectName={addMaterialModalDefaultSubjectName}
         defaultChildIds={addMaterialModalDefaultChildIds}
+        defaultProviderUrl={addMaterialModalDefaultProviderUrl}
       />
       <ConfirmDialog
         visible={confirmDialog.visible}

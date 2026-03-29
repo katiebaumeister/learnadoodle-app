@@ -11,6 +11,7 @@
     "test:openai": "expo start --web --port 19006",
     "web:no-404": "node scripts/dev-server-web.js",
     "seed:chatbot-knowledge": "node scripts/seed-chatbot-knowledge.js",
+    "test:assistant": "node --test lib/assistant/intentTriage.test.js lib/assistant/chatParsers.test.js lib/assistant/materialParse.test.js",
     "build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && node scripts/generate-favicon.cjs && node scripts/patch-favicon-cache-bust.cjs && node scripts/patch-og-meta.cjs && node scripts/patch-auth-redirect.cjs && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true",
     "vercel-build": "node scripts/write-env-for-build.cjs && npx expo export --platform web && node scripts/generate-favicon.cjs && node scripts/patch-favicon-cache-bust.cjs && node scripts/patch-og-meta.cjs && node scripts/patch-auth-redirect.cjs && cp public/sw-uuid-intercept.js dist/ 2>/dev/null || true"
   },

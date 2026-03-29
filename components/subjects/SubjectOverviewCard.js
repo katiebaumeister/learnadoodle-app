@@ -10,6 +10,8 @@ export default function SubjectOverviewCard({
   children = [],
   selectedChildFilter = null, // Optional: filter to show only this child's dot (filtering happens at page level)
   onCardClick,
+  /** Parent: jump to subject detail scrolled to “Needs help” when student has asked for help. */
+  onNeedsHelpPress,
   onNavigateToPlanner,
   onAddMaterial,
   onAddAssignment,
@@ -20,6 +22,7 @@ export default function SubjectOverviewCard({
 }) {
   const session = useSession();
   const [showStatusTooltip, setShowStatusTooltip] = useState(false);
+  const [needsHelpHovered, setNeedsHelpHovered] = useState(false);
   const [hoveredButton, setHoveredButton] = useState(null);
 
   const getChildName = (childId) => {
@@ -196,6 +199,7 @@ export default function SubjectOverviewCard({
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
   const parentAssignmentAttentionCount = subject.parentAssignmentAttentionCount || 0;
+  const parentNeedHelpCount = subject.parentNeedHelpCount || 0;
 
   const openHomeReviewList = (e) => {
     if (e?.stopPropagation) e.stopPropagation();
@@ -219,7 +223,41 @@ export default function SubjectOverviewCard({
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.headerTitleRow}>
-            <Text style={styles.subjectName}>{subject.name}</Text>
+            <View style={styles.subjectTitleWithBadge}>
+              <Text style={styles.subjectName} numberOfLines={2}>
+                {subject.name}
+              </Text>
+              {isParentViewer && parentNeedHelpCount > 0 && typeof onNeedsHelpPress === 'function' ? (
+                <View
+                  style={styles.needsHelpMarkWrap}
+                  {...(Platform.OS === 'web'
+                    ? {
+                        onMouseEnter: () => setNeedsHelpHovered(true),
+                        onMouseLeave: () => setNeedsHelpHovered(false),
+                      }
+                    : {})}
+                >
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      if (e?.stopPropagation) e.stopPropagation();
+                      onNeedsHelpPress(subject);
+                    }}
+                    style={styles.needsHelpMark}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Needs help — open subject"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.needsHelpMarkText}>!</Text>
+                  </TouchableOpacity>
+                  {Platform.OS === 'web' && needsHelpHovered ? (
+                    <View style={styles.needsHelpTooltip} pointerEvents="none">
+                      <Text style={styles.needsHelpTooltipText}>Needs help</Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
             {assignedChildrenObjects.length > 0 ? (
               <View style={styles.childrenDotsContainer}>
                 {assignedChildrenObjects.map((child, index) => {
@@ -448,14 +486,71 @@ const styles = StyleSheet.create({
   },
   headerTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     marginBottom: 6,
+    gap: 8,
+  },
+  subjectTitleWithBadge: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 4,
   },
   subjectName: {
     fontSize: 24,
     fontWeight: '700',
     color: '#1F2937',
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  needsHelpMarkWrap: {
+    position: 'relative',
+    marginTop: 2,
+  },
+  needsHelpMark: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(220, 38, 38, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(220, 38, 38, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  needsHelpMarkText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#dc2626',
+    lineHeight: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  needsHelpTooltip: {
+    position: 'absolute',
+    left: '50%',
+    top: '100%',
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    zIndex: 2000,
+    ...(Platform.OS === 'web' && {
+      transform: [{ translateX: '-50%' }],
+      boxShadow: '0 8px 20px rgba(15, 23, 42, 0.2)',
+    }),
+  },
+  needsHelpTooltipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

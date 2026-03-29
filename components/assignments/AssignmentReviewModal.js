@@ -126,6 +126,7 @@ export default function AssignmentReviewModal({
   };
 
   const handleClose = () => {
+    if (submitting) return;
     setFeedback('');
     setDecision(null);
     setFeedbackFocused(false);
@@ -169,8 +170,14 @@ export default function AssignmentReviewModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={handleClose}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      >
+        <TouchableOpacity style={styles.modalContent} activeOpacity={1} onPress={() => {}}>
           <TouchableOpacity
             onPress={handleClose}
             style={styles.closeFab}
@@ -337,8 +344,8 @@ export default function AssignmentReviewModal({
               </TouchableOpacity>
             </View>
           </ScrollView>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }

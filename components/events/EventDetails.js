@@ -26,6 +26,7 @@ import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { defaultRequiresSubmissionHomeForEventType } from '../../lib/eventRequiresSubmissionHome';
+import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 
 /** Display name for Add to plan? / plan banners from an academic_years row (never "Loading…"). */
 function formatAcademicYearPlanLabel(ay) {
@@ -58,6 +59,15 @@ const normalizeStatus = (value) => {
   return STATUS_NORMALIZE[key] || key;
 };
 
+/** Cooper Hewitt on web — matches banners and `styles.fieldLabel` / `connectedPlanBannerText`. */
+const webCooper = (weight) =>
+  Platform.OS === 'web'
+    ? {
+        fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontWeight: String(weight),
+      }
+    : { fontWeight: String(weight) };
+
 /** Shallow copy of events.curriculum_metadata for reads/writes (lesson_label vs optional DB column). */
 const parseCurriculumMetadata = (ev) => {
   const raw = ev?.curriculum_metadata;
@@ -73,6 +83,77 @@ const parseCurriculumMetadata = (ev) => {
   }
   return {};
 };
+
+/** Whether the edit form should show Academic Details expanded on first paint (mirrors hydrate logic). */
+function eventHasAcademicDetailsSection(ev) {
+  if (!ev) return false;
+  const cm = parseCurriculumMetadata(ev);
+  return !!(
+    ev.subject_id ||
+    ((ev.unit || ev.curriculum_unit_title || '') + '').trim() ||
+    (ev.lesson && String(ev.lesson).trim()) ||
+    (cm.lesson_label && String(cm.lesson_label).trim()) ||
+    (ev.curriculum_lesson_id && (ev.title || '').trim()) ||
+    ev.grade ||
+    ev.percent_of_total_grade != null
+  );
+}
+
+/** Same rules as fetchSubjects — filter family + child-specific subjects for assignees (dedupe by name). */
+function filterSubjectsForAssignees(allSubjects, assigneeIds) {
+  if (!assigneeIds?.length) return [];
+  const subjectMap = new Map();
+  (allSubjects || []).forEach((subject) => {
+    const isFamilyWide = subject.child_id == null;
+    const isForSelectedChild = subject.child_id != null && assigneeIds.includes(subject.child_id);
+    const shouldInclude = isFamilyWide || isForSelectedChild;
+    if (!shouldInclude) return;
+    const existing = subjectMap.get(subject.name);
+    if (!existing) {
+      subjectMap.set(subject.name, subject);
+    } else if (existing.child_id == null && subject.child_id != null) {
+      subjectMap.set(subject.name, subject);
+    } else if (existing.child_id != null && subject.child_id != null) {
+      const firstAssigneeId = assigneeIds[0];
+      if (subject.child_id === firstAssigneeId && existing.child_id !== firstAssigneeId) {
+        subjectMap.set(subject.name, subject);
+      }
+    }
+  });
+  return Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Assignee chips — matches hydrate effect so first paint matches loaded event. */
+function initialAssigneeIdsFromEvent(ev) {
+  if (!ev) return [];
+  const childId =
+    ev.child_id ||
+    (ev.child_ids && ev.child_ids.length > 0 ? ev.child_ids[0] : null) ||
+    ev.childId ||
+    ev.child?.id ||
+    null;
+  return ev.child_ids && ev.child_ids.length > 0 ? ev.child_ids : childId ? [childId] : [];
+}
+
+/** Unit / lesson / grade — matches hydrate effect. */
+function initialAcademicStringsFromEvent(ev) {
+  if (!ev) return { unit: '', lesson: '', grade: '', percent: '' };
+  const unitStr = ((ev.unit || ev.curriculum_unit_title || '') + '').trim();
+  const cm = parseCurriculumMetadata(ev);
+  let lessonStr =
+    (ev.lesson && String(ev.lesson).trim()) ||
+    (cm.lesson_label && String(cm.lesson_label).trim()) ||
+    '';
+  if (!lessonStr && ev.curriculum_lesson_id && ev.title) {
+    lessonStr = String(ev.title).trim();
+  }
+  return {
+    unit: unitStr,
+    lesson: lessonStr,
+    grade: ev.grade || '',
+    percent: ev.percent_of_total_grade != null ? String(ev.percent_of_total_grade) : '',
+  };
+}
 
 const getTimestamp = (event, keys = []) => {
   for (const key of keys) {
@@ -557,7 +638,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = [], viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed }) {
   const session = useSession();
   const { user: authUser } = useAuth();
   const toast = useToast();
@@ -575,7 +656,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [startTime, setStartTime] = useState(DEFAULT_START_TIME);
   const [endTime, setEndTime] = useState('');
   const [draftChildId, setDraftChildId] = useState(null);
-  const [assigneeIds, setAssigneeIds] = useState([]);
+  const [assigneeIds, setAssigneeIds] = useState(() => initialAssigneeIdsFromEvent(event));
   const [draftAllDay, setDraftAllDay] = useState(false);
   const [allDay, setAllDay] = useState(false);
   const [draftNotes, setDraftNotes] = useState('');
@@ -583,8 +664,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftStatus, setDraftStatus] = useState('scheduled');
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
-  const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
-  const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
+  const [showAcademicDetails, setShowAcademicDetails] = useState(() => eventHasAcademicDetailsSection(event));
+  const [showLogisticDetails, setShowLogisticDetails] = useState(
+    () => !!(event?.location || event?.mode || event?.instructor)
+  );
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
   const [draftMaterialId, setDraftMaterialId] = useState(null);
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
@@ -608,7 +691,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   
   // Event type and placement
-  const [eventType, setEventType] = useState('Lesson');
+  const [eventType, setEventType] = useState(() =>
+    event?.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event?.event_type || 'Lesson')
+  );
   const [placement, setPlacement] = useState('calendar'); // 'calendar' or 'backlog'
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
   const [calendarViewMonth, setCalendarViewMonth] = useState(new Date());
@@ -625,21 +710,36 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   });
   
   // Academic and location fields
-  const [subjectId, setSubjectId] = useState(null);
-  const [countsTowardPlan, setCountsTowardPlan] = useState(true);
-  const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
-  const [academicYearId, setAcademicYearId] = useState(null);
-  const [academicYears, setAcademicYears] = useState(() => (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0 ? preloadedAcademicYears : []));
-  const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
-  const [unit, setUnit] = useState('');
-  const [lesson, setLesson] = useState('');
-  const [grade, setGrade] = useState('');
-  const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
+  const [subjectId, setSubjectId] = useState(() => event?.subject_id ?? null);
+  const [countsTowardPlan, setCountsTowardPlan] = useState(() => event?.counts_toward_plan !== false);
+  const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(() => {
+    if (!event) return false;
+    if (typeof event.requires_submission_home === 'boolean') return event.requires_submission_home;
+    const loadedType = event.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event.event_type || 'Lesson');
+    return defaultRequiresSubmissionHomeForEventType(loadedType === 'Scheduled Class Day' ? 'Lesson' : loadedType);
+  });
+  const [academicYearId, setAcademicYearId] = useState(() => event?.academic_year_id ?? null);
+  const [academicYears, setAcademicYears] = useState(() =>
+    Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0 ? [...preloadedAcademicYears] : []
+  );
+  const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState(() =>
+    event?.instructional_minutes != null ? String(event.instructional_minutes) : ''
+  );
+  const [unit, setUnit] = useState(() => initialAcademicStringsFromEvent(event).unit);
+  const [lesson, setLesson] = useState(() => initialAcademicStringsFromEvent(event).lesson);
+  const [grade, setGrade] = useState(() => initialAcademicStringsFromEvent(event).grade);
+  const [percentOfTotalGrade, setPercentOfTotalGrade] = useState(() => initialAcademicStringsFromEvent(event).percent);
   const [location, setLocation] = useState('');
   const [mode, setMode] = useState('');
   const [instructor, setInstructor] = useState('');
   const [goalLink, setGoalLink] = useState(null);
-  const [subjects, setSubjects] = useState([]);
+  const [subjects, setSubjects] = useState(() => {
+    const aids = initialAssigneeIdsFromEvent(event);
+    if (Array.isArray(preloadedSubjects) && preloadedSubjects.length > 0 && aids.length > 0) {
+      return filterSubjectsForAssignees(preloadedSubjects, aids);
+    }
+    return [];
+  });
   const [subjectGoals, setSubjectGoals] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
@@ -730,14 +830,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         .limit(200);
       if (mySeq !== linkedHelpFetchSeq.current) return;
       if (error) {
-        setEventLinkedHelpAssignment(null);
         return;
       }
       const match = (rows || []).find((r) => assignmentRowLinksEventId(r, event.id)) || null;
       setEventLinkedHelpAssignment(match);
     } catch {
       if (mySeq !== linkedHelpFetchSeq.current) return;
-      setEventLinkedHelpAssignment(null);
     } finally {
       if (mySeq === linkedHelpFetchSeq.current) {
         setLinkedHelpReady(true);
@@ -769,14 +867,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         .limit(200);
       if (mySeq !== parentLinkedFetchSeq.current) return;
       if (error) {
-        setParentLinkedAssignments([]);
         return;
       }
       const matches = (rows || []).filter((r) => assignmentRowLinksEventId(r, event.id));
       setParentLinkedAssignments(matches);
     } catch {
       if (mySeq !== parentLinkedFetchSeq.current) return;
-      setParentLinkedAssignments([]);
     } finally {
       if (mySeq === parentLinkedFetchSeq.current) {
         setParentLinkedReady(true);
@@ -786,13 +882,33 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   useEffect(() => {
     linkedHelpFetchSeq.current += 1;
-    setLinkedHelpReady(false);
-    setEventLinkedHelpAssignment(null);
-  }, [event?.id, helpChildId]);
+    const et = event?.event_type || eventType;
+    if (!familyId || !event?.id || !session?.role_flags?.isChild) {
+      setEventLinkedHelpAssignment(null);
+      setLinkedHelpReady(true);
+      return;
+    }
+    if (!helpChildId || !isSchoolWorkEventType(et)) {
+      setEventLinkedHelpAssignment(null);
+      setLinkedHelpReady(true);
+      return;
+    }
+    if (preloadedFamilyAssignments === null) {
+      setEventLinkedHelpAssignment(null);
+      setLinkedHelpReady(false);
+      return;
+    }
+    const match =
+      preloadedFamilyAssignments.find(
+        (r) => String(r.child_id) === String(helpChildId) && assignmentRowLinksEventId(r, event.id)
+      ) || null;
+    setEventLinkedHelpAssignment(match);
+    setLinkedHelpReady(true);
+  }, [event?.id, helpChildId, preloadedFamilyAssignments, session?.role_flags?.isChild, familyId, event?.event_type, eventType]);
 
   useEffect(() => {
     loadEventLinkedHelpAssignment();
-  }, [loadEventLinkedHelpAssignment]);
+  }, [loadEventLinkedHelpAssignment, preloadedFamilyAssignments]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -803,13 +919,30 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   useEffect(() => {
     parentLinkedFetchSeq.current += 1;
-    setParentLinkedReady(false);
-    setParentLinkedAssignments([]);
-  }, [event?.id]);
+    const et = event?.event_type || eventType;
+    if (!isParentView || !familyId || !event?.id) {
+      setParentLinkedAssignments([]);
+      setParentLinkedReady(true);
+      return;
+    }
+    if (!isSchoolWorkEventType(et)) {
+      setParentLinkedAssignments([]);
+      setParentLinkedReady(true);
+      return;
+    }
+    if (preloadedFamilyAssignments === null) {
+      setParentLinkedAssignments([]);
+      setParentLinkedReady(false);
+      return;
+    }
+    const matches = preloadedFamilyAssignments.filter((r) => assignmentRowLinksEventId(r, event.id));
+    setParentLinkedAssignments(matches);
+    setParentLinkedReady(true);
+  }, [event?.id, event?.event_type, eventType, preloadedFamilyAssignments, isParentView, familyId]);
 
   useEffect(() => {
     loadEventLinkedParentAssignments();
-  }, [loadEventLinkedParentAssignments]);
+  }, [loadEventLinkedParentAssignments, preloadedFamilyAssignments]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1454,17 +1587,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     
     // Auto-expand sections if they have content
     const hasLogisticDetails = !!(event.location || event.mode || event.instructor);
-    const hasAcademicDetails = !!(
-      event.subject_id ||
-      (event.unit || event.curriculum_unit_title || '').trim() ||
-      (event.lesson || '').trim() ||
-      (cm.lesson_label && String(cm.lesson_label).trim()) ||
-      (event.curriculum_lesson_id && (event.title || '').trim()) ||
-      event.grade ||
-      event.percent_of_total_grade
-    );
     setShowLogisticDetails(hasLogisticDetails);
-    setShowAcademicDetails(hasAcademicDetails);
+    setShowAcademicDetails(eventHasAcademicDetailsSection(event));
     
     // Materials
     setDraftMaterialId(event.material_id || null);
@@ -1513,18 +1637,34 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   useEffect(() => {
     if (familyId && event?.id) {
       loadMaterials();
-      fetchSubjects();
+      const hasPreloaded =
+        Array.isArray(preloadedSubjects) &&
+        preloadedSubjects.length > 0 &&
+        assigneeIds.length > 0;
+      if (hasPreloaded) {
+        setSubjects(filterSubjectsForAssignees(preloadedSubjects, assigneeIds));
+      }
+      fetchSubjects({ background: hasPreloaded });
       if (assigneeIds.length > 0) {
         fetchSubjectGoals(assigneeIds[0]);
       }
     }
-  }, [familyId, event?.id, assigneeIds]);
+  }, [familyId, event?.id, assigneeIds, preloadedSubjects]);
 
-  // Sync preloaded academic years when provided (avoids "Loading..." in Add to plan? chips)
+  // Merge shell preloaded academic years into list (same shape as fetch; keeps rows merged from event-specific fetch)
   useEffect(() => {
-    if (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0) {
-      setAcademicYears(preloadedAcademicYears);
-    }
+    if (!Array.isArray(preloadedAcademicYears) || preloadedAcademicYears.length === 0) return;
+    setAcademicYears((prev) => {
+      const byId = new Map((prev || []).map((a) => [a.id, a]));
+      preloadedAcademicYears.forEach((a) => {
+        if (a?.id) byId.set(a.id, a);
+      });
+      return Array.from(byId.values()).sort((a, b) => {
+        const sa = a.start_date ? String(a.start_date).slice(0, 10) : '';
+        const sb = b.start_date ? String(b.start_date).slice(0, 10) : '';
+        return sb.localeCompare(sa);
+      });
+    });
   }, [preloadedAcademicYears]);
 
   // Load academic years for Instructional accounting (Counts toward year plan → Plan dropdown)
@@ -1712,65 +1852,32 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return () => window.removeEventListener('refreshMaterials', onMaterialsRefresh);
   }, [familyId]);
 
-  const fetchSubjects = async () => {
+  const fetchSubjects = async (opts = {}) => {
+    const background = opts.background === true;
     if (!familyId) return;
-    setLoadingSubjects(true);
+    if (!background) setLoadingSubjects(true);
     try {
       // If no assignees selected, show no subjects (user must select assignee first)
       if (assigneeIds.length === 0) {
         setSubjects([]);
-        setLoadingSubjects(false);
         return;
       }
-      
-      // First, fetch all subjects to see what we have
+
       const { data: allSubjects, error: allError } = await supabase
         .from('subject')
         .select('id, name, child_id')
         .eq('family_id', familyId);
-      
+
       if (allError) {
         console.error('Error fetching all subjects:', allError);
         throw allError;
       }
-      
-      // Filter in JavaScript: Show both family-wide subjects AND child-specific subjects
-      // Family-wide subjects (child_id: null) show for all children
-      // Child-specific subjects only show for the assigned child
-      // Deduplicate by name - if same name exists as both family-wide and child-specific, prefer child-specific
-      const subjectMap = new Map();
-      
-      (allSubjects || []).forEach(subject => {
-        const isFamilyWide = subject.child_id === null;
-        const isForSelectedChild = subject.child_id !== null && assigneeIds.includes(subject.child_id);
-        const shouldInclude = isFamilyWide || isForSelectedChild;
-        
-        if (shouldInclude) {
-          const existing = subjectMap.get(subject.name);
-          
-          // If no existing entry, add this one
-          if (!existing) {
-            subjectMap.set(subject.name, subject);
-          } 
-          // If existing is family-wide and this is child-specific, replace it (prefer child-specific)
-          else if (existing.child_id === null && subject.child_id !== null) {
-            subjectMap.set(subject.name, subject);
-          }
-          // If existing is child-specific and this is also child-specific, prefer the one matching first assignee
-          else if (existing.child_id !== null && subject.child_id !== null) {
-            const firstAssigneeId = assigneeIds[0];
-            if (subject.child_id === firstAssigneeId && existing.child_id !== firstAssigneeId) {
-              subjectMap.set(subject.name, subject);
-            }
-          }
-        }
-      });
-      
-      const filteredSubjects = Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+      const filteredSubjects = filterSubjectsForAssignees(allSubjects, assigneeIds);
       setSubjects(filteredSubjects);
     } catch (error) {
       console.error('Error in fetchSubjects:', error);
-      setSubjects([]);
+      if (!background) setSubjects([]);
     } finally {
       setLoadingSubjects(false);
     }
@@ -1806,6 +1913,52 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     (Array.isArray(event?.assignees) && event.assignees.length ? event.assignees.join(', ') : null);
 
   const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name || (event?.generated_by === 'plan_year' && event?.title) || null;
+
+  /** Stable subject label: local list → preload → embedded event subject (avoids "Unknown" flash). */
+  const resolvedSubjectLabel = useMemo(() => {
+    if (!subjectId) return null;
+    const fromState = subjects.find((s) => s.id === subjectId)?.name;
+    if (fromState) return fromState;
+    if (Array.isArray(preloadedSubjects)) {
+      const fromPre = preloadedSubjects.find((s) => s.id === subjectId)?.name;
+      if (fromPre) return fromPre;
+    }
+    return (
+      event?.subject?.name ||
+      (typeof event?.subject === 'string' ? event.subject : null) ||
+      event?.subjectName ||
+      event?.subject_name ||
+      (event?.generated_by === 'plan_year' && event?.title) ||
+      null
+    );
+  }, [subjectId, subjects, preloadedSubjects, event?.subject, event?.subjectName, event?.subject_name, event?.generated_by, event?.title]);
+
+  /** Academic year row for this event's plan — local list first, then shell preload (stable Add to plan? / banners). */
+  const resolvedAcademicYearRow = useMemo(() => {
+    if (!academicYearId) return null;
+    const fromState = academicYears.find((a) => a.id === academicYearId);
+    if (fromState) return fromState;
+    if (Array.isArray(preloadedAcademicYears)) {
+      return preloadedAcademicYears.find((a) => a.id === academicYearId) || null;
+    }
+    return null;
+  }, [academicYearId, academicYears, preloadedAcademicYears]);
+
+  /** Chips for Add to plan?: merge fetched rows + shell preload without dropping merged ids. */
+  const academicYearsForPlanChips = useMemo(() => {
+    const byId = new Map();
+    (Array.isArray(preloadedAcademicYears) ? preloadedAcademicYears : []).forEach((a) => {
+      if (a?.id) byId.set(a.id, a);
+    });
+    (academicYears || []).forEach((a) => {
+      if (a?.id) byId.set(a.id, a);
+    });
+    return Array.from(byId.values()).sort((a, b) => {
+      const sa = a.start_date ? String(a.start_date).slice(0, 10) : '';
+      const sb = b.start_date ? String(b.start_date).slice(0, 10) : '';
+      return sb.localeCompare(sa);
+    });
+  }, [academicYears, preloadedAcademicYears]);
 
   const handleDelete = async () => {
     if (readOnly) return;
@@ -3215,7 +3368,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
 
   const renderViewMode = () => {
-    const selectedSubject = subjects.find(s => s.id === subjectId);
     const selectedMaterials = materials.filter(m => attachedMaterialIds.includes(m.id));
     
     // Get end date for display - use state first, then fallback to event's end_ts
@@ -3246,7 +3398,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       a?.child?.first_name ||
       familyMembers.find((m) => String(m.id) === String(a?.child_id))?.name ||
       'Child';
-    
+
+    const showParentAlertsRow =
+      isParentView &&
+      event?.id &&
+      isSchoolWorkEventType(event?.event_type || eventType) &&
+      (!parentLinkedReady || parentHelpAssignment || parentSubmissionAssignment);
+
     return (
       <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
         {/* Header / Title */}
@@ -3272,34 +3430,94 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           })}
         >
           <SafeView style={{ flex: 1 }}>
+          {/* Parent: help / submission — above plan + send banners (same footprint as gray banners) */}
+          {showParentAlertsRow && (
+            <View style={{ alignSelf: 'stretch', marginTop: 14, marginBottom: 4 }}>
+              <View
+                style={{
+                  alignSelf: 'stretch',
+                  backgroundColor: 'rgba(79, 70, 229, 0.07)',
+                  borderRadius: 10,
+                  paddingVertical: 7,
+                  paddingHorizontal: 12,
+                  borderWidth: 1,
+                  borderColor: 'rgba(79, 70, 229, 0.18)',
+                }}
+              >
+                {!parentLinkedReady ? (
+                  <View
+                    style={{
+                      minHeight: 40,
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ActivityIndicator size="small" color="#89B5E4" />
+                  </View>
+                ) : (
+                  <>
+                    {parentHelpAssignment ? (
+                      <Text style={{ color: FG, fontSize: 13, lineHeight: 18, ...webCooper(400) }}>
+                        {parentChildLabel(parentHelpAssignment)} asked for help on this.{' '}
+                        <Text
+                          onPress={() => {
+                            setParentHelpModalAssignment(parentHelpAssignment);
+                            setShowParentHelpModal(true);
+                          }}
+                          style={{
+                            fontSize: 13,
+                            color: '#EA580C',
+                            ...webCooper(700),
+                            ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+                          }}
+                        >
+                          Respond to help request
+                        </Text>
+                      </Text>
+                    ) : null}
+                    {parentSubmissionAssignment ? (
+                      <View style={{ marginTop: parentHelpAssignment ? 12 : 0 }}>
+                        <Text style={{ color: FG, fontSize: 13, lineHeight: 18, ...webCooper(400) }}>
+                          {parentChildLabel(parentSubmissionAssignment)} submitted work for review.
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setParentSubmissionModalAssignment(parentSubmissionAssignment);
+                            setShowParentSubmissionModal(true);
+                          }}
+                          style={{ marginTop: 8, alignSelf: 'flex-start' }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={{ fontSize: 13, color: '#2563EB', ...webCooper(700) }}>Review submission</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </>
+                )}
+              </View>
+            </View>
+          )}
+
           {/* Banner when event is connected to a plan - at top */}
           {countsTowardPlan && academicYearId && (() => {
-            const ay = academicYears.find((a) => a.id === academicYearId);
-            const planLabel = !ay ? 'this plan' : (ay.year_name && String(ay.year_name).trim())
-              ? String(ay.year_name).trim()
-              : (() => {
-                  const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                  const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                  if (start && end) {
-                    try {
-                      const s = new Date(start + 'T12:00:00');
-                      const e = new Date(end + 'T12:00:00');
-                      return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-                    } catch (_) {
-                      return `${start} – ${end}`;
-                    }
-                  }
-                  return 'this plan';
-                })();
+            const planLabel = formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'this plan';
             return (
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => {
                   if (typeof window !== 'undefined') {
                     onClose?.();
-                    window.dispatchEvent(new CustomEvent('openPlanYearModal', {
-                      detail: { from: 'event_details', academicYearId },
-                    }));
+                    window.dispatchEvent(
+                      new CustomEvent('openPlanYearModal', {
+                        detail: {
+                          from: 'event_details',
+                          academicYearId,
+                          subjectId:
+                            event?.subject_id != null ? String(event.subject_id) : null,
+                          skipPlanSummary: true,
+                          openToEditList: false,
+                        },
+                      })
+                    );
                   }
                 }}
                 style={[styles.connectedPlanBanner, { marginTop: 8 }]}
@@ -3313,13 +3531,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             );
           })()}
 
-          {/* Plan event note - event linked to plan; attach/detach via Count as instructional time and plan attachment */}
-          {event?.generated_by === 'plan_year' && event?.curriculum_lesson_id == null && editing && (
-            <View style={{ paddingHorizontal: 14, paddingVertical: 6, marginBottom: 2, backgroundColor: '#f0f9ff', borderRadius: 8, marginTop: 4 }}>
-              <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 18 }}>This event is linked to your plan. Use &quot;Count as instructional time&quot; and plan attachment to include or exclude it from the plan.</Text>
-            </View>
-          )}
-
           {isParentView &&
             !readOnly &&
             event?.id &&
@@ -3331,7 +3542,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 onPress={() => setShowSendToStudentModal(true)}
                 style={[
                   styles.connectedPlanBanner,
-                  !(countsTowardPlan && academicYearId) ? { marginTop: 0 } : null,
+                  (countsTowardPlan && academicYearId) || showParentAlertsRow ? { marginTop: 8 } : { marginTop: 14 },
                 ]}
                 {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
                 accessibilityRole="button"
@@ -3374,7 +3585,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
               <View style={[styles.chipOption, styles.chipOptionActive, { alignSelf: 'flex-start' }]}>
                 <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
-                  {formatAcademicYearPlanLabel(academicYears.find((a) => a.id === academicYearId)) || 'This plan'}
+                  {formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'This plan'}
                 </Text>
               </View>
             </View>
@@ -3547,9 +3758,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
                   <View style={[styles.field, styles.fieldStretch]}>
                     <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Subject</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>
-                      {selectedSubject?.name || subjectName || 'Unknown'}
-                    </Text>
+                    {loadingSubjects && !resolvedSubjectLabel ? (
+                      <View style={{ marginTop: 8, alignItems: 'flex-start' }}>
+                        <ActivityIndicator size="small" color={MUTED} />
+                      </View>
+                    ) : (
+                      <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>
+                        {resolvedSubjectLabel || subjectName || 'Unknown'}
+                      </Text>
+                    )}
                   </View>
                 </SafeFieldRow>
               )}
@@ -3837,81 +4054,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </SafeFieldRow>
             )}
 
-            {isParentView &&
-              event?.id &&
-              isSchoolWorkEventType(event?.event_type || eventType) &&
-              (!parentLinkedReady ||
-                parentHelpAssignment ||
-                parentSubmissionAssignment) && (
-                <SafeFieldRow style={[styles.fieldRow, { marginTop: 4 }]}>
-                  <View
-                    style={{
-                      alignSelf: 'stretch',
-                      backgroundColor: 'rgba(79, 70, 229, 0.07)',
-                      borderRadius: 12,
-                      paddingTop: 10,
-                      paddingBottom: 16,
-                      paddingHorizontal: 14,
-                    }}
-                  >
-                    {!parentLinkedReady ? (
-                      <View
-                        style={{
-                          minHeight: 48,
-                          marginTop: 0,
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <ActivityIndicator size="small" color="#89B5E4" />
-                      </View>
-                    ) : (
-                      <>
-                        {parentHelpAssignment ? (
-                          <View style={{ marginTop: 0 }}>
-                            <Text style={{ color: FG, fontSize: 14, lineHeight: 22 }}>
-                              {parentChildLabel(parentHelpAssignment)} asked for help on this.{' '}
-                              <Text
-                                onPress={() => {
-                                  setParentHelpModalAssignment(parentHelpAssignment);
-                                  setShowParentHelpModal(true);
-                                }}
-                                style={{
-                                  fontSize: 14,
-                                  fontWeight: '700',
-                                  color: '#EA580C',
-                                  ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-                                }}
-                              >
-                                Respond to help request
-                              </Text>
-                            </Text>
-                          </View>
-                        ) : null}
-                        {parentSubmissionAssignment ? (
-                          <View style={{ marginTop: parentHelpAssignment ? 16 : 8 }}>
-                            <Text style={{ color: FG, fontSize: 14, lineHeight: 20 }}>
-                              {parentChildLabel(parentSubmissionAssignment)} submitted work for
-                              review.
-                            </Text>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setParentSubmissionModalAssignment(parentSubmissionAssignment);
-                                setShowParentSubmissionModal(true);
-                              }}
-                              style={{ marginTop: 12, alignSelf: 'flex-start' }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#2563EB' }}>
-                                Review submission
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        ) : null}
-                      </>
-                    )}
-                  </View>
-                </SafeFieldRow>
-              )}
           </SafeView>
         </ScrollView>
 
@@ -3998,32 +4140,25 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       >
       {/* Plan link banner + Send to student — top of form, under plan context (matches read-only order) */}
       {countsTowardPlan && academicYearId && (() => {
-        const ay = academicYears.find((a) => a.id === academicYearId);
-        const planLabel = !ay ? 'this plan' : (ay.year_name && String(ay.year_name).trim())
-          ? String(ay.year_name).trim()
-          : (() => {
-              const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-              const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-              if (start && end) {
-                try {
-                  const s = new Date(start + 'T12:00:00');
-                  const e = new Date(end + 'T12:00:00');
-                  return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-                } catch (_) {
-                  return `${start} – ${end}`;
-                }
-              }
-              return 'this plan';
-            })();
+        const planLabel = formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'this plan';
         return (
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => {
               if (typeof window !== 'undefined') {
                 onClose?.();
-                window.dispatchEvent(new CustomEvent('openPlanYearModal', {
-                  detail: { from: 'event_details', academicYearId },
-                }));
+                window.dispatchEvent(
+                  new CustomEvent('openPlanYearModal', {
+                    detail: {
+                      from: 'event_details',
+                      academicYearId,
+                      subjectId:
+                        event?.subject_id != null ? String(event.subject_id) : null,
+                      skipPlanSummary: true,
+                      openToEditList: false,
+                    },
+                  })
+                );
               }
             }}
             style={[styles.connectedPlanBanner, { marginTop: 8 }]}
@@ -4037,12 +4172,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         );
       })()}
 
-      {event?.generated_by === 'plan_year' && event?.curriculum_lesson_id == null && (
-        <View style={{ paddingHorizontal: 14, paddingVertical: 6, marginBottom: 2, backgroundColor: '#f0f9ff', borderRadius: 8, marginTop: 4 }}>
-          <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 18 }}>This event is linked to your plan. Use &quot;Count as instructional time&quot; and plan attachment to include or exclude it from the plan.</Text>
-        </View>
-      )}
-
       {isParentView &&
         !readOnly &&
         event?.id &&
@@ -4054,7 +4183,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             onPress={() => setShowSendToStudentModal(true)}
             style={[
               styles.connectedPlanBanner,
-              !(countsTowardPlan && academicYearId) ? { marginTop: 0 } : null,
+              (countsTowardPlan && academicYearId) ? { marginTop: 8 } : { marginTop: 14 },
             ]}
             {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
             accessibilityRole="button"
@@ -4839,7 +4968,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       <Text style={[styles.chipOptionText, academicYearId === null && styles.chipOptionTextActive]}>No plan</Text>
                     </TouchableOpacity>
                     {(() => {
-                      const baseLabels = academicYears.map((ay) => {
+                      const baseLabels = academicYearsForPlanChips.map((ay) => {
                         const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
                         const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
                         if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
@@ -4847,7 +4976,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       });
                       const labelCounts = {};
                       baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-                      return academicYears.map((ay) => {
+                      return academicYearsForPlanChips.map((ay) => {
                         const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
                         const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
                         let base = ay.year_name && String(ay.year_name).trim()
@@ -4903,7 +5032,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     {assigneeIds.length === 0 
                       ? 'Select Assignee first' 
                       : subjectId 
-                        ? subjects.find(s => s.id === subjectId)?.name || subjectName || 'Select...' 
+                        ? resolvedSubjectLabel || subjectName || 'Select...' 
                         : 'Select subject'}
                   </Text>
                   <ChevronDown size={16} color={assigneeIds.length === 0 ? MUTED : SUB} />
@@ -5654,118 +5783,157 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             transparent
             animationType="fade"
             onRequestClose={() => {
-              if (!sendToStudentSubmitting) setShowSendToStudentModal(false);
+              if (!sendToStudentSubmitting) {
+                setShowSendToStudentModal(false);
+                setSendToStudentNote('');
+              }
             }}
           >
-            <View
+            <TouchableOpacity
               style={{
                 flex: 1,
-                backgroundColor: 'rgba(0,0,0,0.45)',
+                backgroundColor: 'rgba(15, 23, 42, 0.4)',
                 justifyContent: 'center',
                 alignItems: 'center',
-                padding: 24,
+                padding: 16,
               }}
+              activeOpacity={1}
+              onPress={() => {
+                if (!sendToStudentSubmitting) {
+                  setShowSendToStudentModal(false);
+                  setSendToStudentNote('');
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
             >
-              <View
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => {}}
                 style={{
-                  backgroundColor: '#fff',
-                  borderRadius: 14,
-                  padding: 20,
-                  maxWidth: 440,
+                  backgroundColor: LD.shell,
+                  borderRadius: 24,
                   width: '100%',
-                  ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(0,0,0,0.12)' } : {}),
+                  maxWidth: 520,
+                  borderWidth: 1,
+                  borderColor: LD.shellBorder,
+                  overflow: 'hidden',
+                  position: 'relative',
+                  ...shellShadow,
                 }}
               >
-                <Text style={{ fontSize: 17, fontWeight: '700', color: FG, marginBottom: 8 }}>
-                  Send to student
-                </Text>
-                <Text style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 20, marginBottom: 14 }}>
-                  Adds a parent-assigned task linked to this event so it shows under Submissions (Needs your
-                  attention).
-                </Text>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginBottom: 6 }}>Note (optional)</Text>
-                <TextInput
-                  value={sendToStudentNote}
-                  onChangeText={setSendToStudentNote}
-                  placeholder="Add a short message…"
-                  placeholderTextColor={MUTED}
-                  multiline
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!sendToStudentSubmitting) {
+                      setShowSendToStudentModal(false);
+                      setSendToStudentNote('');
+                    }
+                  }}
                   style={{
+                    position: 'absolute',
+                    top: 14,
+                    right: 14,
+                    zIndex: 20,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'rgba(255,255,255,0.85)',
                     borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    borderRadius: 8,
-                    paddingHorizontal: 12,
-                    paddingVertical: 10,
-                    fontSize: 14,
-                    color: FG,
-                    minHeight: 88,
-                    textAlignVertical: 'top',
+                    borderColor: LD.border,
                   }}
-                  editable={!sendToStudentSubmitting}
-                />
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    flexWrap: 'wrap',
-                    gap: 10,
-                    marginTop: 16,
-                    justifyContent: 'flex-end',
-                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (!sendToStudentSubmitting) {
-                        setShowSendToStudentModal(false);
-                        setSendToStudentNote('');
-                      }
-                    }}
-                    style={{ paddingVertical: 10, paddingHorizontal: 14 }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textSecondary }}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => sendWorkToStudents('')}
-                    disabled={sendToStudentSubmitting}
+                  <X size={20} color={LD.ink} />
+                </TouchableOpacity>
+
+                <View style={{ paddingHorizontal: 24, paddingTop: 64, paddingBottom: 28 }}>
+                  <Text
                     style={{
-                      paddingVertical: 10,
-                      paddingHorizontal: 14,
-                      borderRadius: 8,
+                      fontSize: 14,
+                      color: LD.muted,
+                      lineHeight: 21,
+                      marginBottom: 18,
+                      ...fontDisplay('400'),
+                    }}
+                  >
+                    This will notify your student that the assignment needs their attention.
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '600',
+                      color: LD.inkSoft,
+                      marginBottom: 8,
+                      letterSpacing: 0.15,
+                      ...fontDisplay('600'),
+                    }}
+                  >
+                    Note (optional)
+                  </Text>
+                  <TextInput
+                    value={sendToStudentNote}
+                    onChangeText={setSendToStudentNote}
+                    placeholder="Add a short message…"
+                    placeholderTextColor={LD.placeholder}
+                    multiline
+                    editable={!sendToStudentSubmitting}
+                    textAlignVertical="top"
+                    style={{
                       borderWidth: 1,
-                      borderColor: '#E5E7EB',
-                      backgroundColor: '#fff',
-                      opacity: sendToStudentSubmitting ? 0.6 : 1,
+                      borderColor: LD.border,
+                      borderRadius: 16,
+                      paddingHorizontal: 16,
+                      paddingVertical: 14,
+                      fontSize: 15,
+                      color: LD.ink,
+                      minHeight: 120,
+                      maxHeight: 260,
+                      backgroundColor: LD.fillSoft,
+                      ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
                     }}
-                    {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
-                  >
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: FG }}>Just send</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const t = sendToStudentNote.trim();
-                      if (!t) {
-                        toast.push('Add a note, or use Just send.', 'info');
-                        return;
-                      }
-                      sendWorkToStudents(t);
-                    }}
-                    disabled={sendToStudentSubmitting}
-                    style={{
-                      paddingVertical: 10,
-                      paddingHorizontal: 14,
-                      borderRadius: 8,
-                      backgroundColor: '#4F46E5',
-                      opacity: sendToStudentSubmitting ? 0.6 : 1,
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
-                  >
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
-                      {sendToStudentSubmitting ? 'Sending…' : 'Send with note'}
-                    </Text>
-                  </TouchableOpacity>
+                  />
+
+                  <View style={{ marginTop: 24 }}>
+                    <TouchableOpacity
+                      onPress={() => sendWorkToStudents(sendToStudentNote.trim())}
+                      disabled={sendToStudentSubmitting}
+                      style={{
+                        backgroundColor: LD.black,
+                        paddingVertical: 15,
+                        borderRadius: 14,
+                        alignItems: 'center',
+                        opacity: sendToStudentSubmitting ? 0.5 : 1,
+                        ...(Platform.OS === 'web'
+                          ? { boxShadow: '0 2px 8px rgba(17, 24, 39, 0.12)', cursor: sendToStudentSubmitting ? 'not-allowed' : 'pointer' }
+                          : {}),
+                      }}
+                    >
+                      <Text style={{ fontSize: 16, fontWeight: '600', color: '#ffffff', ...fontDisplay('600') }}>
+                        {sendToStudentSubmitting ? 'Sending…' : 'Send to student'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (!sendToStudentSubmitting) {
+                          setShowSendToStudentModal(false);
+                          setSendToStudentNote('');
+                        }
+                      }}
+                      disabled={sendToStudentSubmitting}
+                      style={{ paddingVertical: 12, alignItems: 'center', marginTop: 4 }}
+                      {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '400', color: LD.mutedLight }}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
-            </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
           </Modal>
 
           <StudentHelpHistoryModal
@@ -7608,9 +7776,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9fafb',
     overflow: 'visible',
   },
-  /** Extra space above Academic Details after Schedule time / prior sections */
+  /** Tight spacing above Academic Details after Schedule / Logistical sections */
   academicSectionTopSpacing: {
-    marginTop: 20,
+    marginTop: 8,
   },
   selectContainer: {
     position: 'relative',

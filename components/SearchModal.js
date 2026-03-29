@@ -3,8 +3,28 @@ import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, ScrollView,
 import { X, Send } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { processDoodleMessage, executeTool, getDisplayMessage, getToolName, getToolParams } from '../lib/doodleAssistant.js'
+import { getDisambiguation } from '../lib/assistant/responseContract.js'
+import { CHAT_COMMIT_KINDS, getPendingCommit, buildChatbotAuditPayload } from '../lib/assistant/chatCommit.js'
+import { AIConversationService } from '../lib/aiConversationService.js'
 import { supabase } from '../lib/supabase'
 import { createEventViaSupabaseRpc } from '../lib/services/plannerClientWithOffline'
+import { executeChatDeleteEvent, executeChatUpdateEvent } from '../lib/assistant/eventChatActions.js'
+import { executeMarkAttendanceRpc } from '../lib/assistant/attendanceChatActions.js'
+import { executeLogGradeChat } from '../lib/assistant/gradesChatActions.js'
+import {
+  executeArchiveMaterialChat,
+  executeRenameMaterialChat,
+  executeCreateLinkMaterialChat,
+} from '../lib/assistant/materialChatActions.js'
+import {
+  executeUpdateChildChat,
+  executeArchiveChildChat,
+  executeDeleteChildPermanentChat,
+  executeAddSubjectChat,
+  executeUpdateSubjectChat,
+} from '../lib/assistant/familyRosterChatActions.js'
+import { deleteSubjectCascadeForFamily, dispatchSubjectDeletedSideEffects } from '../lib/services/deleteSubjectCascade.js'
+import DoodlePendingCommitBar from './assistant/DoodlePendingCommitBar.js'
 
 export default function SearchModal({ visible, onClose, onNavigate }) {
   const { user } = useAuth()
@@ -12,6 +32,8 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
   const [familyId, setFamilyId] = useState(null)
+  const [doodleConversationId, setDoodleConversationId] = useState(null)
+  const doodleConversationIdRef = useRef(null)
   const slideAnim = useRef(new Animated.Value(0)).current
   const scaleAnim = useRef(new Animated.Value(0.8)).current
   const searchInputRef = useRef(null)
@@ -68,6 +90,8 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
       }
     
     setMessages([])
+    setDoodleConversationId(null)
+    doodleConversationIdRef.current = null
   }
 
   const INTRO_TEXT = `Hi! I'm Doodle , your fast chat assistant. Ask away... 🐩💌`
@@ -89,12 +113,25 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
 
     try {
       if (familyId) {
-        const recentMessages = messages.map((m) => ({ role: m.role, content: m.content }))
-        const response = await processDoodleMessage(userMessage, familyId, null, { recentMessages })
+        let conversationId = doodleConversationIdRef.current || doodleConversationId
+        if (!conversationId) {
+          conversationId = await AIConversationService.createConversation(familyId, 'doodlebot', 'Doodle')
+          doodleConversationIdRef.current = conversationId
+          setDoodleConversationId(conversationId)
+        }
+        await AIConversationService.addMessage(conversationId, 'user', userMessage)
+
+        const recentMessages = messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.disambiguation ? { disambiguation: m.disambiguation } : {}),
+        }))
+        const response = await processDoodleMessage(userMessage, familyId, conversationId, { recentMessages })
         let finalResponse = getDisplayMessage(response)
 
+        const pendingCommit = getPendingCommit(response)
         const toolName = getToolName(response)
-        if (toolName) {
+        if (toolName && !pendingCommit) {
           try {
             const toolResult = await executeTool(toolName, getToolParams(response), familyId)
             if (toolResult.success && toolResult.userMessage) {
@@ -113,18 +150,41 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
         if (response.openTaskModal && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('openTaskModal', { detail: response.openTaskModal }))
         }
+
         if (response.createEventInBackground) {
           const { eventData, familyId: famId, childIds } = response.createEventInBackground
           const { data: created, error } = await createEventViaSupabaseRpc(eventData, famId, childIds)
           if (error) {
             console.warn('[SearchModal] Doodle createEvent RPC failed:', error)
             finalResponse += '\n\nSorry, I couldn’t save that event. Please try adding it from the planner.'
-          } else if (created?.length > 0 && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('refreshCalendar'))
-            window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+          } else if (created?.length > 0) {
+            try {
+              await AIConversationService.recordAction(
+                conversationId,
+                CHAT_COMMIT_KINDS.CREATE_EVENT,
+                buildChatbotAuditPayload(CHAT_COMMIT_KINDS.CREATE_EVENT, { eventData, familyId: famId, childIds }, { event_ids: created.map((c) => c.id) }, { client: 'search_modal_legacy_path' }),
+                'completed'
+              )
+            } catch (e) {
+              console.warn('[SearchModal] record_ai_action failed:', e)
+            }
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('refreshCalendar'))
+              window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+            }
           }
         }
-        setMessages([...newMessages, { role: 'assistant', content: finalResponse, timestamp: Date.now() }])
+
+        const disambiguation = getDisambiguation(response)
+        const assistantMsg = {
+          role: 'assistant',
+          content: finalResponse,
+          timestamp: Date.now(),
+          ...(disambiguation ? { disambiguation } : {}),
+          ...(pendingCommit ? { pendingCommit } : {}),
+        }
+        setMessages([...newMessages, assistantMsg])
+        await AIConversationService.addMessage(conversationId, 'assistant', finalResponse)
       }
     } catch (error) {
       console.error('Search error:', error)
@@ -132,6 +192,1106 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleConfirmPendingCommit = async (messageIndex) => {
+    const msg = messages[messageIndex]
+    const pc = msg?.pendingCommit
+    if (!pc || pc.resolved) return
+
+    const convId = doodleConversationIdRef.current || doodleConversationId
+
+    if (pc.kind === CHAT_COMMIT_KINDS.ADD_ACTIVITY || pc.kind === CHAT_COMMIT_KINDS.QUEUE_RESCHEDULE) {
+      const { toolName, params, familyId: fid } = pc.payload || {}
+      if (!fid || !toolName) return
+      setIsLoading(true)
+      try {
+        const toolResult = await executeTool(toolName, params, fid)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              pc.kind,
+              buildChatbotAuditPayload(
+                pc.kind,
+                { toolName, params },
+                { success: true, data: toolResult?.data ?? null, userMessage: toolResult?.userMessage },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        const extra = toolResult?.userMessage ? `\n\n${toolResult.userMessage}` : '\n\n✅ Done.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Tool commit failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              pc.kind,
+              buildChatbotAuditPayload(
+                pc.kind,
+                { toolName, params },
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore audit failure */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "that couldn't be saved."} Try again with more detail or from the planner.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.MARK_ATTENDANCE) {
+      const { familyId: fid, childId, dateISO, uiStatus, childName } = pc.payload || {}
+      if (!fid || !childId || !dateISO) return
+      setIsLoading(true)
+      try {
+        const res = await executeMarkAttendanceRpc(fid, childId, dateISO, uiStatus)
+        if (!res.success) throw new Error(res.error || 'Attendance save failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.MARK_ATTENDANCE,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.MARK_ATTENDANCE,
+                { familyId: fid, childId, dateISO, uiStatus, childName },
+                { success: true, data: res.data ?? null },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Saved.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Mark attendance failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.MARK_ATTENDANCE,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.MARK_ATTENDANCE,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't save attendance."} Try the planner attendance view.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.LOG_GRADE) {
+      const {
+        familyId: fid,
+        childId,
+        subjectId,
+        gradeLetter,
+        score,
+        possible,
+        childName,
+        subjectName,
+      } = pc.payload || {}
+      if (!fid || !childId) return
+      setIsLoading(true)
+      try {
+        const res = await executeLogGradeChat(fid, user?.id || null, {
+          childId,
+          subjectId,
+          gradeLetter,
+          score,
+          possible,
+          notes: null,
+        })
+        if (!res.success) throw new Error(res.error || 'Save failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.LOG_GRADE,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.LOG_GRADE,
+                { familyId: fid, childId, subjectId, gradeLetter, score, possible, childName, subjectName },
+                { success: true, data: res.data ?? null },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'))
+          if (subjectId) {
+            window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }))
+          }
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Saved.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Log grade failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.LOG_GRADE,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.LOG_GRADE,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't save that grade."} Try **Records**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    const dispatchFamilyRefresh = () => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshChildren'))
+        window.dispatchEvent(new CustomEvent('refreshFamily'))
+      }
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.UPDATE_CHILD) {
+      const { familyId: fid, childId, updates, displayName } = pc.payload || {}
+      if (!fid || !childId || !updates) return
+      setIsLoading(true)
+      try {
+        const res = await executeUpdateChildChat(fid, childId, updates)
+        if (!res.success) throw new Error(res.error || 'Update failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_CHILD,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_CHILD,
+                { familyId: fid, childId, updates, displayName },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        dispatchFamilyRefresh()
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\n✅ ${res.userMessage || 'Updated.'}`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } catch (err) {
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_CHILD,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_CHILD,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {}
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't update."} Try **Family**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.ARCHIVE_CHILD) {
+      const { familyId: fid, childId, displayName } = pc.payload || {}
+      if (!fid || !childId) return
+      setIsLoading(true)
+      try {
+        const res = await executeArchiveChildChat(fid, childId)
+        if (!res.success) throw new Error(res.error || 'Archive failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.ARCHIVE_CHILD,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.ARCHIVE_CHILD,
+                { familyId: fid, childId, displayName },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        dispatchFamilyRefresh()
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\n✅ ${res.userMessage || 'Archived.'}`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } catch (err) {
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.ARCHIVE_CHILD,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.ARCHIVE_CHILD,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {}
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't archive."}`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.DELETE_CHILD_PERMANENT) {
+      const { familyId: fid, childId, confirmName, displayName } = pc.payload || {}
+      if (!fid || !childId || !confirmName) return
+      setIsLoading(true)
+      try {
+        const res = await executeDeleteChildPermanentChat(fid, childId, confirmName)
+        if (!res.success) throw new Error(res.error || 'Delete failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_CHILD_PERMANENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_CHILD_PERMANENT,
+                { familyId: fid, childId, displayName },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        dispatchFamilyRefresh()
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'))
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }))
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\n✅ ${res.userMessage || 'Removed.'}`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } catch (err) {
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_CHILD_PERMANENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_CHILD_PERMANENT,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {}
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't delete."} Confirm the name matches **Family** exactly.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.ADD_SUBJECT) {
+      const { familyId: fid, childId, subjectName, childName } = pc.payload || {}
+      if (!fid || !childId || !subjectName) return
+      setIsLoading(true)
+      try {
+        const res = await executeAddSubjectChat(fid, childId, subjectName)
+        if (!res.success) throw new Error(res.error || 'Add subject failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.ADD_SUBJECT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.ADD_SUBJECT,
+                { familyId: fid, childId, subjectName, childName },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        dispatchFamilyRefresh()
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Added.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.ADD_SUBJECT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.ADD_SUBJECT,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {}
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't add subject."} Try **Subjects**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.DELETE_MATERIAL) {
+      const { familyId: fid, materialId, snapshot } = pc.payload || {}
+      if (!fid || !materialId) return
+      setIsLoading(true)
+      try {
+        const res = await executeArchiveMaterialChat(fid, materialId)
+        if (!res.success) throw new Error(res.error || 'Remove failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_MATERIAL,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_MATERIAL,
+                { familyId: fid, materialId, snapshot },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Removed.'
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId: fid } }))
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Delete material failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_MATERIAL,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_MATERIAL,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't remove that."} Try from Library.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.UPDATE_MATERIAL) {
+      const { familyId: fid, materialId, snapshot, newTitle } = pc.payload || {}
+      if (!materialId || !newTitle) return
+      setIsLoading(true)
+      try {
+        const res = await executeRenameMaterialChat(materialId, newTitle)
+        if (!res.success) throw new Error(res.error || 'Rename failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_MATERIAL,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_MATERIAL,
+                { familyId: fid, materialId, snapshot, newTitle },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        if (typeof window !== 'undefined' && fid) {
+          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId: fid } }))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Renamed.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Rename material failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_MATERIAL,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_MATERIAL,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't rename that."} Try from **Library**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.ADD_MATERIAL_LINK) {
+      const { familyId: fid, title, providerUrl, childId, subjectId, snapshot } = pc.payload || {}
+      if (!fid || !providerUrl) return
+      setIsLoading(true)
+      try {
+        const res = await executeCreateLinkMaterialChat(fid, { title, providerUrl, childId, subjectId })
+        if (!res.success) throw new Error(res.error || 'Add failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.ADD_MATERIAL_LINK,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.ADD_MATERIAL_LINK,
+                { familyId: fid, title, providerUrl, childId, subjectId, snapshot },
+                { success: true, materialId: res.materialId },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId: fid } }))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Added.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Add material link failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.ADD_MATERIAL_LINK,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.ADD_MATERIAL_LINK,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't add that link."} Try **Library** → **Add material**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.UPDATE_SUBJECT) {
+      const { familyId: fid, subjectId, snapshot, newName } = pc.payload || {}
+      if (!fid || !subjectId || !newName) return
+      setIsLoading(true)
+      try {
+        const res = await executeUpdateSubjectChat(fid, subjectId, newName)
+        if (!res.success) throw new Error(res.error || 'Update failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_SUBJECT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_SUBJECT,
+                { familyId: fid, subjectId, snapshot, newName },
+                { success: true },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        dispatchFamilyRefresh()
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Updated.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Update subject failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_SUBJECT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_SUBJECT,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't rename that subject."} Try **Subjects**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.DELETE_SUBJECT) {
+      const { familyId: fid, subjectId, snapshot } = pc.payload || {}
+      if (!fid || !subjectId) return
+      setIsLoading(true)
+      try {
+        const result = await deleteSubjectCascadeForFamily(fid, subjectId, snapshot?.name)
+        if (!result.ok) throw new Error(result.error || 'Delete failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_SUBJECT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_SUBJECT,
+                { familyId: fid, subjectId, snapshot },
+                { success: true, deletedName: result.deletedName },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        dispatchSubjectDeletedSideEffects(fid)
+        dispatchFamilyRefresh()
+        const extra = `\n\n✅ Deleted subject **${(result.deletedName || snapshot?.name || 'Subject').trim()}**.`
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Delete subject failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_SUBJECT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_SUBJECT,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't delete that subject."} Try **Subjects**.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.DELETE_EVENT) {
+      const { familyId: fid, eventId, snapshot } = pc.payload || {}
+      if (!fid || !eventId) return
+      setIsLoading(true)
+      try {
+        const res = await executeChatDeleteEvent(fid, eventId)
+        if (!res.success) throw new Error(res.error || 'Delete failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_EVENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_EVENT,
+                { familyId: fid, eventId, snapshot },
+                { success: true, data: res.data ?? null },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshCalendar'))
+          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Deleted.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Delete event commit failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.DELETE_EVENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.DELETE_EVENT,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't delete that event."} Try from the planner.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind === CHAT_COMMIT_KINDS.UPDATE_EVENT) {
+      const { eventId, updates, allowOverlaps } = pc.payload || {}
+      if (!eventId || !updates || typeof updates !== 'object') return
+      setIsLoading(true)
+      try {
+        let res = await executeChatUpdateEvent(eventId, updates, allowOverlaps ?? false)
+        const errText = String(res.error || '').toLowerCase()
+        if (!res.success && (errText.includes('overlap') || errText.includes('exclusion'))) {
+          res = await executeChatUpdateEvent(eventId, updates, true)
+        }
+        if (!res.success) throw new Error(res.error || 'Update failed')
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_EVENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_EVENT,
+                { eventId, updates, allowOverlaps: allowOverlaps ?? false },
+                { success: true, data: res.data ?? null },
+                { client: 'search_modal' }
+              ),
+              'completed'
+            )
+          } catch (e) {
+            console.warn('[SearchModal] record_ai_action failed:', e)
+          }
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshCalendar'))
+          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+        }
+        const extra = res.userMessage ? `\n\n${res.userMessage}` : '\n\n✅ Updated.'
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? { ...m, content: `${m.content}${extra}`, pendingCommit: { ...pc, resolved: true } }
+              : m
+          )
+        )
+      } catch (err) {
+        console.error('[SearchModal] Update event commit failed:', err)
+        if (convId) {
+          try {
+            await AIConversationService.recordAction(
+              convId,
+              CHAT_COMMIT_KINDS.UPDATE_EVENT,
+              buildChatbotAuditPayload(
+                CHAT_COMMIT_KINDS.UPDATE_EVENT,
+                pc.payload || {},
+                { success: false, error: err?.message || String(err) },
+                { client: 'search_modal' }
+              ),
+              'failed'
+            )
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't update that event."} Try editing in the planner.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
+    if (pc.kind !== CHAT_COMMIT_KINDS.CREATE_EVENT) return
+    const { eventData, familyId: famId, childIds } = pc.payload || {}
+    if (!famId || !childIds?.length) return
+
+    setIsLoading(true)
+    try {
+      const { data: created, error } = await createEventViaSupabaseRpc(eventData, famId, childIds)
+      if (error) {
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === messageIndex
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nSorry, I couldn’t save that event. Try adding it from the planner.`,
+                  pendingCommit: { ...pc, resolved: true },
+                }
+              : m
+          )
+        )
+        return
+      }
+      if (convId) {
+        try {
+          await AIConversationService.recordAction(
+            convId,
+            CHAT_COMMIT_KINDS.CREATE_EVENT,
+            buildChatbotAuditPayload(
+              CHAT_COMMIT_KINDS.CREATE_EVENT,
+              { eventData, familyId: famId, childIds },
+              { event_ids: (created || []).map((c) => c.id) },
+              { client: 'search_modal' }
+            ),
+            'completed'
+          )
+        } catch (e) {
+          console.warn('[SearchModal] record_ai_action failed:', e)
+        }
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar'))
+        window.dispatchEvent(new CustomEvent('refreshPlannerWeek'))
+      }
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === messageIndex
+            ? {
+                ...m,
+                content: `${m.content}\n\n✅ Added to your calendar.`,
+                pendingCommit: { ...pc, resolved: true },
+              }
+            : m
+        )
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleCancelPendingCommit = (messageIndex) => {
+    const msg = messages[messageIndex]
+    const pc = msg?.pendingCommit
+    if (!pc || pc.resolved) return
+    setMessages((prev) =>
+      prev.map((m, i) =>
+        i === messageIndex
+          ? {
+              ...m,
+              content: `${m.content}\n\nCancelled — nothing was saved.`,
+              pendingCommit: { ...pc, resolved: true },
+            }
+          : m
+      )
+    )
   }
 
   handleSearchRef.current = handleSearch
@@ -203,7 +1363,7 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
               <>
                 {messages.map((msg, index) => (
                   <View
-                    key={index}
+                    key={`${msg.timestamp}-${index}`}
                     style={[
                       styles.message,
                       msg.role === 'user' ? styles.userMessage : styles.assistantMessage
@@ -215,6 +1375,14 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
                     ]}>
                       {msg.content}
                     </Text>
+                    {msg.role === 'assistant' ? (
+                      <DoodlePendingCommitBar
+                        pendingCommit={msg.pendingCommit}
+                        disabled={isLoading}
+                        onConfirm={() => handleConfirmPendingCommit(index)}
+                        onCancel={() => handleCancelPendingCommit(index)}
+                      />
+                    ) : null}
                   </View>
                 ))}
                 {isLoading && (
