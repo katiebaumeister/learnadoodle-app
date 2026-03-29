@@ -525,6 +525,13 @@ function parsePlanCardLines(ay) {
   return { line1: name, line2: null, line3: dateRange };
 }
 
+/** Sort key for Edit plan list: subject title when present, else first line / year name. */
+function editPlanListSortKey(ay) {
+  const lines = parsePlanCardLines(ay);
+  if (lines.line2) return lines.line2;
+  return lines.line1 || ay?.year_name || '';
+}
+
 /**
  * Hide Edit plan rows whose subject label no longer matches any family subject (e.g. subject removed on Subjects page).
  * Matches buildPlanYearName: segment is parts[1] when year_name uses " · "; multi-subject labels use commas and optional "+N".
@@ -2503,13 +2510,17 @@ export default function PlanYearModal({
     return getPlanEditListTimesForPlans(familyId, rows !== null ? rows : []);
   });
 
-  const editPlanListRows = useMemo(
-    () =>
-      (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
-        planRowSubjectsStillExist(ay, baseSubjectList),
-      ),
-    [previousPlans, baseSubjectList],
-  );
+  const editPlanListRows = useMemo(() => {
+    const rows = (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
+      planRowSubjectsStillExist(ay, baseSubjectList),
+    );
+    return [...rows].sort((a, b) =>
+      editPlanListSortKey(a).localeCompare(editPlanListSortKey(b), undefined, {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+  }, [previousPlans, baseSubjectList]);
 
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;

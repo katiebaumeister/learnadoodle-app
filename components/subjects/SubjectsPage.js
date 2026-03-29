@@ -611,7 +611,6 @@ export default function SubjectsPage({
         }}
         onBack={handleBack}
         onEditSubject={onEditSubject}
-        onNavigateToPlanner={handleNavigateToPlanner}
       />
     );
   }

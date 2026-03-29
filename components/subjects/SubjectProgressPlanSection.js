@@ -838,10 +838,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    marginTop: 14,
     paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(148, 163, 184, 0.25)',
     gap: 0,
   },
   unitsFooterLabel: {

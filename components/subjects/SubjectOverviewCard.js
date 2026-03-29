@@ -418,17 +418,17 @@ export default function SubjectOverviewCard({
         <TouchableOpacity
           style={[
             styles.actionButtonPill,
-            hoveredButton === 'lesson' && styles.actionButtonPillHovered
+            hoveredButton === 'assignment' && styles.actionButtonPillHovered
           ]}
-          onPress={handleAddLesson}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('lesson')}
+          onPress={handleAddAssignment}
+          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('assignment')}
           onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
         >
-          <GraduationCap size={16} color="#6B7280" />
+          <ClipboardList size={16} color="#6B7280" />
           <Text style={[
             styles.actionButtonPillText,
-            hoveredButton === 'lesson' && styles.actionButtonPillTextHovered
-          ]}>Add Lesson</Text>
+            hoveredButton === 'assignment' && styles.actionButtonPillTextHovered
+          ]}>Add Assignment</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -448,17 +448,17 @@ export default function SubjectOverviewCard({
         <TouchableOpacity
           style={[
             styles.actionButtonPill,
-            hoveredButton === 'assignment' && styles.actionButtonPillHovered
+            hoveredButton === 'lesson' && styles.actionButtonPillHovered
           ]}
-          onPress={handleAddAssignment}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('assignment')}
+          onPress={handleAddLesson}
+          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('lesson')}
           onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
         >
-          <ClipboardList size={16} color="#6B7280" />
+          <GraduationCap size={16} color="#6B7280" />
           <Text style={[
             styles.actionButtonPillText,
-            hoveredButton === 'assignment' && styles.actionButtonPillTextHovered
-          ]}>Add Assignment</Text>
+            hoveredButton === 'lesson' && styles.actionButtonPillTextHovered
+          ]}>Add Lesson</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>

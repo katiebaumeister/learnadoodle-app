@@ -7781,28 +7781,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 }));
               }
             }}
-            onNavigateToPlanner={(params = {}) => {
-              if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-              if (onTabChange) onTabChange('planner');
-              const view = params.view || 'month';
-              const queryParams = new URLSearchParams();
-              if (params.subjectId) queryParams.set('subjectId', params.subjectId);
-              if (params.childId) queryParams.set('childId', params.childId);
-              if (params.date) queryParams.set('date', params.date);
-              queryParams.set('view', view);
-              const url = new URL(window.location.href);
-              url.pathname = '/planner';
-              url.search = queryParams.toString();
-              window.history.replaceState({}, '', url.toString());
-              const syncView = () => {
-                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
-              };
-              if (typeof requestAnimationFrame === 'function') {
-                requestAnimationFrame(syncView);
-              } else {
-                setTimeout(syncView, 0);
-              }
-            }}
           />
         );
       } catch (err) {

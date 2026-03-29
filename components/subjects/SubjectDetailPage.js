@@ -60,7 +60,6 @@ export default function SubjectDetailPage({
   children = [],
   onBack,
   onEditSubject,
-  onNavigateToPlanner,
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
   initialScrollToSectionId = null,
@@ -372,6 +371,18 @@ export default function SubjectDetailPage({
     return items.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
   }, [grades, eventOutcomes, subjectData?.events]);
 
+  /** Shown in Grades header: API aggregate when present, else average of percents on listed items. */
+  const displayGradeAveragePercent = useMemo(() => {
+    const clamp = (n) => Math.max(0, Math.min(100, Math.round(Number(n))));
+    if (avgGradePercent != null && Number.isFinite(Number(avgGradePercent))) {
+      return clamp(avgGradePercent);
+    }
+    const withPct = gradedItems.filter((i) => i.percent != null && Number.isFinite(i.percent));
+    if (withPct.length === 0) return null;
+    const sum = withPct.reduce((s, i) => s + i.percent, 0);
+    return clamp(sum / withPct.length);
+  }, [avgGradePercent, gradedItems]);
+
   const assignmentAttentionByEventId = subjectData?.assignmentAttentionByEventId;
   const assignmentsNeedingHelp = subjectData?.assignmentsNeedingHelp || [];
   const assignmentsAssignedToStudent = subjectData?.assignmentsAssignedToStudent || [];
@@ -472,10 +483,13 @@ export default function SubjectDetailPage({
               )}
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => onNavigateToPlanner?.({ subjectId: subject.id, view: 'month' })}
+                onPress={handleAddAssignment}
+                accessibilityRole="button"
+                accessibilityLabel="Add assignment"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Calendar size={16} color="#6B7280" />
-                <Text style={styles.actionButtonText}>View in Planner</Text>
+                <Plus size={16} color="#6B7280" />
+                <Text style={styles.actionButtonText}>Add assignment</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -560,7 +574,28 @@ export default function SubjectDetailPage({
             onPress={() => scrollToSection('grades-section')}
           >
             <Text style={styles.summaryTileLabel}>Grades</Text>
-            <Text style={styles.summaryTileValue}>Coming soon</Text>
+            {displayGradeAveragePercent != null ? (
+              <>
+                <Text style={styles.summaryTileValue}>{displayGradeAveragePercent}%</Text>
+                <Text style={styles.summaryTileCaption}>current average</Text>
+              </>
+            ) : gradedItems.length > 0 ? (
+              <>
+                <Text style={styles.summaryTileValue}>
+                  {gradedItems.length} recorded
+                </Text>
+                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
+                  Add numeric scores to see an average percentage.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.summaryTileValue}>No grades yet</Text>
+                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
+                  Add assignments or assessments for {subject?.name || 'this subject'}.
+                </Text>
+              </>
+            )}
             {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
               <Text style={styles.summaryTileSubtext} numberOfLines={2}>
                 {assignmentsAssignedToStudent.length} assignment
@@ -893,8 +928,30 @@ export default function SubjectDetailPage({
           ) : null}
           {gradedItems.length > 0 && (
             <View style={styles.gradeAverage}>
-              <Text style={styles.gradeAverageLabel}>Current Average</Text>
-              <Text style={styles.gradeAverageComingSoon}>Logic for calculating grade averages is still being built, check back soon...</Text>
+              <View style={styles.gradeAverageRow}>
+                <Text style={styles.gradeAverageLabel}>Current average</Text>
+                <Text
+                  style={
+                    displayGradeAveragePercent != null
+                      ? styles.gradeAverageValue
+                      : styles.gradeAveragePlaceholder
+                  }
+                  accessibilityRole="text"
+                  accessibilityLabel={
+                    displayGradeAveragePercent != null
+                      ? `Current grade average, ${displayGradeAveragePercent} percent`
+                      : 'No numeric average yet'
+                  }
+                >
+                  {displayGradeAveragePercent != null ? `${displayGradeAveragePercent}%` : '—'}
+                </Text>
+              </View>
+              {displayGradeAveragePercent == null ? (
+                <Text style={styles.gradeAverageHint}>
+                  Average uses numeric scores or mapped letter grades. Add scores on assignments or assessments to see a
+                  percentage.
+                </Text>
+              ) : null}
             </View>
           )}
           {gradedItems.length > 0 ? (
@@ -963,10 +1020,6 @@ export default function SubjectDetailPage({
               <Text style={styles.emptyStateText}>
                 Grades appear once you add assignments or assessments.
               </Text>
-              <TouchableOpacity style={styles.emptyStateButton} onPress={handleAddAssignment}>
-                <Plus size={18} color="#6B7280" />
-                <Text style={styles.emptyStateButtonText}>Add Assignment</Text>
-              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -1801,18 +1854,22 @@ const styles = StyleSheet.create({
     }),
   },
   gradeAverage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     padding: 16,
     backgroundColor: '#F9FAFB',
     borderRadius: 8,
     marginBottom: 16,
   },
+  gradeAverageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   gradeAverageLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: '#6B7280',
+    flexShrink: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1825,13 +1882,22 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  gradeAverageComingSoon: {
+  gradeAveragePlaceholder: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#9CA3AF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  gradeAverageHint: {
     fontSize: 13,
     fontWeight: '500',
     color: '#6B7280',
-    marginTop: 4,
+    marginTop: 8,
+    lineHeight: 18,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   gradesList: {
