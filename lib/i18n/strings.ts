@@ -298,6 +298,12 @@ export const STRINGS = {
       instructionalSlotsAvailableMany: "{count} instructional slots available",
       draftLessonSlotMapIntro: "Lessons map to your class times in order:",
       cadenceGenerateLabel: "Generate curriculum",
+      generateCurriculumIntro:
+        "We use your selected students, subject, plan dates, and class schedule to size units and lessons. Add anything else you want below.",
+      generateCurriculumFreeFormPlaceholder:
+        "e.g. We will use your selected students, subject, and class days to generate curriculum. Add any other specific requirements or preferences like learner stage or education style here.",
+      generateAndPreview: "Generate and preview →",
+      generateAndPreviewLoading: "Generating…",
       unitInputModalTitle: "Manual input",
       a11yCadenceAddUnitsMethod: "{methodLabel} for {subjectName}",
       footerSaveDraftLogisticsFirst: "Continue in Builder",
@@ -344,6 +350,8 @@ export const STRINGS = {
       importPreviewStructureLoading: "Parsing…",
       importStreamAssistantLabel: "Live preview",
       importStreamWaiting: "Reading your outline…",
+      uploadParsingSubtitle:
+        "We're reading your uploaded document and extracting units and lessons. This may take a moment.",
       importFromTextTitle: "Import from text",
       importFromTextIntro:
         "Paste your syllabus, lesson list, or plan. We'll organize it into units and lessons.",

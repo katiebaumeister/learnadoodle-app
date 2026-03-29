@@ -6041,8 +6041,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <AddMaterialModal
             visible={showAddMaterialModal}
             onClose={() => setShowAddMaterialModal(false)}
-            onSaved={() => {
+            onSaved={(saved) => {
               loadMaterials();
+              const id = saved?.id;
+              if (id) {
+                setSelectedMaterialId(id);
+                setAttachedMaterialIds([id]);
+              }
             }}
             familyId={familyId}
             children={familyMembers}

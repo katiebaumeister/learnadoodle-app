@@ -56,6 +56,7 @@ import {
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import ConfirmDialog from '../ConfirmDialog';
+import AddMaterialModal from '../materials/AddMaterialModal';
 import { useToast } from '../Toast';
 import {
   createDefaultAcademicYear,
@@ -121,14 +122,6 @@ const PARSE_MODES = [
   { value: 'lesson_based', labelKey: 'parseModeLessonBased' },
   { value: 'week_based', labelKey: 'parseModeWeekBased' },
   { value: 'date_based', labelKey: 'parseModeDateBased' },
-];
-
-const DURATION_OPTIONS = [
-  { value: 'single_unit', labelKey: 'durationSingleUnit' },
-  { value: 'multi_unit_course', labelKey: 'durationMultiUnit' },
-  { value: 'semester', labelKey: 'durationSemester' },
-  { value: 'full_year', labelKey: 'durationFullYear' },
-  { value: 'custom_weeks', labelKey: 'durationCustomWeeks' },
 ];
 
 const LESSON_TYPES = ['lesson', 'project', 'exam', 'assignment', 'activity'];
@@ -890,6 +883,46 @@ function countPreviewSlotsForSubject(previewLines, curriculumSubjectId) {
   return previewLines.filter((l) => String(l.subjectId || '') === sid).length;
 }
 
+/** Context for AI generate: dates, slot count, students, cadence — paired with free-form user notes. */
+function buildPlanYearGeneratePlanningContext({
+  startDate,
+  endDate,
+  previewSlotLines,
+  subject,
+  children,
+  blocks,
+}) {
+  if (!subject?.id) return '';
+  const sid = String(subject.id);
+  const slotCount = countPreviewSlotsForSubject(previewSlotLines, sid);
+  const childIds = getChildIdsForSubject(subject, children);
+  const childLines = childIds.map((id) => {
+    const c = (children || []).find((x) => String(x.id) === String(id));
+    const name = (c?.first_name || c?.name || 'Student').trim();
+    const grade = c?.grade_level ?? c?.grade;
+    const g = grade != null && String(grade).trim() !== '' ? String(grade).trim() : null;
+    return g ? `${name} (grade ${g})` : name;
+  });
+  const blockForSubject = (blocks || []).find((b) => String(b.subject_id) === sid);
+  const lines = [
+    `Plan date range: ${startDate || '(not set)'} through ${endDate || '(not set)'}.`,
+    `Approximate instructional class sessions in this range for "${subject.name || 'this subject'}": ${slotCount} (from your plan calendar, weekdays, class times, and exclusions).`,
+    'Aim for a total lesson count in the same ballpark as this slot count unless the user explicitly asks for a different scope.',
+  ];
+  if (childLines.length) {
+    lines.push(`Students: ${childLines.join('; ')}.`);
+  }
+  if (blockForSubject) {
+    const wd = (blockForSubject.weekdays || []).filter(Boolean);
+    const daysLabel = wd.length ? wd.join(', ') : 'scheduled weekdays';
+    const timeLabel = blockForSubject.all_day
+      ? 'all day'
+      : formatTimeRange(blockForSubject.start_time, blockForSubject.end_time);
+    lines.push(`Typical cadence for this subject: ${daysLabel}; session window: ${timeLabel}.`);
+  }
+  return lines.join('\n');
+}
+
 /** Minimum end date (YYYY-MM-DD) so this subject gains `overflowCount` more instructional slots vs current `endDate`. */
 function findExtendedEndDateForLessonOverflow({
   startDate,
@@ -1179,6 +1212,7 @@ export default function PlanYearModal({
   const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 300 });
   const materialButtonRef = useRef(null);
+  const [showAddMaterialForUpload, setShowAddMaterialForUpload] = useState(false);
   const [sectionSourceExpanded, setSectionSourceExpanded] = useState(true);
   const [sectionWhoExpanded, setSectionWhoExpanded] = useState(false);
   const [sectionScheduleExpanded, setSectionScheduleExpanded] = useState(false);
@@ -1240,20 +1274,8 @@ export default function PlanYearModal({
   const [cadenceDifferentMethodNotice, setCadenceDifferentMethodNotice] = useState(null);
   const [draftData, setDraftData] = useState(null); // Parsed/generated draft before saving
   
-  // Generate mode form state
+  // Generate mode: single free-form field (schedule/students/slots sent as planning_context)
   const [generationScope, setGenerationScope] = useState('');
-  const [learnerStage, setLearnerStage] = useState('');
-  const [durationMode, setDurationMode] = useState('multi_unit_course');
-  const [customWeeks, setCustomWeeks] = useState('');
-  const [lessonCountTarget, setLessonCountTarget] = useState('');
-  const [typicalLessonMinutes, setTypicalLessonMinutes] = useState('45');
-  const [educationalStyle, setEducationalStyle] = useState('');
-  const [rigorLevel, setRigorLevel] = useState('standard');
-  const [includeAssessments, setIncludeAssessments] = useState(true);
-  const [includeProjects, setIncludeProjects] = useState(true);
-  const [includeMaterials, setIncludeMaterials] = useState(true);
-  const [includePacing, setIncludePacing] = useState(true);
-  const [specialInstructions, setSpecialInstructions] = useState('');
   
   // Import & Extract mode form state (for upload)
   const [sourceTitle, setSourceTitle] = useState('');
@@ -1751,6 +1773,7 @@ export default function PlanYearModal({
       let step = st.unitStructureStep || 'input';
       if (step === 'saving') step = 'draft';
       if (step !== 'input' && step !== 'draft' && step !== 'paste_input') step = 'input';
+      if (st.planSource === 'upload' && step === 'paste_input') step = 'input';
       setUnitStructureStep(step);
       if (st.sourceTitle != null) setSourceTitle(String(st.sourceTitle));
       if (st.sourceType) setSourceType(st.sourceType);
@@ -1815,6 +1838,7 @@ export default function PlanYearModal({
     }
     let step = d.unitStructureStep === 'saving' ? 'draft' : d.unitStructureStep;
     if (step !== 'input' && step !== 'draft' && step !== 'paste_input') step = 'input';
+    if (d.planSource === 'upload' && step === 'paste_input') step = 'input';
     const ex = d.expandedUnits instanceof Set ? [...d.expandedUnits] : [];
     writePlanYearImportDraft(d.familyId, sid, d.planSource, {
       v: 1,
@@ -3485,15 +3509,151 @@ export default function PlanYearModal({
     }
   }, [visible, planSource, familyId, loadMaterialsForUpload]);
 
-  // Refetch materials when user saves a new material (from Add Material modal opened via event)
+  // Refetch materials when library updates (Add Material modal dispatches refreshMaterials; keeps picker in sync with Materials page)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => {
+    const handler = (e) => {
+      const fid = e?.detail?.familyId;
+      if (fid && fid !== familyId) return;
       if (planSource === 'upload' && familyId) loadMaterialsForUpload();
     };
-    window.addEventListener('materialSaved', handler);
-    return () => window.removeEventListener('materialSaved', handler);
+    window.addEventListener('refreshMaterials', handler);
+    return () => window.removeEventListener('refreshMaterials', handler);
   }, [planSource, familyId, loadMaterialsForUpload]);
+
+  /** Stream-parse selected library material into curriculum draft (upload path — no paste step). */
+  const runUploadMaterialParse = useCallback(async () => {
+    const availableSubjectId = unitPipelineSubjectId;
+    const availableSubject = availableSubjectId
+      ? baseSubjectList.find((s) => String(s.id) === String(availableSubjectId))
+      : null;
+    if (!availableSubject || !familyId || !selectedMaterialId) {
+      setUnitStructureError(availableSubject ? 'Select a material from your library.' : 'Subject not found.');
+      return;
+    }
+    const mat = materials.find((m) => m.id === selectedMaterialId);
+    setParsing(true);
+    setUnitStructureError(null);
+    setImportParseStreamPreview('');
+    let streamed = '';
+    try {
+      const { data, error: err } = await parsePlainTextStream(
+        {
+          subject_id: availableSubject.id,
+          family_id: familyId,
+          subject_name: availableSubject.name || '',
+          raw_text: '',
+          material_id: selectedMaterialId,
+          source_title: (mat?.title || mat?.provider_name || '').trim() || null,
+          source_type: sourceType === 'auto_detect' ? null : sourceType,
+          parse_mode: parseMode === 'auto_detect' ? null : parseMode,
+          detect_dates: detectDates,
+          preserve_source_headings: preserveHeadings,
+          ignore_policy_text: ignorePolicyText,
+          extract_assignments: extractAssignments,
+          extract_assessments: extractAssessments,
+          special_instructions: specialInstructionsParse.trim() || null,
+        },
+        {
+          onDelta: (chunk) => {
+            streamed += chunk;
+            setImportParseStreamPreview(buildImportStreamPreviewDisplay(streamed));
+          },
+        },
+      );
+      if (err || !data) {
+        setUnitStructureError(err?.message || 'Failed to parse document');
+        return;
+      }
+      setRawText(data.raw_text || '');
+      setDraftData(data);
+      setUnitStructureStep('draft');
+      if (data.units && data.units.length > 0) {
+        setExpandedUnits(new Set([0]));
+      }
+    } catch (err) {
+      setUnitStructureError(err.message || 'Failed to parse document');
+    } finally {
+      setImportParseStreamPreview('');
+      setParsing(false);
+    }
+  }, [
+    unitPipelineSubjectId,
+    baseSubjectList,
+    familyId,
+    selectedMaterialId,
+    materials,
+    sourceType,
+    parseMode,
+    detectDates,
+    preserveHeadings,
+    ignorePolicyText,
+    extractAssignments,
+    extractAssessments,
+    specialInstructionsParse,
+  ]);
+
+  const runGenerateCurriculumDraft = useCallback(async () => {
+    const availableSubjectId = unitPipelineSubjectId;
+    const availableSubject = availableSubjectId
+      ? baseSubjectList.find((s) => String(s.id) === String(availableSubjectId))
+      : null;
+    if (!availableSubject || !familyId) {
+      setUnitStructureError(availableSubject ? 'Missing family.' : 'Subject not found.');
+      return;
+    }
+    const planningContext = buildPlanYearGeneratePlanningContext({
+      startDate,
+      endDate,
+      previewSlotLines,
+      subject: availableSubject,
+      children,
+      blocks,
+    });
+    const slotCount = countPreviewSlotsForSubject(previewSlotLines, String(availableSubject.id));
+    setGenerating(true);
+    setUnitStructureError(null);
+    try {
+      const { data, error: err } = await generateCurriculumDraft({
+        subject_id: availableSubject.id,
+        family_id: familyId,
+        subject_name: availableSubject.name || '',
+        child_ids: getChildIdsForSubject(availableSubject, children),
+        generation_scope: generationScope.trim() || '(No additional free-form notes.)',
+        planning_context: planningContext || undefined,
+        duration_mode: 'multi_unit_course',
+        lesson_count_target: slotCount > 0 ? slotCount : null,
+        typical_lesson_minutes: 45,
+        include_assessments: true,
+        include_projects: true,
+        include_materials: true,
+        include_pacing: true,
+      });
+      if (err || !data) {
+        setUnitStructureError(err?.message || 'Failed to generate curriculum');
+        return;
+      }
+      setDraftData(data);
+      setUnitStructureStep('draft');
+      if (data.units && data.units.length > 0) {
+        setExpandedUnits(new Set([0]));
+      }
+    } catch (err) {
+      setUnitStructureError(err.message || 'Failed to generate curriculum');
+    } finally {
+      setGenerating(false);
+    }
+  }, [
+    unitPipelineSubjectId,
+    baseSubjectList,
+    familyId,
+    startDate,
+    endDate,
+    previewSlotLines,
+    children,
+    blocks,
+    generationScope,
+  ]);
 
   /** Parse content for upload/link/paste so the next screen can use it to plan events. */
   const handleParseContent = useCallback(async () => {
@@ -4944,15 +5104,16 @@ export default function PlanYearModal({
     ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
     : t('planMyYear.multiSubjectUnits.footerSkipClassic');
   const hideFooterSkipForPasteImportInput =
-    ((planSource === 'paste_plain' && unitStructureStep === 'input') ||
-      (planSource === 'upload' && unitStructureStep === 'paste_input')) &&
-    !draftData &&
-    !manualDraft;
+    planSource === 'paste_plain' && unitStructureStep === 'input' && !draftData && !manualDraft;
+  const showUploadMaterialPreviewFooter =
+    planSource === 'upload' && unitStructureStep === 'input' && !draftData && !manualDraft;
+  const showGenerateCurriculumFooter =
+    planSource === 'generate' && unitStructureStep === 'input' && !draftData && !manualDraft;
 
   /** Clear parsed draft UI but keep pasted source text so users can edit or re-run Preview structure (paste_plain / upload). */
   const leaveParsedDraftForTextEditor = useCallback(() => {
     if (planSource === 'upload') {
-      setUnitStructureStep('paste_input');
+      setUnitStructureStep('input');
     } else if (planSource === 'paste_plain') {
       setUnitStructureStep('input');
     } else {
@@ -5314,8 +5475,7 @@ export default function PlanYearModal({
                   ((planSource === 'paste_plain' && unitStructureStep === 'input') ||
                     (planSource === 'generate' && unitStructureStep === 'input') ||
                     (planSource === 'paste' && unitStructureStep === 'input') ||
-                    (planSource === 'upload' &&
-                      (unitStructureStep === 'input' || unitStructureStep === 'paste_input')));
+                    (planSource === 'upload' && unitStructureStep === 'input'));
                 if (loadingUnitStructure && !unitStructureContentEntryIdle) {
                   return (
                     <View style={{ paddingVertical: 40, alignItems: 'center', paddingHorizontal: 16 }}>
@@ -6237,10 +6397,50 @@ export default function PlanYearModal({
                 
                 // Input mode based on planSource
                 if (planSource === 'upload' && unitStructureStep === 'input') {
+                  if (parsing) {
+                    return (
+                      <View>
+                        {unitSubjectBanner}
+                        <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>Upload material</Text>
+                        <Text style={[styles.mutedText, { marginBottom: 16 }]}>
+                          {t('planMyYear.multiSubjectUnits.uploadParsingSubtitle')}
+                        </Text>
+                        <View
+                          style={{
+                            borderRadius: 10,
+                            padding: 14,
+                            minHeight: 280,
+                            backgroundColor: '#f8fafc',
+                            borderWidth: 1,
+                            borderColor: '#e2e8f0',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: TEXT_SECONDARY, marginBottom: 8 }}>
+                            {t('planMyYear.multiSubjectUnits.importStreamAssistantLabel')}
+                          </Text>
+                          <ScrollView
+                            style={{ flexGrow: 0, maxHeight: 232 }}
+                            contentContainerStyle={{ paddingBottom: 4 }}
+                            keyboardShouldPersistTaps="handled"
+                          >
+                            <Text style={{ fontSize: 15, lineHeight: 22, color: '#0f172a' }}>
+                              {importParseStreamPreview
+                                ? importParseStreamPreview
+                                : t('planMyYear.multiSubjectUnits.importStreamWaiting')}
+                            </Text>
+                          </ScrollView>
+                        </View>
+                        {unitStructureError ? (
+                          <View style={{ marginTop: 12, padding: 12, backgroundColor: '#fee2e2', borderRadius: 8 }}>
+                            <Text style={{ fontSize: 14, color: ERROR }}>{unitStructureError}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  }
                   return (
                     <View>
                       {unitSubjectBanner}
-                      {cadenceDifferentMethodBannerEl}
                       <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>Upload material</Text>
                       <Text style={[styles.mutedText, { marginBottom: 16 }]}>Select a material to parse into curriculum structure.</Text>
                       {loadingMaterials ? (
@@ -6251,10 +6451,21 @@ export default function PlanYearModal({
                       ) : (
                         <View>
                           <Text style={[styles.label, { marginBottom: 8 }]}>Select material</Text>
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 8,
+                              width: '100%',
+                              marginBottom: 0,
+                            }}
+                          >
                           <TouchableOpacity
                             ref={materialButtonRef}
-                            {...(Platform.OS === 'web' && { 'data-material-selector': 'true' })}
+                            {...(Platform.OS === 'web' && { 'data-plan-year-upload-material': 'true' })}
                             style={{
+                              flex: 1,
+                              minWidth: 0,
                               flexDirection: 'row',
                               alignItems: 'center',
                               justifyContent: 'space-between',
@@ -6272,7 +6483,7 @@ export default function PlanYearModal({
                                 const calculatePosition = () => {
                                   let node = materialButtonRef.current?._nativeNode || materialButtonRef.current;
                                   if (!node?.getBoundingClientRect) {
-                                    const sel = typeof document !== 'undefined' && document.querySelector?.('[data-material-selector="true"]');
+                                    const sel = typeof document !== 'undefined' && document.querySelector?.('[data-plan-year-upload-material="true"]');
                                     if (sel) node = sel;
                                   }
                                   if (node?.getBoundingClientRect) {
@@ -6303,6 +6514,36 @@ export default function PlanYearModal({
                             </Text>
                             <ChevronDown size={16} color={MUTED} />
                           </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setShowAddMaterialForUpload(true)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                              borderRadius: 6,
+                              borderWidth: 1,
+                              borderColor: ACCENT,
+                            }}
+                            disabled={loadingMaterials}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Plus size={14} color={ACCENT} />
+                            <Text
+                              style={{
+                                fontSize: 13,
+                                color: ACCENT,
+                                fontWeight: '500',
+                                ...(Platform.OS === 'web' && {
+                                  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                }),
+                              }}
+                            >
+                              Add New
+                            </Text>
+                          </TouchableOpacity>
+                          </View>
                           {showMaterialDropdown && Platform.OS === 'web' && materialDropdownPosition.top > 0 && (() => {
                             let ReactDOM;
                             try { ReactDOM = require('react-dom'); } catch (_) {}
@@ -6360,29 +6601,14 @@ export default function PlanYearModal({
                             }
                             return dropdownContent;
                           })()}
-                          
-                          {selectedMaterialId && (
-                            <TouchableOpacity
-                              onPress={() => {
-                                setUnitStructureStep('paste_input');
-                              }}
-                              style={[styles.primaryButton, { marginTop: 16, alignSelf: 'flex-start' }]}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={styles.primaryButtonText}>Next: Paste content</Text>
-                            </TouchableOpacity>
-                          )}
                         </View>
                       )}
                     </View>
                   );
                 }
                 
-                // Upload (after material → paste content) or Paste plain text: Import & Extract interface
-                if (
-                  (planSource === 'upload' && unitStructureStep === 'paste_input') ||
-                  (planSource === 'paste_plain' && unitStructureStep === 'input')
-                ) {
+                // Paste plain text: Import & Extract interface
+                if (planSource === 'paste_plain' && unitStructureStep === 'input') {
                   const runParsePlainTextPreview = async () => {
                     if (!availableSubject || !familyId || !rawText.trim()) {
                       setUnitStructureError(availableSubject ? 'Please paste some content to parse.' : 'Subject not found.');
@@ -6547,254 +6773,32 @@ export default function PlanYearModal({
                   );
                 }
                 
-                // Generate mode: Full Generate Curriculum interface
+                // Generate mode: free-form notes + planning context (schedule, students, slots) sent to API
                 if (planSource === 'generate' && unitStructureStep === 'input') {
                   return (
                     <View>
                       {unitSubjectBanner}
                       {cadenceDifferentMethodBannerEl}
                       <Text style={[styles.unitStructureModalTitle, { marginBottom: 8 }]}>Generate curriculum</Text>
-                      <Text style={[styles.mutedText, { marginBottom: 16 }]}>AI will create structured units and lessons with objectives, materials, and pacing suggestions based on your subject and preferences.</Text>
-                      
-                      <View style={{ gap: 16 }}>
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Scope / course goal</Text>
-                          <TextInput
-                            style={[styles.input, { minHeight: 100, textAlignVertical: 'top' }]}
-                            placeholder="e.g. Generate a semester-long introduction to watercolor painting"
-                            placeholderTextColor={MUTED}
-                            value={generationScope}
-                            onChangeText={setGenerationScope}
-                            multiline
-                            numberOfLines={3}
-                            editable={!generating}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
+                      <Text style={[styles.mutedText, { marginBottom: 14, lineHeight: 20 }]}>
+                        {t('planMyYear.multiSubjectUnits.generateCurriculumIntro')}
+                      </Text>
+                      <TextInput
+                        style={[styles.input, { minHeight: 320, textAlignVertical: 'top', fontSize: 15, lineHeight: 22 }]}
+                        placeholder={t('planMyYear.multiSubjectUnits.generateCurriculumFreeFormPlaceholder')}
+                        placeholderTextColor={MUTED}
+                        value={generationScope}
+                        onChangeText={setGenerationScope}
+                        multiline
+                        numberOfLines={16}
+                        editable={!generating}
+                        {...(Platform.OS === 'web' && { cursor: 'text' })}
+                      />
+                      {unitStructureError && (
+                        <View style={{ marginTop: 12, padding: 12, backgroundColor: '#fee2e2', borderRadius: 8 }}>
+                          <Text style={{ fontSize: 14, color: ERROR }}>{unitStructureError}</Text>
                         </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Grade level or learner stage</Text>
-                          <TextInput
-                            style={styles.input}
-                            placeholder="K–2, 3–5, 6–8, 9–12, or custom"
-                            placeholderTextColor={MUTED}
-                            value={learnerStage}
-                            onChangeText={setLearnerStage}
-                            editable={!generating}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Duration</Text>
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                            {DURATION_OPTIONS.map((opt) => (
-                              <TouchableOpacity
-                                key={opt.value}
-                                style={[
-                                  {
-                                    paddingHorizontal: 12,
-                                    paddingVertical: 8,
-                                    borderRadius: 16,
-                                    borderWidth: 1,
-                                    borderColor: durationMode === opt.value ? ACCENT : BORDER,
-                                    backgroundColor: durationMode === opt.value ? ACCENT_LIGHT : BG,
-                                  },
-                                ]}
-                                onPress={() => setDurationMode(opt.value)}
-                                disabled={generating}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.radioLabel, { fontSize: 13, color: durationMode === opt.value ? ACCENT : MUTED }]}>
-                                  {s(`courseStructure.generateCurriculum.${opt.labelKey}`) || opt.value}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                          {durationMode === 'custom_weeks' && (
-                            <TextInput
-                              style={[styles.input, { width: 100, marginTop: 8 }]}
-                              placeholder="Weeks"
-                              placeholderTextColor={MUTED}
-                              value={customWeeks}
-                              onChangeText={setCustomWeeks}
-                              keyboardType="number-pad"
-                              editable={!generating}
-                              {...(Platform.OS === 'web' && { cursor: 'text' })}
-                            />
-                          )}
-                        </View>
-                        
-                        <View style={{ flexDirection: 'row', gap: 16 }}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.label, { marginBottom: 8 }]}>Approximate lesson count</Text>
-                            <TextInput
-                              style={styles.input}
-                              placeholder="e.g. 18"
-                              placeholderTextColor={MUTED}
-                              value={lessonCountTarget}
-                              onChangeText={setLessonCountTarget}
-                              keyboardType="number-pad"
-                              editable={!generating}
-                              {...(Platform.OS === 'web' && { cursor: 'text' })}
-                            />
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.label, { marginBottom: 8 }]}>Typical lesson length (minutes)</Text>
-                            <TextInput
-                              style={styles.input}
-                              placeholder="45"
-                              placeholderTextColor={MUTED}
-                              value={typicalLessonMinutes}
-                              onChangeText={setTypicalLessonMinutes}
-                              keyboardType="number-pad"
-                              editable={!generating}
-                              {...(Platform.OS === 'web' && { cursor: 'text' })}
-                            />
-                          </View>
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Educational style (optional)</Text>
-                          <TextInput
-                            style={styles.input}
-                            placeholder="e.g. project-based, Charlotte Mason–inspired"
-                            placeholderTextColor={MUTED}
-                            value={educationalStyle}
-                            onChangeText={setEducationalStyle}
-                            editable={!generating}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Rigor</Text>
-                          <View style={{ flexDirection: 'row', gap: 8 }}>
-                            {['gentle', 'standard', 'advanced'].map((r) => (
-                              <TouchableOpacity
-                                key={r}
-                                style={[
-                                  {
-                                    paddingHorizontal: 12,
-                                    paddingVertical: 8,
-                                    borderRadius: 16,
-                                    borderWidth: 1,
-                                    borderColor: rigorLevel === r ? ACCENT : BORDER,
-                                    backgroundColor: rigorLevel === r ? ACCENT_LIGHT : BG,
-                                  },
-                                ]}
-                                onPress={() => setRigorLevel(r)}
-                                disabled={generating}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={[styles.radioLabel, { fontSize: 13, color: rigorLevel === r ? ACCENT : MUTED, textTransform: 'capitalize' }]}>
-                                  {r}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                        </View>
-                        
-                        <View style={{ gap: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Include assessments</Text>
-                            <Switch value={includeAssessments} onValueChange={setIncludeAssessments} disabled={generating} />
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Include projects</Text>
-                            <Switch value={includeProjects} onValueChange={setIncludeProjects} disabled={generating} />
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Include materials suggestions</Text>
-                            <Switch value={includeMaterials} onValueChange={setIncludeMaterials} disabled={generating} />
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={styles.label}>Include pacing suggestions</Text>
-                            <Switch value={includePacing} onValueChange={setIncludePacing} disabled={generating} />
-                          </View>
-                        </View>
-                        
-                        <View>
-                          <Text style={[styles.label, { marginBottom: 8 }]}>Special instructions (optional)</Text>
-                          <TextInput
-                            style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
-                            placeholder="Any specific requirements or preferences..."
-                            placeholderTextColor={MUTED}
-                            value={specialInstructions}
-                            onChangeText={setSpecialInstructions}
-                            multiline
-                            numberOfLines={2}
-                            editable={!generating}
-                            {...(Platform.OS === 'web' && { cursor: 'text' })}
-                          />
-                        </View>
-                        
-                        {unitStructureError && (
-                          <View style={{ padding: 12, backgroundColor: '#fee2e2', borderRadius: 8 }}>
-                            <Text style={{ fontSize: 14, color: ERROR }}>{unitStructureError}</Text>
-                          </View>
-                        )}
-                        
-                        <TouchableOpacity
-                          onPress={async () => {
-                            if (!availableSubject || !familyId || !generationScope.trim()) {
-                              setUnitStructureError(availableSubject ? 'Please describe what should be covered.' : 'Subject not found.');
-                              return;
-                            }
-                            setGenerating(true);
-                            setUnitStructureError(null);
-                            try {
-                              const { data, error: err } = await generateCurriculumDraft({
-                                subject_id: availableSubject?.id,
-                                family_id: familyId,
-                                subject_name: availableSubject?.name || '',
-                                child_ids: getChildIdsForSubject(availableSubject, children),
-                                generation_scope: generationScope.trim(),
-                                learner_stage: learnerStage.trim() || null,
-                                duration_mode: durationMode,
-                                custom_weeks: customWeeks.trim() ? parseInt(customWeeks, 10) : null,
-                                lesson_count_target: lessonCountTarget.trim() ? parseInt(lessonCountTarget, 10) : null,
-                                typical_lesson_minutes: typicalLessonMinutes.trim() ? parseInt(typicalLessonMinutes, 10) : null,
-                                educational_style: educationalStyle.trim() || null,
-                                rigor_level: rigorLevel,
-                                include_assessments: includeAssessments,
-                                include_projects: includeProjects,
-                                include_materials: includeMaterials,
-                                include_pacing: includePacing,
-                                special_instructions: specialInstructions.trim() || null,
-                              });
-                              if (err || !data) {
-                                setUnitStructureError(err?.message || 'Failed to generate curriculum');
-                                return;
-                              }
-                              setDraftData(data);
-                              setUnitStructureStep('draft');
-                              if (data.units && data.units.length > 0) {
-                                setExpandedUnits(new Set([0]));
-                              }
-                            } catch (err) {
-                              setUnitStructureError(err.message || 'Failed to generate curriculum');
-                            } finally {
-                              setGenerating(false);
-                            }
-                          }}
-                          style={[styles.primaryButton, { alignSelf: 'flex-start' }]}
-                          disabled={generating || !generationScope.trim()}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          {generating ? (
-                            <>
-                              <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
-                              <Text style={styles.primaryButtonText}>Generating...</Text>
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles size={18} color={BG} style={{ marginRight: 8 }} />
-                              <Text style={styles.primaryButtonText}>Generate curriculum</Text>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      </View>
+                      )}
                     </View>
                   );
                 }
@@ -9563,6 +9567,72 @@ export default function PlanYearModal({
                           </TouchableOpacity>
                         </View>
                       </View>
+                    ) : showGenerateCurriculumFooter ? (
+                      <TouchableOpacity
+                        onPress={runGenerateCurriculumDraft}
+                        disabled={generating}
+                        style={{
+                          width: '100%',
+                          backgroundColor: UNIT_STRUCTURE_OVERLAY_PRIMARY_BG,
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexDirection: 'row',
+                          gap: 8,
+                          opacity: generating ? 0.65 : 1,
+                        }}
+                        {...(Platform.OS === 'web' && {
+                          cursor: generating ? 'not-allowed' : 'pointer',
+                        })}
+                      >
+                        {generating ? (
+                          <>
+                            <ActivityIndicator size="small" color="#ffffff" />
+                            <Text style={[styles.primaryButtonText, { textAlign: 'center' }]}>
+                              {t('planMyYear.multiSubjectUnits.generateAndPreviewLoading')}
+                            </Text>
+                          </>
+                        ) : (
+                          <Text style={[styles.primaryButtonText, { textAlign: 'center' }]}>
+                            {t('planMyYear.multiSubjectUnits.generateAndPreview')}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    ) : showUploadMaterialPreviewFooter ? (
+                      <TouchableOpacity
+                        onPress={runUploadMaterialParse}
+                        disabled={parsing || !selectedMaterialId}
+                        style={{
+                          width: '100%',
+                          backgroundColor: UNIT_STRUCTURE_OVERLAY_PRIMARY_BG,
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexDirection: 'row',
+                          gap: 8,
+                          opacity: parsing || !selectedMaterialId ? 0.55 : 1,
+                        }}
+                        {...(Platform.OS === 'web' && {
+                          cursor: parsing || !selectedMaterialId ? 'not-allowed' : 'pointer',
+                        })}
+                      >
+                        {parsing ? (
+                          <>
+                            <ActivityIndicator size="small" color="#ffffff" />
+                            <Text style={[styles.primaryButtonText, { textAlign: 'center' }]}>
+                              {t('planMyYear.multiSubjectUnits.importPreviewStructureLoading')}
+                            </Text>
+                          </>
+                        ) : (
+                          <Text style={[styles.primaryButtonText, { textAlign: 'center' }]}>
+                            {t('planMyYear.multiSubjectUnits.importPreviewStructure')}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
                     ) : hideFooterSkipForPasteImportInput ? null : (
                       <TouchableOpacity
                         onPress={() => {
@@ -10415,6 +10485,53 @@ export default function PlanYearModal({
                       </Text>
                     </TouchableOpacity>
                   </View>
+                ) : showGenerateCurriculumFooter ? (
+                  <TouchableOpacity
+                    onPress={runGenerateCurriculumDraft}
+                    disabled={generating}
+                    style={[styles.primaryButton, generating && styles.primaryButtonDisabled]}
+                    {...(Platform.OS === 'web' && {
+                      cursor: generating ? 'not-allowed' : 'pointer',
+                    })}
+                  >
+                    {generating ? (
+                      <>
+                        <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
+                        <Text style={styles.primaryButtonText}>
+                          {t('planMyYear.multiSubjectUnits.generateAndPreviewLoading')}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={styles.primaryButtonText}>
+                        {t('planMyYear.multiSubjectUnits.generateAndPreview')}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                ) : showUploadMaterialPreviewFooter ? (
+                  <TouchableOpacity
+                    onPress={runUploadMaterialParse}
+                    disabled={parsing || !selectedMaterialId}
+                    style={[
+                      styles.primaryButton,
+                      (parsing || !selectedMaterialId) && styles.primaryButtonDisabled,
+                    ]}
+                    {...(Platform.OS === 'web' && {
+                      cursor: parsing || !selectedMaterialId ? 'not-allowed' : 'pointer',
+                    })}
+                  >
+                    {parsing ? (
+                      <>
+                        <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
+                        <Text style={styles.primaryButtonText}>
+                          {t('planMyYear.multiSubjectUnits.importPreviewStructureLoading')}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={styles.primaryButtonText}>
+                        {t('planMyYear.multiSubjectUnits.importPreviewStructure')}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
                 ) : hideFooterSkipForPasteImportInput ? null : (
                   <TouchableOpacity
                     onPress={() => setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST))}
@@ -10518,6 +10635,26 @@ export default function PlanYearModal({
         </TouchableOpacity>
   );
 
+  const uploadAddMaterialModalEl = familyId ? (
+    <AddMaterialModal
+      visible={showAddMaterialForUpload}
+      onClose={() => setShowAddMaterialForUpload(false)}
+      onSaved={(saved) => {
+        loadMaterialsForUpload();
+        if (saved?.id) setSelectedMaterialId(saved.id);
+      }}
+      familyId={familyId}
+      children={children}
+      allSubjects={baseSubjectList}
+      defaultSubjectId={unitPipelineSubjectId || null}
+      defaultSubjectName={
+        unitPipelineSubjectId
+          ? baseSubjectList.find((s) => String(s.id) === String(unitPipelineSubjectId))?.name
+          : null
+      }
+    />
+  ) : null;
+
   if (renderInline) {
     return (
       <View style={{ flex: 1, minHeight: 0, width: '100%', minWidth: 0 }}>
@@ -10570,6 +10707,7 @@ export default function PlanYearModal({
         }}
         onCancel={() => setShowDeletePlanConfirm(false)}
       />
+      {uploadAddMaterialModalEl}
       </View>
     );
   }
@@ -10627,6 +10765,7 @@ export default function PlanYearModal({
         }}
         onCancel={() => setShowDeletePlanConfirm(false)}
       />
+      {uploadAddMaterialModalEl}
     </Modal>
   );
 }

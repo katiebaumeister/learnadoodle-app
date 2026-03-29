@@ -198,6 +198,7 @@ def validate_and_normalize_draft(raw: Dict[str, Any], subject_id: str, family_id
 def build_system_prompt() -> str:
     return """You are an educational curriculum planner generating structured homeschool or after-school curriculum outlines.
 Return valid JSON only. Do not include markdown. Do not include explanatory text outside the JSON.
+When the user message includes a "Planning context" section, treat instructional slot counts, student grades, and schedule cadence as authoritative for total lesson count and pacing unless the user explicitly overrides them.
 Generate a curriculum draft with units and lessons appropriate for the provided subject, learner stage, duration, and preferences.
 
 Each unit must include a title and a list of lessons.
@@ -241,24 +242,34 @@ def build_user_prompt(
     include_materials: bool = True,
     include_pacing: bool = True,
     special_instructions: Optional[str] = None,
+    planning_context: Optional[str] = None,
 ) -> str:
-    parts = [
-        f"Subject: {subject_name}",
-        f"Goal/Scope: {generation_scope}",
-    ]
-    if learner_stage:
-        parts.append(f"Learner stage: {learner_stage}")
-    parts.append(f"Duration mode: {duration_mode}")
-    if custom_weeks:
-        parts.append(f"Custom weeks: {custom_weeks}")
-    if lesson_count_target:
-        parts.append(f"Target lesson count: {lesson_count_target}")
-    if typical_lesson_minutes:
-        parts.append(f"Typical lesson length (minutes): {typical_lesson_minutes}")
-    if educational_style:
-        parts.append(f"Educational style: {educational_style}")
-    if rigor_level:
-        parts.append(f"Rigor: {rigor_level}")
+    parts = [f"Subject: {subject_name}"]
+    pc = (planning_context or "").strip()
+    if pc:
+        parts.append(
+            "=== Planning context (authoritative: use for approximate lesson count, pacing, and grade level) ==="
+        )
+        parts.append(pc)
+        parts.append(
+            "Align units and lessons with the instructional slot count and student grades above unless the user explicitly overrides."
+        )
+    parts.append("=== User notes (additional requirements and preferences) ===")
+    parts.append((generation_scope or "").strip() or "(No additional free-form notes.)")
+    if not pc:
+        if learner_stage:
+            parts.append(f"Learner stage: {learner_stage}")
+        parts.append(f"Duration mode: {duration_mode}")
+        if custom_weeks:
+            parts.append(f"Custom weeks: {custom_weeks}")
+        if lesson_count_target:
+            parts.append(f"Target lesson count: {lesson_count_target}")
+        if typical_lesson_minutes:
+            parts.append(f"Typical lesson length (minutes): {typical_lesson_minutes}")
+        if educational_style:
+            parts.append(f"Educational style: {educational_style}")
+        if rigor_level:
+            parts.append(f"Rigor: {rigor_level}")
     parts.append(f"Include assessments: {include_assessments}")
     parts.append(f"Include projects: {include_projects}")
     parts.append(f"Include materials suggestions: {include_materials}")
@@ -324,6 +335,7 @@ async def generate_curriculum_draft(
     include_materials: bool = True,
     include_pacing: bool = True,
     special_instructions: Optional[str] = None,
+    planning_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Call OpenAI to generate a curriculum draft; validate and normalize; return DraftCurriculum.
@@ -348,6 +360,7 @@ async def generate_curriculum_draft(
         include_materials=include_materials,
         include_pacing=include_pacing,
         special_instructions=special_instructions,
+        planning_context=planning_context,
     )
     system_content = build_system_prompt()
 

@@ -106,7 +106,11 @@ class GenerateCurriculumDraftRequest(BaseModel):
     child_ids: Optional[List[str]] = Field(None, description="Optional learner child IDs")
     learner_stage: Optional[str] = Field(None, description="e.g. K-2, 3-5, 6-8, 9-12")
     age_range: Optional[Dict[str, int]] = Field(None, description="Optional min/max age")
-    generation_scope: str = Field(..., description="Course goal / scope description")
+    generation_scope: str = Field(..., description="User free-form notes and goals")
+    planning_context: Optional[str] = Field(
+        None,
+        description="Pre-built context: schedule, students, slot counts (from client or server)",
+    )
     duration_mode: Literal["single_unit", "multi_unit_course", "semester", "full_year", "custom_weeks"] = Field(
         "multi_unit_course", description="Duration type"
     )
@@ -219,7 +223,8 @@ class ParsePlainTextRequest(BaseModel):
     subject_id: str = Field(..., description="Subject ID")
     family_id: str = Field(..., description="Family ID")
     subject_name: str = Field(..., description="Subject name")
-    raw_text: str = Field(..., description="Pasted syllabus/outline text")
+    raw_text: str = Field(default="", description="Pasted syllabus/outline text (optional when material_id is set)")
+    material_id: Optional[str] = Field(default=None, description="Library material ID — server extracts text from PDF/notes")
     source_title: Optional[str] = None
     source_type: Optional[Literal["auto_detect", "syllabus", "lesson_list", "pacing_guide", "weekly_plan", "course_outline"]] = None
     parse_mode: Optional[Literal["auto_detect", "unit_based", "lesson_based", "assignment_based", "week_based", "date_based"]] = None
@@ -230,6 +235,17 @@ class ParsePlainTextRequest(BaseModel):
     extract_assessments: bool = True
     learner_stage: Optional[str] = None
     special_instructions: Optional[str] = None
+
+
+async def _resolve_plain_text_for_parse(body: ParsePlainTextRequest, family_id: str) -> str:
+    """Use pasted text, or extract from a library material (PDF/notes)."""
+    if body.material_id:
+        text = await extract_material_text(body.material_id, family_id)
+        return (text or "").strip()
+    text = (body.raw_text or "").strip()
+    if not text:
+        raise ValueError("Paste some content or choose a library material.")
+    return text
 
 
 class ParsedDraftLesson(BaseModel):
@@ -962,6 +978,7 @@ async def generate_curriculum_draft_endpoint(
             family_id=body.family_id,
             subject_name=body.subject_name,
             generation_scope=body.generation_scope,
+            planning_context=body.planning_context,
             user_id=user["id"],
             child_ids=body.child_ids,
             learner_stage=body.learner_stage,
@@ -1102,12 +1119,13 @@ async def parse_plain_text_endpoint(
         family_id = get_family_id_for_user(user["id"])
         if not family_id or family_id != body.family_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+        raw_text_resolved = await _resolve_plain_text_for_parse(body, family_id)
         from services.curriculum_parse_service import extract_curriculum_from_plain_text
         result = await extract_curriculum_from_plain_text(
             subject_id=body.subject_id,
             family_id=body.family_id,
             subject_name=body.subject_name,
-            raw_text=body.raw_text,
+            raw_text=raw_text_resolved,
             source_title=body.source_title,
             source_type=body.source_type,
             parse_mode=body.parse_mode,
@@ -1155,11 +1173,12 @@ async def parse_plain_text_stream_endpoint(
 
     async def ndjson_gen():
         try:
+            raw_text_resolved = await _resolve_plain_text_for_parse(body, family_id)
             async for chunk in stream_extract_curriculum_from_plain_text(
                 subject_id=body.subject_id,
                 family_id=body.family_id,
                 subject_name=body.subject_name,
-                raw_text=body.raw_text,
+                raw_text=raw_text_resolved,
                 source_title=body.source_title,
                 source_type=body.source_type,
                 parse_mode=body.parse_mode,
