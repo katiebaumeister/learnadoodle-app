@@ -2,7 +2,7 @@
  * Materials Library Page
  * Main page for viewing and managing family materials
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -34,9 +34,36 @@ import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import ConfirmDialog from '../ConfirmDialog';
 import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from './MaterialDocViewerModal';
+import { getSubjectIdsAffectedByMaterial } from '../../lib/materialsSubjectLinkUtils';
 
 // Single visible chip row everywhere: role-first
 const ROLE_CHIPS = DOCUMENT_ROLE_CHIPS;
+
+/**
+ * Web-only: invalidate subject detail caches + broadcast refreshes.
+ * @param {'materialDeleted'|'materialUpdated'} legacyEvent — portfolio / other listeners
+ */
+function emitSubjectDetailMaterialSyncWeb(
+  materialRow,
+  familyId,
+  subjectList,
+  legacyEvent = 'materialDeleted',
+  extraLegacyDetail = {}
+) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId || !materialRow?.id) return;
+  const subjectIds = getSubjectIdsAffectedByMaterial(materialRow, subjectList);
+  window.dispatchEvent(new CustomEvent('subjectDetailMaterialsStale', { detail: { familyId, subjectIds } }));
+  window.dispatchEvent(
+    new CustomEvent(legacyEvent, {
+      detail: { materialId: materialRow.id, familyId, subjectIds, ...extraLegacyDetail },
+    })
+  );
+  window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+  window.dispatchEvent(new CustomEvent('refreshSubjects'));
+  for (const sid of subjectIds) {
+    window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
+  }
+}
 
 export default function MaterialsLibrary({ familyId, children = [], preloadedSubjects = null, preloadedMaterials = null, onMaterialsUpdate = null }) {
   const toast = useToast();
@@ -100,6 +127,15 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const filtersDropdownRef = useRef(null);
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
+
+  /** Deduped subjects for linking materials by name (subject_key) on Subject detail. */
+  const mergedSubjectsForMaterialLookup = useMemo(() => {
+    const byId = new Map();
+    for (const s of [...subjects, ...allSubjectsForModal]) {
+      if (s?.id) byId.set(String(s.id), s);
+    }
+    return [...byId.values()];
+  }, [subjects, allSubjectsForModal]);
 
   // Use preloaded materials if available and no filters are applied
   useEffect(() => {
@@ -453,19 +489,9 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       // All items are now materials - use soft delete with family_id for RLS
       // Note: We keep storage files until permanent deletion to allow restore
       await archiveMaterial(data.id, familyId);
-      
-      // Dispatch event for other components to refresh
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('materialDeleted', { 
-          detail: { materialId: data.id, familyId } 
-        }));
-        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        if (data.subject_id) {
-          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
-        }
-      }
-      
+
+      emitSubjectDetailMaterialSyncWeb(data, familyId, mergedSubjectsForMaterialLookup, 'materialDeleted');
+
       // Reload materials
       await loadMaterials();
       // Reload deleted materials if bin is open
@@ -852,19 +878,11 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     
     try {
       await restoreMaterial(data.id, familyId);
-      
-      // Dispatch event for other components to refresh
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('materialUpdated', { 
-          detail: { materialId: data.id, familyId, action: 'restored' } 
-        }));
-        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        if (data.subject_id) {
-          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
-        }
-      }
-      
+
+      emitSubjectDetailMaterialSyncWeb(data, familyId, mergedSubjectsForMaterialLookup, 'materialUpdated', {
+        action: 'restored',
+      });
+
       await loadMaterials();
       await loadDeletedMaterials();
       toast.push(`${itemName} restored`, 'success');
@@ -917,18 +935,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       // Delete from database first (RPC will return storage_path if it exists)
       const result = await permanentlyDeleteMaterial(data.id, familyId);
       
-      // Dispatch event for other components to refresh
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('materialDeleted', { 
-          detail: { materialId: data.id, familyId, permanent: true } 
-        }));
-        window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        if (data.subject_id) {
-          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: data.subject_id } }));
-        }
-      }
-      
+      emitSubjectDetailMaterialSyncWeb(data, familyId, mergedSubjectsForMaterialLookup, 'materialDeleted', {
+        permanent: true,
+      });
+
       // Delete storage file if it exists (use storage_path from RPC result or from item data)
       const storagePath = result.storage_path || data.storage_path;
       if (storagePath) {

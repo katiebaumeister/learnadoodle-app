@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,12 @@ import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curric
 import { clearPlaceholders, getEventForPlanSlot } from '../../lib/services/academicYearClient';
 import { deleteEvent as deletePlannerEventSoft } from '../../lib/services/plannerClientWithOffline';
 import { dropPlanYearFullDataCacheEntry } from '../../lib/planEditListCache';
+import {
+  getSubjectProgressCache,
+  mergeSubjectProgressCache,
+  invalidateSubjectProgressCache,
+  invalidateSubjectProgressCacheForFamily,
+} from '../../lib/subjectProgressPlanCache';
 import { colors } from '../../theme/colors';
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 
@@ -96,6 +102,11 @@ export default function SubjectProgressPlanSection({
   onPlanContext,
 }) {
   const toast = useToast();
+  const subjectIdLiveRef = useRef(subjectId);
+  const familyIdLiveRef = useRef(familyId);
+  subjectIdLiveRef.current = subjectId;
+  familyIdLiveRef.current = familyId;
+
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [academicYearId, setAcademicYearId] = useState(null);
   const [planData, setPlanData] = useState(null);
@@ -121,50 +132,114 @@ export default function SubjectProgressPlanSection({
 
   const loadPlan = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
-    if (!familyId || !subjectId) return;
+    const reqFamilyId = familyId;
+    const reqSubjectId = subjectId;
+    if (!reqFamilyId || !reqSubjectId) return;
     if (!silent) setLoadingPlan(true);
     try {
-      const { academicYearId: yid, planData: data } = await findAcademicYearPlanForSubject(familyId, subjectId);
+      const { academicYearId: yid, planData: data } = await findAcademicYearPlanForSubject(reqFamilyId, reqSubjectId);
+      if (
+        String(subjectIdLiveRef.current) !== String(reqSubjectId) ||
+        String(familyIdLiveRef.current) !== String(reqFamilyId)
+      ) {
+        return;
+      }
       setAcademicYearId(yid);
       setPlanData(data);
+      let nextLines = [];
       if (yid && data) {
-        setSlotLines(buildSubjectPlanSlotLines(yid, data, subjectId, subjectName || 'Subject'));
+        nextLines = buildSubjectPlanSlotLines(yid, data, reqSubjectId, subjectName || 'Subject');
+        setSlotLines(nextLines);
       } else {
         setSlotLines([]);
       }
+      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, {
+        academicYearId: yid,
+        planData: data,
+        slotLines: yid && data ? nextLines : [],
+      });
     } catch (e) {
       console.warn('[SubjectProgressPlanSection] loadPlan', e);
+      if (
+        String(subjectIdLiveRef.current) !== String(reqSubjectId) ||
+        String(familyIdLiveRef.current) !== String(reqFamilyId)
+      ) {
+        return;
+      }
       setAcademicYearId(null);
       setPlanData(null);
       setSlotLines([]);
+      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, {
+        academicYearId: null,
+        planData: null,
+        slotLines: [],
+      });
     } finally {
-      if (!silent) setLoadingPlan(false);
+      if (
+        String(subjectIdLiveRef.current) === String(reqSubjectId) &&
+        String(familyIdLiveRef.current) === String(reqFamilyId) &&
+        !silent
+      ) {
+        setLoadingPlan(false);
+      }
     }
   }, [familyId, subjectId, subjectName]);
 
   const loadUnits = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
-    if (!familyId || !subjectId) return;
+    const reqFamilyId = familyId;
+    const reqSubjectId = subjectId;
+    if (!reqFamilyId || !reqSubjectId) return;
     if (!silent) setLoadingUnits(true);
     try {
-      const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
+      const { data, error } = await fetchSubjectCurriculumEventsStructure(reqFamilyId, reqSubjectId);
+      if (
+        String(subjectIdLiveRef.current) !== String(reqSubjectId) ||
+        String(familyIdLiveRef.current) !== String(reqFamilyId)
+      ) {
+        return;
+      }
       if (error) {
         setCurriculumUnits([]);
+        mergeSubjectProgressCache(reqFamilyId, reqSubjectId, { curriculumUnits: [] });
         return;
       }
       const units = data?.units;
-      setCurriculumUnits(Array.isArray(units) ? units : []);
+      const nextUnits = Array.isArray(units) ? units : [];
+      setCurriculumUnits(nextUnits);
+      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, { curriculumUnits: nextUnits });
     } catch (e) {
+      if (
+        String(subjectIdLiveRef.current) !== String(reqSubjectId) ||
+        String(familyIdLiveRef.current) !== String(reqFamilyId)
+      ) {
+        return;
+      }
       setCurriculumUnits([]);
+      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, { curriculumUnits: [] });
     } finally {
-      if (!silent) setLoadingUnits(false);
+      if (
+        String(subjectIdLiveRef.current) === String(reqSubjectId) &&
+        String(familyIdLiveRef.current) === String(reqFamilyId) &&
+        !silent
+      ) {
+        setLoadingUnits(false);
+      }
     }
   }, [familyId, subjectId]);
 
-  const subjectKeyRef = useRef(subjectId);
-  useEffect(() => {
-    if (subjectKeyRef.current !== subjectId) {
-      subjectKeyRef.current = subjectId;
+  /** Hydrate from cache before paint to avoid skeleton flash when revisiting a subject. */
+  useLayoutEffect(() => {
+    if (!familyId || !subjectId) return;
+    const c = getSubjectProgressCache(familyId, subjectId);
+    if (c) {
+      setAcademicYearId(c.academicYearId ?? null);
+      setPlanData(c.planData ?? null);
+      setSlotLines(Array.isArray(c.slotLines) ? c.slotLines : []);
+      setCurriculumUnits(Array.isArray(c.curriculumUnits) ? c.curriculumUnits : []);
+      setLoadingPlan(false);
+      setLoadingUnits(false);
+    } else {
       setAcademicYearId(null);
       setPlanData(null);
       setSlotLines([]);
@@ -172,12 +247,23 @@ export default function SubjectProgressPlanSection({
       setLoadingPlan(true);
       setLoadingUnits(true);
     }
-  }, [subjectId]);
+  }, [familyId, subjectId]);
 
   useEffect(() => {
-    loadPlan();
-    loadUnits();
-  }, [loadPlan, loadUnits]);
+    if (!familyId || !subjectId) return;
+    const c = getSubjectProgressCache(familyId, subjectId);
+    loadPlan({ silent: !!c });
+    loadUnits({ silent: !!c });
+  }, [familyId, subjectId, loadPlan, loadUnits]);
+
+  const prevFamilyIdRef = useRef(familyId);
+  useEffect(() => {
+    const prev = prevFamilyIdRef.current;
+    prevFamilyIdRef.current = familyId;
+    if (prev && familyId && String(prev) !== String(familyId)) {
+      invalidateSubjectProgressCacheForFamily(prev);
+    }
+  }, [familyId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -343,6 +429,8 @@ export default function SubjectProgressPlanSection({
       setPlanData(null);
       setSlotLines([]);
       dropPlanYearFullDataCacheEntry(familyId, academicYearId);
+      invalidateSubjectProgressCache(familyId, subjectId);
+      loadPlan({ silent: true });
       loadUnits({ silent: true });
       onRefresh?.();
       if (typeof window !== 'undefined') {
@@ -352,7 +440,7 @@ export default function SubjectProgressPlanSection({
     } finally {
       setDeletingPlan(false);
     }
-  }, [familyId, academicYearId, toast, loadUnits, onRefresh]);
+  }, [familyId, academicYearId, subjectId, toast, loadPlan, loadUnits, onRefresh]);
 
   const requestDeletePlanRow = useCallback(
     async (line, rowKey) => {
@@ -453,18 +541,28 @@ export default function SubjectProgressPlanSection({
   return (
     <View style={styles.section}>
       {!hasPlan ? (
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.btnPrimary} onPress={openBuildPlanModal} {...webCursor}>
-            <Calendar size={16} color="#fff" />
-            <Text style={styles.btnPrimaryText}>Build plan</Text>
+        <View style={styles.emptyStateBox}>
+          {!hasUnits ? (
+            <Text style={styles.emptyStateHint}>
+              Add a class plan or unit structure so we can show scheduled dates and measure progress.
+            </Text>
+          ) : (
+            <Text style={styles.emptyStateHint}>
+              Add lessons under Build plan — they will appear here as rows (Unassigned until placed on the calendar).
+            </Text>
+          )}
+          <TouchableOpacity
+            style={[styles.planHeaderRoundedBtn, styles.buildPlanBtnAlign]}
+            onPress={openBuildPlanModal}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Build plan"
+            {...webCursor}
+          >
+            <Calendar size={16} color="#64748b" strokeWidth={2} />
+            <Text style={styles.planHeaderRoundedBtnText}>Build plan</Text>
           </TouchableOpacity>
         </View>
-      ) : null}
-
-      {!hasPlan && !hasUnits ? (
-        <Text style={styles.hint}>
-          Add a class plan or unit structure so we can show scheduled dates and measure progress.
-        </Text>
       ) : null}
 
       {mergedScheduleRows.length > 0 ? (
@@ -674,10 +772,6 @@ export default function SubjectProgressPlanSection({
             </Text>
           ) : null}
         </>
-      ) : !hasPlan && hasUnits ? (
-        <Text style={styles.muted}>
-          Add lessons under Build plan — they will appear here as rows (Unassigned until placed on the calendar).
-        </Text>
       ) : null}
 
       <ConfirmDialog
@@ -707,12 +801,27 @@ const styles = StyleSheet.create({
   section: {
     marginTop: 4,
   },
-  actionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  emptyStateBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: colors.border || '#e5e7eb',
     marginBottom: 12,
-    alignItems: 'center',
+  },
+  buildPlanBtnAlign: {
+    alignSelf: 'flex-start',
+    marginTop: 16,
+  },
+  emptyStateHint: {
+    fontSize: 14,
+    color: colors.muted || '#6B7280',
+    lineHeight: 20,
+    marginTop: 0,
+    marginBottom: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   skeletonWrap: {
     paddingVertical: 8,
@@ -741,26 +850,6 @@ const styles = StyleSheet.create({
   },
   skeletonBarShorter: {
     width: '52%',
-  },
-  btnPrimary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#4F46E5',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  btnPrimaryText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  hint: {
-    fontSize: 14,
-    color: '#64748b',
-    lineHeight: 20,
-    marginBottom: 12,
   },
   muted: {
     fontSize: 14,

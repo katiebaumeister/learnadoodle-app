@@ -3597,6 +3597,30 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }));
   }, []);
 
+  /** Library material delete/restore can change Subject snapshot; drop stale preloads so detail refetches. */
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const invalidateSubjectDetailCaches = (e) => {
+      const { familyId: fid, subjectIds } = e.detail || {};
+      if (!fid || fid !== familyId) return;
+      if (Array.isArray(subjectIds) && subjectIds.length > 0) {
+        setSubjectDetailCache((prev) => {
+          const next = { ...prev };
+          for (const sid of subjectIds) {
+            delete next[sid];
+          }
+          return next;
+        });
+        return;
+      }
+      setSubjectDetailCache({});
+    };
+    window.addEventListener('subjectDetailMaterialsStale', invalidateSubjectDetailCaches);
+    return () => {
+      window.removeEventListener('subjectDetailMaterialsStale', invalidateSubjectDetailCaches);
+    };
+  }, [familyId]);
+
   // Clear cache when subjects are added/updated
   useEffect(() => {
     if (Platform.OS !== 'web') return;

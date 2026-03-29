@@ -173,7 +173,9 @@ export default function AddMaterialModal({
 
     const childIds = selectedChildIds;
     if (!childIds || childIds.length === 0) {
-      if (draftChildIds.length === 0) {
+      // Include draft subject while children chips sync (first paint), or when parent passed only a name.
+      // Without this, "No subjects found" appears for a not-yet-saved subject.
+      if (draftSubjectNameTrim) {
         return [...base, draftRow].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       }
       return base;

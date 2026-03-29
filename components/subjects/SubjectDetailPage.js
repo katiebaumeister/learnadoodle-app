@@ -93,21 +93,12 @@ export default function SubjectDetailPage({
     }
   }, [preloadedSubjectData]);
 
-  useEffect(() => {
-    if (!subjectId || !familyId) {
-      setLoading(false);
-      setError('Subject ID and Family ID are required');
-      return;
-    }
-    if (preloadedSubjectData) return;
-    loadSubjectDetail();
-  }, [subjectId, familyId]);
-
   const loadSubjectDetail = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
-    if (!subjectId || !familyId || loadingRef.current) return;
-    loadingRef.current = true;
+    if (!subjectId || !familyId) return;
+    if (!silent && loadingRef.current) return;
     if (!silent) {
+      loadingRef.current = true;
       setLoading(true);
     }
     setError(null);
@@ -128,10 +119,20 @@ export default function SubjectDetailPage({
     } finally {
       if (!silent) {
         setLoading(false);
+        loadingRef.current = false;
       }
-      loadingRef.current = false;
     }
   }, [subjectId, familyId, onSubjectDataUpdate, onBack, session]);
+
+  useEffect(() => {
+    if (!subjectId || !familyId) {
+      setLoading(false);
+      setError('Subject ID and Family ID are required');
+      return;
+    }
+    loadSubjectDetail({ silent: !!preloadedSubjectData });
+    // Intentionally omit preloadedSubjectData: parent updates cache object after each fetch; re-running would loop.
+  }, [subjectId, familyId, loadSubjectDetail]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -139,17 +140,27 @@ export default function SubjectDetailPage({
     const handleSubjectDetailRefresh = (e) => {
       if (e.detail?.subjectId === subjectId) loadSubjectDetail({ silent: true });
     };
+    const handleMaterialsStale = (e) => {
+      const fid = e.detail?.familyId;
+      const ids = e.detail?.subjectIds;
+      if (fid !== familyId) return;
+      if (Array.isArray(ids) && ids.some((id) => String(id) === String(subjectId))) {
+        loadSubjectDetail({ silent: true });
+      }
+    };
     window.addEventListener('refreshSubjects', handleRefresh);
     window.addEventListener('refreshPlanDefaults', handleRefresh);
     window.addEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
     window.addEventListener('childAssignmentsNeedRefresh', handleRefresh);
+    window.addEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
     return () => {
       window.removeEventListener('refreshSubjects', handleRefresh);
       window.removeEventListener('refreshPlanDefaults', handleRefresh);
       window.removeEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
       window.removeEventListener('childAssignmentsNeedRefresh', handleRefresh);
+      window.removeEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
     };
-  }, [subjectId, loadSubjectDetail]);
+  }, [subjectId, familyId, loadSubjectDetail]);
 
   const getChildName = useCallback((childId) => {
     const child = children.find(c => c.id === childId);
@@ -881,7 +892,7 @@ export default function SubjectDetailPage({
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
-                Attendance appears after you complete lessons or log time.
+                Attendance appears once you complete an event attached to this subject.
               </Text>
               {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 && (
                 <TouchableOpacity
@@ -927,21 +938,6 @@ export default function SubjectDetailPage({
               </Text>
             ) : null}
           </View>
-          {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
-            <View style={styles.assignedToStudentCtaWrap}>
-              <TouchableOpacity
-                style={styles.emptyStateButton}
-                onPress={() => setShowAssignedToStudentModal(true)}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="View work assigned to student that has not been submitted"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Calendar size={18} color="#6B7280" />
-                <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
           {gradedItems.length > 0 && (
             <View style={styles.gradeAverage}>
               <View style={styles.gradeAverageRow}>
@@ -1030,12 +1026,38 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
+              {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.gradesAssignedToStudentButton]}
+                  onPress={() => setShowAssignedToStudentModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="View work assigned to student that has not been submitted"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
+                </TouchableOpacity>
+              ) : null}
             </>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
-                Grades appear once you add assignments or assessments.
+                Grades appear once you add grades to assignments or assessments for this subject.
               </Text>
+              {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
+                <TouchableOpacity
+                  style={styles.emptyStateButton}
+                  onPress={() => setShowAssignedToStudentModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="View work assigned to student that has not been submitted"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           )}
         </View>
@@ -1378,9 +1400,9 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  /** Grades: pill CTA matching Attendance “Past lessons & bulk actions” */
-  assignedToStudentCtaWrap: {
-    marginBottom: 16,
+  /** Grades: spacing for Assigned to student below the list (same idea as attendance past-lessons CTA) */
+  gradesAssignedToStudentButton: {
+    marginTop: 8,
   },
   summaryTile: {
     flex: 1,

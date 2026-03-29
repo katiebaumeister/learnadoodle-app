@@ -527,25 +527,54 @@ function editPlanListSortKey(ay) {
 }
 
 /**
+ * True when at least one scheduling block references a subject id that still exists (e.g. after subject delete + recreate
+ * with the same name, old block UUIDs are orphaned — subject page shows "Build plan" and slot lines show "Subject").
+ */
+function planBlocksReferenceAnyActiveSubject(planData, subjectList) {
+  const ids = new Set(
+    (Array.isArray(subjectList) ? subjectList : [])
+      .filter((s) => s && s.id != null)
+      .map((s) => String(s.id)),
+  );
+  const blocks = planData?.plan?.blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return true;
+  const withSid = blocks.filter((b) => b.subject_id != null && String(b.subject_id).trim() !== '');
+  if (withSid.length === 0) return true;
+  return withSid.some((b) => ids.has(String(b.subject_id)));
+}
+
+/**
  * Hide Edit plan rows whose subject label no longer matches any family subject (e.g. subject removed on Subjects page).
  * Matches buildPlanYearName: segment is parts[1] when year_name uses " · "; multi-subject labels use commas and optional "+N".
+ * When full plan is cached, also hide rows whose blocks only reference deleted subject ids (name can still match recreated subjects).
  */
-function planRowSubjectsStillExist(ay, subjectList) {
+function planRowSubjectsStillExist(ay, subjectList, familyId) {
   const subs = Array.isArray(subjectList) ? subjectList : [];
   const active = new Set(
     subs.map((s) => (s && s.name ? String(s.name).trim().toLowerCase() : '')).filter(Boolean),
   );
   const name = ay?.year_name || '';
   const parts = name.split(' · ').map((p) => p.trim()).filter(Boolean);
-  if (parts.length < 3) return true;
-  const subjectPart = parts[1];
-  if (!subjectPart) return true;
-  const segments = subjectPart
-    .split(',')
-    .map((s) => s.replace(/\s*\+\d+\s*$/, '').trim())
-    .filter(Boolean);
-  if (segments.length === 0) return true;
-  return segments.every((seg) => active.has(seg.toLowerCase()));
+  let nameOk = true;
+  if (parts.length >= 3) {
+    const subjectPart = parts[1];
+    if (!subjectPart) {
+      nameOk = true;
+    } else {
+      const segments = subjectPart
+        .split(',')
+        .map((s) => s.replace(/\s*\+\d+\s*$/, '').trim())
+        .filter(Boolean);
+      if (segments.length === 0) nameOk = true;
+      else nameOk = segments.every((seg) => active.has(seg.toLowerCase()));
+    }
+    if (!nameOk) return false;
+  }
+  if (!familyId || !ay?.id) return true;
+  const cached = getPlanYearFullDataFromCache(familyId, ay.id);
+  if (!cached?.plan?.blocks) return true;
+  if (!planBlocksReferenceAnyActiveSubject(cached, subjectList)) return false;
+  return true;
 }
 
 /** Dedupe and stable-sort children for Edit plan / subject-style dot clusters */
@@ -2537,7 +2566,7 @@ export default function PlanYearModal({
 
   const editPlanListRows = useMemo(() => {
     const rows = (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
-      planRowSubjectsStillExist(ay, baseSubjectList),
+      planRowSubjectsStillExist(ay, baseSubjectList, familyId),
     );
     return [...rows].sort((a, b) =>
       editPlanListSortKey(a).localeCompare(editPlanListSortKey(b), undefined, {
@@ -2545,7 +2574,7 @@ export default function PlanYearModal({
         numeric: true,
       }),
     );
-  }, [previousPlans, baseSubjectList]);
+  }, [previousPlans, baseSubjectList, familyId, planListRowTimesById]);
 
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;

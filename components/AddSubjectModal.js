@@ -1586,7 +1586,11 @@ export default function AddSubjectModal({
     </RNModal>
 
     <AddMaterialModal
-      key={showAddMaterialModal ? `subject-add-material-${addMaterialDefaultRole ?? 'any'}` : 'subject-add-material-closed'}
+      key={
+        showAddMaterialModal
+          ? `subject-add-material-${addMaterialDefaultRole ?? 'any'}-${subjectName.trim()}-${selectedChildIds.join(',')}`
+          : 'subject-add-material-closed'
+      }
       visible={showAddMaterialModal}
       onClose={() => {
         setShowAddMaterialModal(false);
@@ -1605,10 +1609,11 @@ export default function AddSubjectModal({
       children={children}
       defaultRole={addMaterialDefaultRole ?? null}
       defaultSubjectId={subject?.id ?? null}
+      defaultSubjectName={!subject && subjectName.trim() ? subjectName.trim() : null}
       defaultChildIds={selectedChildIds}
       draftSubjectForMaterial={
-        !subject && subjectName.trim() && selectedChildIds.length > 0
-          ? { name: subjectName.trim(), childIds: selectedChildIds }
+        !subject && subjectName.trim()
+          ? { name: subjectName.trim(), childIds: selectedChildIds.length > 0 ? [...selectedChildIds] : [] }
           : null
       }
     />
@@ -1770,10 +1775,10 @@ const styles = StyleSheet.create({
   addUnitsLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748b',
+    color: '#111827',
     marginRight: 8,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   addUnitsLink: {
@@ -1781,6 +1786,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       textDecorationLine: 'underline',
     }),
   },
@@ -1789,6 +1795,9 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginHorizontal: 6,
     fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   accordionSection: {
     borderWidth: 1,

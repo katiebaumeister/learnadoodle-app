@@ -5,7 +5,7 @@
  * Shows condensed review inbox with tabs and limited items.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
@@ -19,6 +19,38 @@ import {
   filterEventsForComingUpRail,
 } from '../child/childHomeRailHelpers';
 
+const RAIL_CACHE_TTL_MS = 3 * 60 * 1000;
+const railCacheKey = (familyId) => `parent_home_rail_v1_${familyId}`;
+
+function readRailCache(familyId) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return null;
+  try {
+    const raw = sessionStorage.getItem(railCacheKey(familyId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const { ts, assignments, upcomingEvents, children } = parsed;
+    if (typeof ts !== 'number' || Date.now() - ts > RAIL_CACHE_TTL_MS) return null;
+    return {
+      assignments: Array.isArray(assignments) ? assignments : [],
+      upcomingEvents: Array.isArray(upcomingEvents) ? upcomingEvents : [],
+      children: Array.isArray(children) ? children : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeRailCache(familyId, payload) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+  try {
+    sessionStorage.setItem(
+      railCacheKey(familyId),
+      JSON.stringify({ ts: Date.now(), ...payload })
+    );
+  } catch {
+    /* ignore quota */
+  }
+}
 
 const SECTIONS = [
   { id: 'submissions', label: 'Submissions' },
@@ -49,6 +81,22 @@ export default function EmbeddedNotificationCenter({
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
   const [openModal, setOpenModal] = useState(null);
+
+  /** Hydrate from session cache before paint so the rail does not pop in empty on repeat visits. */
+  useLayoutEffect(() => {
+    if (!familyId) return;
+    const c = readRailCache(familyId);
+    if (!c) return;
+    setAssignments(c.assignments);
+    setUpcomingEvents(c.upcomingEvents);
+    setChildren(c.children);
+  }, [familyId]);
+
+  useEffect(() => {
+    if (dataReady && familyId) {
+      writeRailCache(familyId, { assignments, upcomingEvents, children });
+    }
+  }, [dataReady, familyId, assignments, upcomingEvents, children]);
 
   useEffect(() => {
     if (session && !session.loading && familyId) {
@@ -339,8 +387,8 @@ export default function EmbeddedNotificationCenter({
       : dataReady && hasLinkedChildAccount && !hasInboxActivity
         ? 'assign'
         : 'none';
-  /** Tabs + list only after load and only when not showing an onboarding card. */
-  const showInboxTabs = dataReady && primaryCardMode === 'none';
+  /** Inbox chrome as soon as we know we are not in onboarding-card mode (primaryCardMode stays 'none' while loading). */
+  const showInboxTabs = hideOnboardingCards || primaryCardMode === 'none';
 
   const sectionLabel =
     primaryCardMode === 'invite'
