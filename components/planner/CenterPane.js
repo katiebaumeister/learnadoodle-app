@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { View, Platform, useWindowDimensions } from 'react-native';
 import MonthGrid from './MonthGrid';
 import WeekGrid from './WeekGrid';
@@ -56,7 +56,8 @@ export default function CenterPane({
   const [mode, setMode] = useState(() => normalizeViewMode(externalViewMode));
   const prevModeRef = useRef(mode);
 
-  useEffect(() => {
+  // useLayoutEffect: sync toolbar/URL view before paint. useEffect caused a visible flash (e.g. plan → attendance showed Month for one frame).
+  useLayoutEffect(() => {
     setMode(normalizeViewMode(externalViewMode));
   }, [externalViewMode]);
   const [viewDate, setViewDate] = useState(selectedDate || date || startOfToday());

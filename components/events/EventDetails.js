@@ -2861,6 +2861,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         event_type: eventType === 'Scheduled Class Day' ? 'Schedule Block' : (eventType || 'Lesson'),
         subject_id: subjectId || null,
         unit: (unit && unit.trim()) ? unit.trim() : null,
+        // Mirror unit/lesson for APIs that read curriculum_unit_title / events.lesson (subject structure, plan slot labels).
+        curriculum_unit_title: (unit && unit.trim()) ? unit.trim() : null,
+        lesson: (lesson && lesson.trim()) ? lesson.trim() : null,
         grade: (grade && grade.trim()) ? grade.trim() : null,
         percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
           const parsed = parseFloat(percentOfTotalGrade.trim());
@@ -3270,6 +3273,45 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
       }
 
+      // Keep canonical curriculum rows in sync when this occurrence is tied to a plan/subject lesson.
+      const syncPlanOrSubject =
+        !!(subjectId || countsTowardPlan || event?.subject_id || event?.academic_year_id);
+      const lessonIdFk = event?.curriculum_lesson_id;
+      if (syncPlanOrSubject && lessonIdFk) {
+        const newUnitT = (unit && unit.trim()) ? unit.trim() : '';
+        const newLessonT =
+          (lesson && lesson.trim()) ? lesson.trim() : (draftTitle || '').trim() || null;
+        try {
+          const { data: lesRow, error: lesErr } = await supabase
+            .from('curriculum_lessons')
+            .select('id, unit_id, title')
+            .eq('id', lessonIdFk)
+            .maybeSingle();
+          if (!lesErr && lesRow?.unit_id) {
+            if (newUnitT) {
+              const { error: unitErr } = await supabase
+                .from('curriculum_units')
+                .update({ title: newUnitT })
+                .eq('id', lesRow.unit_id);
+              if (unitErr) {
+                console.warn('[EventDetails] curriculum_units title sync:', unitErr.message || unitErr);
+              }
+            }
+            if (newLessonT && String(newLessonT) !== String(lesRow.title || '')) {
+              const { error: ltErr } = await supabase
+                .from('curriculum_lessons')
+                .update({ title: newLessonT })
+                .eq('id', lesRow.id);
+              if (ltErr) {
+                console.warn('[EventDetails] curriculum_lessons title sync:', ltErr.message || ltErr);
+              }
+            }
+          }
+        } catch (curSyncErr) {
+          console.warn('[EventDetails] curriculum row sync skipped', curSyncErr);
+        }
+      }
+
       const patch = { ...updates };
       if (!('start_ts' in patch) && event.start_ts) {
         patch.start_ts = event.start_ts;
@@ -3347,11 +3389,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       } else if (typeof window !== 'undefined' && event?.academic_year_id) {
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
       }
+      // Subject-linked edits (no plan year on patch): still refresh calendar + plan summary listeners.
+      if (
+        typeof window !== 'undefined' &&
+        !planYearId &&
+        (subjectId || event?.subject_id)
+      ) {
+        window.dispatchEvent(
+          new CustomEvent('refreshCalendar', {
+            detail: { forceInvalidate: true, skipHomeRefresh: false },
+          }),
+        );
+      }
       // Refresh Subjects page so grades/materials and subject detail stay in sync
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        if (event?.subject_id) {
-          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: event.subject_id } }));
+        const detailSubjectId = cleanUpdates.subject_id ?? event?.subject_id;
+        if (detailSubjectId) {
+          window.dispatchEvent(
+            new CustomEvent('refreshSubjectDetail', { detail: { subjectId: detailSubjectId } }),
+          );
         }
       }
     } catch (err) {

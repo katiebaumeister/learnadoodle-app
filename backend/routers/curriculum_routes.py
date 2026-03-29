@@ -654,7 +654,7 @@ async def get_subject_curriculum_events_structure(
         rows = res.data or []
         units_map: Dict[str, List[Dict[str, Any]]] = {}
         for ev in rows:
-            utitle = (ev.get("curriculum_unit_title") or "").strip() or "Untitled Unit"
+            utitle = (ev.get("curriculum_unit_title") or ev.get("unit") or "").strip() or "Untitled Unit"
             if utitle not in units_map:
                 units_map[utitle] = []
             meta = ev.get("curriculum_metadata") or {}
