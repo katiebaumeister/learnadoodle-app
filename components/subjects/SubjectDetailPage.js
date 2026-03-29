@@ -35,6 +35,7 @@ import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
+import SubjectAssignedToStudentModal from './SubjectAssignedToStudentModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
 import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtils';
@@ -72,6 +73,10 @@ export default function SubjectDetailPage({
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
   const [showPastEventsAttendanceModal, setShowPastEventsAttendanceModal] = useState(false);
+  const [showAssignedToStudentModal, setShowAssignedToStudentModal] = useState(false);
+  /** Web-only: which export icon is hovered (portal tooltip, matches planner RightToolbar). */
+  const [exportTooltipKey, setExportTooltipKey] = useState(null);
+  const [exportTooltipPos, setExportTooltipPos] = useState({ x: 0, y: 0 });
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
   const [assignedDetailAssignment, setAssignedDetailAssignment] = useState(null);
   const [showMaterialDocViewer, setShowMaterialDocViewer] = useState(false);
@@ -401,6 +406,28 @@ export default function SubjectDetailPage({
       return;
     }
     setAssignedDetailAssignment(a);
+  }, []);
+
+  const handleOpenAssignedFromModal = useCallback(
+    (a) => {
+      setShowAssignedToStudentModal(false);
+      openAssignedWorkItem(a);
+    },
+    [openAssignedWorkItem],
+  );
+
+  const handleExportHover = useCallback((key, isEnter, event) => {
+    if (Platform.OS !== 'web') return;
+    if (isEnter) {
+      setExportTooltipKey(key);
+      const node = event?.currentTarget || event?.target;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        setExportTooltipPos({ x: rect.left + rect.width / 2, y: rect.bottom });
+      }
+    } else {
+      setExportTooltipKey(null);
+    }
   }, []);
 
   const hasGradesAttention = useMemo(() => {
@@ -776,7 +803,12 @@ export default function SubjectDetailPage({
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Export attendance"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                accessibilityHint="Download"
+                {...(Platform.OS === 'web' && {
+                  cursor: 'pointer',
+                  onMouseEnter: (e) => handleExportHover('attendance', true, e),
+                  onMouseLeave: (e) => handleExportHover('attendance', false, e),
+                })}
               >
                 <Download size={18} color="#6B7280" />
               </TouchableOpacity>
@@ -879,7 +911,12 @@ export default function SubjectDetailPage({
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Export grades"
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                accessibilityHint="Download"
+                {...(Platform.OS === 'web' && {
+                  cursor: 'pointer',
+                  onMouseEnter: (e) => handleExportHover('grades', true, e),
+                  onMouseLeave: (e) => handleExportHover('grades', false, e),
+                })}
               >
                 <Download size={18} color="#6B7280" />
               </TouchableOpacity>
@@ -891,39 +928,18 @@ export default function SubjectDetailPage({
             ) : null}
           </View>
           {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
-            <View style={styles.assignedToStudentBlock}>
-              <Text style={styles.assignedToStudentHeading}>Assigned to student</Text>
-              <Text style={styles.assignedToStudentHint}>
-                Work you’ve assigned that hasn’t been submitted yet. Open the planner event or assignment details.
-              </Text>
-              <View style={styles.assignedToStudentList}>
-                {assignmentsAssignedToStudent.map((a) => {
-                  const dueLine = formatDueShort(a.due_date);
-                  const statusLabel = a.status === 'in_progress' ? 'In progress' : 'Not started';
-                  return (
-                    <TouchableOpacity
-                      key={a.id}
-                      style={styles.assignedToStudentRow}
-                      onPress={() => openAssignedWorkItem(a)}
-                      activeOpacity={0.75}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Open assignment ${a.title || ''}`}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <View style={styles.assignedToStudentRowBody}>
-                        <Text style={styles.assignedToStudentRowTitle} numberOfLines={2}>
-                          {a.title || 'Assignment'}
-                        </Text>
-                        <Text style={styles.assignedToStudentRowMeta}>
-                          {getChildName(a.child_id)}
-                          {dueLine ? ` · ${dueLine}` : ''} · {statusLabel}
-                        </Text>
-                      </View>
-                      <ChevronRight size={18} color="#94a3b8" />
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+            <View style={styles.assignedToStudentCtaWrap}>
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={() => setShowAssignedToStudentModal(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="View work assigned to student that has not been submitted"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Calendar size={18} color="#6B7280" />
+                <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
+              </TouchableOpacity>
             </View>
           ) : null}
           {gradedItems.length > 0 && (
@@ -1034,7 +1050,12 @@ export default function SubjectDetailPage({
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel="Export learning goals"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              accessibilityHint="Download"
+              {...(Platform.OS === 'web' && {
+                cursor: 'pointer',
+                onMouseEnter: (e) => handleExportHover('learningGoals', true, e),
+                onMouseLeave: (e) => handleExportHover('learningGoals', false, e),
+              })}
             >
               <Download size={18} color="#6B7280" />
             </TouchableOpacity>
@@ -1055,6 +1076,14 @@ export default function SubjectDetailPage({
         getChildName={getChildName}
         onOpenEvent={handleOpenEventDetails}
         onCompleted={() => loadSubjectDetail({ silent: true })}
+      />
+      <SubjectAssignedToStudentModal
+        visible={showAssignedToStudentModal}
+        onClose={() => setShowAssignedToStudentModal(false)}
+        assignments={assignmentsAssignedToStudent}
+        getChildName={getChildName}
+        formatDueShort={formatDueShort}
+        onOpenAssignment={handleOpenAssignedFromModal}
       />
       <Modal
         visible={showExportComingSoonModal}
@@ -1112,6 +1141,34 @@ export default function SubjectDetailPage({
         familyId={familyId}
         onClose={() => setAssignedDetailAssignment(null)}
       />
+      {Platform.OS === 'web' &&
+        exportTooltipKey &&
+        (() => {
+          let ReactDOM;
+          try {
+            ReactDOM = require('react-dom');
+          } catch (e) {
+            return null;
+          }
+          const tip = (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.exportHoverTooltip,
+                {
+                  position: 'fixed',
+                  left: exportTooltipPos.x,
+                  top: exportTooltipPos.y,
+                  transform: [{ translateX: '-50%' }],
+                  marginTop: 6,
+                },
+              ]}
+            >
+              <Text style={styles.exportHoverTooltipText}>Download</Text>
+            </View>
+          );
+          return ReactDOM.createPortal ? ReactDOM.createPortal(tip, document.body) : null;
+        })()}
     </View>
   );
 }
@@ -1321,62 +1378,9 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  assignedToStudentBlock: {
-    marginBottom: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.25)',
-  },
-  assignedToStudentHeading: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 6,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  assignedToStudentHint: {
-    fontSize: 13,
-    color: '#64748b',
-    lineHeight: 18,
-    marginBottom: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  assignedToStudentList: {},
-  assignedToStudentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#f8fafc',
-  },
-  assignedToStudentRowBody: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 8,
-  },
-  assignedToStudentRowTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  assignedToStudentRowMeta: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  /** Grades: pill CTA matching Attendance “Past lessons & bulk actions” */
+  assignedToStudentCtaWrap: {
+    marginBottom: 16,
   },
   summaryTile: {
     flex: 1,
@@ -1545,6 +1549,28 @@ const styles = StyleSheet.create({
   exportIconButton: {
     padding: 4,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  /** Web hover tooltip — same idea as RightToolbar (dark pill, portal to body) */
+  exportHoverTooltip: {
+    backgroundColor: '#0f172a',
+    borderRadius: 9999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    zIndex: 10000,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 14px rgba(15, 23, 42, 0.35)',
+    }),
+  },
+  exportHoverTooltipText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sectionTitle: {
     fontSize: 18,

@@ -103,6 +103,7 @@ import {
   formatTimeRange,
   getPlanBlocksTimesSummary,
 } from '../../lib/planEditListCache';
+import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 
 // Constants for curriculum building
 const SOURCE_TYPES = [
@@ -7313,7 +7314,9 @@ export default function PlanYearModal({
                       {mergedSlotLines.length > 0 ? (
                         <>
                           <View style={[styles.planSummaryPadded, { marginTop: 4, marginBottom: 8 }]}>
-                            <Text style={styles.planSummaryDatesSectionLabel}>Dates with events</Text>
+                            <Text style={styles.planSummaryDatesSectionLabel}>
+                              {formatSubjectPlanHeading(assigneeNames, subjectNames)}
+                            </Text>
                           </View>
                           <View style={styles.planSummaryDatesList}>
                             {mergedSlotLines.map((line) => {

@@ -22,6 +22,7 @@ import { clearPlaceholders, getEventForPlanSlot } from '../../lib/services/acade
 import { deleteEvent as deletePlannerEventSoft } from '../../lib/services/plannerClientWithOffline';
 import { dropPlanYearFullDataCacheEntry } from '../../lib/planEditListCache';
 import { colors } from '../../theme/colors';
+import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 
 function dispatchOpenPlanModal(detail) {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -108,6 +109,15 @@ export default function SubjectProgressPlanSection({
   const [rowPendingDelete, setRowPendingDelete] = useState(null);
   /** Plan row `item.key` while resolving calendar event id for delete (no eventId on line yet). */
   const [planRowDeleteResolvingKey, setPlanRowDeleteResolvingKey] = useState(null);
+
+  const planSectionHeading = useMemo(() => {
+    const idSet = new Set((assignedChildIds || []).map(String));
+    const names = (children || [])
+      .filter((c) => c && idSet.has(String(c.id)))
+      .map((c) => (c.first_name || c.name || '').trim())
+      .filter(Boolean);
+    return formatSubjectPlanHeading(names, subjectName);
+  }, [children, assignedChildIds, subjectName]);
 
   const loadPlan = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
@@ -460,7 +470,7 @@ export default function SubjectProgressPlanSection({
       {mergedScheduleRows.length > 0 ? (
         <View style={styles.datesCard}>
           <View style={styles.datesCardHeaderRow}>
-            <Text style={styles.tableTitle}>Dates with events</Text>
+            <Text style={styles.tableTitle}>{planSectionHeading}</Text>
             <View style={styles.planHeaderActionGroup}>
               <TouchableOpacity
                 style={styles.planHeaderRoundedBtn}
