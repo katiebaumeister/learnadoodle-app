@@ -14,7 +14,7 @@
  * - role_flags (isParent, isTutor, isChild)
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { getMe, getIntegrationStatus } from '../lib/apiClient';
@@ -304,6 +304,9 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     }
   }, []);
 
+  const sessionRefForRefresh = useRef(session);
+  sessionRefForRefresh.current = session;
+
   // Load session when user or familyId changes
   useEffect(() => {
     if (authUserId) {
@@ -314,20 +317,24 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     }
   }, [authUserId, propFamilyId, loadSession]);
 
-  // Refresh session (useful after role changes)
+  // Refresh session (useful after role changes) — do not close over `session` or this identity changes every session update and churns context consumers.
   const refreshSession = useCallback(() => {
     if (authUserId) {
       setLoading(true);
-      loadSession(session?.family_id || propFamilyId);
+      loadSession(sessionRefForRefresh.current?.family_id || propFamilyId);
     }
-  }, [authUserId, session, propFamilyId, loadSession]);
+  }, [authUserId, propFamilyId, loadSession]);
 
-  const value = {
-    ...session,
-    loading,
-    legacyMode,
-    refreshSession,
-  };
+  /** Stable reference when session snapshot is unchanged — avoids consumer useEffect([session]) loops. */
+  const value = useMemo(
+    () => ({
+      ...session,
+      loading,
+      legacyMode,
+      refreshSession,
+    }),
+    [session, loading, legacyMode, refreshSession]
+  );
 
   return (
     <SessionContext.Provider value={value}>

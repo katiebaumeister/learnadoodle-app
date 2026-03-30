@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     borderRadius: 20, // --radius-md
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.08)', // --stroke
-    margin: 16, // Gap between sidebar and surface
+    margin: 16, // Gap between sidebar and surface (uniform on all sides)
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       overflowY: 'auto',
@@ -136,6 +136,8 @@ const styles = StyleSheet.create({
       flexDirection: 'column',
       position: 'relative', // Ensure stacking context
       zIndex: 0, // Below dropdown menu
+      // Reserve space for scrollbar so centered content doesn’t look shifted vs top/bottom gutters
+      scrollbarGutter: 'stable',
     }),
   },
   setupBanner: {

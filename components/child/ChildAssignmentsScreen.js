@@ -47,11 +47,11 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
   const childId = session?.child_id || (session?.accessible_children?.[0]?.id);
   const child = session?.accessible_children?.[0];
 
+  const sessionLoading = session?.loading;
   useEffect(() => {
-    if (session && !session.loading && childId) {
-      loadAssignments();
-    }
-  }, [session, childId]);
+    if (sessionLoading !== false || !childId || !session) return;
+    loadAssignments();
+  }, [sessionLoading, childId]);
 
   const loadAssignments = async () => {
     if (!childId) return;

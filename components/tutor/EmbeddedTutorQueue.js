@@ -22,11 +22,16 @@ export default function EmbeddedTutorQueue({ familyId, limit = 5, onViewAll }) {
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
+  const sessionLoading = session?.loading;
+  const accessibleChildIdsKey = (session?.accessible_children || [])
+    .map((c) => (typeof c === 'string' ? c : c?.id))
+    .filter(Boolean)
+    .sort()
+    .join(',');
   useEffect(() => {
-    if (session && !session.loading && session.accessible_children) {
-      loadData();
-    }
-  }, [session]);
+    if (sessionLoading !== false || !accessibleChildIdsKey || !session) return;
+    loadData();
+  }, [sessionLoading, accessibleChildIdsKey]);
 
   const loadData = async () => {
     if (!session.accessible_children || session.accessible_children.length === 0) {

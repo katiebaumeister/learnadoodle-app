@@ -39,11 +39,11 @@ export default function ReviewInboxScreen({ familyId, onNavigate }) {
   const [openModal, setOpenModal] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
+  const sessionLoading = session?.loading;
   useEffect(() => {
-    if (session && !session.loading && familyId) {
-      loadData();
-    }
-  }, [session, familyId]);
+    if (sessionLoading !== false || !familyId || !session) return;
+    loadData();
+  }, [sessionLoading, familyId]);
 
   const loadData = async () => {
     if (!familyId) return;

@@ -73,11 +73,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const loadDataRef = useRef(loadData);
   loadDataRef.current = loadData;
 
+  const sessionLoading = session?.loading;
   useEffect(() => {
-    if (session && !session.loading && familyId && childId) {
-      loadData();
-    }
-  }, [session, familyId, childId]);
+    if (sessionLoading !== false || !familyId || !childId || !session) return;
+    loadData();
+  }, [sessionLoading, familyId, childId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;

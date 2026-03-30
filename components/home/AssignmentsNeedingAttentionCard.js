@@ -23,11 +23,11 @@ export default function AssignmentsNeedingAttentionCard({ familyId, limit = 3 })
   const [children, setChildren] = useState([]);
   const [showInboxModal, setShowInboxModal] = useState(false);
 
+  const sessionLoading = session?.loading;
   useEffect(() => {
-    if (session && !session.loading && familyId) {
-      loadData();
-    }
-  }, [session, familyId]);
+    if (sessionLoading !== false || !familyId || !session) return;
+    loadData();
+  }, [sessionLoading, familyId]);
 
   const loadData = async () => {
     if (!familyId) return;

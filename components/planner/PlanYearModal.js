@@ -2574,7 +2574,7 @@ export default function PlanYearModal({
         numeric: true,
       }),
     );
-  }, [previousPlans, baseSubjectList, familyId, planListRowTimesById]);
+  }, [previousPlans, baseSubjectList, familyId]);
 
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;

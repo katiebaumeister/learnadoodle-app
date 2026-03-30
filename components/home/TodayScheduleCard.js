@@ -200,6 +200,17 @@ export default function TodayScheduleCard({
             const isHoliday = (event.event_type || event.type || '').toLowerCase() === 'holiday';
             const done = isEventDone(event);
             const showCheck = showAttendanceToggle && !isHoliday;
+            const subjectName = event.subject_id ? getSubjectName(event.subject_id) : null;
+            const rawTitle = (event.title || '').trim();
+            const primaryLabel = subjectName || rawTitle || 'Event';
+            const showTitleSubtitle =
+              Boolean(
+                subjectName &&
+                  rawTitle &&
+                  rawTitle.toLowerCase() !== String(subjectName).toLowerCase()
+              );
+            /** Subject chip only if we could not resolve a name for the headline */
+            const showSubjectPill = Boolean(event.subject_id && !subjectName);
 
             return (
               <View key={event.id} style={styles.eventRow}>
@@ -233,14 +244,25 @@ export default function TodayScheduleCard({
                           )}
                         </View>
                       ) : null}
-                      <Text
-                        style={[
-                          styles.eventTitle,
-                          done && styles.eventTitleDone,
-                        ]}
-                      >
-                        {event.title}
-                      </Text>
+                      <View style={styles.titleStack}>
+                        <Text
+                          style={[
+                            styles.eventPrimaryTitle,
+                            done && styles.eventTitleDone,
+                          ]}
+                          numberOfLines={2}
+                        >
+                          {primaryLabel}
+                        </Text>
+                        {showTitleSubtitle ? (
+                          <Text
+                            style={[styles.eventSubtitle, done && styles.eventTitleDone]}
+                            numberOfLines={2}
+                          >
+                            {rawTitle}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                     <View style={styles.pillsRow}>
                       {eventChildIds.length > 0 && (
@@ -248,7 +270,7 @@ export default function TodayScheduleCard({
                           <ChildAvatarCluster
                             childIds={eventChildIds}
                             familyChildren={children}
-                            size={32}
+                            size={28}
                             overlap={-8}
                           />
                           <Text style={[styles.childLabelText, done && styles.eventMetaDone]}>
@@ -256,13 +278,13 @@ export default function TodayScheduleCard({
                           </Text>
                         </View>
                       )}
-                      {event.subject_id && (
+                      {showSubjectPill ? (
                         <View style={[styles.pill, { backgroundColor: getSubjectColor(event.subject_id) + '20' }]}>
                           <Text style={[styles.pillText, { color: getSubjectColor(event.subject_id) }]}>
                             {getSubjectName(event.subject_id)}
                           </Text>
                         </View>
-                      )}
+                      ) : null}
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -529,7 +551,12 @@ const styles = StyleSheet.create({
     gap: 8,
     flex: 1,
     minWidth: 0,
-    marginBottom: 6,
+    marginBottom: 4,
+  },
+  titleStack: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'column',
   },
   eventHeader: {
     flexDirection: 'row',
@@ -551,9 +578,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   childLabelText: {
-    fontSize: 13,
-    color: '#374151',
-    fontWeight: '500',
+    fontSize: 12,
+    color: '#94a3b8',
+    fontWeight: '400',
     flex: 1,
     minWidth: 0,
     ...(Platform.OS === 'web' && {
@@ -565,9 +592,9 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   timeText: {
-    fontSize: 13,
-    color: '#64748b',
-    fontWeight: '500',
+    fontSize: 12,
+    color: '#94a3b8',
+    fontWeight: '400',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -575,15 +602,26 @@ const styles = StyleSheet.create({
   contentColumn: {
     flex: 1,
   },
-  eventTitle: {
-    fontSize: 14,
-    fontWeight: '500',
+  /** Primary row label: subject name or event title */
+  eventPrimaryTitle: {
+    fontSize: 15,
+    fontWeight: '700',
     color: '#0f172a',
     flex: 1,
     minWidth: 0,
-    marginBottom: 0,
+    letterSpacing: -0.2,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  /** Secondary line when both subject and a distinct title exist */
+  eventSubtitle: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#64748b',
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   pillsRow: {

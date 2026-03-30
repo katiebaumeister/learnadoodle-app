@@ -331,12 +331,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [userRole, setUserRole] = useState(propUserRole || null);
   
   // Update userRole from session when prop not provided (prop wins so child gets same shell with userRole="child")
+  const sessionEffectiveRole = session?.effective_role;
   useEffect(() => {
     if (propUserRole != null) return;
-    if (session && session.effective_role) {
-      setUserRole(session.effective_role);
-    }
-  }, [session, propUserRole]);
+    if (!sessionEffectiveRole) return;
+    setUserRole((prev) => (prev === sessionEffectiveRole ? prev : sessionEffectiveRole));
+  }, [sessionEffectiveRole, propUserRole]);
 
   /** Tutor: read-first planner; no global "new event" ownership. */
   const isTutorUser = userRole === 'tutor' || session?.role_flags?.isTutor === true;

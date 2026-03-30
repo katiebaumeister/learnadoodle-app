@@ -38,14 +38,15 @@ export default function ChildHomeScreen({
   const safeChildId = childId != null && String(childId).trim() ? String(childId).trim() : null;
   const safeFamilyId = familyId != null && String(familyId).trim() ? String(familyId).trim() : null;
 
+  const sessionLoading = session?.loading;
   useEffect(() => {
     if (!safeFamilyId || !safeChildId) return;
     if (isParentViewingChild) {
       loadData();
-    } else if (session && !session.loading) {
+    } else if (session && sessionLoading === false) {
       loadData();
     }
-  }, [session, safeFamilyId, safeChildId, isParentViewingChild]);
+  }, [sessionLoading, safeFamilyId, safeChildId, isParentViewingChild]);
 
   const loadData = async () => {
     if (!safeFamilyId || !safeChildId) return;

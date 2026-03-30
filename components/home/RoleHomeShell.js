@@ -37,11 +37,12 @@ const styles = StyleSheet.create({
     /* Match main app surface so gutters / column gap aren’t blue-gray */
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      maxWidth: 1200,
-      alignSelf: 'center',
-      paddingHorizontal: 20,
-      paddingTop: 20,
-      paddingBottom: 36,
+      maxWidth: '100%',
+      alignSelf: 'stretch',
+      /* Symmetric edge inset so left/right match top/bottom relative to AppShell inner area */
+      paddingHorizontal: 16,
+      paddingTop: 16,
+      paddingBottom: 16,
     }),
     ...(Platform.OS !== 'web' && {
       paddingHorizontal: 16,
@@ -76,7 +77,7 @@ const styles = StyleSheet.create({
       overflow: 'hidden',
       borderWidth: 1,
       borderColor: 'rgba(15, 23, 42, 0.08)',
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
     }),
   },
   leftSectionFullWidth: {

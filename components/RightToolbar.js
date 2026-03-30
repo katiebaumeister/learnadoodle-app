@@ -105,17 +105,16 @@ export default function RightToolbar({
   const handleToolHover = (tool, isEnter, event) => {
     if (Platform.OS !== 'web') return;
     if (isEnter) {
-      setHoveredTool(tool.key);
+      setHoveredTool((prev) => (prev === tool.key ? prev : tool.key));
       const node = event?.currentTarget || event?.target;
       if (node && typeof node.getBoundingClientRect === 'function') {
         const rect = node.getBoundingClientRect();
-        setTooltipPos({
-          x: rect.left + rect.width / 2,
-          y: rect.bottom,
-        });
+        const x = rect.left + rect.width / 2;
+        const y = rect.bottom;
+        setTooltipPos((prev) => (prev.x === x && prev.y === y ? prev : { x, y }));
       }
     } else {
-      setHoveredTool(null);
+      setHoveredTool((prev) => (prev == null ? prev : null));
     }
   };
 

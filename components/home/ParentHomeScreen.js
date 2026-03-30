@@ -135,7 +135,8 @@ export default function ParentHomeScreen({
         subjects: [],
       });
     }
-  }, [session, familyId, selectedDate]);
+    // Primitives only — avoid re-running when SessionContext value identity flickers.
+  }, [session?.loading, session?.error, familyId, selectedDate]);
 
   const loadData = async (silent = false) => {
     if (!familyId) return;
@@ -524,14 +525,16 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.1)',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
       flex: 1,
       height: '100%',
       minHeight: 0,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
       /* Single white column comes from RoleHomeShell.leftSection — avoid double card chrome */
       backgroundColor: 'transparent',
       borderWidth: 0,
@@ -544,12 +547,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.12)',
     backgroundColor: colors.bgSubtle,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     marginBottom: 2,
     ...(Platform.OS === 'web' && {
       backgroundImage: 'linear-gradient(135deg, #f4f2ff 0%, #eef6ff 48%, #f0fdf6 100%)',
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
     }),
   },
   headerRow: {
@@ -561,7 +564,7 @@ const styles = StyleSheet.create({
   },
   headerLeft: {
     flexDirection: 'column',
-    gap: 6,
+    gap: 8,
     flex: 1,
     minWidth: 200,
     ...(Platform.OS === 'web' && {
@@ -589,7 +592,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     fontWeight: '400',
-    marginTop: 4,
+    marginTop: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -623,42 +626,46 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: 'rgba(148, 163, 184, 0.2)',
-    marginTop: 12,
-    marginBottom: 12,
+    marginTop: 10,
+    marginBottom: 10,
   },
   scheduleSection: {
     flex: 1,
     marginTop: 2,
-    paddingTop: 6,
+    /** Match headerCard top inset so “Add event” aligns with “View To-Dos” from the card edge */
+    paddingTop: 14,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
       minHeight: 0,
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
     }),
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingTop: 6,
-    marginBottom: 10,
-    marginHorizontal: -16,
-    paddingHorizontal: 16,
+    alignItems: 'center',
+    paddingTop: 0,
+    marginBottom: 8,
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
+    paddingRight: 10,
   },
-  /** Section title tier (600) — readable vs rail card; still below page hero */
+  /** Section title — slightly heavier than body, below page hero */
   sectionLabel: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#1e293b',
     letterSpacing: -0.2,
     textTransform: 'none',
-    marginTop: 4,
+    marginTop: 0,
+    flexShrink: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -673,6 +680,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.24)',
+    flexShrink: 0,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease',

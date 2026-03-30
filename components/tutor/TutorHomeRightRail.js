@@ -2,7 +2,7 @@
  * Tutor home right rail — "What needs my input right now?"
  * Tabs: Needs help (default) · In progress · Upcoming
  */
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,8 @@ function normalizeChildIds(session) {
 
 export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanner }) {
   const session = useSession();
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('needs_help');
   const [filterChildId, setFilterChildId] = useState('all');
@@ -44,10 +46,18 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
   const [responseText, setResponseText] = useState('');
   const [sending, setSending] = useState(false);
 
-  const childIds = useMemo(() => normalizeChildIds(session), [session]);
+  const accessibleChildIdsKey = useMemo(
+    () => normalizeChildIds(session).slice().sort().join(','),
+    [session?.loading, session?.accessible_children],
+  );
+  const childIds = useMemo(() => {
+    if (!accessibleChildIdsKey) return [];
+    return accessibleChildIdsKey.split(',').filter(Boolean);
+  }, [accessibleChildIdsKey]);
 
   const load = useCallback(async () => {
-    if (!familyId || childIds.length === 0) {
+    const ids = normalizeChildIds(sessionRef.current);
+    if (!familyId || ids.length === 0) {
       setAssignments([]);
       setUpcomingEvents([]);
       setChildrenById({});
@@ -59,7 +69,7 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
       const { data: kids, error: kidsErr } = await supabase
         .from('children')
         .select('id, first_name, name, avatar')
-        .in('id', childIds);
+        .in('id', ids);
       if (!kidsErr && kids) {
         const map = {};
         kids.forEach((c) => {
@@ -69,7 +79,7 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
       }
 
       const rows = [];
-      for (const cid of childIds) {
+      for (const cid of ids) {
         const { data, error } = await getAssignments(cid);
         if (!error && data) {
           data.forEach((a) => rows.push({ ...a, child_id: cid, child: kids?.find((k) => k.id === cid) }));
@@ -84,7 +94,7 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
         .from('events')
         .select('id, title, start_ts, end_ts, child_id, event_type, subject_id, status')
         .eq('family_id', familyId)
-        .in('child_id', childIds)
+        .in('child_id', ids)
         .gte('start_ts', now.toISOString())
         .lte('start_ts', horizon.toISOString())
         .in('status', ['scheduled', 'in_progress'])
@@ -115,11 +125,13 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
     } finally {
       setLoading(false);
     }
-  }, [familyId, childIds.join(',')]);
+  }, [familyId, accessibleChildIdsKey]);
 
+  const sessionLoading = session?.loading;
   useEffect(() => {
-    if (session && !session.loading) load();
-  }, [session, load]);
+    if (sessionLoading !== false || !session) return;
+    load();
+  }, [sessionLoading, load]);
 
   const childName = (cid) => childrenById[cid]?.first_name || childrenById[cid]?.name || 'Student';
 

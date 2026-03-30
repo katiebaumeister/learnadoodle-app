@@ -19,11 +19,16 @@ export default function TutorStudentsScreen({ onSelectChild }) {
   const [children, setChildren] = useState([]);
   const [childStats, setChildStats] = useState({});
 
+  const sessionLoading = session?.loading;
+  const accessibleChildIdsKey = (session?.accessible_children || [])
+    .map((c) => (typeof c === 'string' ? c : c?.id))
+    .filter(Boolean)
+    .sort()
+    .join(',');
   useEffect(() => {
-    if (session && !session.loading && session.accessible_children) {
-      loadChildren();
-    }
-  }, [session]);
+    if (sessionLoading !== false || !accessibleChildIdsKey || !session) return;
+    loadChildren();
+  }, [sessionLoading, accessibleChildIdsKey]);
 
   const loadChildren = async () => {
     if (!session.accessible_children || session.accessible_children.length === 0) {

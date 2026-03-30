@@ -84,6 +84,13 @@ export default function SubjectDetailPage({
   const [materialDocViewerTitle, setMaterialDocViewerTitle] = useState('');
   const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
   const loadingRef = useRef(false);
+  /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const onSubjectDataUpdateRef = useRef(onSubjectDataUpdate);
+  onSubjectDataUpdateRef.current = onSubjectDataUpdate;
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
 
   useEffect(() => {
     if (preloadedSubjectData) {
@@ -104,14 +111,14 @@ export default function SubjectDetailPage({
     setError(null);
     try {
       // Pass session for role-based filtering
-      const data = await getSubjectDetail(subjectId, familyId, null, session);
+      const data = await getSubjectDetail(subjectId, familyId, null, sessionRef.current);
       if (data == null) {
-        if (typeof onBack === 'function') onBack();
+        if (typeof onBackRef.current === 'function') onBackRef.current();
         return;
       }
       setSubjectData(data);
-      if (onSubjectDataUpdate) {
-        onSubjectDataUpdate(data);
+      if (onSubjectDataUpdateRef.current) {
+        onSubjectDataUpdateRef.current(data);
       }
     } catch (err) {
       console.error('[SubjectDetailPage] Error loading subject detail:', err);
@@ -122,7 +129,7 @@ export default function SubjectDetailPage({
         loadingRef.current = false;
       }
     }
-  }, [subjectId, familyId, onSubjectDataUpdate, onBack, session]);
+  }, [subjectId, familyId]);
 
   useEffect(() => {
     if (!subjectId || !familyId) {

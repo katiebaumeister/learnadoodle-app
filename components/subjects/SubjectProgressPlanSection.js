@@ -280,10 +280,12 @@ export default function SubjectProgressPlanSection({
   const hasPlan = !!academicYearId && !!planData?.plan?.blocks?.some((b) => String(b.subject_id) === String(subjectId));
   const hasUnits = curriculumUnits.length > 0;
 
+  const onPlanContextRef = useRef(onPlanContext);
+  onPlanContextRef.current = onPlanContext;
   useEffect(() => {
     if (loadingPlan || loadingUnits) return;
-    onPlanContext?.({ hasPlan, hasUnits });
-  }, [loadingPlan, loadingUnits, hasPlan, hasUnits, onPlanContext]);
+    onPlanContextRef.current?.({ hasPlan, hasUnits });
+  }, [loadingPlan, loadingUnits, hasPlan, hasUnits]);
 
   /**
    * Curriculum lessons not already represented on a plan row.

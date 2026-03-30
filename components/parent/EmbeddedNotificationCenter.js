@@ -98,6 +98,10 @@ export default function EmbeddedNotificationCenter({
     }
   }, [dataReady, familyId, assignments, upcomingEvents, children]);
 
+  // Primitives only — full `session` from context was a new object whenever SessionProvider re-rendered (before useMemo).
+  const sessionLoading = session?.loading;
+  const sessionFamilyId = session?.family_id;
+
   useEffect(() => {
     if (session && !session.loading && familyId) {
       // Load data in background without showing loading state
@@ -114,7 +118,7 @@ export default function EmbeddedNotificationCenter({
         window.removeEventListener('refreshCalendar', onParentRefresh);
       };
     }
-  }, [session, familyId, hideOnboardingCards, viewerChildId]);
+  }, [sessionLoading, sessionFamilyId, familyId, hideOnboardingCards, viewerChildId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -564,7 +568,9 @@ export default function EmbeddedNotificationCenter({
                     </Text>
                     {count > 0 && (
                       <View style={[styles.countBadge, isActive && styles.countBadgeActive]}>
-                        <Text style={styles.countText}>{count > 99 ? '99+' : count}</Text>
+                        <Text style={[styles.countText, !isActive && styles.countTextInactive]}>
+                          {count > 99 ? '99+' : count}
+                        </Text>
                       </View>
                     )}
                   </TouchableOpacity>
@@ -728,7 +734,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.22)',
+    borderColor: 'rgba(148, 163, 184, 0.18)',
     paddingVertical: 12,
     paddingHorizontal: 12,
     ...(Platform.OS === 'web' && {
@@ -736,8 +742,10 @@ const styles = StyleSheet.create({
       flexDirection: 'column',
       height: '100%',
       minHeight: 0,
+      paddingVertical: 12,
+      paddingHorizontal: 12,
       transition: 'all 0.2s ease',
-      boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
     }),
   },
   header: {
@@ -751,10 +759,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  /** Rail subheading: inbox mode — quiet label, does not compete with card titles */
+  /** Rail subheading: inbox mode — quiet but legible section label */
   titleInbox: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
     letterSpacing: 0.02,
     color: '#64748b',
     textTransform: 'none',
@@ -838,7 +846,7 @@ const styles = StyleSheet.create({
   },
   tabs: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 5,
     marginBottom: 10,
   },
   tab: {
@@ -847,34 +855,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 6,
     borderRadius: 999,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(248, 250, 252, 0.65)',
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
+    borderColor: 'rgba(148, 163, 184, 0.16)',
     position: 'relative',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.15s ease-in-out',
       '&:hover': {
-        backgroundColor: 'rgba(248, 250, 252, 0.9)',
-        borderColor: 'rgba(148, 163, 184, 0.5)',
+        backgroundColor: 'rgba(241, 245, 249, 0.95)',
+        borderColor: 'rgba(148, 163, 184, 0.22)',
       },
     }),
   },
-  /* Match planner view chips (WebLayout): lavender fill + violet ring, indigo label */
+  /** Active tab: readable but slightly desaturated vs primary actions */
   tabActive: {
-    borderColor: 'rgba(139, 92, 246, 0.5)',
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderColor: 'rgba(99, 102, 241, 0.28)',
+    backgroundColor: 'rgba(99, 102, 241, 0.065)',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(99, 102, 241, 0.12)',
+      boxShadow: '0 1px 3px rgba(71, 81, 115, 0.1)',
     }),
   },
   tabText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '400',
+    color: '#94a3b8',
     textAlign: 'center',
     flexShrink: 1,
     ...(Platform.OS === 'web' && {
@@ -882,20 +890,20 @@ const styles = StyleSheet.create({
     }),
   },
   tabTextActive: {
-    color: 'rgba(99, 102, 241, 1)',
+    color: '#5a5f8a',
     fontWeight: '600',
   },
   countBadge: {
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
-    backgroundColor: 'rgba(99, 102, 241, 0.9)',
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(226, 232, 240, 0.95)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 3,
   },
   countBadgeActive: {
-    backgroundColor: 'rgba(79, 70, 229, 1)',
+    backgroundColor: 'rgba(99, 102, 241, 0.78)',
   },
   countText: {
     fontSize: 10,
@@ -904,6 +912,10 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  countTextInactive: {
+    color: '#64748b',
+    fontWeight: '500',
   },
   emptyState: {
     paddingTop: 4,
