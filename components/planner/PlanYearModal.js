@@ -109,6 +109,7 @@ import {
   getPlanBlocksTimesSummary,
 } from '../../lib/planEditListCache';
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
+import { prefetchPlanEditListForFamily } from '../../lib/services/plannerPrefetch';
 
 // Constants for curriculum building
 const SOURCE_TYPES = [
@@ -2786,6 +2787,11 @@ export default function PlanYearModal({
     [openForNewPlan, initialAcademicYearId, academicYearId, savedCurriculumHasLessonsBySubjectId],
   );
 
+  const hasAnySavedCurriculumUnits = useMemo(
+    () => Object.values(savedCurriculumHasLessonsBySubjectId || {}).some((value) => value === true),
+    [savedCurriculumHasLessonsBySubjectId],
+  );
+
   const flatLessonSlotTimes = useMemo(
     () =>
       buildFlatLessonSlotTimes(
@@ -2864,6 +2870,19 @@ export default function PlanYearModal({
     const rows = familyId ? getAcademicYearsPickerCache(familyId) : null;
     return getPlanEditListTimesForPlans(familyId, rows !== null ? rows : []);
   });
+
+  useEffect(() => {
+    if (!familyId) return;
+    const cachedRows = getAcademicYearsPickerCache(familyId);
+    if (cachedRows !== null) {
+      setPreviousPlans(cachedRows);
+      setPreviousPlansListFetched(true);
+      const times = getPlanEditListTimesForPlans(familyId, cachedRows);
+      if (Object.keys(times).length > 0) {
+        setPlanListRowTimesById((prev) => ({ ...times, ...prev }));
+      }
+    }
+  }, [familyId]);
 
   const editPlanListRows = useMemo(() => {
     const rows = (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
@@ -3045,22 +3064,11 @@ export default function PlanYearModal({
     let cancelled = false;
     const cancelledRef = { get current() { return cancelled; } };
     setPreviousPlansListFetched(false);
-    setPreviousPlans([]);
     (async () => {
-      const { data: rows, error: err } = await supabase
-        .from('academic_years')
-        .select('id, year_name, start_date, end_date, updated_at')
-        .eq('family_id', familyId)
-        .order('start_date', { ascending: false });
+      await prefetchPlanEditListForFamily(familyId);
       if (cancelled) return;
+      const next = getAcademicYearsPickerCache(familyId) || [];
       setPreviousPlansListFetched(true);
-      if (err) {
-        setPreviousPlans([]);
-        setAcademicYearsPickerCache(familyId, []);
-        return;
-      }
-      const next = Array.isArray(rows) ? rows : [];
-      setAcademicYearsPickerCache(familyId, next);
       setPreviousPlans(next);
       next
         .map((r) => r.id)
@@ -3206,15 +3214,16 @@ export default function PlanYearModal({
     }
     if (initialAcademicYearId && !openForNewPlan && !openedToPlanSummaryRef.current && !skipInitialPlanSummary) {
       openedToPlanSummaryRef.current = true;
-      if (initialPlanSummaryData && familyId) {
-        mergePlanYearFullDataCache(familyId, initialAcademicYearId, initialPlanSummaryData);
-        planSummaryCacheRef.current.set(initialAcademicYearId, initialPlanSummaryData);
-        setPlanSummaryData(initialPlanSummaryData);
-        setPlanSummaryError(null);
-      }
+      const cached =
+        (familyId ? getPlanYearFullDataFromCache(familyId, initialAcademicYearId) : null) ||
+        planSummaryCacheRef.current.get(initialAcademicYearId) ||
+        null;
+      if (cached) planSummaryCacheRef.current.set(initialAcademicYearId, cached);
+      setPlanSummaryData(cached);
+      setPlanSummaryError(null);
       setPlanSummaryYearId(initialAcademicYearId);
     }
-  }, [visible, initialAcademicYearId, initialPlanSummaryData, openForNewPlan, familyId, skipInitialPlanSummary]);
+  }, [visible, initialAcademicYearId, openForNewPlan, skipInitialPlanSummary, familyId]);
 
   // When user selects a plan from the list, show summary from cache (ref or app-warmed module cache), then refresh in background
   useEffect(() => {
@@ -3504,6 +3513,7 @@ export default function PlanYearModal({
     (async () => {
       const cachedLocal =
         planSummaryCacheRef.current.get(yearIdToLoad) || getPlanYearFullDataFromCache(familyId, yearIdToLoad);
+
       if (cachedLocal) {
         planSummaryCacheRef.current.set(yearIdToLoad, cachedLocal);
         mergePlanYearFullDataCache(familyId, yearIdToLoad, cachedLocal);
@@ -3524,12 +3534,20 @@ export default function PlanYearModal({
             setLoadError(error.message || 'Failed to load plan.');
           }
         } else {
+          planSummaryCacheRef.current.set(yearIdToLoad, cachedLocal);
+          mergePlanYearFullDataCache(familyId, yearIdToLoad, cachedLocal);
+          applyYearPayload(cachedLocal);
           await loadExclusions();
         }
         return;
       }
       if (!data) {
-        if (cachedLocal) await loadExclusions();
+        if (cachedLocal) {
+          planSummaryCacheRef.current.set(yearIdToLoad, cachedLocal);
+          mergePlanYearFullDataCache(familyId, yearIdToLoad, cachedLocal);
+          applyYearPayload(cachedLocal);
+          await loadExclusions();
+        }
         return;
       }
       planSummaryCacheRef.current.set(yearIdToLoad, data);
@@ -8054,7 +8072,7 @@ export default function PlanYearModal({
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
                       <Text style={{ fontSize: 14, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
-                        Add units without scheduling →
+                        {hasAnySavedCurriculumUnits ? 'Change units without scheduling ->' : 'Add units without scheduling ->'}
                       </Text>
                     </TouchableOpacity>
                   </View>

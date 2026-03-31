@@ -77,13 +77,13 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
         toValue: 1,
         duration: 200,
         easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
       }),
       Animated.spring(cardTranslate, {
         toValue: 0,
         damping: 20,
         stiffness: 200,
-        useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
       }),
     ]).start();
   }, [overlayOpacity, cardTranslate]);
@@ -99,7 +99,7 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
           toValue: 220,
           duration: 1100,
           easing: Easing.linear,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         })
       );
       progressAnim.current.start();
@@ -116,8 +116,8 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       if (spinnerAnim.current) spinnerAnim.current.stop();
       spinnerAnim.current = Animated.loop(
         Animated.sequence([
-          Animated.timing(spinnerScale, { toValue: 0.85, duration: 320, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(spinnerScale, { toValue: 1.1, duration: 320, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(spinnerScale, { toValue: 0.85, duration: 320, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(spinnerScale, { toValue: 1.1, duration: 320, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
         ])
       );
       spinnerAnim.current.start();
@@ -145,14 +145,14 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
       toValue: 1,
       duration: 200,
       easing: Easing.out(Easing.ease),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start(() => {
       toastTimer.current = setTimeout(() => {
         Animated.timing(toastOpacity, {
           toValue: 0,
           duration: 200,
           easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }).start(() => setToast(null));
       }, durationMs);
     });
@@ -284,8 +284,8 @@ const AIModal: React.FC<AIModalProps> = ({ title, context, run, apply, onClose }
     if (isClosing) return;
     setIsClosing(true);
     Animated.parallel([
-      Animated.timing(overlayOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-      Animated.timing(cardTranslate, { toValue: 30, duration: 180, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+      Animated.timing(overlayOpacity, { toValue: 0, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(cardTranslate, { toValue: 30, duration: 180, easing: Easing.in(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
     ]).start(({ finished }) => {
       if (finished) {
         onClose();

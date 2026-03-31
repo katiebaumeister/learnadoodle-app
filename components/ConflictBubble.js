@@ -24,12 +24,12 @@ const ConflictBubble = ({
       Animated.timing(slideAnim, {
         toValue: 0,
         duration: 300,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }),
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 300,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       }),
     ]).start();
   }, []);

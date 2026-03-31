@@ -11,6 +11,14 @@ import AddMaterialModal from './materials/AddMaterialModal';
 import { apiRequest } from '../lib/apiClient';
 import { defaultRequiresSubmissionHomeForEventType } from '../lib/eventRequiresSubmissionHome';
 import { Search } from 'lucide-react';
+import {
+  LearnerPill,
+  formatConflictMetaFromEvent,
+  mapChildrenForConflict,
+  parseConflictMessageString,
+  resolveLearnerChild,
+  sharedConflictBannerStyles as cb,
+} from './planner/conflictBannerShared';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -23,6 +31,7 @@ const CHIP_BORDER = '#e5e7eb';
 
 const DEFAULT_START_TIME = '9:00 AM';
 const DEFAULT_DURATION_MINUTES = 30;
+let createTaskEventAllowOverlapsSupported = true;
 
 const EVENT_TYPES = [
   'Lesson',
@@ -313,6 +322,34 @@ export default function TaskCreateModal({
   const [suggestedChange, setSuggestedChange] = useState(null); // { newStart: Date, newEnd: Date, message: "..." }
   const [changeAccepted, setChangeAccepted] = useState(false); // Track if the suggested change was accepted
 
+  const conflictChildren = mapChildrenForConflict(familyMembers);
+  const parsedConflictMessage = conflictWarning?.message ? parseConflictMessageString(conflictWarning.message) : null;
+  const resolvedConflictLearner = conflictWarning
+    ? resolveLearnerChild(conflictWarning.event, conflictChildren, parsedConflictMessage?.learnerName || null)
+    : null;
+  const conflictRichCopy = conflictWarning
+    ? parsedConflictMessage
+      ? {
+          kind: 'rich',
+          learner: resolvedConflictLearner,
+          nameFallback: parsedConflictMessage.learnerName,
+          conflictingTitle: parsedConflictMessage.conflictingTitle,
+          metaLine: parsedConflictMessage.metaLine || formatConflictMetaFromEvent(conflictWarning.event),
+        }
+      : resolvedConflictLearner || conflictWarning?.event?.title
+        ? {
+            kind: 'rich',
+            learner: resolvedConflictLearner,
+            nameFallback: resolvedConflictLearner ? null : 'Learner',
+            conflictingTitle: conflictWarning?.event?.title || 'Existing event',
+            metaLine: formatConflictMetaFromEvent(conflictWarning.event),
+          }
+        : {
+            kind: 'plain',
+            text: `Conflict with ${conflictWarning.message}`,
+          }
+    : null;
+
   // Load academic years when modal opens (for "Counts toward year plan" dropdown)
   useEffect(() => {
     if (!visible || !familyId) {
@@ -400,105 +437,10 @@ export default function TaskCreateModal({
           return;
         }
 
-        // Fetch existing events for the date range (single day or multi-day)
-        // Build UTC day boundaries to match database timestamps
-        const localYear = dueDate.getFullYear();
-        const localMonth = dueDate.getMonth();
-        const localDay = dueDate.getDate();
-        
-        // Create start/end of day in local timezone, then convert to UTC for query
-        const localStartOfDay = new Date(localYear, localMonth, localDay, 0, 0, 0, 0);
-        
-        // For multi-day events, use eventEndDate; otherwise use the same day
-        let localEndOfDay;
-        if (isMultiDayEventType && eventEndDate) {
-          const endDateYear = eventEndDate.getFullYear();
-          const endDateMonth = eventEndDate.getMonth();
-          const endDateDay = eventEndDate.getDate();
-          localEndOfDay = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
-        } else {
-          localEndOfDay = new Date(localYear, localMonth, localDay, 23, 59, 59, 999);
-        }
-        
-        // Convert to UTC ISO strings for database query
-        const startOfDay = localStartOfDay.toISOString();
-        const endOfDay = localEndOfDay.toISOString();
-
-        // Query for events that match any of the assigneeIds
-        // Events can have either child_id (single) or child_ids (array)
-        // We need to check both cases
-        // For multi-day events, we need to check events that overlap with our range
-        // So we check: events that start before our end date AND (end after our start date OR have no end)
-        let query = supabase
-          .from('events')
-          .select('*')
-          .eq('family_id', familyId)
-          .lt('start_ts', endOfDay) // Event starts before our range ends
-          .neq('status', 'canceled')
-          .is('canceled_at', null)
-          .is('deleted_at', null);
-        
-        // Filter for events that end after our start (or have no end) - we'll do this in JavaScript
-        // since Supabase doesn't easily support OR conditions with null checks
-        
-        // Filter by child_id OR child_ids array overlap
-        // For child_id: use .in() filter
-        // For child_ids: we'll filter in JavaScript since Supabase doesn't have array overlap operator easily
-        query = query.in('child_id', assigneeIds);
-        
-        const { data: existingEventsRaw, error } = await query;
-        
-        // Filter events that actually overlap with our date range
-        // An event overlaps if: event.start < our.end AND (event.end > our.start OR event.end is null)
-        const filteredEventsRaw = (existingEventsRaw || []).filter(event => {
-          const eventStart = new Date(event.start_ts);
-          const eventEnd = event.end_ts ? new Date(event.end_ts) : null;
-          // Event overlaps if it starts before our end AND (ends after our start OR has no end)
-          return eventStart < resolvedEnd && (!eventEnd || eventEnd > resolvedStart);
-        });
-        
-        // Also fetch events where child_ids array contains any of our assigneeIds
-        // We need to do this separately since Supabase array operations are limited
-        let eventsWithChildIds = [];
-        if (assigneeIds.length > 0) {
-          const { data: eventsWithArrays, error: arrayError } = await supabase
-            .from('events')
-            .select('*')
-            .eq('family_id', familyId)
-            .lt('start_ts', endOfDay) // Event starts before our range ends
-            .neq('status', 'canceled')
-            .is('canceled_at', null)
-            .is('deleted_at', null)
-            .not('child_ids', 'is', null);
-          
-          if (!arrayError && eventsWithArrays) {
-            // Filter events where child_ids array overlaps with assigneeIds AND event overlaps with date range
-            eventsWithChildIds = eventsWithArrays.filter(event => {
-              const eventChildIds = event.child_ids || [];
-              const hasChildOverlap = eventChildIds.some(cid => assigneeIds.includes(cid));
-              if (!hasChildOverlap) return false;
-              
-              // Check date overlap
-              const eventStart = new Date(event.start_ts);
-              const eventEnd = event.end_ts ? new Date(event.end_ts) : null;
-              return eventStart < resolvedEnd && (!eventEnd || eventEnd > resolvedStart);
-            });
-          }
-        }
-        
-        // Combine and deduplicate by event id
-        const allEvents = [...filteredEventsRaw];
-        const existingEventIds = new Set(allEvents.map(e => e.id));
-        eventsWithChildIds.forEach(event => {
-          if (!existingEventIds.has(event.id)) {
-            allEvents.push(event);
-            existingEventIds.add(event.id);
-          }
-        });
-        
-        const existingEvents = allEvents;
-
-        if (error) {
+        let existingEvents = [];
+        try {
+          existingEvents = await fetchPotentialConflictingEvents(resolvedStart, resolvedEnd, assigneeIds);
+        } catch (error) {
           console.error('[TaskCreateModal] Error fetching events for conflict detection:', error);
           setConflictWarning(null);
           return;
@@ -1045,12 +987,12 @@ export default function TaskCreateModal({
         Animated.timing(fade, {
           toValue: 1,
           duration: 180,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
           easing: Easing.out(Easing.quad),
         }),
         Animated.spring(scale, {
           toValue: 1,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
           friction: 8,
           tension: 80,
         }),
@@ -1184,10 +1126,106 @@ export default function TaskCreateModal({
     return Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
   };
 
+  const fetchPotentialConflictingEvents = useCallback(
+    async (rangeStart, rangeEnd, targetChildIds) => {
+      const childIdList = Array.isArray(targetChildIds) ? targetChildIds.filter(Boolean) : [];
+      if (!familyId || childIdList.length === 0 || !rangeStart || !rangeEnd) return [];
+
+      const startIso = new Date(rangeStart).toISOString();
+      const endIso = new Date(rangeEnd).toISOString();
+
+      const baseFilters = (query) =>
+        query
+          .eq('family_id', familyId)
+          .lt('start_ts', endIso)
+          .is('canceled_at', null)
+          .is('deleted_at', null);
+
+      const [{ data: directEvents, error: directError }, { data: arrayEvents, error: arrayError }] = await Promise.all([
+        baseFilters(supabase.from('events').select('*').in('child_id', childIdList)),
+        baseFilters(supabase.from('events').select('*').not('child_ids', 'is', null)),
+      ]);
+
+      if (directError) throw directError;
+      if (arrayError) throw arrayError;
+
+      const matchesChildIds = (event) => {
+        if (childIdList.includes(event?.child_id)) return true;
+        return Array.isArray(event?.child_ids) && event.child_ids.some((id) => childIdList.includes(id));
+      };
+
+      const overlapsRange = (event) => {
+        const eventStart = new Date(event.start_ts);
+        const eventEnd = event.end_ts ? new Date(event.end_ts) : null;
+        return eventStart < new Date(rangeEnd) && (!eventEnd || eventEnd > new Date(rangeStart));
+      };
+
+      const shouldCountAsConflict = (event) => {
+        const status = String(event?.status || '').toLowerCase();
+        if (status === 'canceled' || status === 'done') return false;
+        if (event?.is_backlog === true) return false;
+        if (event?.canceled_at || event?.deleted_at) return false;
+        return true;
+      };
+
+      const deduped = [];
+      const seen = new Set();
+      [...(directEvents || []), ...(arrayEvents || [])].forEach((event) => {
+        if (!event?.id || seen.has(event.id)) return;
+        if (!shouldCountAsConflict(event)) return;
+        if (!matchesChildIds(event) || !overlapsRange(event)) return;
+        seen.add(event.id);
+        deduped.push(event);
+      });
+
+      return deduped;
+    },
+    [familyId]
+  );
+
+  const createOverlapAllowedEventFallback = useCallback(
+    async ({ title, startDate, endDate, childIds, eventType, minutes, recurrenceRule }) => {
+      const insertPayload = {
+        family_id: familyId,
+        child_id: null,
+        child_ids: childIds && childIds.length > 0 ? childIds : [],
+        title: title.trim(),
+        start_ts: startDate.toISOString(),
+        end_ts: endDate?.toISOString() || null,
+        description: notes.trim() || null,
+        status: 'scheduled',
+        source: 'manual',
+        tags: null,
+        is_flexible: true,
+        is_backlog: false,
+        event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson',
+        subject_id: subjectId || null,
+        unit: unit.trim() || null,
+        grade: grade.trim() || null,
+        location: location.trim() || null,
+        mode: mode || null,
+        instructor: instructor.trim() || null,
+        goal_link: goalLink || null,
+        minutes,
+        materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
+        recurrence_rule: recurrenceRule || null,
+      };
+
+      const { data: inserted, error: insertError } = await supabase
+        .from('events')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+
+      if (insertError) throw insertError;
+      return inserted;
+    },
+    [attachedMaterialIds, familyId, goalLink, grade, instructor, location, mode, notes, subjectId, unit]
+  );
+
   // Handle overlap errors by fetching conflicting events and showing conflict warning
   const handleOverlapError = async (errorMessage, startDate, endDate, assigneeIds, eventTypeParam = null) => {
     const eventTypeToUse = eventTypeParam || eventType;
-    const isMultiDayEventType = eventTypeToUse && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeToUse);
     try {
       // Check if error is an overlap error
       if (!errorMessage || (!errorMessage.includes('overlap') && !errorMessage.includes('Event overlaps'))) {
@@ -1206,20 +1244,23 @@ export default function TaskCreateModal({
       const endOfRange = new Date(endDate || startDate);
       endOfRange.setHours(23, 59, 59, 999);
 
-      const { data: existingEvents, error: fetchError } = await supabase
-        .from('events')
-        .select('*')
-        .eq('family_id', familyId)
-        .in('child_id', targetChildIds)
-        .gte('start_ts', startOfRange.toISOString())
-        .lte('start_ts', endOfRange.toISOString())
-        .neq('status', 'canceled')
-        .is('canceled_at', null)
-        .is('deleted_at', null);
-
-      if (fetchError || !existingEvents || existingEvents.length === 0) {
+      let dedupedEvents = [];
+      try {
+        dedupedEvents = await fetchPotentialConflictingEvents(startOfRange, endOfRange, targetChildIds);
+      } catch (fetchError) {
         console.warn('[TaskCreateModal] Could not fetch conflicting events:', fetchError);
         return false;
+      }
+
+      if (dedupedEvents.length === 0) {
+        setConflictWarning({
+          event: null,
+          message: 'another event at this time',
+          conflictCount: 1,
+          allConflicts: [],
+          isGenericConflict: true,
+        });
+        return true;
       }
 
       // Check which events actually overlap
@@ -1227,7 +1268,7 @@ export default function TaskCreateModal({
       const resolvedStart = new Date(startDate);
       const resolvedEnd = new Date(endDate || startDate);
 
-      for (const event of existingEvents) {
+      for (const event of dedupedEvents) {
         const eventStart = new Date(event.start_ts);
         const eventEnd = new Date(event.end_ts || event.start_ts);
 
@@ -1442,6 +1483,7 @@ export default function TaskCreateModal({
       }
 
       const userFamilyId = profile.family_id;
+      const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
 
       // Parse list_id to extract child_id if it's a child list
       const childIds = assigneeIds.length > 0 ? assigneeIds : null;
@@ -1501,8 +1543,6 @@ export default function TaskCreateModal({
           error = fetchError;
         }
       } else {
-        // Check if this is a multi-day event type (Project, Trip, Holiday, Other)
-        const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
         const eventEndDateToUse = isMultiDayEventType && eventEndDate ? eventEndDate : dueDate;
 
         // Calculate start_ts and end_ts from due date and selected time
@@ -1655,7 +1695,7 @@ export default function TaskCreateModal({
             };
             
             // Only include _allow_overlaps if we need to allow overlaps (backward compatibility)
-            if (shouldAllowOverlaps) {
+            if (shouldAllowOverlaps && createTaskEventAllowOverlapsSupported) {
               rpcParams._allow_overlaps = true;
             }
             
@@ -1664,6 +1704,7 @@ export default function TaskCreateModal({
             // If function not found error and we're trying to allow overlaps, retry without the parameter
             // This handles the case where the migration hasn't been run yet
             if (rpcError && rpcError.message && rpcError.message.includes('Could not find the function') && shouldAllowOverlaps) {
+              createTaskEventAllowOverlapsSupported = false;
               console.warn('[TaskCreateModal] Function does not support _allow_overlaps yet, retrying without it');
               delete rpcParams._allow_overlaps;
               const retryResult = await supabase.rpc('create_task_event', rpcParams);
@@ -1758,7 +1799,7 @@ export default function TaskCreateModal({
           };
           
           // Only include _allow_overlaps if we need to allow overlaps (backward compatibility)
-          if (shouldAllowOverlaps) {
+          if (shouldAllowOverlaps && createTaskEventAllowOverlapsSupported) {
             rpcParams._allow_overlaps = true;
             console.log('[TaskCreateModal] Allowing overlaps - _allow_overlaps=true, shouldAllowOverlaps=', shouldAllowOverlaps);
           }
@@ -1769,6 +1810,7 @@ export default function TaskCreateModal({
           // If function not found error and we're trying to allow overlaps, retry without the parameter
           // This handles the case where the migration hasn't been run yet
           if (rpcError && rpcError.message && rpcError.message.includes('Could not find the function') && shouldAllowOverlaps) {
+            createTaskEventAllowOverlapsSupported = false;
             console.warn('[TaskCreateModal] Function does not support _allow_overlaps yet, retrying without it');
             delete rpcParams._allow_overlaps;
             const retryResult = await supabase.rpc('create_task_event', rpcParams);
@@ -1787,7 +1829,27 @@ export default function TaskCreateModal({
             
             // Check if this is an overlap error and handle it with conflict warning
             const errorMessage = error?.message || rpcData?.error || '';
-            if (errorMessage.includes('overlap') || errorMessage.includes('Event overlaps')) {
+            if (shouldAllowOverlaps && (errorMessage.includes('overlap') || errorMessage.includes('Event overlaps'))) {
+              try {
+                data = await createOverlapAllowedEventFallback({
+                  title,
+                  startDate,
+                  endDate,
+                  childIds,
+                  eventType,
+                  minutes,
+                  recurrenceRule: recurrenceRule ? recurrenceRule : null,
+                });
+                error = null;
+              } catch (fallbackError) {
+                error = fallbackError;
+                data = null;
+              }
+            }
+
+            if (!error && data) {
+              // created via fallback
+            } else if (errorMessage.includes('overlap') || errorMessage.includes('Event overlaps')) {
               // Calculate start and end dates for conflict detection
               const baseDate = new Date(dueDate);
               baseDate.setHours(0, 0, 0, 0);
@@ -2678,30 +2740,61 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 ) : conflictWarning ? (
-                  <View style={{
-                    marginTop: 12,
-                    paddingVertical: 10,
-                    paddingHorizontal: 12,
-                    backgroundColor: '#FFF5F5',
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: '#FEE2E2',
-                  }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-                      <AlertCircle size={18} color="#EF4444" style={{ marginTop: 2, flexShrink: 0 }} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ 
-                          fontSize: 13, 
-                          color: '#9A3412', 
-                          fontWeight: '500', 
-                          marginBottom: 8,
-                          ...(Platform.OS === 'web' && {
-                            fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }),
-                        }}>
-                          Conflicts with {conflictWarning.message}
-                        </Text>
-                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                  <View
+                    style={[
+                      cb.banner,
+                      {
+                        marginHorizontal: 0,
+                        marginTop: 12,
+                        marginBottom: 0,
+                      },
+                    ]}
+                  >
+                    <View style={cb.bannerContentCompact}>
+                      <View style={cb.bannerIconWrapSm}>
+                        <AlertCircle size={14} color="#5B8FC7" />
+                      </View>
+                      <View style={cb.bannerTextGrow}>
+                        {conflictRichCopy?.kind === 'rich' ? (
+                          <>
+                            <View style={cb.conflictLine}>
+                              <Text style={cb.kicker}>Conflict with </Text>
+                              <LearnerPill
+                                child={conflictRichCopy.learner}
+                                nameFallback={conflictRichCopy.nameFallback || undefined}
+                              />
+                              <Text style={cb.conflictTitle} numberOfLines={1}>
+                                {' '}
+                                — {conflictRichCopy.conflictingTitle}
+                              </Text>
+                              {conflictRichCopy.metaLine ? (
+                                <Text style={cb.metaInline} numberOfLines={1}>
+                                  {' '}
+                                  · {conflictRichCopy.metaLine}
+                                </Text>
+                              ) : null}
+                            </View>
+                            {suggestedChange?.message ? (
+                              <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                                Suggested change: {suggestedChange.message}
+                              </Text>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <Text style={cb.bannerMessagePlain} numberOfLines={2}>
+                              {conflictRichCopy?.text || 'Conflict with another event at this time'}
+                            </Text>
+                            {suggestedChange?.message ? (
+                              <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                                Suggested change: {suggestedChange.message}
+                              </Text>
+                            ) : null}
+                          </>
+                        )}
+                      </View>
+                      <View style={cb.bannerActionsRow}>
+                        {!conflictWarning?.isGenericConflict && (
                           <TouchableOpacity
                             {...(Platform.OS === 'web' && { type: 'button' })}
                             onPress={async (e) => {
@@ -2837,56 +2930,21 @@ export default function TaskCreateModal({
                                 handleCreate(true, false);
                               }
                             }}
-                            style={{
-                              flex: 1,
-                              backgroundColor: '#FDD7D7',
-                              borderWidth: 1,
-                              borderColor: '#FCA5A5',
-                              paddingVertical: 8,
-                              paddingHorizontal: 12,
-                              borderRadius: 6,
-                              alignItems: 'center',
-                            }}
+                            style={cb.primaryButton}
                           >
-                            <Text style={{ 
-                              color: '#9A3412', 
-                              fontSize: 13, 
-                              fontWeight: '600',
-                              ...(Platform.OS === 'web' && {
-                                fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }),
-                            }}>
-                              Adjust automatically
-                            </Text>
+                            <Text style={cb.primaryButtonText}>Adjust automatically</Text>
                           </TouchableOpacity>
-                          <TouchableOpacity
+                        )}
+                        <TouchableOpacity
+                            {...(Platform.OS === 'web' && { type: 'button' })}
                             onPress={() => {
                               setShouldAutoAdjust(false);
                               handleCreate(true, true); // Skip validation AND allow overlaps - user explicitly wants to save despite conflict
                             }}
-                            style={{
-                              flex: 1,
-                              backgroundColor: '#FFFFFF',
-                              borderWidth: 1,
-                              borderColor: '#E5E7EB',
-                              paddingVertical: 8,
-                              paddingHorizontal: 12,
-                              borderRadius: 6,
-                              alignItems: 'center',
-                            }}
+                            style={cb.ghostButton}
                           >
-                            <Text style={{ 
-                              color: '#374151', 
-                              fontSize: 13, 
-                              fontWeight: '500',
-                              ...(Platform.OS === 'web' && {
-                                fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }),
-                            }}>
-                              Save anyway
-                            </Text>
+                            <Text style={cb.ghostButtonText}>Save anyway</Text>
                           </TouchableOpacity>
-                        </View>
                       </View>
                     </View>
                   </View>

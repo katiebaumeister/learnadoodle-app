@@ -357,13 +357,26 @@ export default function SubjectProgressPlanSection({
     if (familyId && academicYearId) {
       dropPlanYearFullDataCacheEntry(familyId, academicYearId);
     }
+    if (familyId && subjectId) {
+      invalidateSubjectProgressCache(familyId, subjectId);
+    }
     loadPlan({ silent: true });
     loadUnits({ silent: true });
     onRefresh?.();
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
     }
-  }, [familyId, academicYearId, loadPlan, loadUnits, onRefresh]);
+  }, [familyId, academicYearId, subjectId, loadPlan, loadUnits, onRefresh]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!familyId || !subjectId) return;
+    const handler = () => {
+      refreshPlanCaches();
+    };
+    window.addEventListener('planAppliedToCalendar', handler);
+    return () => window.removeEventListener('planAppliedToCalendar', handler);
+  }, [familyId, subjectId, refreshPlanCaches]);
 
   const openBuildPlanModal = useCallback(() => {
     dispatchOpenPlanModal({

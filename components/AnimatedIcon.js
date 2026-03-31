@@ -60,12 +60,12 @@ export default function AnimatedIcon({
             Animated.timing(animatedValue, {
               toValue: 1,
               duration: duration / 2,
-              useNativeDriver: true,
+              useNativeDriver: Platform.OS !== 'web',
             }),
             Animated.timing(animatedValue, {
               toValue: 0,
               duration: duration / 2,
-              useNativeDriver: true,
+              useNativeDriver: Platform.OS !== 'web',
             }),
           ])
         );
@@ -76,7 +76,7 @@ export default function AnimatedIcon({
           Animated.timing(rotationValue, {
             toValue: 1,
             duration,
-            useNativeDriver: true,
+            useNativeDriver: Platform.OS !== 'web',
           })
         );
         break;
@@ -87,12 +87,12 @@ export default function AnimatedIcon({
             Animated.timing(animatedValue, {
               toValue: 1,
               duration: duration / 2,
-              useNativeDriver: true,
+              useNativeDriver: Platform.OS !== 'web',
             }),
             Animated.timing(animatedValue, {
               toValue: 0,
               duration: duration / 2,
-              useNativeDriver: true,
+              useNativeDriver: Platform.OS !== 'web',
             }),
           ])
         );
@@ -105,13 +105,13 @@ export default function AnimatedIcon({
               toValue: 1,
               duration: duration / 2,
               easing: Easing.inOut(Easing.ease),
-              useNativeDriver: true,
+              useNativeDriver: Platform.OS !== 'web',
             }),
             Animated.timing(animatedValue, {
               toValue: 0,
               duration: duration / 2,
               easing: Easing.inOut(Easing.ease),
-              useNativeDriver: true,
+              useNativeDriver: Platform.OS !== 'web',
             }),
           ])
         );

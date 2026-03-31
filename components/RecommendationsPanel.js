@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Platform } from 'react-native';
 import { Sparkles, Check, X, Clock, Star, AlertCircle, Lightbulb, BookOpen, Target, Zap, TrendingUp, Award } from 'lucide-react';
 import { getRecommendations, updateRecommendation } from '../lib/services/recordsClient';
 import { generatePersonalizedRecommendations, saveRecommendations } from '../lib/services/aiRecommendationsService';
@@ -51,13 +51,13 @@ export default function RecommendationsPanel({ childId, familyId }) {
         Animated.timing(fadeAnim, {
           toValue: 1,
           duration: 300,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.spring(scaleAnim, {
           toValue: 1,
           tension: 50,
           friction: 7,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ]).start();
     }
@@ -254,13 +254,13 @@ function RecommendationCard({ rec, index, Icon, iconColor, priorityColor, isAnim
         Animated.timing(cardOpacity, {
           toValue: 1,
           duration: 300,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.spring(cardScale, {
           toValue: 1,
           tension: 50,
           friction: 7,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ]),
     ]).start();
@@ -273,12 +273,12 @@ function RecommendationCard({ rec, index, Icon, iconColor, priorityColor, isAnim
         Animated.timing(cardOpacity, {
           toValue: 0,
           duration: 200,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(cardScale, {
           toValue: 0.9,
           duration: 200,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ]).start();
     }

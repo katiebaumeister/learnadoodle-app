@@ -48,12 +48,12 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
         Animated.timing(slideAnim, {
           toValue: 1,
           duration: 200,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(scaleAnim, {
           toValue: 1,
           duration: 200,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         })
       ]).start()
     } else {
@@ -62,12 +62,12 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
         Animated.timing(slideAnim, {
           toValue: 0,
           duration: 150,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(scaleAnim, {
           toValue: 0.8,
           duration: 150,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         })
       ]).start()
     }
