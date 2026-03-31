@@ -205,7 +205,7 @@
       "step1SetSchedule": "Step 1 — Set schedule",
       "step2AddContent": "Step 2 — Add content",
       "addContentSetCadenceHint": "Set days & times to automatically place lessons on your calendar.",
-      "addContentBeforeCadenceInline": "Pick weekdays and class times in Step 1 first for automatic placement. You can still add content now; lessons will map once a schedule produces instructional slots.",
+      "addContentBeforeCadenceInline": "Pick weekdays and class times above then add content to map lessons to the selected class time slots.",
       "unitModalNoScheduleBanner": "No schedule set yet — lessons will be placed once you choose days & times.",
       "instructionalSlotsAvailableOne": "1 instructional slot available",
       "instructionalSlotsAvailableMany": "{count} instructional slots available",

@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator } from 'react-native';
+import {
+  LearnerPill,
+  resolveLearnerChild,
+  formatConflictMetaFromEvent,
+  parseConflictMessageString,
+  mapChildrenForConflict,
+  sharedConflictBannerStyles as cb,
+} from '../planner/conflictBannerShared';
 import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -27,6 +35,11 @@ import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { defaultRequiresSubmissionHomeForEventType } from '../../lib/eventRequiresSubmissionHome';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
+import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
+
+// Session-level guard: if this environment does not expose `lesson_standards`,
+// don't keep retrying the same failing request on every EventDetails mount.
+let lessonStandardsUnavailableSession = false;
 
 /** Display name for Add to plan? / plan banners from an academic_years row (never "Loading…"). */
 function formatAcademicYearPlanLabel(ay) {
@@ -135,6 +148,18 @@ function initialAssigneeIdsFromEvent(ev) {
   return ev.child_ids && ev.child_ids.length > 0 ? ev.child_ids : childId ? [childId] : [];
 }
 
+/** Display name(s) for assignees — conflict banner copy. */
+function assigneeLabelForConflict(assigneeIds, familyMembers) {
+  if (!assigneeIds?.length || !familyMembers?.length) return null;
+  const names = assigneeIds.map((id) => {
+    const m = familyMembers.find((x) => String(x.id) === String(id));
+    const n = (m?.name || m?.first_name || '').trim();
+    return n || null;
+  }).filter(Boolean);
+  if (!names.length) return null;
+  return names.length === 1 ? names[0] : names.join(' & ');
+}
+
 /** Unit / lesson / grade — matches hydrate effect. */
 function initialAcademicStringsFromEvent(ev) {
   if (!ev) return { unit: '', lesson: '', grade: '', percent: '' };
@@ -178,6 +203,17 @@ const toDateInput = (timestamp) => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+};
+
+const formatTimeForInput = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  let hours = date.getHours();
+  const minutes = date.getMinutes();
+  const period = hours >= 12 ? 'PM' : 'AM';
+  if (hours > 12) hours -= 12;
+  else if (hours === 0) hours = 12;
+  return `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
 };
 
 // Helper function to check if a string is just a UUID (not a valid URL)
@@ -576,6 +612,63 @@ function fmt(d) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function formatConflictSuggestionMessage(startDate, endDate) {
+  if (!startDate || !endDate) return '';
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const formatTime = (d) => {
+    let hours = d.getHours();
+    const minutes = d.getMinutes();
+    const period = hours >= 12 ? 'PM' : 'AM';
+    if (hours > 12) hours -= 12;
+    else if (hours === 0) hours = 12;
+    return minutes === 0 ? `${hours} ${period}` : `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+  };
+  const dayName = dayNames[startDate.getDay()];
+  const monthName = monthNames[startDate.getMonth()];
+  const day = startDate.getDate();
+  const startTimeStr = formatTime(startDate);
+  const endTimeStr = formatTime(endDate);
+  const startTimeOnly = startTimeStr.replace(/\s*(AM|PM)$/i, '');
+  const endTimeOnly = endTimeStr.replace(/\s*(AM|PM)$/i, '');
+  const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
+  return `${dayName} ${monthName} ${day} · ${startTimeOnly}–${endTimeOnly} ${period}`;
+}
+
+function findNextAvailableConflictSlot(conflictEvent, currentStart, currentEnd, existingEvents, childIds) {
+  try {
+    const duration = (currentEnd - currentStart) / (1000 * 60);
+    const conflictEnd = new Date(conflictEvent.end_ts || conflictEvent.start_ts);
+    let candidateStart = new Date(conflictEnd);
+    const dayEnd = new Date(candidateStart);
+    dayEnd.setHours(23, 59, 0, 0);
+
+    while (candidateStart < dayEnd) {
+      const candidateEnd = new Date(candidateStart.getTime() + duration * 60 * 1000);
+      let hasConflict = false;
+      for (const ev of existingEvents || []) {
+        if (!ev || ev.id === conflictEvent.id) continue;
+        const evStart = new Date(ev.start_ts);
+        const evEnd = new Date(ev.end_ts || ev.start_ts);
+        if (candidateStart < evEnd && evStart < candidateEnd) {
+          const evChildIds = ev.child_id ? [ev.child_id] : (ev.child_ids || []);
+          if (childIds.some((id) => evChildIds.includes(id))) {
+            hasConflict = true;
+            break;
+          }
+        }
+      }
+      if (!hasConflict && candidateEnd <= dayEnd) {
+        return { newStart: candidateStart, newEnd: candidateEnd };
+      }
+      candidateStart = new Date(candidateStart.getTime() + 15 * 60 * 1000);
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
 // Format date range for multi-day events
 function fmtDateRange(startDate, endDate) {
   if (!startDate || !endDate) return fmt(startDate || endDate);
@@ -638,7 +731,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed }) {
   const session = useSession();
   const { user: authUser } = useAuth();
   const toast = useToast();
@@ -982,6 +1075,240 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false); // Flag for "Adjust automatically"
   const [shouldAllowOverlaps, setShouldAllowOverlaps] = useState(false); // Flag for "Save anyway"
 
+  /** Planner chip warning → open modal: top banner (not Quick Reschedule directly) */
+  const [chipConflictBannerDismissed, setChipConflictBannerDismissed] = useState(false);
+  const [chipConflictMessage, setChipConflictMessage] = useState(null);
+  const [chipConflictSuggestion, setChipConflictSuggestion] = useState(null);
+  const [chipConflictLoading, setChipConflictLoading] = useState(false);
+
+  const editConflictEnterOp = useRef(new Animated.Value(0)).current;
+  const editConflictEnterY = useRef(new Animated.Value(5)).current;
+  const chipConflictEnterOp = useRef(new Animated.Value(0)).current;
+  const chipConflictEnterY = useRef(new Animated.Value(5)).current;
+
+  useEffect(() => {
+    setChipConflictBannerDismissed(false);
+    setChipConflictMessage(null);
+    setChipConflictSuggestion(null);
+    setChipConflictLoading(false);
+  }, [event?.id, conflictResolutionContext]);
+
+  useEffect(() => {
+    const shouldHydratePersistentConflict =
+      openConflictResolution ||
+      !!conflictResolutionContext?.conflictEvent ||
+      !!conflictResolutionContext?.conflictMessage;
+    if (!shouldHydratePersistentConflict || chipConflictBannerDismissed || !event?.id || !familyId || !event.start_ts) {
+      return;
+    }
+    if (conflictResolutionContext?.conflictEvent || conflictResolutionContext?.conflictMessage) {
+      const conflictEv = conflictResolutionContext.conflictEvent;
+      if (conflictResolutionContext.conflictMessage) {
+        setChipConflictMessage(conflictResolutionContext.conflictMessage);
+      } else if (conflictEv?.title) {
+        const who = assigneeLabelForConflict(assigneeIds, familyMembers);
+        const lead = who ? `${who} — ` : '';
+        setChipConflictMessage(`${lead}${conflictEv.title} (${formatConflictMetaFromEvent(conflictEv).replace(' · ', ', ')})`);
+      }
+      if (conflictResolutionContext?.suggestedChange) {
+        setChipConflictSuggestion(conflictResolutionContext.suggestedChange);
+      }
+      setChipConflictLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setChipConflictLoading(true);
+    (async () => {
+      try {
+        const movedStart = new Date(event.start_ts);
+        if (isNaN(movedStart.getTime())) {
+          if (!cancelled) {
+            setChipConflictLoading(false);
+            setChipConflictMessage('another event');
+          }
+          return;
+        }
+        const y = movedStart.getFullYear();
+        const mo = movedStart.getMonth();
+        const da = movedStart.getDate();
+        const localStartOfDay = new Date(y, mo, da, 0, 0, 0, 0);
+        const localEndOfDay = new Date(y, mo, da, 23, 59, 59, 999);
+
+        const { data, error } = await supabase
+          .from('events')
+          .select('*')
+          .eq('family_id', familyId)
+          .gte('start_ts', localStartOfDay.toISOString())
+          .lte('start_ts', localEndOfDay.toISOString())
+          .neq('status', 'canceled')
+          .is('canceled_at', null)
+          .is('deleted_at', null);
+
+        if (cancelled) return;
+        if (error) {
+          setChipConflictLoading(false);
+          onOpenConflictResolutionConsumed?.();
+          return;
+        }
+
+        const movedForConflict = {
+          ...event,
+          child_id: assigneeIds[0] || event.child_id || null,
+          child_ids: assigneeIds.length > 0 ? assigneeIds : (Array.isArray(event.child_ids) ? event.child_ids : []),
+        };
+        const first = findFirstConflictEvent(movedForConflict, data || []);
+        if (!first) {
+          setChipConflictLoading(false);
+          setChipConflictMessage('another event');
+          setChipConflictSuggestion(null);
+          return;
+        }
+
+        const eventDate = new Date(first.start_ts);
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const dayName = dayNames[eventDate.getDay()];
+        const monthName = monthNames[eventDate.getMonth()];
+        const day = eventDate.getDate();
+
+        const formatTime = (d) => {
+          let hours = d.getHours();
+          const minutes = d.getMinutes();
+          const period = hours >= 12 ? 'PM' : 'AM';
+          if (hours > 12) hours -= 12;
+          else if (hours === 0) hours = 12;
+          return minutes === 0 ? `${hours} ${period}` : `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+        };
+        const eventStart = new Date(first.start_ts);
+        const eventEnd = new Date(first.end_ts || first.start_ts);
+        const startTimeStr = formatTime(eventStart);
+        const endTimeStr = formatTime(eventEnd);
+        const startTimeOnly = startTimeStr.replace(/\s*(AM|PM)$/i, '');
+        const endTimeOnly = endTimeStr.replace(/\s*(AM|PM)$/i, '');
+        const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
+        const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
+
+        const ids = initialAssigneeIdsFromEvent(event);
+        const who = assigneeLabelForConflict(ids, familyMembers);
+        const lead = who ? `${who} — ` : '';
+        const msg = `${lead}${first.title} (${dayName} ${monthName} ${day}, ${timeRange})`;
+
+        if (!cancelled) {
+          const currentStart = new Date(event.start_ts);
+          const currentEnd = new Date(event.end_ts || new Date(currentStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000));
+          const childIds = initialAssigneeIdsFromEvent(movedForConflict);
+          const suggestion = findNextAvailableConflictSlot(first, currentStart, currentEnd, data || [], childIds);
+          setChipConflictMessage(msg);
+          setChipConflictSuggestion(
+            suggestion
+              ? {
+                  ...suggestion,
+                  message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
+                }
+              : null
+          );
+          setChipConflictLoading(false);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setChipConflictLoading(false);
+          setChipConflictMessage('another event');
+          setChipConflictSuggestion(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    openConflictResolution,
+    chipConflictBannerDismissed,
+    event?.id,
+    event?.start_ts,
+    event?.end_ts,
+    familyId,
+    familyMembers,
+    assigneeIds,
+    conflictResolutionContext,
+  ]);
+
+  useEffect(() => {
+    if (
+      chipConflictBannerDismissed ||
+      !familyId ||
+      !conflictResolutionContext?.conflictEvent ||
+      !conflictResolutionContext?.movedEvent
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const moved = conflictResolutionContext.movedEvent;
+        const conflictEv = conflictResolutionContext.conflictEvent;
+        const currentStart = new Date(moved.start_ts || event?.start_ts);
+        const currentEnd = new Date(
+          moved.end_ts ||
+          event?.end_ts ||
+          new Date(currentStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000)
+        );
+        if (isNaN(currentStart.getTime()) || isNaN(currentEnd.getTime())) return;
+
+        const y = currentStart.getFullYear();
+        const mo = currentStart.getMonth();
+        const da = currentStart.getDate();
+        const localStartOfDay = new Date(y, mo, da, 0, 0, 0, 0);
+        const localEndOfDay = new Date(y, mo, da, 23, 59, 59, 999);
+
+        const { data } = await supabase
+          .from('events')
+          .select('*')
+          .eq('family_id', familyId)
+          .gte('start_ts', localStartOfDay.toISOString())
+          .lte('start_ts', localEndOfDay.toISOString())
+          .neq('status', 'canceled')
+          .is('canceled_at', null)
+          .is('deleted_at', null);
+
+        if (cancelled) return;
+
+        const childIds = moved.child_id ? [moved.child_id] : (moved.child_ids || assigneeIds || []);
+        const suggestion = findNextAvailableConflictSlot(
+          conflictEv,
+          currentStart,
+          currentEnd,
+          data || [],
+          childIds
+        );
+
+        if (!chipConflictMessage && conflictResolutionContext.conflictMessage) {
+          setChipConflictMessage(conflictResolutionContext.conflictMessage);
+        }
+        if (suggestion) {
+          setChipConflictSuggestion({
+            ...suggestion,
+            message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
+          });
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    chipConflictBannerDismissed,
+    chipConflictMessage,
+    familyId,
+    conflictResolutionContext,
+    event?.start_ts,
+    event?.end_ts,
+    assigneeIds,
+  ]);
+
   const mergeDescriptionWithNote = (prev, note) => {
     const n = (note || '').trim();
     if (!n) return prev || null;
@@ -1159,6 +1486,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return true;
   };
 
+  useEffect(() => {
+    if (!dueDate) return;
+    setValidationErrors((prev) => {
+      if (!prev.date) return prev;
+      const next = { ...prev };
+      delete next.date;
+      return next;
+    });
+  }, [dueDate]);
+
+  useEffect(() => {
+    if (assigneeIds.length === 0) return;
+    setValidationErrors((prev) => {
+      if (!prev.assignee) return prev;
+      const next = { ...prev };
+      delete next.assignee;
+      return next;
+    });
+  }, [assigneeIds]);
+
   // Handle scheduling mode changes - when initialSchedulingMode becomes true, 
   // set editing and schedulingBacklog states and placement to 'calendar'
   // Also check for _openInEditMode flag on the event itself
@@ -1177,15 +1524,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
   }, [readOnly, initialSchedulingMode, event?._openInEditMode, onEditingChange]);
 
-  // Load standards when event loads
-  useEffect(() => {
-    if (event?.id) {
-      loadAttachedStandards();
-    }
-  }, [event?.id]);
+  // Avoid probing lesson_standards on every modal open.
+  // The table is not available in all environments, and eager loading
+  // creates a noisy 404 even when the standards UI is unused.
 
   const loadAttachedStandards = async () => {
     if (!event?.id) return;
+    if (lessonStandardsUnavailableSession) {
+      setAttachedStandards([]);
+      setLoadingStandards(false);
+      return;
+    }
     setLoadingStandards(true);
     try {
       // Avoid standards(*) embed: PostgREST returns PGRST200 if no FK to standards in schema cache.
@@ -1236,6 +1585,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
     } catch (error) {
       // lesson_standards may be missing or RLS may return 400; show no standards instead of failing
+      const msg = String(error?.message || error?.details || error || '').toLowerCase();
+      const status = error?.status;
+      if (
+        status === 404 ||
+        msg.includes('404') ||
+        msg.includes('lesson_standards') ||
+        msg.includes('failed to load resource') ||
+        msg.includes('relation') ||
+        msg.includes('does not exist')
+      ) {
+        lessonStandardsUnavailableSession = true;
+      }
       setAttachedStandards([]);
     } finally {
       setLoadingStandards(false);
@@ -2484,18 +2845,33 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
             const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
 
+            const who = assigneeLabelForConflict(assigneeIds, familyMembers);
+            const lead = who ? `${who} — ` : '';
             conflicts.push({
               event: otherEv,
-              message: `${otherEv.title} (${dayName} ${monthName} ${day}, ${timeRange})`,
+              message: `${lead}${otherEv.title} (${dayName} ${monthName} ${day}, ${timeRange})`,
             });
           }
         }
 
         if (conflicts.length > 0) {
+          const suggestion = findNextAvailableConflictSlot(
+            conflicts[0].event,
+            resolvedStart,
+            resolvedEnd,
+            existingEvents || [],
+            assigneeIds
+          );
           setConflictWarning({
             ...conflicts[0],
             conflictCount: conflicts.length,
             allConflicts: conflicts,
+            suggestedChange: suggestion
+              ? {
+                  ...suggestion,
+                  message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
+                }
+              : null,
           });
         } else {
           setConflictWarning(null);
@@ -2522,6 +2898,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     familyId,
     shouldAllowOverlaps,
     event?.id,
+    familyMembers,
   ]);
 
   // Handle overlap errors by fetching conflicting events and showing conflict UI
@@ -2603,19 +2980,34 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
           const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
           
+          const whoOv = assigneeLabelForConflict(targetChildIds, familyMembers);
+          const leadOv = whoOv ? `${whoOv} — ` : '';
           conflicts.push({
             event: existingEvent,
-            message: `${existingEvent.title} (${dayName} ${monthName} ${day}, ${timeRange})`
+            message: `${leadOv}${existingEvent.title} (${dayName} ${monthName} ${day}, ${timeRange})`
           });
         }
       }
 
       if (conflicts.length > 0) {
         console.log('[EventDetails] Setting conflict warning from overlap error:', conflicts[0]);
+        const suggestion = findNextAvailableConflictSlot(
+          conflicts[0].event,
+          resolvedStart,
+          resolvedEnd,
+          existingEvents || [],
+          targetChildIds
+        );
         setConflictWarning({
           ...conflicts[0],
           conflictCount: conflicts.length,
           allConflicts: conflicts,
+          suggestedChange: suggestion
+            ? {
+                ...suggestion,
+                message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
+              }
+            : null,
         });
         return true;
       }
@@ -2994,22 +3386,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         returnedChildId: data?.[0]?.child_id
       });
       
-      // If we get an overlap error, show conflict UI instead of auto-fixing
-      // Unless allowOverlaps is true (user clicked "Save anyway")
+      // If we get an overlap error, persist immediately as a flexible overlap.
+      // We still hydrate the conflict UI first when possible so reopened modal state is rich.
       if (error && (error.message?.includes('overlap') || error.message?.includes('Event overlaps'))) {
         if (!allowOverlaps) {
-          // Show conflict warning UI - don't auto-fix
-          console.log('[EventDetails] Overlap error detected, showing conflict warning');
-          const handled = await handleOverlapError(error.message, startDateObj, endDateObj, assigneeIds);
-          if (handled) {
-            // Conflict warning is now shown, don't show toast or continue
-            setSaving(false);
-            return;
-          }
+          console.log('[EventDetails] Overlap error detected, hydrating conflict warning before immediate save');
+          await handleOverlapError(error.message, startDateObj, endDateObj, assigneeIds);
         }
         
-        // If allowOverlaps is true, proceed with multi-step update
-        console.log('[EventDetails] Overlap error detected, doing multi-step update with is_flexible=true (allowOverlaps=true)');
+        console.log('[EventDetails] Overlap error detected, doing immediate multi-step update with is_flexible=true');
         
         // Step 1: Set is_flexible = true first (only if it's not already set)
         if (!cleanUpdates.is_flexible) {
@@ -3364,6 +3749,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (!isBacklog || !startDateObj) {
         toast.push('Event updated', 'success');
       }
+
+      if (typeof window !== 'undefined') {
+        // Drop any stale planner conflict snapshot so the next modal open
+        // rebuilds conflict details from the newly saved event state.
+        window.dispatchEvent(new CustomEvent('clearConflictBanner'));
+      }
       
       // Close the modal after saving
       onClose?.();
@@ -3553,6 +3944,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </View>
           )}
+
+          {showChipConflictBanner ? renderPersistentConflictContainer(false) : null}
 
           {/* Banner when event is connected to a plan - at top */}
           {countsTowardPlan && academicYearId && (() => {
@@ -4195,6 +4588,84 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           },
         })}
       >
+      {showChipConflictBanner ? renderPersistentConflictContainer(false) : conflictWarning && (
+        <View
+          style={[
+            cb.banner,
+            {
+              marginTop: 8,
+              marginBottom: 8,
+              marginHorizontal: 0,
+            },
+          ]}
+        >
+          <View style={cb.bannerContentCompact}>
+            <View style={cb.bannerIconWrapSm}>
+              <AlertCircle size={14} color="#5B8FC7" />
+            </View>
+            <View style={cb.bannerTextGrow}>
+              {editFormConflictRich?.kind === 'rich' ? (
+                <View style={cb.conflictLine}>
+                  <Text style={cb.kicker}>Conflict with </Text>
+                  <LearnerPill
+                    child={editFormConflictRich.learner}
+                    nameFallback={editFormConflictRich.nameFallback || undefined}
+                  />
+                  <Text style={cb.conflictTitle} numberOfLines={1}>
+                    {' '}
+                    — {editFormConflictRich.conflictingTitle}
+                  </Text>
+                  {editFormConflictRich.metaLine ? (
+                    <Text style={cb.metaInline} numberOfLines={1}>
+                      {' '}
+                      · {editFormConflictRich.metaLine}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : (
+                <Text style={cb.bannerMessagePlain} numberOfLines={2}>
+                  Conflicts with {editFormConflictRich?.text || conflictWarning.message}
+                </Text>
+              )}
+            </View>
+            <View style={cb.bannerActionsRow}>
+              <TouchableOpacity
+                {...(Platform.OS === 'web' && { type: 'button' })}
+                onPress={async (e) => {
+                  if (Platform.OS === 'web' && e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                  applySuggestedConflictChange(
+                    conflictWarning?.suggestedChange ||
+                    chipConflictSuggestion ||
+                    conflictResolutionContext?.suggestedChange
+                  );
+                }}
+                style={cb.primaryButton}
+              >
+                <Text style={cb.primaryButtonText}>Adjust automatically</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                {...(Platform.OS === 'web' && { type: 'button' })}
+                onPress={(e) => {
+                  if (Platform.OS === 'web' && e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                  setShouldAllowOverlaps(true);
+                  setConflictWarning(null);
+                  handleSave(false, true);
+                }}
+                style={cb.ghostButton}
+              >
+                <Text style={cb.ghostButtonText}>Save anyway</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
       {/* Plan link banner + Send to student — top of form, under plan context (matches read-only order) */}
       {countsTowardPlan && academicYearId && (() => {
         const planLabel = formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'this plan';
@@ -4351,7 +4822,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           if (isMultiDayEvent) {
             // Start date picker for multi-day events
             return (
-              <View style={styles.chip}>
+              <View style={[styles.chip, validationErrors.date && styles.chipFieldError]}>
                 <Text style={[styles.chipLabel, { marginRight: 8 }]}>Start:</Text>
                 <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
                   <ChevronLeft size={16} color={FG} />
@@ -4376,7 +4847,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           } else {
             // Single date picker for regular events
             return (
-              <View style={styles.chip}>
+              <View style={[styles.chip, validationErrors.date && styles.chipFieldError]}>
                 <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
                   <ChevronLeft size={16} color={FG} />
                 </TouchableOpacity>
@@ -4400,46 +4871,65 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           }
         })()}
 
-        {/* Assignee chip */}
+        {/* Assignee chip — error text sits under this column, not full modal width */}
         {familyMembers.length > 0 && (
-          <View style={styles.chip}>
-      <View>
-              <Text style={styles.chipLabel}>Assignee</Text>
-              <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>(required)</Text>
-            </View>
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-              {familyMembers.map((m) => {
-                const isSelected = assigneeIds.includes(m.id);
-                return (
-                  <TouchableOpacity
-                    key={m.id}
-                    onPress={() => {
-                      if (isSelected) {
-                        setAssigneeIds(assigneeIds.filter(id => id !== m.id));
-                      } else {
-                        setAssigneeIds([...assigneeIds, m.id]);
-                      }
-                    }}
-                    style={[
-                      styles.chipOption,
-                      isSelected && styles.chipOptionActive,
-                    ]}
-                  >
-                    <Text
+          <View style={styles.assigneeChipColumn}>
+            <View style={[styles.chip, validationErrors.assignee && styles.chipFieldError]}>
+              <View>
+                <Text style={styles.chipLabel}>Assignee</Text>
+                <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>(required)</Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                {familyMembers.map((m) => {
+                  const isSelected = assigneeIds.includes(m.id);
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      onPress={() => {
+                        if (validationErrors.assignee) {
+                          setValidationErrors((prev) => {
+                            if (!prev.assignee) return prev;
+                            const next = { ...prev };
+                            delete next.assignee;
+                            return next;
+                          });
+                        }
+                        if (isSelected) {
+                          setAssigneeIds(assigneeIds.filter(id => id !== m.id));
+                        } else {
+                          setAssigneeIds([...assigneeIds, m.id]);
+                        }
+                      }}
                       style={[
-                        styles.chipOptionText,
-                        isSelected && styles.chipOptionTextActive,
+                        styles.chipOption,
+                        isSelected && styles.chipOptionActive,
                       ]}
                     >
-                      {m.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-      </View>
+                      <Text
+                        style={[
+                          styles.chipOptionText,
+                          isSelected && styles.chipOptionTextActive,
+                        ]}
+                      >
+                        {m.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+            {validationErrors.assignee ? (
+              <Text style={styles.assigneeErrorText}>{validationErrors.assignee}</Text>
+            ) : null}
           </View>
         )}
       </ScrollView>
+      {validationErrors.date ? (
+        <View style={{ marginTop: 4, marginBottom: 4, paddingHorizontal: 0 }}>
+          <Text style={styles.errorTextSmall}>{validationErrors.date}</Text>
+        </View>
+      ) : null}
+
 
       {/* End date picker - shown below start date for multi-day events */}
       {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (
@@ -4502,7 +4992,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
       <SafeView>
         {placement === 'calendar' && (
-          <View style={styles.timeSection}>
+          <View style={[styles.timeSection, validationErrors.time && styles.timeSectionError]}>
             <View style={styles.timeToggleRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text style={styles.sectionLabel}>Schedule time</Text>
@@ -5524,121 +6014,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
       </ScrollView>
 
-      {/* Conflict Warning Banner */}
-      {conflictWarning && (
-        <View style={{
-          marginTop: 12,
-          marginHorizontal: 16,
-          paddingVertical: 10,
-          paddingHorizontal: 12,
-          backgroundColor: '#FFF5F5',
-          borderRadius: 8,
-          borderWidth: 1,
-          borderColor: '#FEE2E2',
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-            <AlertCircle size={18} color="#EF4444" style={{ marginTop: 2, flexShrink: 0 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 13, 
-                color: '#9A3412', 
-                fontWeight: '500', 
-                marginBottom: 8,
-                ...(Platform.OS === 'web' && {
-                  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                }),
-              }}>
-                Conflicts with {conflictWarning.message}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                <TouchableOpacity
-                  {...(Platform.OS === 'web' && { type: 'button' })}
-                  onPress={async (e) => {
-                    if (Platform.OS === 'web' && e) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }
-                    
-                    // Open Quick Reschedule modal for automatic adjustment
-                    setShouldAutoAdjust(true);
-                    setConflictWarning(null);
-                    
-                    // Close this modal and open Quick Reschedule
-                    onClose?.();
-                    
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      setTimeout(() => {
-                        window.dispatchEvent(new CustomEvent('openQuickReschedule', {
-                          detail: {
-                            event: event,
-                            skipToPreview: false,
-                          }
-                        }));
-                      }, 100);
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    backgroundColor: '#FDD7D7',
-                    borderWidth: 1,
-                    borderColor: '#FCA5A5',
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 6,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ 
-                    color: '#9A3412', 
-                    fontSize: 13, 
-                    fontWeight: '600',
-                    ...(Platform.OS === 'web' && {
-                      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                    }),
-                  }}>
-                    Adjust automatically
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  {...(Platform.OS === 'web' && { type: 'button' })}
-                  onPress={(e) => {
-                    if (Platform.OS === 'web' && e) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }
-                    // Save anyway - allow overlaps
-                    setShouldAllowOverlaps(true);
-                    setConflictWarning(null);
-                    handleSave(false, true); // Skip validation, allow overlaps
-                  }}
-                  style={{
-                    flex: 1,
-                    backgroundColor: '#FFFFFF',
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 6,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ 
-                    color: '#374151', 
-                    fontSize: 13, 
-                    fontWeight: '500',
-                    ...(Platform.OS === 'web' && {
-                      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                    }),
-                  }}>
-                    Save anyway
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </View>
-      )}
-
       {session?.role_flags?.isChild && event?.id && isSchoolWorkEventType(eventType) && (
         <View style={{ paddingHorizontal: 16, paddingBottom: 8, paddingTop: 4 }}>
           <View
@@ -5745,13 +6120,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
           <TouchableOpacity
           onPress={() => {
-            if (saving || !isFormValid()) return;
+            if (saving) return;
+            if (!validateFields()) return;
             handleSave();
           }}
-          disabled={saving || !isFormValid()}
+          disabled={saving}
           style={[
             styles.createButton,
             (saving || !isFormValid()) && styles.createButtonDisabled,
+            Platform.OS === 'web' && !saving && !isFormValid() && { cursor: 'pointer' },
           ]}
         >
           <Text style={[
@@ -5774,6 +6151,267 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     console.log('[EventDetails] editing state:', editing);
   }
+
+  const editFormConflictRich = useMemo(() => {
+    if (!conflictWarning) return null;
+    const msg = conflictWarning.message || '';
+    const ev = conflictWarning.event;
+    const parsed = msg ? parseConflictMessageString(msg) : null;
+    const movedLike = { child_id: assigneeIds[0], child_ids: assigneeIds };
+    const learner = resolveLearnerChild(movedLike, mapChildrenForConflict(familyMembers), parsed?.learnerName);
+    const title = ev?.title || parsed?.conflictingTitle;
+    const meta = ev ? formatConflictMetaFromEvent(ev) : parsed?.metaLine;
+    if (title || parsed) {
+      return {
+        kind: 'rich',
+        learner,
+        conflictingTitle: title || parsed?.conflictingTitle || 'Event',
+        metaLine: meta || parsed?.metaLine || '',
+        nameFallback: parsed?.learnerName,
+      };
+    }
+    return { kind: 'plain', text: msg || 'Schedule conflict' };
+  }, [conflictWarning, assigneeIds, familyMembers]);
+
+  const chipConflictRich = useMemo(() => {
+    const contextMessage = conflictResolutionContext?.conflictMessage;
+    if (contextMessage) {
+      const parsed = parseConflictMessageString(contextMessage);
+      const learner = resolveLearnerChild(
+        conflictResolutionContext?.movedEvent || event,
+        mapChildrenForConflict(familyMembers),
+        parsed?.learnerName
+      );
+      if (parsed) {
+        return {
+          kind: 'rich',
+          learner,
+          conflictingTitle: parsed.conflictingTitle,
+          metaLine: parsed.metaLine,
+          nameFallback: parsed.learnerName,
+        };
+      }
+      return { kind: 'plain', text: contextMessage };
+    }
+    if (!chipConflictMessage) return null;
+    const parsed = parseConflictMessageString(chipConflictMessage);
+    const learner = resolveLearnerChild(event, mapChildrenForConflict(familyMembers), parsed?.learnerName);
+    if (parsed) {
+      return {
+        kind: 'rich',
+        learner,
+        conflictingTitle: parsed.conflictingTitle,
+        metaLine: parsed.metaLine,
+        nameFallback: parsed.learnerName,
+      };
+    }
+    return { kind: 'plain', text: chipConflictMessage };
+  }, [chipConflictMessage, conflictResolutionContext, event, familyMembers]);
+
+  const showChipConflictBanner =
+    !chipConflictBannerDismissed &&
+    !!(
+      chipConflictLoading ||
+      chipConflictMessage ||
+      chipConflictSuggestion ||
+      conflictResolutionContext?.conflictMessage ||
+      conflictResolutionContext?.suggestedChange
+    );
+
+  const applySuggestedConflictChange = useCallback((suggestion) => {
+    if (!suggestion?.newStart || !suggestion?.newEnd) return false;
+    const nextStart = suggestion.newStart instanceof Date ? suggestion.newStart : new Date(suggestion.newStart);
+    const nextEnd = suggestion.newEnd instanceof Date ? suggestion.newEnd : new Date(suggestion.newEnd);
+    if (Number.isNaN(nextStart.getTime()) || Number.isNaN(nextEnd.getTime())) return false;
+
+    setDueDate(nextStart);
+    setDraftDate(toDateInput(nextStart.toISOString()));
+    setStartTime(formatTimeForInput(nextStart));
+    setEndTime(formatTimeForInput(nextEnd));
+    setConflictWarning(null);
+    setChipConflictMessage(null);
+    setChipConflictSuggestion(null);
+    setChipConflictBannerDismissed(true);
+    setShouldAutoAdjust(true);
+    onOpenConflictResolutionConsumed?.();
+    return true;
+  }, [onOpenConflictResolutionConsumed]);
+
+  const persistSuggestedConflictChange = useCallback(async (suggestion) => {
+    if (!event?.id || !suggestion?.newStart || !suggestion?.newEnd) return false;
+    const nextStart = suggestion.newStart instanceof Date ? suggestion.newStart : new Date(suggestion.newStart);
+    const nextEnd = suggestion.newEnd instanceof Date ? suggestion.newEnd : new Date(suggestion.newEnd);
+    if (Number.isNaN(nextStart.getTime()) || Number.isNaN(nextEnd.getTime())) return false;
+
+    const optimisticPatch = {
+      id: event.id,
+      previous_start_ts: event.start_ts,
+      start_ts: nextStart.toISOString(),
+      end_ts: nextEnd.toISOString(),
+    };
+
+    applySuggestedConflictChange(suggestion);
+    onEventPatched?.(optimisticPatch);
+
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .update({
+          start_ts: nextStart.toISOString(),
+          end_ts: nextEnd.toISOString(),
+        })
+        .eq('id', event.id)
+        .select()
+        .single();
+      if (error) throw error;
+      onEventPatched?.({
+        id: event.id,
+        previous_start_ts: event.start_ts,
+        ...(data || optimisticPatch),
+      });
+      onEventUpdated?.();
+      return true;
+    } catch (err) {
+      console.error('[EventDetails] Failed to auto-apply suggested conflict change:', err);
+      Alert.alert('Could not adjust automatically', err?.message || 'Please try again.');
+      onEventUpdated?.();
+      return false;
+    }
+  }, [applySuggestedConflictChange, event?.id, event?.start_ts, onEventPatched, onEventUpdated]);
+
+  const openPersistentConflictResolution = useCallback(() => {
+    const suggestion = chipConflictSuggestion || conflictResolutionContext?.suggestedChange || null;
+    if (editing) {
+      applySuggestedConflictChange(suggestion);
+      return;
+    }
+    persistSuggestedConflictChange(suggestion);
+  }, [applySuggestedConflictChange, chipConflictSuggestion, conflictResolutionContext, editing, persistSuggestedConflictChange]);
+
+  const dismissPersistentConflictResolution = useCallback(() => {
+    setChipConflictBannerDismissed(true);
+    setChipConflictMessage(null);
+    setChipConflictSuggestion(null);
+    onOpenConflictResolutionConsumed?.();
+    if (Platform.OS === 'web' && event?.id && typeof localStorage !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('dismissedConflicts');
+        const arr = raw ? JSON.parse(raw) : [];
+        const next = Array.isArray(arr) ? [...new Set([...arr, String(event.id)])] : [String(event.id)];
+        localStorage.setItem('dismissedConflicts', JSON.stringify(next));
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }, [event?.id, onOpenConflictResolutionConsumed]);
+
+  const renderPersistentConflictContainer = useCallback((inline = false) => (
+    <View
+      style={[
+        cb.banner,
+        inline
+          ? { marginTop: 6, marginBottom: 8, marginHorizontal: 0 }
+          : { marginTop: 8, marginBottom: 4, marginHorizontal: 0 },
+      ]}
+    >
+      <View style={cb.bannerContentCompact}>
+        <View style={cb.bannerIconWrapSm}>
+          <AlertCircle size={14} color="#5B8FC7" />
+        </View>
+        <View style={cb.bannerTextGrow}>
+          {chipConflictLoading ? (
+            <ActivityIndicator size="small" color="#64748B" style={{ alignSelf: 'flex-start' }} />
+          ) : chipConflictRich?.kind === 'rich' ? (
+            <>
+              <View style={cb.conflictLine}>
+                <Text style={cb.kicker}>Conflict with </Text>
+                <LearnerPill
+                  child={chipConflictRich.learner}
+                  nameFallback={chipConflictRich.nameFallback || undefined}
+                />
+                <Text style={cb.conflictTitle} numberOfLines={1}>
+                  {' '}
+                  — {chipConflictRich.conflictingTitle}
+                </Text>
+                {chipConflictRich.metaLine ? (
+                  <Text style={cb.metaInline} numberOfLines={1}>
+                    {' '}
+                    · {chipConflictRich.metaLine}
+                  </Text>
+                ) : null}
+              </View>
+              {chipConflictSuggestion?.message ? (
+                <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                  Suggested change: {chipConflictSuggestion.message}
+                </Text>
+              ) : conflictResolutionContext?.suggestedChange?.message ? (
+                <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                  Suggested change: {conflictResolutionContext.suggestedChange.message}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={cb.bannerMessagePlain} numberOfLines={2}>
+                Overlaps with {chipConflictRich?.text || chipConflictMessage}
+              </Text>
+              {chipConflictSuggestion?.message ? (
+                <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                  Suggested change: {chipConflictSuggestion.message}
+                </Text>
+              ) : conflictResolutionContext?.suggestedChange?.message ? (
+                <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                  Suggested change: {conflictResolutionContext.suggestedChange.message}
+                </Text>
+              ) : null}
+            </>
+          )}
+        </View>
+        {!chipConflictLoading && (chipConflictMessage || chipConflictSuggestion) ? (
+          <View style={cb.bannerActionsRow}>
+            {!readOnly ? (
+              <TouchableOpacity
+                {...(Platform.OS === 'web' && { type: 'button' })}
+                onPress={openPersistentConflictResolution}
+                style={cb.primaryButton}
+              >
+                <Text style={cb.primaryButtonText}>Adjust automatically</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              {...(Platform.OS === 'web' && { type: 'button' })}
+              onPress={dismissPersistentConflictResolution}
+              style={cb.ghostButton}
+            >
+              <Text style={cb.ghostButtonText}>Ignore</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  ), [cb, chipConflictLoading, chipConflictMessage, chipConflictRich, chipConflictSuggestion, dismissPersistentConflictResolution, openPersistentConflictResolution, readOnly]);
+
+  useEffect(() => {
+    if (!conflictWarning) return;
+    editConflictEnterOp.setValue(0);
+    editConflictEnterY.setValue(5);
+    const useNativeDriver = Platform.OS !== 'web';
+    Animated.parallel([
+      Animated.timing(editConflictEnterOp, { toValue: 1, duration: 240, useNativeDriver }),
+      Animated.timing(editConflictEnterY, { toValue: 0, duration: 240, useNativeDriver }),
+    ]).start();
+  }, [conflictWarning]);
+
+  useEffect(() => {
+    if (!showChipConflictBanner) return;
+    chipConflictEnterOp.setValue(0);
+    chipConflictEnterY.setValue(5);
+    const useNativeDriver = Platform.OS !== 'web';
+    Animated.parallel([
+      Animated.timing(chipConflictEnterOp, { toValue: 1, duration: 240, useNativeDriver }),
+      Animated.timing(chipConflictEnterY, { toValue: 0, duration: 240, useNativeDriver }),
+    ]).start();
+  }, [showChipConflictBanner]);
 
   return (
     <>
@@ -7462,7 +8100,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
     gap: 8,
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
   },
   chip: {
@@ -7478,6 +8116,24 @@ const styles = StyleSheet.create({
     marginRight: 8,
     flexShrink: 0,
     minHeight: 40,
+  },
+  chipFieldError: {
+    borderColor: '#ef4444',
+    borderWidth: 1.5,
+  },
+  assigneeChipColumn: {
+    marginRight: 8,
+    alignSelf: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  assigneeErrorText: {
+    color: '#ef4444',
+    fontSize: 11,
+    marginTop: 6,
+    maxWidth: 260,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   chipText: {
     color: FG,
@@ -7632,6 +8288,10 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 10,
     backgroundColor: '#f9fafb',
+  },
+  timeSectionError: {
+    borderColor: '#ef4444',
+    borderWidth: 1.5,
   },
   timeToggleRow: {
     flexDirection: 'row',

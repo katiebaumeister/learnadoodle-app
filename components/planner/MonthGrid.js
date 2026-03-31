@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Platform, Alert } from 'react-native';
 import { eachDayMatrix, isSameMonth, isToday, formatDayNum } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import { rescheduleEvent } from '../../lib/services/plannerClientWithOffline';
+import { detectConflicts } from '../../lib/utils/conflictDetection';
 
 // For web portal rendering
 let ReactDOM;
@@ -625,6 +626,14 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               window.dispatchEvent(new CustomEvent('eventRescheduled', {
                 detail: { eventId, updatedEvent, dropStartTime: dropStart, previousDateLocal }
               }));
+              const localConflictCount = detectConflicts(updatedEvent, events || []);
+              if (localConflictCount > 0) {
+                console.log('[MonthGrid] Local conflict detected after drop - persisting move immediately as flexible');
+                window.dispatchEvent(new CustomEvent('persistConflictDragMove', {
+                  detail: { eventId, movedEvent: updatedEvent }
+                }));
+                return;
+              }
               rescheduleEvent(
               eventId,
               newStart.toISOString(),
@@ -1224,8 +1233,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                     // This prevents jumping to a different month when clicking on days from adjacent months
                     if (inMonth) {
                       if (onSelectDate) onSelectDate(day);
-                      // Switch to Board view for the week of this day, centered on this day
-                      if (onSwitchToBoardViewForDay) onSwitchToBoardViewForDay(day);
                     }
                   }}
                   {...(Platform.OS === 'web' && {
@@ -1451,7 +1458,9 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                       <TouchableOpacity
                         onPress={(e) => {
                           e.stopPropagation();
-                          if (onSwitchToBoardView) {
+                          if (onSwitchToBoardViewForDay) {
+                            onSwitchToBoardViewForDay(day);
+                          } else if (onSwitchToBoardView) {
                             onSwitchToBoardView();
                           }
                         }}

@@ -2573,7 +2573,7 @@ export default function TaskCreateModal({
                             <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
                               <TouchableOpacity
                                 onPress={() => {
-                                  // Accept the suggested change - update start/end times
+                                  // Accept the suggested change - update date and times inline
                                   if (!suggestedChange || !suggestedChange.newStart || !suggestedChange.newEnd) {
                                     console.warn('[TaskCreateModal] Cannot accept change - invalid suggestedChange');
                                     return;
@@ -2597,15 +2597,18 @@ export default function TaskCreateModal({
                                     return `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
                                   };
                                   
+                                  const nextStartDate = suggestedChange.newStart instanceof Date
+                                    ? suggestedChange.newStart
+                                    : new Date(suggestedChange.newStart);
                                   const newStartTime = formatTimeForInput(suggestedChange.newStart);
                                   const newEndTime = formatTimeForInput(suggestedChange.newEnd);
                                   
-                                  if (!newStartTime || !newEndTime) {
+                                  if (isNaN(nextStartDate.getTime()) || !newStartTime || !newEndTime) {
                                     console.error('[TaskCreateModal] Failed to format times from suggestedChange');
                                     return;
                                   }
                                   
-                              // Update times first
+                              setDueDate(nextStartDate);
                               setStartTime(newStartTime);
                               setEndTime(newEndTime);
                               

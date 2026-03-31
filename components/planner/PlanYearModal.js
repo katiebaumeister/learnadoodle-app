@@ -19,7 +19,6 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
-  Switch,
 } from 'react-native';
 
 const TARGET_INSTRUCTIONAL_DAYS_DEFAULT = 180;
@@ -37,6 +36,7 @@ import {
   Clock,
   Target,
   Check,
+  CircleCheck,
   Info,
   LayoutGrid,
   Upload,
@@ -51,7 +51,6 @@ import {
   Pencil,
   RotateCcw,
   GripVertical,
-  AlertTriangle,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -89,8 +88,13 @@ import {
 } from './planYearFlowConfig';
 import {
   analyzePlanCadenceConflicts,
+  applyCadenceFixForConflict,
   applyCadenceTimeShiftsUntilStable,
+  conflictCounterpartyLabel,
+  conflictCounterpartyTimeLabel,
+  findConflictsForPreviewLine,
   getNextCadenceTimeShift,
+  getSuggestedTimeForConflict,
 } from '../../lib/utils/planCadenceConflicts';
 import {
   getAcademicYearsPickerCache,
@@ -346,6 +350,30 @@ function formatDateDisplay(ymd) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** Short date for dense preview rows (no year). */
+function formatDateShort(ymd) {
+  if (!ymd) return '';
+  const d = dateStringToDate(ymd);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** "09:00–10:00" → "9–10"; keeps half-hours as "9:30–10:30". */
+function compressSuggestedTimeForChip(label) {
+  if (!label || typeof label !== 'string') return '';
+  const normalized = label.replace(/\s+/g, '');
+  const parts = normalized.split(/[–-]/);
+  if (parts.length !== 2) return label;
+  const strip = (s) => {
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return s;
+    const h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    if (min === 0) return String(h);
+    return `${h}:${String(min).padStart(2, '0')}`;
+  };
+  return `${strip(parts[0])}–${strip(parts[1])}`;
+}
+
 /** Flatten manual/upload draft units into ordered lessons for schedule preview (1-based index). */
 function flattenUnitLessonsForPreview(units) {
   if (!Array.isArray(units)) return [];
@@ -399,6 +427,158 @@ function buildLessonSchedulePreviewRows(previewSlotLines, flatLessons, curriculu
     return { line, detailLine: availableSlotLabel };
   });
   return { rows, overflowCount: q.length, hasCurriculumMapping: true, curriculumSubjectId: sid };
+}
+
+const CADENCE_PREVIEW_ROW_PAD_V = 8;
+const CADENCE_PREVIEW_ROW_GAP = 5;
+/** Dusty rose for conflict copy — soft, parent-friendly (not alert red). */
+const CADENCE_CONFLICT_COPY = '#B89696';
+const CADENCE_ROW_PAD_H = 8;
+
+/** Dense year-view row: same padding/type for all states; conflict = ⚠ + soft rose text + accent link only (no bars/fills). */
+function CadencePreviewSlotRow({
+  line,
+  detailLine,
+  conflictDetail,
+  showResolvedTint: _showResolvedTint,
+  isLast = false,
+  onMoveRowPress,
+}) {
+  const subjLine =
+    detailLine ??
+    (line.assigneeShortLabel
+      ? `${line.subjectName} · ${line.assigneeShortLabel}`
+      : line.childNames
+        ? `${line.subjectName} · ${line.childNames}`
+        : line.subjectName);
+
+  const hasConflict = !!conflictDetail;
+  const dateShort = formatDateShort(line.date);
+  const timePart = line.timeLabel || '';
+  const chipTime = conflictDetail?.suggestedTimeLabel
+    ? compressSuggestedTimeForChip(conflictDetail.suggestedTimeLabel)
+    : '';
+
+  const rowShell = {
+    paddingVertical: CADENCE_PREVIEW_ROW_PAD_V,
+    marginBottom: isLast ? 0 : CADENCE_PREVIEW_ROW_GAP,
+    paddingHorizontal: CADENCE_ROW_PAD_H,
+  };
+
+  const moveLink = chipTime && onMoveRowPress && (
+    <TouchableOpacity
+      onPress={onMoveRowPress}
+      activeOpacity={0.75}
+      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <Text style={{ fontSize: 11, lineHeight: 15, fontWeight: '600', color: ACCENT }}>
+        {t('planMyYear.cadenceConflicts.moveToChip', { time: chipTime })}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <View style={rowShell}>
+      <Text style={{ fontSize: 13, lineHeight: 18 }} numberOfLines={1} ellipsizeMode="tail">
+        <Text style={{ fontWeight: '500', color: FG }}>{dateShort}</Text>
+        <Text style={{ fontWeight: '500', color: FG }}>{` · ${timePart}`}</Text>
+        <Text style={{ color: TEXT_SECONDARY, fontWeight: '400' }}>{` — ${subjLine}`}</Text>
+      </Text>
+      {hasConflict ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: 2 }}>
+          <Text style={{ fontSize: 11, lineHeight: 15, color: CADENCE_CONFLICT_COPY, fontWeight: '500' }}>
+            ⚠ {t('planMyYear.cadenceConflicts.conflictsWithNamed', { name: conflictDetail.counterpartyLabel || '—' })}
+            {conflictDetail.counterpartyTimeLabel ? ` ${conflictDetail.counterpartyTimeLabel}` : ''}
+            {chipTime ? ' · ' : ''}
+          </Text>
+          {chipTime && onMoveRowPress ? (
+            moveLink
+          ) : chipTime ? (
+            <Text style={{ fontSize: 11, lineHeight: 15, color: CADENCE_CONFLICT_COPY }}>
+              {t('planMyYear.cadenceConflicts.moveToChip', { time: chipTime })}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Light bulk action (footer / above CTA): not an alert — title, suggested window, outline button. */
+function CadencePreviewConflictBulkBar({ conflictCount, suggestedTimeLabel, canMoveAll, onMoveAll }) {
+  if (!conflictCount || !canMoveAll) return null;
+  const title =
+    conflictCount === 1
+      ? t('planMyYear.cadenceConflicts.conflictsFoundOne')
+      : t('planMyYear.cadenceConflicts.conflictsFoundMany', { count: conflictCount });
+  const moveLabel = suggestedTimeLabel
+    ? t('planMyYear.cadenceConflicts.moveAllToTime', { time: suggestedTimeLabel })
+    : t('planMyYear.cadenceConflicts.moveAllFallback');
+
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 12,
+        width: '100%',
+        marginBottom: 12,
+        paddingBottom: 4,
+        borderBottomWidth: 1,
+        borderBottomColor: BORDER_SUBTLE,
+      }}
+    >
+      <View style={{ flex: 1, minWidth: 160 }}>
+        <Text style={{ fontSize: 14, fontWeight: '600', color: FG, lineHeight: 20 }}>{title}</Text>
+        {suggestedTimeLabel ? (
+          <Text style={{ fontSize: 13, color: TEXT_SECONDARY, marginTop: 3, lineHeight: 18 }}>
+            {t('planMyYear.cadenceConflicts.suggestionInline', { time: suggestedTimeLabel })}
+          </Text>
+        ) : null}
+      </View>
+      <TouchableOpacity
+        onPress={onMoveAll}
+        disabled={!canMoveAll}
+        accessibilityRole="button"
+        accessibilityLabel={t('planMyYear.cadenceConflicts.acceptAllSuggestedA11y')}
+        activeOpacity={0.88}
+        style={{
+          paddingVertical: 9,
+          paddingHorizontal: 16,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: PRIMARY_BTN,
+          backgroundColor: BG,
+          ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+        }}
+        {...(Platform.OS === 'web' && {
+          onMouseEnter: (e) => {
+            if (e?.currentTarget?.style) e.currentTarget.style.backgroundColor = ACCENT_LIGHT;
+          },
+          onMouseLeave: (e) => {
+            if (e?.currentTarget?.style) e.currentTarget.style.backgroundColor = BG;
+          },
+        })}
+      >
+        <Text style={{ fontSize: 13, fontWeight: '600', color: ACCENT }}>{moveLabel}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function CadenceConflictsResolvedLine({ visible }) {
+  if (!visible) return null;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 6 }}>
+      <CircleCheck size={15} color="#58B08C" strokeWidth={2} />
+      <Text style={{ fontSize: 12, fontWeight: '600', color: '#58B08C', letterSpacing: 0.2 }}>
+        {t('planMyYear.cadenceConflicts.conflictsResolved')}
+      </Text>
+    </View>
+  );
 }
 
 /** Slot time labels in lesson order (matches `flattenUnitLessonsForPreview` + `buildLessonSchedulePreviewRows`). */
@@ -897,6 +1077,7 @@ function buildPreviewSlotLinesForPlanYear({
         timeLabel,
         subjectName,
         subjectId: block.subject_id ?? null,
+        blockId: block.block_id ?? null,
         childNames,
         assigneeShortLabel,
       });
@@ -1104,6 +1285,8 @@ export default function PlanYearModal({
   onOpenBuildCurriculum = null,
   onOpenRebalance = null,
   onOpenPlannerSettings = null,
+  /** Prefer this over window events so native / tests can open ManualCurriculumBuilderModal without DOM APIs. */
+  onOpenManualCurriculumBuilder = null,
   initialAcademicYearId = null,
   initialPlanSummaryData = null,
   openForNewPlan = false,
@@ -1193,7 +1376,10 @@ export default function PlanYearModal({
   /** Calendar events in plan date range — cadence overlap vs existing schedule. */
   const [calendarEventsForConflicts, setCalendarEventsForConflicts] = useState([]);
   const [loadingCalendarEventsForConflicts, setLoadingCalendarEventsForConflicts] = useState(false);
-  const [ignorePlanCadenceConflicts, setIgnorePlanCadenceConflicts] = useState(false);
+  /** When true, conflict summary + Move all are hidden; user can reopen via amber dot on a row. */
+  /** Brief success line after user accepts suggested times and overlaps clear. */
+  const [cadenceConflictsResolvedFeedback, setCadenceConflictsResolvedFeedback] = useState(false);
+  const pendingCadenceResolveAckRef = useRef(false);
   const [replacePlaceholders, setReplacePlaceholders] = useState(true);
   const [applyFromMode, setApplyFromMode] = useState('entire'); // 'entire' | 'today' | 'date'
   const [applyFromDate, setApplyFromDate] = useState(null); // YYYY-MM-DD when applyFromMode === 'date'
@@ -1326,6 +1512,8 @@ export default function PlanYearModal({
   const [manualDraft, setManualDraft] = useState(null);
   /** After user clears manual draft while staying on unit structure, do not immediately re-hydrate from unitStructureData. */
   const suppressManualCurriculumHydrateRef = useRef(false);
+  /** Logistics-first: `cadenceYieldsInstructionalSlots` — read at tap time so unit-structure entry stays in sync. */
+  const cadenceReadyForUnitStructureRef = useRef(false);
   /** Draft unit-structure modal: which lesson rows show date + extra type chips (`${unitIdx}-${lessonIdx}`). */
   const [expandedDraftLessonDetailKeys, setExpandedDraftLessonDetailKeys] = useState(() => new Set());
   /** `${unitIdx}-${lessonIdx}` — lesson row kebab in draft builder */
@@ -1935,6 +2123,7 @@ export default function PlanYearModal({
   const openCadenceUnitMethod = useCallback(
     (subjectId, method) => {
       if (!ensureUnitSubjectForUnitStructure(subjectId)) return;
+      if (PLAN_MY_YEAR_LOGISTICS_FIRST && !cadenceReadyForUnitStructureRef.current) return;
       setUnitFocusSubjectId(subjectId);
       setParsedContent(null);
       setParseContentError(null);
@@ -2314,11 +2503,94 @@ export default function PlanYearModal({
     !!cadenceConflictReport &&
     (cadenceConflictReport.internal.length > 0 || cadenceConflictReport.external.length > 0);
 
+  useEffect(() => {
+    if (hasCadenceConflicts) {
+      setCadenceConflictsResolvedFeedback(false);
+      if (pendingCadenceResolveAckRef.current) pendingCadenceResolveAckRef.current = false;
+      return;
+    }
+    if (!pendingCadenceResolveAckRef.current) return;
+    pendingCadenceResolveAckRef.current = false;
+    setCadenceConflictsResolvedFeedback(true);
+    const id = setTimeout(() => setCadenceConflictsResolvedFeedback(false), 5000);
+    return () => clearTimeout(id);
+  }, [hasCadenceConflicts]);
+
   const cadenceConflictDates = cadenceConflictReport?.conflictDates ?? new Set();
   const cadenceConflictDayCount = cadenceConflictDates.size;
+  const cadenceConflictEntryCount =
+    (cadenceConflictReport?.internal?.length ?? 0) + (cadenceConflictReport?.external?.length ?? 0);
+
+  /** Suggested window for “Move all” — matches bulk fix algorithm. */
+  const cadenceBulkSuggestedTimeLabel = useMemo(() => {
+    if (!hasCadenceConflicts || !blocks?.length) return null;
+    const shift = getNextCadenceTimeShift(blocks, cadenceConflictContext);
+    if (!shift?.start_time || !shift?.end_time) return null;
+    const a = String(shift.start_time).slice(0, 5);
+    const b = String(shift.end_time).slice(0, 5);
+    return `${a}–${b}`;
+  }, [hasCadenceConflicts, blocks, cadenceConflictContext]);
+
+  const canMoveAllCadenceFix = useMemo(() => {
+    if (!hasCadenceConflicts || !blocks?.length) return false;
+    return getNextCadenceTimeShift(blocks, cadenceConflictContext) != null;
+  }, [hasCadenceConflicts, blocks, cadenceConflictContext]);
+
+  /** `${date}|${blockId}` for preview rows that should show the conflict icon. */
+  const previewLineConflictKeySet = useMemo(() => {
+    const s = new Set();
+    if (!cadenceConflictReport) return s;
+    for (const c of cadenceConflictReport.external || []) {
+      s.add(`${c.date}|${String(c.blockId)}`);
+    }
+    for (const c of cadenceConflictReport.internal || []) {
+      s.add(`${c.date}|${String(c.blockIdA)}`);
+      s.add(`${c.date}|${String(c.blockIdB)}`);
+    }
+    return s;
+  }, [cadenceConflictReport]);
 
   /** True when date range + cadence produce at least one class occurrence (instructional slot preview). */
   const cadenceYieldsInstructionalSlots = previewSlotLines.length > 0;
+  cadenceReadyForUnitStructureRef.current = cadenceYieldsInstructionalSlots;
+  const unitStructureBlockedByCadence =
+    PLAN_MY_YEAR_LOGISTICS_FIRST && !cadenceYieldsInstructionalSlots;
+
+  const dispatchContentFirstUnitsFlow = useCallback(() => {
+    const sid =
+      initialSubjectId != null && String(initialSubjectId).trim() !== ''
+        ? initialSubjectId
+        : unitPipelineSubjectId ??
+          (Array.isArray(effectiveSubjectIds) && effectiveSubjectIds.length > 0
+            ? effectiveSubjectIds[0]
+            : null);
+    const subj = (baseSubjectList || []).find((s) => String(s.id) === String(sid));
+    const childIds = (children || []).map((c) => c?.id).filter(Boolean);
+    const detail = {
+      subjectId: sid ?? null,
+      subjectName: (subj?.name || '').trim() || 'Subject',
+      familyId,
+      childIds,
+    };
+    if (typeof onOpenManualCurriculumBuilder === 'function') {
+      onOpenManualCurriculumBuilder(detail);
+      onClose?.();
+      return;
+    }
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', { detail }));
+      onClose?.();
+    }
+  }, [
+    onOpenManualCurriculumBuilder,
+    familyId,
+    children,
+    initialSubjectId,
+    unitPipelineSubjectId,
+    effectiveSubjectIds,
+    baseSubjectList,
+    onClose,
+  ]);
 
   /** Client-side lesson → slot lines (matches apply order; no DB placeholders required). */
   const lessonSchedulePreviewPlan = useMemo(() => {
@@ -2347,6 +2619,35 @@ export default function PlanYearModal({
     unitPipelineSubjectId,
     singleBlockSubjectId,
     lastSavedUnitSubjectId,
+  ]);
+
+  /** Per preview row: counterparty + suggested shift for inline conflict copy. */
+  const previewLineConflictDetailsByKey = useMemo(() => {
+    const map = new Map();
+    if (!cadenceConflictReport || !lessonSchedulePreviewPlan?.rows?.length) return map;
+    for (const { line } of lessonSchedulePreviewPlan.rows) {
+      if (!line?.blockId || !line?.date) continue;
+      const key = `${line.date}|${String(line.blockId)}`;
+      if (!previewLineConflictKeySet.has(key)) continue;
+      const { internal, external } = findConflictsForPreviewLine(line, cadenceConflictReport);
+      const first = external[0] || internal[0];
+      if (!first) continue;
+      const counterpartyLabel = conflictCounterpartyLabel(line, first);
+      const counterpartyTimeLabel = conflictCounterpartyTimeLabel(line, first) || null;
+      const sug = getSuggestedTimeForConflict(first, blocks, cadenceConflictContext);
+      const suggestedTimeLabel =
+        sug?.start_time && sug?.end_time
+          ? `${String(sug.start_time).slice(0, 5)}–${String(sug.end_time).slice(0, 5)}`
+          : null;
+      map.set(key, { counterpartyLabel, counterpartyTimeLabel, suggestedTimeLabel });
+    }
+    return map;
+  }, [
+    cadenceConflictReport,
+    lessonSchedulePreviewPlan.rows,
+    previewLineConflictKeySet,
+    blocks,
+    cadenceConflictContext,
   ]);
 
   const lessonOverflowExtendEndDate = useMemo(
@@ -4663,11 +4964,6 @@ export default function PlanYearModal({
       setError(t('planMyYear.applyFrom.dateRequired'));
       return;
     }
-    if (isHomeschool && hasCadenceConflicts && !ignorePlanCadenceConflicts) {
-      setError(t('planMyYear.cadenceConflicts.applyBlocked'));
-      return;
-    }
-
     if (existingPlaceholdersCount > 0) {
       await runApplyToCalendar(true);
       return;
@@ -5009,16 +5305,31 @@ export default function PlanYearModal({
     setBlocks(blocks.map((b, i) => (i === index ? { ...b, ...updates } : b)));
   };
 
-  const applyNextCadenceSuggestion = useCallback(() => {
-    const shift = getNextCadenceTimeShift(blocks, cadenceConflictContext);
-    if (!shift) return;
-    updateBlock(shift.blockIndex, { start_time: shift.start_time, end_time: shift.end_time });
-  }, [blocks, cadenceConflictContext]);
+  const handleFixAllCadenceConflicts = useCallback(() => {
+    pendingCadenceResolveAckRef.current = true;
+    setBlocks((prev) => {
+      const next = applyCadenceTimeShiftsUntilStable(prev, cadenceConflictContext, 40);
+      return next !== prev ? next : prev;
+    });
+  }, [cadenceConflictContext]);
 
-  const applyAllCadenceSuggestions = useCallback(() => {
-    const next = applyCadenceTimeShiftsUntilStable(blocks, cadenceConflictContext, 40);
-    if (next !== blocks) setBlocks(next);
-  }, [blocks, cadenceConflictContext]);
+  const handleApplyCadenceRowFix = useCallback(
+    (line) => {
+      if (!cadenceConflictReport || !line?.date || line.blockId == null) return;
+      const { internal, external } = findConflictsForPreviewLine(line, cadenceConflictReport);
+      const first = external[0] || internal[0];
+      if (!first) return;
+      const patch = applyCadenceFixForConflict(first, blocks, cadenceConflictContext);
+      if (!patch) return;
+      pendingCadenceResolveAckRef.current = true;
+      setBlocks((prev) =>
+        prev.map((b, i) =>
+          i === patch.blockIndex ? { ...b, start_time: patch.start_time, end_time: patch.end_time } : b,
+        ),
+      );
+    },
+    [cadenceConflictReport, blocks, cadenceConflictContext],
+  );
 
   // Reset state when modal closes (so reopening doesn't show stale conflicts/plan data after e.g. removing placeholders)
   useEffect(() => {
@@ -5049,13 +5360,10 @@ export default function PlanYearModal({
       setApplyFromDate(null);
       setShowApplyFromDatePicker(false);
       setCalendarEventsForConflicts([]);
-      setIgnorePlanCadenceConflicts(false);
+      setCadenceConflictsResolvedFeedback(false);
+      pendingCadenceResolveAckRef.current = false;
     }
   }, [visible]);
-
-  useEffect(() => {
-    setIgnorePlanCadenceConflicts(false);
-  }, [blocks, startDate, endDate]);
 
   // Load calendar events in range so cadence can be checked against existing schedule.
   useEffect(() => {
@@ -7479,39 +7787,58 @@ export default function PlanYearModal({
           ) : planStep === 'preview' && !(PLAN_MY_YEAR_LOGISTICS_FIRST && isHomeschool) ? (
             <View style={{ flex: 1, minHeight: 0 }}>
               <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={true}>
-                <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>
-                  {lessonSchedulePreviewPlan.hasCurriculumMapping
-                    ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
-                    : s('planMyYear.multiSubjectUnits.previewSelectedDaysTimesTitle')}
-                </Text>
-                <Text style={[styles.mutedText, { marginBottom: 16 }]}>
-                  {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
-                </Text>
-                {cadenceConflictDayCount > 0 ? (
-                  <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 12, lineHeight: 18 }}>
-                    {cadenceConflictDayCount === 1
-                      ? t('planMyYear.cadenceConflicts.previewConflictSummaryOne')
-                      : t('planMyYear.cadenceConflicts.previewConflictSummaryMany', { count: cadenceConflictDayCount })}
-                  </Text>
-                ) : null}
-                {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => (
-                  <View
-                    key={`ls-classic-${line.date}-${line.subjectId}-${idx}`}
-                    style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                <View style={{ marginTop: 8, marginBottom: 12, paddingHorizontal: 14, paddingVertical: 8 }}>
+                  <Text
+                    style={{
+                      fontSize: 17,
+                      fontWeight: '700',
+                      color: FG,
+                      marginBottom: 6,
+                      lineHeight: 22,
+                      ...(Platform.OS === 'web' && {
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }),
+                    }}
                   >
-                    <Text style={[styles.label, { marginBottom: 2 }]}>
-                      {line.dateLabel}, {line.timeLabel}
+                    {t('planMyYear.cadenceConflicts.previewDominantTitle')}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: TEXT_SECONDARY,
+                      marginBottom: lessonSchedulePreviewPlan.hasCurriculumMapping ? 4 : 12,
+                      lineHeight: 18,
+                    }}
+                  >
+                    {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
+                  </Text>
+                  {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
+                    <Text style={{ fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 16 }}>
+                      {s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')}
                     </Text>
-                    <Text style={[styles.mutedText, { fontSize: 14 }]}>
-                      {detailLine ?? (line.childNames ? `${line.subjectName} · ${line.childNames}` : line.subjectName)}
-                    </Text>
-                    {cadenceConflictDates.has(line.date) ? (
-                      <Text style={{ fontSize: 11, color: '#b45309', marginTop: 6, lineHeight: 16 }}>
-                        {t('planMyYear.cadenceConflicts.previewRowFlag')}
-                      </Text>
-                    ) : null}
-                  </View>
-                ))}
+                  ) : null}
+                  <CadenceConflictsResolvedLine visible={cadenceConflictsResolvedFeedback} />
+                  {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => {
+                    const rowKey =
+                      line.blockId && line.date ? `${line.date}|${String(line.blockId)}` : '';
+                    const conflictDetail = rowKey ? previewLineConflictDetailsByKey.get(rowKey) ?? null : null;
+                    return (
+                      <CadencePreviewSlotRow
+                        key={`ls-classic-${line.date}-${line.subjectId}-${idx}`}
+                        line={line}
+                        detailLine={detailLine}
+                        conflictDetail={conflictDetail}
+                        showResolvedTint={cadenceConflictsResolvedFeedback && !conflictDetail}
+                        isLast={idx === lessonSchedulePreviewPlan.rows.length - 1}
+                        onMoveRowPress={
+                          conflictDetail?.suggestedTimeLabel
+                            ? () => handleApplyCadenceRowFix(line)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </View>
                 <LessonOverflowFollowUp
                   textStyle={[styles.mutedText, { fontSize: 12, color: TEXT_SECONDARY }]}
                   overflowCount={lessonSchedulePreviewPlan.overflowCount}
@@ -7672,13 +7999,59 @@ export default function PlanYearModal({
                     </ScrollView>
                   </>
                 ) : (
-                  <Text style={[styles.mutedText, { fontSize: 17, marginTop: 28, marginBottom: 16 }]}>Nothing to see here (yet). Create a new plan to get started.</Text>
+                  <View style={{ marginTop: 28, marginBottom: 16, paddingHorizontal: 4 }}>
+                    <Text style={[styles.mutedText, { fontSize: 16, lineHeight: 22, color: FG, marginBottom: 8 }]}>
+                      Start by scheduling, or organize lessons first — you can connect them anytime.
+                    </Text>
+                    <Text style={[styles.mutedText, { fontSize: 14, lineHeight: 20, marginBottom: 14 }]}>
+                      Create a new plan from the flow below when you’re ready for cadence and calendar slots.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={dispatchContentFirstUnitsFlow}
+                      activeOpacity={0.75}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={{ fontSize: 14, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+                        Add units without scheduling →
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
             </ScrollView>
           ) : planStep === 'source' ? (
             <ScrollView style={styles.content} contentContainerStyle={[styles.contentContainer, styles.sourceStepContent]} showsVerticalScrollIndicator={false}>
               <View>
+                {PLAN_MY_YEAR_LOGISTICS_FIRST && unitStructureBlockedByCadence ? (
+                  <View
+                    style={{
+                      marginBottom: 18,
+                      paddingVertical: 14,
+                      paddingHorizontal: 14,
+                      backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: 'rgba(245, 158, 11, 0.32)',
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, color: FG, lineHeight: 20, fontWeight: '600' }}>
+                      Set days & times to unlock this step.
+                    </Text>
+                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 6, lineHeight: 18 }}>
+                      Add your weekly pattern under Logistics first, then you can attach units to those slots here.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={dispatchContentFirstUnitsFlow}
+                      style={{ marginTop: 12, alignSelf: 'flex-start' }}
+                      activeOpacity={0.75}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={{ fontSize: 13, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+                        Skip scheduling and build units only →
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && effectiveSubjectIds.length > 1 && !initialSubjectId && (
                   <View style={{ marginBottom: 20 }}>
                     <Text style={[styles.label, { marginBottom: 6 }]}>{s('planMyYear.multiSubjectUnits.subjectPickerTitle')}</Text>
@@ -7730,6 +8103,7 @@ export default function PlanYearModal({
                     return (
                       <TouchableOpacity
                         onPress={() => {
+                          if (unitStructureBlockedByCadence) return;
                           if (!ensureUnitSubjectForUnitStructure()) return;
                           suppressManualCurriculumHydrateRef.current = false;
                           setPlanSource('paste');
@@ -7746,10 +8120,13 @@ export default function PlanYearModal({
                           styles.sourceOptionTile,
                           isSelected && styles.sourceOptionTileSelected,
                           isHover && styles.sourceOptionTileHover,
+                          unitStructureBlockedByCadence && { opacity: 0.45 },
                         ]}
                         onMouseEnter={Platform.OS === 'web' ? () => setHoverSourceKey(`unit-${key}`) : undefined}
                         onMouseLeave={Platform.OS === 'web' ? () => setHoverSourceKey(null) : undefined}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        {...(Platform.OS === 'web' && {
+                          cursor: unitStructureBlockedByCadence ? 'not-allowed' : 'pointer',
+                        })}
                       >
                         <View style={styles.sourceOptionIconWrap}>
                           <List size={18} color={MUTED} />
@@ -7780,6 +8157,7 @@ export default function PlanYearModal({
                     return (
                       <TouchableOpacity
                         onPress={() => {
+                          if (unitStructureBlockedByCadence) return;
                           if (!ensureUnitSubjectForUnitStructure()) return;
                           setManualDraft(null);
                           if (!hydrateImportDraftFromStorage(unitPipelineSubjectId, { requireSource: 'paste_plain' })) {
@@ -7797,10 +8175,13 @@ export default function PlanYearModal({
                           styles.sourceOptionTile,
                           isSelected && styles.sourceOptionTileSelected,
                           isHover && styles.sourceOptionTileHover,
+                          unitStructureBlockedByCadence && { opacity: 0.45 },
                         ]}
                         onMouseEnter={Platform.OS === 'web' ? () => setHoverSourceKey('unit-paste_plain') : undefined}
                         onMouseLeave={Platform.OS === 'web' ? () => setHoverSourceKey(null) : undefined}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        {...(Platform.OS === 'web' && {
+                          cursor: unitStructureBlockedByCadence ? 'not-allowed' : 'pointer',
+                        })}
                       >
                         <View style={styles.sourceOptionIconWrap}>
                           <FileText size={18} color={MUTED} />
@@ -7831,6 +8212,7 @@ export default function PlanYearModal({
                     return (
                       <TouchableOpacity
                         onPress={() => {
+                          if (unitStructureBlockedByCadence) return;
                           if (!ensureUnitSubjectForUnitStructure()) return;
                           setManualDraft(null);
                           if (!hydrateImportDraftFromStorage(unitPipelineSubjectId, { requireSource: 'upload' })) {
@@ -7846,10 +8228,13 @@ export default function PlanYearModal({
                           styles.sourceOptionTile,
                           isSelected && styles.sourceOptionTileSelected,
                           isHover && styles.sourceOptionTileHover,
+                          unitStructureBlockedByCadence && { opacity: 0.45 },
                         ]}
                         onMouseEnter={Platform.OS === 'web' ? () => setHoverSourceKey(`unit-${key}`) : undefined}
                         onMouseLeave={Platform.OS === 'web' ? () => setHoverSourceKey(null) : undefined}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        {...(Platform.OS === 'web' && {
+                          cursor: unitStructureBlockedByCadence ? 'not-allowed' : 'pointer',
+                        })}
                       >
                         <View style={styles.sourceOptionIconWrap}>
                           <Upload size={18} color={MUTED} />
@@ -7879,6 +8264,7 @@ export default function PlanYearModal({
                     return (
                       <TouchableOpacity
                         onPress={() => {
+                          if (unitStructureBlockedByCadence) return;
                           if (!ensureUnitSubjectForUnitStructure()) return;
                           setPlanSource('generate');
                           setDraftData(null);
@@ -7892,10 +8278,13 @@ export default function PlanYearModal({
                           styles.sourceOptionTile,
                           isSelected && styles.sourceOptionTileSelected,
                           isHover && styles.sourceOptionTileHover,
+                          unitStructureBlockedByCadence && { opacity: 0.45 },
                         ]}
                         onMouseEnter={Platform.OS === 'web' ? () => setHoverSourceKey(`unit-${key}`) : undefined}
                         onMouseLeave={Platform.OS === 'web' ? () => setHoverSourceKey(null) : undefined}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        {...(Platform.OS === 'web' && {
+                          cursor: unitStructureBlockedByCadence ? 'not-allowed' : 'pointer',
+                        })}
                       >
                         <View style={styles.sourceOptionIconWrap}>
                           <Sparkles size={18} color={MUTED} />
@@ -8697,7 +9086,7 @@ export default function PlanYearModal({
 
                 {/* Scheduled class days / cadence — show when subjects selected OR placeholder-only scope */}
                 {(effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
-                  <View style={[styles.fieldSection, { marginTop: 16, marginBottom: 16 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
+                  <View style={[styles.fieldSection, { marginTop: 16, marginBottom: 8 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
                       <View style={styles.scheduleBlocksInner}>
                       {PLAN_MY_YEAR_LOGISTICS_FIRST && (
                         <Text
@@ -8724,105 +9113,6 @@ export default function PlanYearModal({
                         <Text style={[styles.mutedText, { marginBottom: 10, fontSize: 12 }]}>
                           {t('planMyYear.cadenceConflicts.loadingCalendar')}
                         </Text>
-                      ) : null}
-                      {hasCadenceConflicts ? (
-                        <View
-                          style={{
-                            marginBottom: 12,
-                            padding: 12,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: 'rgba(217, 119, 6, 0.35)',
-                            backgroundColor: 'rgba(217, 119, 6, 0.08)',
-                          }}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
-                            <AlertTriangle size={18} color="#b45309" style={{ marginRight: 8, marginTop: 2 }} />
-                            <Text style={{ fontSize: 13, fontWeight: '700', color: FG, flex: 1 }}>
-                              {t('planMyYear.cadenceConflicts.title')}
-                            </Text>
-                          </View>
-                          {cadenceConflictReport.internal.slice(0, 3).map((c, i) => (
-                            <Text key={`int-${c.date}-${i}`} style={{ fontSize: 12, color: FG, marginBottom: 4, lineHeight: 18 }}>
-                              {t('planMyYear.cadenceConflicts.internalLine', {
-                                date: formatDateDisplay(c.date),
-                                subjectA: c.subjectA,
-                                subjectB: c.subjectB,
-                                time: c.timeLabel,
-                              })}
-                            </Text>
-                          ))}
-                          {cadenceConflictReport.external.slice(0, 3).map((c, i) => (
-                            <Text key={`ext-${c.date}-${c.eventId}-${i}`} style={{ fontSize: 12, color: FG, marginBottom: 4, lineHeight: 18 }}>
-                              {t('planMyYear.cadenceConflicts.externalLine', {
-                                date: formatDateDisplay(c.date),
-                                subjectName: c.subjectName,
-                                slotTime: c.slotTimeLabel,
-                                eventTitle: c.eventTitle,
-                              })}
-                            </Text>
-                          ))}
-                          {(() => {
-                            const ni = cadenceConflictReport.internal.length;
-                            const ne = cadenceConflictReport.external.length;
-                            const shown = Math.min(3, ni) + Math.min(3, ne);
-                            const more = ni + ne - shown;
-                            return more > 0 ? (
-                              <Text style={{ fontSize: 11, color: MUTED, marginBottom: 8 }}>
-                                {t('planMyYear.cadenceConflicts.more', { count: more })}
-                              </Text>
-                            ) : null;
-                          })()}
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                            <TouchableOpacity
-                              onPress={applyNextCadenceSuggestion}
-                              activeOpacity={0.85}
-                              style={{
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                borderRadius: 8,
-                                backgroundColor: ACCENT,
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>
-                                {t('planMyYear.cadenceConflicts.trySuggestion')}
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={applyAllCadenceSuggestions}
-                              activeOpacity={0.85}
-                              style={{
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                borderRadius: 8,
-                                borderWidth: 1,
-                                borderColor: ACCENT,
-                                backgroundColor: 'transparent',
-                              }}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={{ fontSize: 13, fontWeight: '600', color: ACCENT }}>
-                                {t('planMyYear.cadenceConflicts.tryAllSuggestions')}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                            <Switch
-                              value={ignorePlanCadenceConflicts}
-                              onValueChange={setIgnorePlanCadenceConflicts}
-                              trackColor={{ false: BORDER, true: ACCENT }}
-                            />
-                            <View style={{ flex: 1, minWidth: 200 }}>
-                              <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>
-                                {t('planMyYear.cadenceConflicts.ignoreToggle')}
-                              </Text>
-                              <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
-                                {t('planMyYear.cadenceConflicts.ignoreHint')}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
                       ) : null}
                       {blocks.map((block, idx) => {
                       const subj = block.subject_id ? baseSubjectList.find((s) => s.id === block.subject_id) : null;
@@ -9139,44 +9429,61 @@ export default function PlanYearModal({
                 )}
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && (
-                  <View style={{ marginTop: 20 }}>
+                  <View style={{ marginTop: 8 }}>
                     {cadenceYieldsInstructionalSlots && (
                       <>
-                        <Text style={[styles.sectionTitle, { marginBottom: 4, textTransform: 'none' }]}>
-                          {lessonSchedulePreviewPlan.hasCurriculumMapping
-                            ? s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')
-                            : s('planMyYear.multiSubjectUnits.previewSelectedDaysTimesTitle')}
-                        </Text>
-                        <Text style={[styles.mutedText, { marginBottom: 16 }]}>
-                          {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
-                        </Text>
-                        {cadenceConflictDayCount > 0 ? (
-                          <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 12, lineHeight: 18 }}>
-                            {cadenceConflictDayCount === 1
-                              ? t('planMyYear.cadenceConflicts.previewConflictSummaryOne')
-                              : t('planMyYear.cadenceConflicts.previewConflictSummaryMany', {
-                                  count: cadenceConflictDayCount,
-                                })}
-                          </Text>
-                        ) : null}
-                        {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => (
-                          <View
-                            key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
-                            style={{ paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                        <View style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
+                          <Text
+                            style={{
+                              fontSize: 17,
+                              fontWeight: '700',
+                              color: FG,
+                              marginBottom: 6,
+                              lineHeight: 22,
+                              ...(Platform.OS === 'web' && {
+                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                              }),
+                            }}
                           >
-                            <Text style={[styles.label, { marginBottom: 2 }]}>
-                              {line.dateLabel}, {line.timeLabel}
+                            {t('planMyYear.cadenceConflicts.previewDominantTitle')}
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              color: TEXT_SECONDARY,
+                              marginBottom: lessonSchedulePreviewPlan.hasCurriculumMapping ? 4 : 12,
+                              lineHeight: 18,
+                            }}
+                          >
+                            {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
+                          </Text>
+                          {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
+                            <Text style={{ fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 16 }}>
+                              {s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')}
                             </Text>
-                            <Text style={[styles.mutedText, { fontSize: 14 }]}>
-                              {detailLine ?? (line.childNames ? `${line.subjectName} · ${line.childNames}` : line.subjectName)}
-                            </Text>
-                            {cadenceConflictDates.has(line.date) ? (
-                              <Text style={{ fontSize: 11, color: '#b45309', marginTop: 6, lineHeight: 16 }}>
-                                {t('planMyYear.cadenceConflicts.previewRowFlag')}
-                              </Text>
-                            ) : null}
-                          </View>
-                        ))}
+                          ) : null}
+                          <CadenceConflictsResolvedLine visible={cadenceConflictsResolvedFeedback} />
+                          {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => {
+                            const rowKey =
+                              line.blockId && line.date ? `${line.date}|${String(line.blockId)}` : '';
+                            const conflictDetail = rowKey ? previewLineConflictDetailsByKey.get(rowKey) ?? null : null;
+                            return (
+                              <CadencePreviewSlotRow
+                                key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
+                                line={line}
+                                detailLine={detailLine}
+                                conflictDetail={conflictDetail}
+                                showResolvedTint={cadenceConflictsResolvedFeedback && !conflictDetail}
+                                isLast={idx === lessonSchedulePreviewPlan.rows.length - 1}
+                                onMoveRowPress={
+                                  conflictDetail?.suggestedTimeLabel
+                                    ? () => handleApplyCadenceRowFix(line)
+                                    : undefined
+                                }
+                              />
+                            );
+                          })}
+                        </View>
                         <LessonOverflowFollowUp
                           textStyle={[styles.mutedText, { fontSize: 12, color: TEXT_SECONDARY }]}
                           overflowCount={lessonSchedulePreviewPlan.overflowCount}
@@ -9189,6 +9496,16 @@ export default function PlanYearModal({
                       </>
                     )}
                     {academicYearId && !showPlanEditingModeBanner && cadenceDirty ? renderApplyFromScopeCard() : null}
+                    {hasCadenceConflicts && canMoveAllCadenceFix ? (
+                      <View style={{ paddingHorizontal: 14, marginTop: 8 }}>
+                        <CadencePreviewConflictBulkBar
+                          conflictCount={cadenceConflictEntryCount}
+                          suggestedTimeLabel={cadenceBulkSuggestedTimeLabel}
+                          canMoveAll={canMoveAllCadenceFix}
+                          onMoveAll={handleFixAllCadenceConflicts}
+                        />
+                      </View>
+                    ) : null}
                     <TouchableOpacity
                       style={[
                         styles.primaryButton,
@@ -9198,13 +9515,17 @@ export default function PlanYearModal({
                       ]}
                       onPress={handleApplyToCalendar}
                       disabled={saving || loading || !preconditionsMet || !feasible}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      {...(Platform.OS === 'web' && {
+                        cursor: saving || loading || !preconditionsMet || !feasible ? 'not-allowed' : 'pointer',
+                      })}
                     >
                       {saving ? (
                         <ActivityIndicator size="small" color={BG} />
                       ) : (
                         <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
-                          {academicYearId ? STRINGS.planMyYear.primaryActions.updateSlots : STRINGS.planMyYear.primaryActions.generateSlots}
+                          {academicYearId
+                            ? STRINGS.planMyYear.primaryActions.updateSlots
+                            : STRINGS.planMyYear.primaryActions.generateSlots}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -10204,6 +10525,14 @@ export default function PlanYearModal({
             {planStep === 'preview' ? (
               <View style={{ width: '100%' }}>
                 {cadenceDirty ? renderApplyFromScopeCard() : null}
+                {hasCadenceConflicts && canMoveAllCadenceFix ? (
+                  <CadencePreviewConflictBulkBar
+                    conflictCount={cadenceConflictEntryCount}
+                    suggestedTimeLabel={cadenceBulkSuggestedTimeLabel}
+                    canMoveAll={canMoveAllCadenceFix}
+                    onMoveAll={handleFixAllCadenceConflicts}
+                  />
+                ) : null}
                 <View style={styles.planYearPreviewFooterRow}>
                   <View style={[styles.planYearPreviewFooterSide, { alignItems: 'flex-start' }]}>
                     <TouchableOpacity
@@ -10221,15 +10550,24 @@ export default function PlanYearModal({
                     </TouchableOpacity>
                   </View>
                   <TouchableOpacity
-                    style={[styles.primaryButton, styles.planYearGenerateCtaFooter, (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled]}
+                    style={[
+                      styles.primaryButton,
+                      styles.planYearGenerateCtaFooter,
+                      (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled,
+                    ]}
                     onPress={handleApplyToCalendar}
                     disabled={saving || loading || !preconditionsMet || !feasible}
+                    {...(Platform.OS === 'web' && {
+                      cursor: saving || loading || !preconditionsMet || !feasible ? 'not-allowed' : 'pointer',
+                    })}
                   >
                     {saving ? (
                       <ActivityIndicator size="small" color={BG} />
                     ) : (
                       <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
-                        {academicYearId ? STRINGS.planMyYear.primaryActions.updateSlots : STRINGS.planMyYear.primaryActions.generateSlots}
+                        {academicYearId
+                          ? STRINGS.planMyYear.primaryActions.updateSlots
+                          : STRINGS.planMyYear.primaryActions.generateSlots}
                       </Text>
                     )}
                   </TouchableOpacity>

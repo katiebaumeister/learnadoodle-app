@@ -28,6 +28,10 @@ export default function EventModal({
   /** null | 'help' | 'submission' — parent opens respond/review modal once linked assignment loads */
   parentEventFocus = null,
   onParentEventFocusConsumed,
+  /** From planner chip conflict icon — show top banner with Auto reschedule / Ignore */
+  openConflictResolution = false,
+  conflictResolutionContext = null,
+  onOpenConflictResolutionConsumed,
 }) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
@@ -340,6 +344,9 @@ export default function EventModal({
                   preloadedFamilyAssignments={preloadedFamilyAssignments}
                   parentEventFocus={parentEventFocus}
                   onParentEventFocusConsumed={onParentEventFocusConsumed}
+                  openConflictResolution={openConflictResolution}
+                  conflictResolutionContext={conflictResolutionContext}
+                  onOpenConflictResolutionConsumed={onOpenConflictResolutionConsumed}
                 />
               ) : (
                 <View style={styles.loadingContainer}>

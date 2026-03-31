@@ -364,21 +364,22 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     }
   }, [ev, allDayEvents, dismissedConflicts, participatingChildIds]);
 
-  // Handle conflict indicator click
+  // Handle conflict indicator click — open event details with conflict banner (not Quick Reschedule)
   const handleConflictClick = (e) => {
     if (Platform.OS === 'web' && e) {
       e.stopPropagation();
       e.preventDefault();
     }
-    
-    // Open Quick Reschedule with this event, skip to preview
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openQuickReschedule', {
-        detail: {
-          event: ev,
-          skipToPreview: true,
-        }
-      }));
+    if (typeof window !== 'undefined' && ev?.id) {
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: {
+            eventId: ev.id,
+            initialEvent: ev,
+            openConflictResolution: true,
+          },
+        }),
+      );
     }
   };
 
@@ -581,6 +582,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               onMouseEnter: handleConflictHover,
               onMouseLeave: handleConflictHoverLeave,
               onClick: handleConflictClick,
+              onMouseDown: (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+              },
               onContextMenu: handleConflictDismiss,
             })}
           >
@@ -843,6 +848,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               onMouseEnter: handleConflictHover,
               onMouseLeave: handleConflictHoverLeave,
               onClick: handleConflictClick,
+              onMouseDown: (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+              },
               onContextMenu: handleConflictDismiss,
             })}
           >
@@ -1061,6 +1070,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             onMouseEnter: handleConflictHover,
             onMouseLeave: handleConflictHoverLeave,
             onClick: handleConflictClick,
+            onMouseDown: (e) => {
+              e.stopPropagation();
+              e.preventDefault();
+            },
             onContextMenu: handleConflictDismiss,
           })}
         >

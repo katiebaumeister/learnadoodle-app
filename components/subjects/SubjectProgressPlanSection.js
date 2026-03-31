@@ -544,26 +544,32 @@ export default function SubjectProgressPlanSection({
     <View style={styles.section}>
       {!hasPlan ? (
         <View style={styles.emptyStateBox}>
-          {!hasUnits ? (
-            <Text style={styles.emptyStateHint}>
-              Add a class plan or unit structure so we can show scheduled dates and measure progress.
-            </Text>
-          ) : (
-            <Text style={styles.emptyStateHint}>
-              Add lessons under Build plan — they will appear here as rows (Unassigned until placed on the calendar).
-            </Text>
-          )}
+          <Text style={styles.emptyStateHint}>
+            Start by scheduling this subject, or just organize your lessons.
+          </Text>
           <TouchableOpacity
-            style={[styles.planHeaderRoundedBtn, styles.buildPlanBtnAlign]}
+            style={[styles.planHeaderRoundedBtn, styles.buildPlanBtnAlign, styles.emptyStatePrimaryBtn]}
             onPress={openBuildPlanModal}
             activeOpacity={0.75}
             accessibilityRole="button"
             accessibilityLabel="Build plan"
             {...webCursor}
           >
-            <Calendar size={16} color="#64748b" strokeWidth={2} />
-            <Text style={styles.planHeaderRoundedBtnText}>Build plan</Text>
+            <Calendar size={16} color={colors.accentContrast || '#ffffff'} strokeWidth={2} />
+            <Text style={styles.emptyStatePrimaryBtnText}>Build plan</Text>
           </TouchableOpacity>
+          {Platform.OS === 'web' ? (
+            <TouchableOpacity
+              onPress={() => openCurriculumStructureAction('manual')}
+              style={styles.emptyStateSecondaryLinkWrap}
+              activeOpacity={0.7}
+              accessibilityRole="link"
+              accessibilityLabel="Add units manually"
+              {...webCursor}
+            >
+              <Text style={styles.emptyStateSecondaryLink}>Add units manually →</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : null}
 
@@ -822,6 +828,37 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 0,
     ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  /** Match Materials Snapshot “Add syllabus / Add lesson plan” chip (SubjectDetailPage materialsAddCta). */
+  emptyStatePrimaryBtn: {
+    backgroundColor: colors.accent || '#0d9488',
+    borderColor: colors.accent || '#0d9488',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  emptyStatePrimaryBtnText: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: colors.accentContrast || '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyStateSecondaryLinkWrap: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingVertical: 4,
+  },
+  emptyStateSecondaryLink: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.accent || '#0d9488',
+    ...(Platform.OS === 'web' && {
+      textDecorationLine: 'underline',
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },

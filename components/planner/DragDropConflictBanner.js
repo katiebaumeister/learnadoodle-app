@@ -3,11 +3,18 @@
  * Non-blocking banner that appears after drag-and-drop when conflicts are detected
  */
 
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 import { AlertCircle, Check } from 'lucide-react';
-import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
+import {
+  LearnerPill,
+  resolveLearnerChild,
+  formatConflictMetaFromEvent,
+  parseConflictMessageString,
+  mapChildrenForConflict,
+  sharedConflictBannerStyles as cb,
+} from './conflictBannerShared';
 
 export default function DragDropConflictBanner({
   visible,
@@ -16,15 +23,20 @@ export default function DragDropConflictBanner({
   conflictMessage, // Optional: formatted message like "Soccer Practice (Fri Jan 2, 4-5:30 PM)"
   eventId, // ID of the moved event
   conflictEvent, // The conflicting event object (optional, will be fetched if not provided)
+  movedEvent, // Moved event (for learner avatar + pill)
+  children = [], // Family children rows { id, first_name, name, avatar, avatar_url }
   familyId, // Family ID for fetching events
   onQuickReschedule,
   onDismiss,
   onSuggestionAccepted, // Callback when suggestion is accepted: (newStart, newEnd) => void
+  onSuggestionComputed,
 }) {
   const [suggestedChange, setSuggestedChange] = useState(null);
   const [changeAccepted, setChangeAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const bannerRef = useRef(null);
+  const enterOpacity = useRef(new Animated.Value(0)).current;
+  const enterY = useRef(new Animated.Value(6)).current;
   
   useEffect(() => {
     if (visible && Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -120,7 +132,12 @@ export default function DragDropConflictBanner({
       e.stopPropagation();
     }
 
-    if (!eventId || !familyId || !conflictEvent) {
+    if (suggestedChange) {
+      handleAcceptChange();
+      return;
+    }
+
+    if (!familyId || !conflictEvent) {
       // Fallback to Quick Reschedule if we don't have required data
       onQuickReschedule();
       return;
@@ -128,25 +145,19 @@ export default function DragDropConflictBanner({
 
     setLoading(true);
     try {
-      // Fetch the moved event
-      const { data: movedEvent, error: eventError } = await supabase
-        .from('events')
-        .select('*')
-        .eq('id', eventId)
-        .eq('family_id', familyId)
-        .maybeSingle();
-
-      if (eventError || !movedEvent) {
-        console.error('[DragDropConflictBanner] Error fetching moved event:', eventError);
+      const movedEventForSuggestion = movedEvent || null;
+      if (!movedEventForSuggestion?.start_ts) {
         onQuickReschedule();
         return;
       }
 
-      const currentStart = new Date(movedEvent.start_ts);
-      const currentEnd = new Date(movedEvent.end_ts || movedEvent.start_ts);
+      const currentStart = new Date(movedEventForSuggestion.start_ts);
+      const currentEnd = new Date(movedEventForSuggestion.end_ts || movedEventForSuggestion.start_ts);
 
       // Get child IDs
-      const childIds = movedEvent.child_id ? [movedEvent.child_id] : (movedEvent.child_ids || []);
+      const childIds = movedEventForSuggestion.child_id
+        ? [movedEventForSuggestion.child_id]
+        : (movedEventForSuggestion.child_ids || []);
 
       // Fetch existing events for the day
       const dateKey = currentStart.toISOString().split('T')[0];
@@ -212,11 +223,13 @@ export default function DragDropConflictBanner({
 
         const suggestionMessage = `${dayName} ${monthName} ${day}, ${timeRange}`;
 
-        setSuggestedChange({
+        const nextSuggestion = {
           newStart: slot.newStart,
           newEnd: slot.newEnd,
           message: suggestionMessage,
-        });
+        };
+        setSuggestedChange(nextSuggestion);
+        onSuggestionComputed?.(nextSuggestion);
       } else {
         // No slot found - escalate to Quick Reschedule
         onQuickReschedule();
@@ -255,92 +268,117 @@ export default function DragDropConflictBanner({
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || suggestedChange || loading || !eventId || !familyId || !conflictEvent) return;
+    handleAdjustAutomatically();
+  }, [visible, suggestedChange, loading, eventId, familyId, conflictEvent]);
+
+  const richCopy = useMemo(() => {
+    const fallback =
+      conflictMessage ||
+      `This move conflicts with ${conflictCount} other ${conflictCount === 1 ? 'event' : 'events'}`;
+    const learner = resolveLearnerChild(movedEvent, mapChildrenForConflict(children));
+    if (conflictEvent && conflictEvent.title) {
+      return {
+        kind: 'rich',
+        learner,
+        conflictingTitle: conflictEvent.title,
+        metaLine: formatConflictMetaFromEvent(conflictEvent),
+        nameFallback: learner ? null : parseConflictMessageString(conflictMessage)?.learnerName,
+      };
+    }
+    const parsed = parseConflictMessageString(conflictMessage);
+    if (parsed) {
+      return {
+        kind: 'rich',
+        learner,
+        conflictingTitle: parsed.conflictingTitle,
+        metaLine: parsed.metaLine,
+        nameFallback: parsed.learnerName,
+      };
+    }
+    return { kind: 'plain', text: fallback };
+  }, [movedEvent, children, conflictEvent, conflictMessage, conflictCount]);
+
+  useEffect(() => {
+    if (!visible) return;
+    enterOpacity.setValue(0);
+    enterY.setValue(6);
+    const useNativeDriver = Platform.OS !== 'web';
+    Animated.parallel([
+      Animated.timing(enterOpacity, { toValue: 1, duration: 240, useNativeDriver }),
+      Animated.timing(enterY, { toValue: 0, duration: 240, useNativeDriver }),
+    ]).start();
+  }, [visible, suggestedChange]);
+
   if (!visible) {
     return null;
   }
 
-  // Format conflict message - use provided message or fallback to generic
-  const displayMessage = conflictMessage || 
-    `This move conflicts with ${conflictCount} other ${conflictCount === 1 ? 'event' : 'events'}`;
-
-  // Show suggested change UI if available
-  if (suggestedChange) {
-    return (
-      <View ref={bannerRef} style={styles.suggestedBanner} data-testid="drag-drop-conflict-banner">
-        <View style={styles.bannerContent}>
-          <Check size={18} color="#16A34A" style={{ marginTop: 2, flexShrink: 0 }} />
-          <View style={styles.bannerText}>
-            {changeAccepted ? (
-              <>
-                <Text style={styles.suggestedMessage}>
-                  Successfully changed to recommended time
+  // Show conflict warning UI (compact, family-style learner pill)
+  return (
+    <Animated.View
+      ref={bannerRef}
+      style={[cb.banner, { opacity: enterOpacity, transform: [{ translateY: enterY }] }]}
+      data-testid="drag-drop-conflict-banner"
+    >
+      <View style={cb.bannerContentCompact}>
+        <View style={cb.bannerIconWrapSm} accessibilityRole="image" accessibilityLabel="Scheduling note">
+          <AlertCircle size={14} color="#5B8FC7" />
+        </View>
+        <View style={cb.bannerTextGrow}>
+          {richCopy.kind === 'rich' ? (
+            <>
+              <View style={cb.conflictLine}>
+                <Text style={cb.kicker}>Conflict with </Text>
+                <LearnerPill
+                  child={richCopy.learner}
+                  nameFallback={richCopy.nameFallback || undefined}
+                />
+                <Text style={cb.conflictTitle} numberOfLines={1}>
+                  {' '}
+                  — {richCopy.conflictingTitle}
                 </Text>
-                <Text style={styles.suggestedSubtext}>
-                  The event has been moved to {suggestedChange.message}
+                {richCopy.metaLine ? (
+                  <Text style={cb.metaInline} numberOfLines={1}>
+                    {' '}
+                    · {richCopy.metaLine}
+                  </Text>
+                ) : null}
+              </View>
+              {suggestedChange?.message ? (
+                <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                  Suggested change: {suggestedChange.message}
                 </Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.suggestedTitle}>
-                  Suggested adjustment
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={cb.bannerMessagePlain} numberOfLines={2}>
+                {richCopy.text}
+              </Text>
+              {suggestedChange?.message ? (
+                <Text style={[cb.metaInline, { marginTop: 4 }]} numberOfLines={2}>
+                  Suggested change: {suggestedChange.message}
                 </Text>
-                <Text style={styles.suggestedMessage}>
-                  Move this event to {suggestedChange.message}
-                </Text>
-                <Text style={styles.suggestedSubtext}>
-                  Keeps other events unchanged
-                </Text>
-              </>
-            )}
-          </View>
-          {!changeAccepted && (
-            <View style={styles.bannerActions}>
-              <TouchableOpacity
-                {...(Platform.OS === 'web' && { type: 'button' })}
-                style={styles.acceptButton}
-                onPress={handleAcceptChange}
-                disabled={loading}
-              >
-                <Text style={styles.acceptButtonText}>Accept change</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                {...(Platform.OS === 'web' && { type: 'button' })}
-                style={styles.undoButton}
-                onPress={handleUndo}
-              >
-                <Text style={styles.undoButtonText}>Undo</Text>
-              </TouchableOpacity>
-            </View>
+              ) : null}
+            </>
           )}
         </View>
-      </View>
-    );
-  }
-
-  // Show conflict warning UI
-  return (
-    <View ref={bannerRef} style={styles.banner} data-testid="drag-drop-conflict-banner">
-      <View style={styles.bannerContent}>
-        <AlertCircle size={18} color="#EF4444" style={{ marginTop: 2, flexShrink: 0 }} />
-        <View style={styles.bannerText}>
-          <Text style={styles.bannerMessage}>
-            Conflicts with {displayMessage}
-          </Text>
-        </View>
-        <View style={styles.bannerActions}>
+        <View style={cb.bannerActionsRow}>
           <TouchableOpacity
             {...(Platform.OS === 'web' && { type: 'button' })}
-            style={styles.adjustButton}
+            style={cb.primaryButton}
             onPress={handleAdjustAutomatically}
             disabled={loading}
           >
-            <Text style={styles.adjustButtonText}>
+            <Text style={cb.primaryButtonText}>
               {loading ? 'Calculating...' : 'Adjust automatically'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
             {...(Platform.OS === 'web' && { type: 'button' })}
-            style={styles.saveAnywayButton}
+            style={cb.ghostButton}
             onPress={(e) => {
               if (Platform.OS === 'web' && e) {
                 e.preventDefault();
@@ -349,180 +387,87 @@ export default function DragDropConflictBanner({
               onDismiss();
             }}
           >
-            <Text style={styles.saveAnywayButtonText}>Save anyway</Text>
+            <Text style={cb.ghostButtonText}>Save anyway</Text>
           </TouchableOpacity>
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  banner: {
-    backgroundColor: '#FFF5F5',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FEE2E2',
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-      zIndex: 10000, // Very high z-index to ensure it's above calendar grid and other elements
-      position: 'relative',
-      display: 'flex', // Ensure it's displayed
-      visibility: 'visible', // Ensure it's visible
-      opacity: 1, // Ensure it's not transparent
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 3,
-    }),
-  },
-  bannerContent: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    gap: 8,
-  },
-  bannerText: {
-    flex: 1,
-  },
-  bannerMessage: {
-    fontSize: 13,
-    color: '#9A3412',
-    fontWeight: '500',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  bannerActions: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  adjustButton: {
-    flexShrink: 0,
-    backgroundColor: '#DC2626',
-    borderWidth: 1,
-    borderColor: '#991B1B',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  adjustButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  saveAnywayButton: {
-    flexShrink: 0,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  saveAnywayButtonText: {
-    color: '#374151',
-    fontSize: 13,
-    fontWeight: '500',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   suggestedBanner: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 8,
+    backgroundColor: '#F4FAF7',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderColor: 'rgba(91, 163, 122, 0.2)',
     marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
+    marginTop: 8,
+    marginBottom: 4,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       zIndex: 10000,
       position: 'relative',
       display: 'flex',
       visibility: 'visible',
       opacity: 1,
     } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 3,
+      shadowColor: '#101828',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 3,
+      elevation: 2,
     }),
   },
+  suggestedIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(91, 163, 122, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   suggestedTitle: {
-    fontSize: 13,
-    color: '#166534',
+    fontSize: 11,
+    color: '#3D5A4A',
     fontWeight: '500',
-    marginBottom: 4,
+    marginBottom: 2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   suggestedMessage: {
-    fontSize: 13,
-    color: '#166534',
+    fontSize: 12,
+    color: '#3D5A4A',
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   suggestedSubtext: {
     fontSize: 11,
-    color: '#15803D',
+    color: '#64748B',
     fontWeight: '400',
-    opacity: 0.8,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   acceptButton: {
     flexShrink: 0,
-    backgroundColor: '#16A34A',
+    backgroundColor: '#7CB89A',
     borderWidth: 1,
-    borderColor: '#15803D',
-    paddingVertical: 8,
+    borderColor: 'rgba(91, 163, 122, 0.55)',
+    paddingVertical: 5,
     paddingHorizontal: 12,
-    borderRadius: 6,
+    borderRadius: 10,
     alignItems: 'center',
   },
   acceptButtonText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  undoButton: {
-    flexShrink: 0,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  undoButtonText: {
-    color: '#374151',
-    fontSize: 13,
-    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

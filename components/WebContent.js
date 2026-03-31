@@ -640,6 +640,26 @@ import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
 import PlanHealthBanner from './planner/PlanHealthBanner'
 
+/** Display name(s) for calendar conflict copy (drag-drop banner). */
+function childLabelFromEvent(ev, children) {
+  if (!ev || !Array.isArray(children) || children.length === 0) return null;
+  const ids = [];
+  if (ev.child_id) ids.push(String(ev.child_id));
+  if (Array.isArray(ev.child_ids)) {
+    ev.child_ids.forEach((id) => {
+      if (id && !ids.includes(String(id))) ids.push(String(id));
+    });
+  }
+  if (ids.length === 0) return null;
+  const names = ids.map((id) => {
+    const c = children.find((ch) => ch && String(ch.id) === String(id));
+    const n = c && (c.first_name || c.name || '').trim();
+    return n || null;
+  }).filter(Boolean);
+  if (names.length === 0) return null;
+  return names.length === 1 ? names[0] : names.join(' & ');
+}
+
 import ParentHomeScreen from './home/ParentHomeScreen';
 
 export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, onPlannerLoadingChange, onSubjectsLoadingChange, onMaterialsLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
@@ -2055,9 +2075,59 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
                   const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
                   
-                  conflictMessage = `${firstConflictEvent.title} (${dayName} ${monthName} ${day}, ${timeRange})`;
+                  const who = childLabelFromEvent(movedEvent, propChildren);
+                  const lead = who ? `${who} — ` : '';
+                  conflictMessage = `${lead}${firstConflictEvent.title} (${dayName} ${monthName} ${day}, ${timeRange})`;
                 }
                 
+                const findNextAvailableSlot = () => {
+                  if (!firstConflictEvent) return null;
+                  const durationMs = movedEnd - movedStart;
+                  if (!(durationMs > 0)) return null;
+                  let candidateStart = new Date(firstConflictEvent.end_ts || firstConflictEvent.start_ts);
+                  const dayEnd = new Date(candidateStart);
+                  dayEnd.setHours(23, 59, 0, 0);
+                  while (candidateStart < dayEnd) {
+                    const candidateEnd = new Date(candidateStart.getTime() + durationMs);
+                    let hasConflict = false;
+                    for (const ev of eventsForConflictDetection || []) {
+                      if (!ev || ev.id === eventId) continue;
+                      const evStart = new Date(ev.start_ts || ev.start);
+                      const evEnd = new Date(ev.end_ts || ev.end);
+                      if (isNaN(evStart.getTime()) || isNaN(evEnd.getTime())) continue;
+                      if (candidateStart < evEnd && evStart < candidateEnd && ev.child_id === movedChildId) {
+                        hasConflict = true;
+                        break;
+                      }
+                    }
+                    if (!hasConflict && candidateEnd <= dayEnd) {
+                      const fmtTime = (date) => {
+                        let hours = date.getHours();
+                        const minutes = date.getMinutes();
+                        const period = hours >= 12 ? 'PM' : 'AM';
+                        if (hours > 12) hours -= 12;
+                        else if (hours === 0) hours = 12;
+                        return minutes === 0 ? `${hours} ${period}` : `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                      };
+                      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                      const startStr = fmtTime(candidateStart);
+                      const endStr = fmtTime(candidateEnd);
+                      const startOnly = startStr.replace(/\s*(AM|PM)$/i, '');
+                      const endOnly = endStr.replace(/\s*(AM|PM)$/i, '');
+                      const period = startStr.includes('PM') ? 'PM' : 'AM';
+                      return {
+                        newStart: candidateStart,
+                        newEnd: candidateEnd,
+                        message: `${dayNames[candidateStart.getDay()]} ${monthNames[candidateStart.getMonth()]} ${candidateStart.getDate()} · ${startOnly}–${endOnly} ${period}`,
+                      };
+                    }
+                    candidateStart = new Date(candidateStart.getTime() + 15 * 60 * 1000);
+                  }
+                  return null;
+                };
+                const suggestedChange = findNextAvailableSlot();
+
                 return {
                   visible: true,
                   eventId,
@@ -2066,6 +2136,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   conflictEvent: firstConflictEvent, // Store the first conflicting event
                   movedEvent: movedEvent, // Store the moved event for suggestion acceptance
                   conflictMessage, // Formatted conflict message
+                  suggestedChange,
                   dismissed: false,
                   timestamp: Date.now(),
                 };
@@ -2317,7 +2388,94 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       window.removeEventListener('eventRescheduled', handleEventRescheduled);
       window.removeEventListener('eventRescheduleError', handleEventRescheduleError);
     };
-  }, [familyId]);
+  }, [familyId, propChildren]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const localDateKeyFromTs = (ts) => {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return null;
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const handleEventPatched = (event) => {
+      const patch = event?.detail?.patch;
+      const eventId = patch?.id;
+      if (!eventId) return;
+
+      setCalendarEvents((prevEvents) => {
+        let prior = null;
+        let priorDateKey = null;
+        for (const dateKey of Object.keys(prevEvents)) {
+          const dayEvents = prevEvents[dateKey];
+          if (!Array.isArray(dayEvents)) continue;
+          const hit = dayEvents.find((e) => e && e.id === eventId);
+          if (hit) {
+            prior = hit;
+            priorDateKey = dateKey;
+            break;
+          }
+        }
+
+        if (!prior) {
+          const cache = calendarDataCacheRef.current || {};
+          for (const monthData of Object.values(cache)) {
+            if (!monthData || typeof monthData !== 'object') continue;
+            for (const dateKey of Object.keys(monthData)) {
+              const dayEvents = monthData[dateKey];
+              if (!Array.isArray(dayEvents)) continue;
+              const hit = dayEvents.find((e) => e && e.id === eventId);
+              if (hit) {
+                prior = hit;
+                priorDateKey = dateKey;
+                break;
+              }
+            }
+            if (prior) break;
+          }
+        }
+
+        const newDateKey =
+          localDateKeyFromTs(patch.start_ts || prior?.start_ts || prior?.start || prior?.start_local) ||
+          (prior?.date_local ? String(prior.date_local).trim().slice(0, 10) : null) ||
+          (patch.previous_start_ts ? localDateKeyFromTs(patch.previous_start_ts) : null) ||
+          priorDateKey;
+        if (!newDateKey) return prevEvents;
+
+        const patched = {
+          ...(prior || {}),
+          ...patch,
+          date_local: newDateKey,
+          data: {
+            ...((prior && prior.data) || {}),
+            ...patch,
+            date_local: newDateKey,
+          },
+        };
+
+        const nextEvents = { ...prevEvents };
+        Object.keys(nextEvents).forEach((dateKey) => {
+          const dayEvents = nextEvents[dateKey];
+          if (!Array.isArray(dayEvents)) return;
+          const filtered = dayEvents.filter((e) => !e || e.id !== eventId);
+          if (filtered.length === 0) delete nextEvents[dateKey];
+          else nextEvents[dateKey] = filtered;
+        });
+
+        nextEvents[newDateKey] = [...(nextEvents[newDateKey] || []), patched];
+        return nextEvents;
+      });
+    };
+
+    window.addEventListener('eventPatched', handleEventPatched);
+    return () => {
+      window.removeEventListener('eventPatched', handleEventPatched);
+    };
+  }, []);
   
   // Track recent drag-and-drop operations to prevent immediate refreshes
   const lastDragDropTimeRef = useRef(0);
@@ -3860,6 +4018,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     conflictEvent: null, // Store the first conflicting event
     movedEvent: null, // Store the moved event for suggestion acceptance
     conflictMessage: null,
+    suggestedChange: null,
     dismissed: false,
     timestamp: 0,
   });
@@ -3870,6 +4029,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   useEffect(() => {
     if (conflictBanner.visible) {
       console.log('[WebContent] Conflict banner shown:', { eventId: conflictBanner.eventId, conflictCount: conflictBanner.conflictCount });
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.__ldActiveConflictBanner = conflictBanner;
     }
   }, [conflictBanner.visible, conflictBanner.eventId, conflictBanner.conflictCount]);
 
@@ -3899,17 +4061,106 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
   }, []);
 
-  const handleDragConflictDismiss = useCallback(() => {
-    setConflictBanner((prev) => ({
-      ...prev,
-      visible: false,
-      dismissed: true,
-      timestamp: Date.now(),
-    }));
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+  const persistFlexibleConflictMove = useCallback(
+    async (id, moved) => {
+      if (!id || !familyId || !moved?.start_ts) return false;
+      const nextStart = moved.start_ts || moved.start || null;
+      const nextEnd = moved.end_ts || moved.end || null;
+      const childIds =
+        Array.isArray(moved.child_ids) && moved.child_ids.length > 0
+          ? moved.child_ids
+          : moved.child_id
+            ? [moved.child_id]
+            : [];
+      const rpcResult = await supabase.rpc('update_event_with_overlap_handling', {
+        _event_id: id,
+        _updates: {
+          start_ts: nextStart,
+          end_ts: nextEnd,
+          child_id: moved.child_id ?? null,
+          child_ids: childIds,
+          is_flexible: true,
+        },
+        _allow_overlaps: true,
+      });
+      if (rpcResult.error) throw rpcResult.error;
+      if (!rpcResult.data?.ok) {
+        throw new Error(rpcResult.data?.error || 'Could not save overlap change');
+      }
+
+      const { data: savedEvent, error: fetchError } = await supabase
+        .from('events')
+        .select('*')
+        .eq('id', id)
+        .eq('family_id', familyId)
+        .single();
+      if (fetchError) throw fetchError;
+
+      pendingOptimisticUpdatesRef.current.delete(id);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && savedEvent) {
+        window.dispatchEvent(
+          new CustomEvent('eventRescheduled', {
+            detail: { eventId: id, updatedEvent: savedEvent, fromApi: true },
+          })
+        );
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+      return true;
+    },
+    [familyId]
+  );
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const handlePersistConflictDragMove = async (event) => {
+      const { eventId, movedEvent } = event.detail || {};
+      if (!eventId || !movedEvent) return;
+      try {
+        await persistFlexibleConflictMove(eventId, movedEvent);
+      } catch (err) {
+        console.error('[WebContent] Failed to auto-persist conflict drag move:', err);
+      }
+    };
+
+    window.addEventListener('persistConflictDragMove', handlePersistConflictDragMove);
+    return () => {
+      window.removeEventListener('persistConflictDragMove', handlePersistConflictDragMove);
+    };
+  }, [persistFlexibleConflictMove]);
+
+  const handleDragConflictDismiss = useCallback(async () => {
+    const id = conflictBanner.eventId;
+    const moved = conflictBanner.movedEvent;
+
+    if (!id || !familyId || !moved?.start_ts) {
+      setConflictBanner((prev) => ({
+        ...prev,
+        visible: false,
+        dismissed: true,
+        timestamp: Date.now(),
+      }));
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+      }
+      return;
     }
-  }, []);
+
+    try {
+      await persistFlexibleConflictMove(id, moved);
+      setConflictBanner((prev) => ({
+        ...prev,
+        visible: false,
+        dismissed: true,
+        timestamp: Date.now(),
+      }));
+    } catch (err) {
+      console.error('[WebContent] Failed to persist overlap-allowed drag move:', err);
+      Alert.alert('Could not save change', err?.message || 'Please try again.');
+    }
+  }, [conflictBanner.eventId, conflictBanner.movedEvent, familyId, persistFlexibleConflictMove]);
 
   const handleDragConflictQuickReschedule = useCallback(() => {
     const ev = conflictBanner.movedEvent;
@@ -3925,7 +4176,29 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const handleDragConflictSuggestionAccepted = useCallback(
     async (newStart, newEnd) => {
       const id = conflictBanner.eventId;
+      const moved = conflictBanner.movedEvent;
       if (!id || !familyId) return;
+
+      const optimisticUpdatedEvent = {
+        ...(moved || {}),
+        id,
+        start_ts: newStart.toISOString(),
+        end_ts: newEnd.toISOString(),
+        date_local: (() => {
+          const d = new Date(newStart);
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${y}-${m}-${day}`;
+        })(),
+      };
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('eventRescheduled', {
+          detail: { eventId: id, updatedEvent: optimisticUpdatedEvent }
+        }));
+      }
+
       const { error } = await supabase
         .from('events')
         .update({
@@ -3951,7 +4224,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
       }
     },
-    [conflictBanner.eventId, familyId],
+    [conflictBanner.eventId, conflictBanner.movedEvent, familyId],
   );
 
   // Sync planner date when WebLayout nav changes month/week
@@ -4243,7 +4516,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                         };
                         const startStr = formatTime(new Date(firstConflictEvent.start_ts));
                         const endStr = formatTime(new Date(firstConflictEvent.end_ts || firstConflictEvent.start_ts));
-                        conflictMessage = `${firstConflictEvent.title} (${dayNames[d.getDay()]} ${monthNames[d.getMonth()]} ${d.getDate()}, ${startStr}–${endStr})`;
+                        const whoRestore = childLabelFromEvent(restored, propChildren);
+                        const leadRestore = whoRestore ? `${whoRestore} — ` : '';
+                        conflictMessage = `${leadRestore}${firstConflictEvent.title} (${dayNames[d.getDay()]} ${monthNames[d.getMonth()]} ${d.getDate()}, ${startStr}–${endStr})`;
                       }
                       setConflictBanner(prev => ({
                         ...prev,
@@ -4469,7 +4744,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.addEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
     return () => window.removeEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
-  }, [familyId]);
+  }, [familyId, propChildren]);
 
   // Load month data when showing planner tab so grid and events show on first open or after login
   useEffect(() => {
@@ -7605,10 +7880,19 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             conflictMessage={conflictBanner.conflictMessage || undefined}
             eventId={conflictBanner.eventId}
             conflictEvent={conflictBanner.conflictEvent}
+            movedEvent={conflictBanner.movedEvent}
+            children={propChildren}
             familyId={familyId}
             onQuickReschedule={handleDragConflictQuickReschedule}
             onDismiss={handleDragConflictDismiss}
             onSuggestionAccepted={handleDragConflictSuggestionAccepted}
+        onSuggestionComputed={(suggestedChange) => {
+          setConflictBanner((prev) =>
+            prev.eventId
+              ? { ...prev, suggestedChange }
+              : prev
+          );
+        }}
           />
         ) : null}
         {showPlannerMonthHydrating ? (
@@ -7645,7 +7929,27 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         onEventSelect={(event) => {
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: event?.id, initialEvent: event } }));
+            const hasActiveConflictContext =
+              conflictBanner.visible &&
+              (
+                (conflictBanner.eventId && String(conflictBanner.eventId) === String(event?.id)) ||
+                (conflictBanner.conflictEvent?.id && String(conflictBanner.conflictEvent.id) === String(event?.id))
+              );
+            window.dispatchEvent(new CustomEvent('openEventModal', {
+              detail: {
+                eventId: event?.id,
+                initialEvent: event,
+                openConflictResolution: hasActiveConflictContext,
+                conflictResolutionContext: hasActiveConflictContext
+                  ? {
+                      conflictEvent: conflictBanner.conflictEvent,
+                      movedEvent: conflictBanner.movedEvent,
+                      conflictMessage: conflictBanner.conflictMessage,
+                      suggestedChange: conflictBanner.suggestedChange,
+                    }
+                  : null,
+              },
+            }));
           }
         }}
         onEventRightClick={(ev, e) => {

@@ -67,14 +67,15 @@ export const STRINGS = {
       title: "Build plan",
       subtitle: "Set when learning can happen and how much time is required.",
       helper:
-        "This creates instructional slots on the calendar. Slots are safe to edit and can be filled with lessons later.",
+        "This creates instructional slots on the calendar. You can also build units first elsewhere and attach them when you’re ready.",
       /** Same visual hierarchy as attendance “Year at a glance” (YearHeatmapGrid). */
       structuredClassPlansTitle: "Build Structured Class Plans",
       structuredClassPlansHelp:
-        "Choose subjects, set your date range and weekly blocks, then preview and generate instructional slots on your calendar.",
+        "Choose subjects, set your date range and weekly pattern, then preview slots on the calendar — or add units first from the subject page and connect them later.",
       /** Edit plan list (inline planner) — same title scale as structuredClassPlansTitle. */
       editPlanTitle: "Edit plan",
-      editPlanHelp: "Select a plan to view details or make changes.",
+      editPlanHelp:
+        "Select a plan to view details or make changes. To add lesson structure without scheduling yet, use Add units on the subject page.",
     },
 
     sections: {
@@ -217,13 +218,52 @@ export const STRINGS = {
 
     cadenceConflicts: {
       title: "Schedule conflicts",
+      previewDominantTitle: "Here’s how your schedule will look",
+      previewDensityLabel: "Rows",
+      previewDensityComfortable: "Comfortable",
+      previewDensityCompact: "Compact",
+      moveToChip: "Move to {time}",
+      sessionsConflictWithScheduleOne: "1 session conflicts with your schedule",
+      sessionsConflictWithScheduleMany: "{count} sessions conflict with your schedule",
+      schedulingIssueToResolveOne: "1 scheduling issue to resolve",
+      schedulingIssuesToResolveMany: "{count} scheduling issues to resolve",
+      sessionsInvolved: "· {count} sessions",
+      summaryExternal:
+        "{subjectName} ({slotTime}) overlaps “{eventTitle}” on the calendar.",
+      summaryInternal: "{subjectA} and {subjectB} overlap ({time}) for the same student(s).",
+      overlapDirectionalExternal:
+        "“{subjectName}” ({slotTime}) overlaps “{eventTitle}” on your calendar.",
+      overlapDirectionalInternal: "{subjectA} and {subjectB} overlap ({time}).",
+      /** Scannable second line: time vs conflicting calendar/class */
+      overlapScanExternal: "{slotTime} overlaps with {eventTitle}",
+      overlapScanInternal: "{time} overlaps with {otherSubject}",
+      suggestedTimeLine: "Suggested time: {time}",
+      suggestedFixMoveTo: "Suggested fix: move to {time}",
+      fixAllConflictsAtOnce: "Fix all conflicts at once",
+      moveAllToTime: "Move all to {time}",
+      moveAllFallback: "Move all",
+      acceptAllSuggestedA11y: "Move all sessions to the suggested time",
+      dismissConflictPanelA11y: "Dismiss schedule conflict details",
+      conflictsResolved: "Conflicts resolved",
+      previewConflictsNeedResolutionOne: "1 conflict needs resolution",
+      previewConflictsNeedResolutionMany: "{count} conflicts need resolution",
+      suggestionTimeArrow: "Suggested time → {time}",
+      fixThis: "Fix this",
       loadingCalendar: "Checking your calendar for overlapping events…",
       internalLine:
         "{date}: {subjectA} and {subjectB} overlap ({time}) for the same student(s).",
       externalLine:
         "{date}: {subjectName} ({slotTime}) overlaps “{eventTitle}” on the calendar.",
+      suggestionInline: "Suggested: {time}",
+      /** Inline row — no emoji; short for timeline list */
+      conflictsWithNamed: "Conflicts with {name}",
+      conflictsFoundOne: "1 conflict found",
+      conflictsFoundMany: "{count} conflicts found",
+      moveToTimeInline: "Move to {time}",
+      previewConflictWith: "⚠ Conflicts with {name}",
+      applyFix: "Apply fix",
       more: "+ {count} more",
-      trySuggestion: "Apply suggested times",
+      trySuggestion: "Fix this",
       ignoreToggle: "Ignore conflicts and allow overlapping slots",
       ignoreHint:
         "We will still generate instructional slots; you can fix overlaps on the calendar later.",
@@ -231,9 +271,7 @@ export const STRINGS = {
       previewConflictSummaryOne: "1 day in this preview has a schedule conflict.",
       previewConflictSummaryMany:
         "{count} days in this preview have schedule conflicts.",
-      tryAllSuggestions: "Apply all suggested times",
-      applyBlocked:
-        "Resolve schedule conflicts below, or enable “Ignore conflicts” before applying.",
+      tryAllSuggestions: "Fix all automatically",
     },
 
     planningTargetProgress: {
@@ -291,7 +329,7 @@ export const STRINGS = {
       addContentSetCadenceHint:
         "Set days & times to automatically place lessons on your calendar.",
       addContentBeforeCadenceInline:
-        "Pick weekdays and class times in Step 1 first for automatic placement. You can still add content now; lessons will map once a schedule produces instructional slots.",
+        "Pick weekdays and class times above then add content to map lessons to the selected class time slots.",
       unitModalNoScheduleBanner:
         "No schedule set yet — lessons will be placed once you choose days & times.",
       instructionalSlotsAvailableOne: "1 instructional slot available",

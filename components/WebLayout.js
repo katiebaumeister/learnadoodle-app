@@ -183,6 +183,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
   /** Plan "Dates with events" row edit → open EventModal in edit form, not read-only details */
   const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false);
+  /** Planner chip warning → open EventModal with top conflict banner (Auto reschedule / Ignore) */
+  const [eventModalOpenConflictResolution, setEventModalOpenConflictResolution] = useState(false);
+  const [eventModalConflictResolutionContext, setEventModalConflictResolutionContext] = useState(null);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
   const [editingChild, setEditingChild] = useState(null);
   const [taskModalDate, setTaskModalDate] = useState(new Date());
@@ -1831,18 +1834,39 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const initialEvent = detail.initialEvent || null;
       const parentEventFocus = detail.parentEventFocus ?? null;
       const schedulingMode = !!detail.schedulingMode;
+      const openConflictResolution = !!detail.openConflictResolution;
+      let conflictResolutionContext = detail.conflictResolutionContext || null;
+      if (!conflictResolutionContext && openConflictResolution && Platform.OS === 'web' && typeof window !== 'undefined') {
+        const activeConflict = window.__ldActiveConflictBanner;
+        if (
+          activeConflict &&
+          (
+            String(activeConflict.eventId) === String(eventId) ||
+            String(activeConflict.conflictEvent?.id) === String(eventId)
+          )
+        ) {
+          conflictResolutionContext = {
+            conflictEvent: activeConflict.conflictEvent || null,
+            movedEvent: activeConflict.movedEvent || null,
+            conflictMessage: activeConflict.conflictMessage || null,
+            suggestedChange: activeConflict.suggestedChange || null,
+          };
+        }
+      }
 
       if (!eventId) {
         console.warn('[WebLayout] openEventModal event received but no eventId provided');
         return;
       }
 
-      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab, schedulingMode });
+      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab, schedulingMode, openConflictResolution });
 
       // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
       setEventModalSchedulingMode(schedulingMode);
+      setEventModalOpenConflictResolution(openConflictResolution);
+      setEventModalConflictResolutionContext(conflictResolutionContext);
       setEventModalParentFocus(
         parentEventFocus === 'help' || parentEventFocus === 'submission' ? parentEventFocus : null
       );
@@ -3591,6 +3615,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }}
                     onOpenRebalance={() => setShowRebalanceModal(true)}
                     onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
+                    onOpenManualCurriculumBuilder={(detail) => {
+                      setManualCurriculumBuilderContext({
+                        subjectId: detail?.subjectId ?? null,
+                        subjectName: detail?.subjectName ?? null,
+                        familyId: detail?.familyId ?? familyId ?? null,
+                      });
+                      setShowManualCurriculumBuilderModal(true);
+                    }}
                     onComplete={() => {
                       const returnView = planYearReturnViewRef.current || defaultView || 'month';
                       setCurrentView(returnView);
@@ -3832,6 +3864,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setRebalanceYearPlanId(params.yearPlanId || null);
           setShowRebalanceModal(true);
         }}
+        onOpenManualCurriculumBuilder={(detail) => {
+          setManualCurriculumBuilderContext({
+            subjectId: detail?.subjectId ?? null,
+            subjectName: detail?.subjectName ?? null,
+            familyId: detail?.familyId ?? familyId ?? null,
+          });
+          setShowManualCurriculumBuilderModal(true);
+        }}
         onComplete={async () => {
           const sid = planYearModalReturnSubjectIdRef.current;
           planYearModalReturnSubjectIdRef.current = null;
@@ -3928,6 +3968,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         eventId={eventModalEventId}
         initialEvent={eventModalInitialEvent}
         schedulingMode={eventModalSchedulingMode}
+        openConflictResolution={eventModalOpenConflictResolution}
+        conflictResolutionContext={eventModalConflictResolutionContext}
+        onOpenConflictResolutionConsumed={() => setEventModalOpenConflictResolution(false)}
         familyId={familyId}
         children={children}
         viewerRole={session?.role_flags?.isTutor ? 'tutor' : undefined}
@@ -3937,7 +3980,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         preloadedFamilyAssignments={preloadedFamilyAssignments}
         familyMembers={children.map(child => ({
           id: child.id,
+          first_name: child.first_name || child.name || 'Unknown',
           name: child.first_name || child.name || 'Unknown',
+          avatar: child.avatar || child.avatar_url || null,
+          avatar_url: child.avatar_url || child.avatar || null,
           role: 'child'
         }))}
         parentEventFocus={eventModalParentFocus}
@@ -3948,15 +3994,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setEventModalInitialEvent(null);
           setEventModalParentFocus(null);
           setEventModalSchedulingMode(false);
+          setEventModalOpenConflictResolution(false);
+          setEventModalConflictResolutionContext(null);
+        }}
+        onEventPatched={(patch) => {
+          if (Platform.OS === 'web' && patch?.id) {
+            window.dispatchEvent(
+              new CustomEvent('eventPatched', {
+                detail: { patch },
+              })
+            );
+          }
         }}
         onEventUpdated={async () => {
           console.log('[WebLayout] Global EventModal onEventUpdated');
-          // Dispatch refresh events
+          // Refresh calendar only — do NOT dispatch eventDeleted; that optimistically removes
+          // the event from planner state and makes saved events disappear until refetch.
           if (Platform.OS === 'web') {
             window.dispatchEvent(new CustomEvent('refreshCalendar'));
-            window.dispatchEvent(new CustomEvent('eventDeleted', { 
-              detail: { eventId: eventModalEventId } 
-            }));
           }
         }}
         onEventDeleted={async (deletedEventId) => {
