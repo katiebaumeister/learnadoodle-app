@@ -167,6 +167,57 @@ def _dedupe_empty_whole_family_slots_for_day(
     return len(remove_ids)
 
 
+def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
+    payload = {
+        "start_ts": row["start_ts"],
+        "end_ts": row["end_ts"],
+        "subject_id": row["subject_id"],
+        "title": row["title"],
+        "generation_batch_id": row["generation_batch_id"],
+        "is_flexible": row.get("is_flexible", True),
+    }
+    if row.get("source_block_id") is not None:
+        payload["source_block_id"] = row["source_block_id"]
+    if "child_ids" in row and row["child_ids"] is not None:
+        payload["child_ids"] = row["child_ids"]
+    if row.get("deleted_at"):
+        payload["deleted_at"] = None
+
+    try:
+        supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
+        return True
+    except Exception:
+        fallback_payload = dict(payload)
+        if "child_ids" in row and row["child_ids"] is not None:
+            fallback_payload["child_ids"] = row["child_ids"]
+        fallback_payload["child_id"] = None
+        fallback_payload["is_flexible"] = True
+        try:
+            supabase.table("events").update(fallback_payload).eq("id", row["id"]).eq("family_id", family_id).execute()
+            return True
+        except Exception:
+            return False
+
+
+def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
+    try:
+        supabase.table("events").insert(row).execute()
+        return True
+    except Exception:
+        fallback_row = dict(row)
+        child_id = fallback_row.get("child_id")
+        child_ids = fallback_row.get("child_ids")
+        if (not child_ids) and child_id is not None:
+            fallback_row["child_ids"] = [child_id]
+        fallback_row["child_id"] = None
+        fallback_row["is_flexible"] = True
+        try:
+            supabase.table("events").insert(fallback_row).execute()
+            return True
+        except Exception:
+            return False
+
+
 def regenerate_block(
     supabase,
     family_id: str,
@@ -274,6 +325,7 @@ def regenerate_block(
                     "title": subject_name,
                     "generation_batch_id": generation_batch_id,
                     "deleted_at": e.get("deleted_at"),
+                    "is_flexible": True,
                 })
             else:
                 to_insert.append({
@@ -293,6 +345,7 @@ def regenerate_block(
                     "generation_batch_id": generation_batch_id,
                     "source_block_id": block_id,
                     "counts_toward_plan": True,
+                    "is_flexible": True,
                 })
         else:
             for cid in child_ids:
@@ -309,6 +362,7 @@ def regenerate_block(
                         "title": subject_name,
                         "generation_batch_id": generation_batch_id,
                         "deleted_at": e.get("deleted_at"),
+                        "is_flexible": True,
                     })
                 else:
                     to_insert.append({
@@ -327,6 +381,7 @@ def regenerate_block(
                         "generation_batch_id": generation_batch_id,
                         "source_block_id": block_id,
                         "counts_toward_plan": True,
+                        "is_flexible": True,
                     })
 
     # New block_id would miss older plan_year rows in existing_by_key → duplicate whole-family events on the same day.
@@ -359,6 +414,7 @@ def regenerate_block(
                     "generation_batch_id": ins["generation_batch_id"],
                     "source_block_id": ins.get("source_block_id"),
                     "child_ids": ins.get("child_ids"),
+                    "is_flexible": True,
                 })
             else:
                 reconciled.append(ins)
@@ -378,29 +434,23 @@ def regenerate_block(
         )
     for row in to_update:
         try:
-            payload = {
-                "start_ts": row["start_ts"],
-                "end_ts": row["end_ts"],
-                "subject_id": row["subject_id"],
-                "title": row["title"],
-                "generation_batch_id": row["generation_batch_id"],
-            }
-            if row.get("source_block_id") is not None:
-                payload["source_block_id"] = row["source_block_id"]
-            if "child_ids" in row and row["child_ids"] is not None:
-                payload["child_ids"] = row["child_ids"]
-            # Undelete if this plan event was soft-deleted so plan_health sees it again
-            if row.get("deleted_at"):
-                payload["deleted_at"] = None
-            supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
-            updated_count += 1
+            if _safe_overlap_update(supabase, family_id, row):
+                updated_count += 1
+            else:
+                print(f"[BACKEND] block_regen update failed for id={row.get('id')}: overlap-safe fallback also failed", flush=True)
         except Exception as exc:
             print(f"[BACKEND] block_regen update failed for id={row.get('id')}: {exc}", flush=True)
 
     inserted_count = 0
     if to_insert:
-        ins = supabase.table("events").insert(to_insert).execute()
-        inserted_count = len(ins.data) if ins.data else len(to_insert)
+        for row in to_insert:
+            if _safe_overlap_insert(supabase, row):
+                inserted_count += 1
+            else:
+                print(
+                    f"[BACKEND] block_regen insert failed for subject={row.get('subject_id')} start={row.get('start_ts')}: overlap-safe fallback also failed",
+                    flush=True,
+                )
 
     deleted_count = 0
     if to_delete_ids:

@@ -2949,23 +2949,65 @@ export default function PlanYearModal({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         const startYmd = startDate && String(startDate).trim();
-        const detail = { forceInvalidate: true, skipHomeRefresh: false };
-        if (startYmd && /^\d{4}-\d{2}-\d{2}$/.test(startYmd)) {
-          const [y, m] = startYmd.split('-').map(Number);
-          detail.targetYear = y;
-          detail.targetMonth = m - 1;
+        const endYmd = endDate && String(endDate).trim();
+        const dispatchMonths = [];
+        if (
+          startYmd &&
+          endYmd &&
+          /^\d{4}-\d{2}-\d{2}$/.test(startYmd) &&
+          /^\d{4}-\d{2}-\d{2}$/.test(endYmd)
+        ) {
+          const [startYear, startMonth] = startYmd.split('-').map(Number);
+          const [endYear, endMonth] = endYmd.split('-').map(Number);
+          let year = startYear;
+          let month = startMonth - 1;
+          const lastKey = `${endYear}-${endMonth - 1}`;
+          const seen = new Set();
+          while (true) {
+            const key = `${year}-${month}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              dispatchMonths.push({ targetYear: year, targetMonth: month });
+            }
+            if (key === lastKey) break;
+            month += 1;
+            if (month > 11) {
+              month = 0;
+              year += 1;
+            }
+          }
         }
-        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail }));
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
-        }, 200);
+
+        if (dispatchMonths.length === 0) {
+          dispatchMonths.push({
+            targetYear: plannerDate?.getFullYear?.() ?? new Date().getFullYear(),
+            targetMonth: plannerDate?.getMonth?.() ?? new Date().getMonth(),
+          });
+        }
+
+        dispatchMonths.forEach((monthDetail, index) => {
+          window.dispatchEvent(
+            new CustomEvent('refreshCalendar', {
+              detail: {
+                forceInvalidate: true,
+                skipHomeRefresh: index > 0,
+                ...monthDetail,
+              },
+            }),
+          );
+        });
+
+        window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
         setTimeout(() => {
           window.dispatchEvent(
             new CustomEvent('refreshCalendar', {
-              detail: { ...detail, skipHomeRefresh: true, forceInvalidate: true },
+              detail: {
+                forceInvalidate: true,
+                skipHomeRefresh: true,
+              },
             }),
           );
-        }, 450);
+        }, 250);
       }
       if (yid && planSummaryYearId && String(planSummaryYearId) === String(yid)) {
         getAcademicYear(yid).then(({ data: fresh, error }) => {
