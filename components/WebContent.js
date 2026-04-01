@@ -2726,6 +2726,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const skipCacheClear = event?.detail?.skipCacheClear === true;
       const forceInvalidate = event?.detail?.forceInvalidate === true;
       const dropStartTime = event?.detail?.dropStartTime;
+      if (forceInvalidate && refreshDate instanceof Date && !isNaN(refreshDate.getTime())) {
+        const forceMonthPrefix = `${refreshDate.getFullYear()}-${String(refreshDate.getMonth() + 1).padStart(2, '0')}`;
+        setCalendarEvents((prev) => {
+          let changed = false;
+          const next = {};
+          Object.entries(prev || {}).forEach(([dateKey, list]) => {
+            if (String(dateKey).startsWith(forceMonthPrefix)) {
+              changed = true;
+              return;
+            }
+            next[dateKey] = list;
+          });
+          return changed ? next : prev;
+        });
+      }
       const doRefetch = () => {
         const tRefresh = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
         console.log('[WebContent] [drag-timing] t+' + tRefresh + 'ms refreshCalendar handler calling refreshCalendarData');
@@ -2733,6 +2748,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         const opts = isTargetedRefresh && eventIdFromDetail ? { preserveEventId: eventIdFromDetail } : {};
         if (dropStartTime != null) opts.dropStartTime = dropStartTime;
         if (isTargetedRefresh && eventIdFromDetail) opts.background = true; // post-drag: refetch in background, no loading state
+        if (forceInvalidate) opts.force = true;
         refreshCalendarData(refreshDate, opts).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
       };
       if (forceInvalidate) {
@@ -2821,8 +2837,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     // When an event is deleted, remove it from planner calendar state immediately so it disappears without waiting for refetch
     const handleEventDeletedForPlanner = (event) => {
       const deletedId = event.detail?.eventId || event.detail?.id;
-      if (!deletedId) return;
-      const idStr = String(deletedId);
+      const deletedAcademicYearId = event.detail?.academicYearId || event.detail?.academic_year_id;
+      if (!deletedId && !deletedAcademicYearId) return;
+      const idStr = deletedId ? String(deletedId) : null;
+      const academicYearIdStr = deletedAcademicYearId ? String(deletedAcademicYearId) : null;
       setCalendarEvents((prev) => {
         let changed = false;
         const next = {};
@@ -2831,7 +2849,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             next[dateKey] = list;
             continue;
           }
-          const filtered = list.filter((e) => e && String(e.id) !== idStr);
+          const filtered = list.filter((e) => {
+            if (!e) return false;
+            if (idStr && String(e.id) === idStr) return false;
+            if (academicYearIdStr && String(e.academic_year_id || '') === academicYearIdStr) return false;
+            return true;
+          });
           if (filtered.length !== list.length) changed = true;
           next[dateKey] = filtered;
         }
@@ -2851,7 +2874,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               nextByDate[dateKey] = list;
               continue;
             }
-            const filtered = list.filter((e) => e && String(e.id) !== idStr);
+            const filtered = list.filter((e) => {
+              if (!e) return false;
+              if (idStr && String(e.id) === idStr) return false;
+              if (academicYearIdStr && String(e.academic_year_id || '') === academicYearIdStr) return false;
+              return true;
+            });
             if (filtered.length !== list.length) changed = true;
             nextByDate[dateKey] = filtered;
           }
@@ -2927,13 +2955,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     const handleEventDeletedForHome = async (event) => {
       if (activeTab === 'home' && authUserId) {
         const deletedId = event.detail?.eventId || event.detail?.id;
+        const deletedAcademicYearId = event.detail?.academicYearId || event.detail?.academic_year_id;
         console.log('[WebContent] Event deleted, refreshing home page, deletedId:', deletedId);
         
         // Optimistically remove from homeData
-        if (homeData && deletedId) {
+        if (homeData && (deletedId || deletedAcademicYearId)) {
           setHomeData(prev => {
             if (!prev) return prev;
-            const updatedLearning = (prev.learning || []).filter(e => e.id !== deletedId);
+            const updatedLearning = (prev.learning || []).filter((e) => {
+              if (!e) return false;
+              if (deletedId && e.id === deletedId) return false;
+              if (deletedAcademicYearId && String(e.academic_year_id || '') === String(deletedAcademicYearId)) return false;
+              return true;
+            });
             return {
               ...prev,
               learning: updatedLearning
@@ -4751,9 +4785,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
     if (!familyId) return;
     const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
-    if (!calendarDataCache[monthKey]) {
-      refreshCalendarData(plannerDate).catch((err) => console.error('[WebContent] Initial planner load failed:', err));
-    }
+    const hasCache = !!calendarDataCache[monthKey];
+    refreshCalendarData(plannerDate, { background: hasCache, force: hasCache }).catch((err) =>
+      console.error('[WebContent] Initial planner load failed:', err)
+    );
   }, [activeTab, familyId, plannerDate, calendarDataCache, refreshCalendarData]);
 
   // Optimistically add newly created calendar events so they appear on the planner immediately
@@ -4807,6 +4842,284 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.addEventListener('eventCreated', handler);
     return () => window.removeEventListener('eventCreated', handler);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const academicYearId = e?.detail?.academicYearId;
+      const rawSlots = Array.isArray(e?.detail?.slots) ? e.detail.slots : [];
+      if (!academicYearId || rawSlots.length === 0) return;
+
+      setCalendarEvents((prev) => {
+        const next = { ...prev };
+        rawSlots.forEach((raw) => {
+          const dateKey = raw?.date_local || raw?.date || '';
+          if (!dateKey) return;
+          const list = Array.isArray(next[dateKey]) ? [...next[dateKey]] : [];
+          if (
+            list.some(
+              (ev) =>
+                ev &&
+                String(ev.academic_year_id || '') === String(academicYearId) &&
+                String(ev.subject_id || '') === String(raw.subject_id || '') &&
+                String(ev.start_local || '') === String(raw.start_local || ''),
+            )
+          ) {
+            return;
+          }
+          list.push({
+            id: raw.id,
+            type: raw.source || 'activity',
+            title: raw.title || 'Untitled Event',
+            childName: 'Child',
+            time: raw.start_local || '',
+            color: 'teal',
+            subject: raw.subject_name ?? '',
+            status: raw.status || 'scheduled',
+            year_plan_id: raw.year_plan_id,
+            event_type: raw.event_type || 'Lesson',
+            subject_id: raw.subject_id,
+            academic_year_id: raw.academic_year_id,
+            generated_by: raw.generated_by,
+            is_flexible: raw.is_flexible,
+            data: { ...raw, date_local: dateKey },
+            date_local: dateKey,
+            start_local: raw.start_local,
+            end_local: raw.end_local || undefined,
+            start_ts: raw.start_ts,
+            end_ts: raw.end_ts,
+            assignee: raw.child_id,
+            assignees: raw.child_id ? [raw.child_id] : [],
+            child_id: raw.child_id,
+          });
+          next[dateKey] = list;
+        });
+        return next;
+      });
+
+      setCalendarDataCache((prev) => {
+        const next = { ...prev };
+        rawSlots.forEach((raw) => {
+          const dateKey = raw?.date_local || raw?.date || '';
+          if (!dateKey) return;
+          const monthKey = dateKey.slice(0, 7);
+          const byDate = next[monthKey] && typeof next[monthKey] === 'object' ? { ...next[monthKey] } : {};
+          const list = Array.isArray(byDate[dateKey]) ? [...byDate[dateKey]] : [];
+          if (
+            list.some(
+              (ev) =>
+                ev &&
+                String(ev.academic_year_id || '') === String(academicYearId) &&
+                String(ev.subject_id || '') === String(raw.subject_id || '') &&
+                String(ev.start_local || '') === String(raw.start_local || ''),
+            )
+          ) {
+            next[monthKey] = byDate;
+            return;
+          }
+          list.push({ ...raw, date_local: dateKey });
+          byDate[dateKey] = list;
+          next[monthKey] = byDate;
+        });
+        return next;
+      });
+    };
+    window.addEventListener('planSlotsCreated', handler);
+    return () => window.removeEventListener('planSlotsCreated', handler);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const academicYearId = e?.detail?.academicYearId;
+      const incomingSlots = Array.isArray(e?.detail?.slots) ? e.detail.slots : [];
+      const explicitSubjectIds = Array.isArray(e?.detail?.subjectIds) ? e.detail.subjectIds.map(String) : [];
+      if (!academicYearId || (incomingSlots.length === 0 && explicitSubjectIds.length === 0)) return;
+      const ayId = String(academicYearId);
+
+      const loadedEvents = [];
+      Object.entries(calendarEventsRef.current || {}).forEach(([dateKey, list]) => {
+        if (!Array.isArray(list)) return;
+        list.forEach((ev) => {
+          if (ev && String(ev.academic_year_id || ev?.data?.academic_year_id || '') === ayId) {
+            loadedEvents.push({ ...ev, _loadedDateKey: dateKey });
+          }
+        });
+      });
+      if (loadedEvents.length === 0) return;
+
+      const sortBySlot = (a, b) =>
+        String(a.date_local || a._loadedDateKey || '').localeCompare(String(b.date_local || b._loadedDateKey || '')) ||
+        String(a.start_local || '').localeCompare(String(b.start_local || '')) ||
+        String(a.subject_id || '').localeCompare(String(b.subject_id || '')) ||
+        String(a.id || '').localeCompare(String(b.id || ''));
+
+      const existingBySubject = new Map();
+      loadedEvents.forEach((ev) => {
+        const key = String(ev.subject_id || ev?.data?.subject_id || '');
+        if (!existingBySubject.has(key)) existingBySubject.set(key, []);
+        existingBySubject.get(key).push(ev);
+      });
+      existingBySubject.forEach((list) => list.sort(sortBySlot));
+
+      const incomingBySubject = new Map();
+      incomingSlots.forEach((slot) => {
+        const key = String(slot.subject_id || '');
+        if (!incomingBySubject.has(key)) incomingBySubject.set(key, []);
+        incomingBySubject.get(key).push(slot);
+      });
+      incomingBySubject.forEach((list) => list.sort(sortBySlot));
+      const targetSubjectKeys = new Set([...incomingBySubject.keys(), ...explicitSubjectIds]);
+
+      const keepIds = new Set();
+      const patches = [];
+      const optimisticAdds = [];
+
+      Array.from(new Set([...existingBySubject.keys(), ...incomingBySubject.keys()])).forEach((subjectKey) => {
+        const existing = existingBySubject.get(subjectKey) || [];
+        const incoming = incomingBySubject.get(subjectKey) || [];
+        const pairCount = Math.min(existing.length, incoming.length);
+        for (let i = 0; i < pairCount; i += 1) {
+          const prevEv = existing[i];
+          const nextSlot = incoming[i];
+          keepIds.add(String(prevEv.id));
+          const nextStartTs =
+            nextSlot.date_local && nextSlot.start_local
+              ? new Date(`${nextSlot.date_local}T${nextSlot.start_local}:00`).toISOString()
+              : prevEv.start_ts;
+          const nextEndTs =
+            nextSlot.date_local && nextSlot.end_local
+              ? new Date(`${nextSlot.date_local}T${nextSlot.end_local}:00`).toISOString()
+              : prevEv.end_ts;
+          patches.push({
+            id: prevEv.id,
+            title: nextSlot.title || prevEv.title,
+            subject_id: nextSlot.subject_id ?? prevEv.subject_id,
+            academic_year_id: academicYearId,
+            date_local: nextSlot.date_local || prevEv.date_local,
+            start_local: nextSlot.start_local || prevEv.start_local,
+            end_local: nextSlot.end_local || prevEv.end_local,
+            start_ts: nextStartTs,
+            end_ts: nextEndTs,
+          });
+        }
+        for (let i = pairCount; i < incoming.length; i += 1) {
+          const nextSlot = incoming[i];
+          optimisticAdds.push({
+            id: `optimistic-plan-slot-${academicYearId}-${subjectKey || 'slot'}-${nextSlot.date_local}-${i}`,
+            academic_year_id: academicYearId,
+            title: nextSlot.title || 'Lesson',
+            subject_id: nextSlot.subject_id ?? null,
+            start_local: nextSlot.start_local,
+            end_local: nextSlot.end_local,
+            date_local: nextSlot.date_local,
+            generated_by: 'plan_year',
+            is_flexible: true,
+          });
+        }
+      });
+
+      setCalendarEvents((prev) => {
+        const next = {};
+        Object.entries(prev).forEach(([dateKey, list]) => {
+          if (!Array.isArray(list)) {
+            next[dateKey] = list;
+            return;
+          }
+          const filtered = list.filter((ev) => {
+            if (!ev) return false;
+            if (String(ev.academic_year_id || ev?.data?.academic_year_id || '') !== ayId) return true;
+            if (!targetSubjectKeys.has(String(ev.subject_id || ev?.data?.subject_id || ''))) return true;
+            return keepIds.has(String(ev.id));
+          });
+          if (filtered.length > 0) next[dateKey] = filtered;
+        });
+
+        patches.forEach((patch) => {
+          const dateKey = patch.date_local;
+          const list = Array.isArray(next[dateKey]) ? [...next[dateKey]] : [];
+          const idx = list.findIndex((ev) => ev && String(ev.id) === String(patch.id));
+          if (idx >= 0) {
+            list[idx] = {
+              ...list[idx],
+              ...patch,
+              data: { ...(list[idx].data || {}), ...patch },
+              time: patch.start_local || list[idx].time,
+            };
+          } else {
+            list.push({
+              ...patch,
+              event_type: 'Lesson',
+              data: { ...patch },
+              time: patch.start_local || '',
+            });
+          }
+          next[dateKey] = list;
+        });
+
+        optimisticAdds.forEach((raw) => {
+          const dateKey = raw.date_local;
+          const list = Array.isArray(next[dateKey]) ? [...next[dateKey]] : [];
+          if (!list.some((ev) => ev && String(ev.id) === String(raw.id))) {
+            list.push({
+              ...raw,
+              event_type: 'Lesson',
+              data: { ...raw },
+              time: raw.start_local || '',
+            });
+          }
+          next[dateKey] = list;
+        });
+        return next;
+      });
+
+      setCalendarDataCache((prev) => {
+        const next = { ...prev };
+        Object.entries(next).forEach(([monthKey, byDate]) => {
+          if (!byDate || typeof byDate !== 'object') return;
+          const nextByDate = { ...byDate };
+          Object.entries(nextByDate).forEach(([dateKey, list]) => {
+            if (!Array.isArray(list)) return;
+            const filtered = list.filter((ev) => {
+              if (!ev) return false;
+              if (String(ev.academic_year_id || ev?.data?.academic_year_id || '') !== ayId) return true;
+              if (!targetSubjectKeys.has(String(ev.subject_id || ev?.data?.subject_id || ''))) return true;
+              return keepIds.has(String(ev.id));
+            });
+            nextByDate[dateKey] = filtered;
+          });
+          next[monthKey] = nextByDate;
+        });
+        patches.forEach((patch) => {
+          const dateKey = patch.date_local;
+          const monthKey = dateKey.slice(0, 7);
+          const byDate = next[monthKey] && typeof next[monthKey] === 'object' ? { ...next[monthKey] } : {};
+          const list = Array.isArray(byDate[dateKey]) ? [...byDate[dateKey]] : [];
+          const idx = list.findIndex((ev) => ev && String(ev.id) === String(patch.id));
+          if (idx >= 0) {
+            list[idx] = { ...list[idx], ...patch, data: { ...(list[idx].data || {}), ...patch } };
+          } else {
+            list.push({ ...patch, data: { ...patch } });
+          }
+          byDate[dateKey] = list;
+          next[monthKey] = byDate;
+        });
+        return next;
+      });
+
+      patches.forEach((patch) => {
+        window.dispatchEvent(new CustomEvent('eventPatched', { detail: { patch } }));
+      });
+
+      window.dispatchEvent(
+        new CustomEvent('planSlotsCreated', {
+          detail: { academicYearId, slots: optimisticAdds },
+        }),
+      );
+    };
+    window.addEventListener('planSlotsUpdated', handler);
+    return () => window.removeEventListener('planSlotsUpdated', handler);
   }, []);
 
   // Holidays are now fetched inside refreshCalendarData (in parallel with month events) so they appear on load with other events.

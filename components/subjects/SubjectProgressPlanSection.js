@@ -6,6 +6,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { Pencil, Trash2, Calendar, Paperclip } from 'lucide-react';
 import { useToast } from '../Toast';
@@ -118,6 +120,7 @@ export default function SubjectProgressPlanSection({
   const [showDeletePlanConfirm, setShowDeletePlanConfirm] = useState(false);
   const [deletingPlan, setDeletingPlan] = useState(false);
   const [rowPendingDelete, setRowPendingDelete] = useState(null);
+  const [showCurrentUnitsModal, setShowCurrentUnitsModal] = useState(false);
   /** Plan row `item.key` while resolving calendar event id for delete (no eventId on line yet). */
   const [planRowDeleteResolvingKey, setPlanRowDeleteResolvingKey] = useState(null);
 
@@ -189,10 +192,16 @@ export default function SubjectProgressPlanSection({
     const silent = opts.silent === true;
     const reqFamilyId = familyId;
     const reqSubjectId = subjectId;
+    const reqAcademicYearId =
+      opts.academicYearId === undefined ? academicYearId : (opts.academicYearId || null);
     if (!reqFamilyId || !reqSubjectId) return;
     if (!silent) setLoadingUnits(true);
     try {
-      const { data, error } = await fetchSubjectCurriculumEventsStructure(reqFamilyId, reqSubjectId);
+      const { data, error } = await fetchSubjectCurriculumEventsStructure(
+        reqFamilyId,
+        reqSubjectId,
+        reqAcademicYearId
+      );
       if (
         String(subjectIdLiveRef.current) !== String(reqSubjectId) ||
         String(familyIdLiveRef.current) !== String(reqFamilyId)
@@ -226,7 +235,7 @@ export default function SubjectProgressPlanSection({
         setLoadingUnits(false);
       }
     }
-  }, [familyId, subjectId]);
+  }, [familyId, subjectId, academicYearId]);
 
   /** Hydrate from cache before paint to avoid skeleton flash when revisiting a subject. */
   useLayoutEffect(() => {
@@ -253,8 +262,16 @@ export default function SubjectProgressPlanSection({
     if (!familyId || !subjectId) return;
     const c = getSubjectProgressCache(familyId, subjectId);
     loadPlan({ silent: !!c });
-    loadUnits({ silent: !!c });
-  }, [familyId, subjectId, loadPlan, loadUnits]);
+  }, [familyId, subjectId, loadPlan]);
+
+  useEffect(() => {
+    if (!familyId || !subjectId || loadingPlan) return;
+    const c = getSubjectProgressCache(familyId, subjectId);
+    loadUnits({
+      silent: !!c,
+      academicYearId: academicYearId ?? null,
+    });
+  }, [familyId, subjectId, academicYearId, loadingPlan, loadUnits]);
 
   const prevFamilyIdRef = useRef(familyId);
   useEffect(() => {
@@ -270,7 +287,6 @@ export default function SubjectProgressPlanSection({
     const h = (e) => {
       if (e.detail?.subjectId === subjectId) {
         loadPlan({ silent: true });
-        loadUnits({ silent: true });
       }
     };
     window.addEventListener('refreshSubjectDetail', h);
@@ -353,6 +369,11 @@ export default function SubjectProgressPlanSection({
     });
   }, [curriculumUnits, mergedScheduleRows]);
 
+  const hasCurrentUnitsModalContent = useMemo(
+    () => curriculumUnits.some((u) => (u.lessons || []).length > 0),
+    [curriculumUnits]
+  );
+
   const refreshPlanCaches = useCallback(() => {
     if (familyId && academicYearId) {
       dropPlanYearFullDataCacheEntry(familyId, academicYearId);
@@ -402,31 +423,22 @@ export default function SubjectProgressPlanSection({
     }
   }, [academicYearId, subjectId, openBuildPlanModal]);
 
-  /** Same global curriculum flows as Edit Subject → Course structure (WebLayout modals). */
+  /** Route subject-detail unit actions into the unified Plan My Year / Edit Plan modal. */
   const openCurriculumStructureAction = useCallback(
     (kind) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-      const childIds =
-        assignedChildIds.length > 0
-          ? [...assignedChildIds]
-          : (children || []).map((c) => c.id).filter(Boolean);
-      const base = {
-        subjectId: subjectId ?? null,
-        subjectName: (subjectName || '').trim() || 'Subject',
-        familyId,
-        childIds,
-      };
-      if (kind === 'manual') {
-        window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', { detail: base }));
-      } else if (kind === 'paste') {
-        window.dispatchEvent(new CustomEvent('openParsePlainTextModal', { detail: base }));
-      } else if (kind === 'generate') {
-        window.dispatchEvent(new CustomEvent('openGenerateCurriculumModal', { detail: base }));
-      } else if (kind === 'upload') {
-        window.dispatchEvent(new CustomEvent('openAddMaterialModal', { detail: { ...base, role: null } }));
-      }
+      dispatchOpenPlanModal({
+        from: 'subject_detail',
+        subjectId,
+        academicYearId: academicYearId || null,
+        openAsModal: true,
+        openToEditList: false,
+        skipPlanSummary: !!academicYearId,
+        openDirectlyToScope: !academicYearId,
+        initialUnitStructureMethod: kind,
+      });
     },
-    [subjectId, subjectName, familyId, assignedChildIds, children]
+    [subjectId, academicYearId]
   );
 
   const handleDeletePlan = useCallback(async () => {
@@ -446,7 +458,7 @@ export default function SubjectProgressPlanSection({
       dropPlanYearFullDataCacheEntry(familyId, academicYearId);
       invalidateSubjectProgressCache(familyId, subjectId);
       loadPlan({ silent: true });
-      loadUnits({ silent: true });
+      loadUnits({ silent: true, academicYearId: null });
       onRefresh?.();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
@@ -723,6 +735,18 @@ export default function SubjectProgressPlanSection({
           </View>
           {Platform.OS === 'web' ? (
             <View style={styles.unitsFooterRow}>
+              {hasCurrentUnitsModalContent ? (
+                <>
+                  <TouchableOpacity
+                    onPress={() => setShowCurrentUnitsModal(true)}
+                    activeOpacity={0.7}
+                    {...webCursor}
+                  >
+                    <Text style={styles.unitsFooterLink}>View current units</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.unitsFooterSep}>·</Text>
+                </>
+              ) : null}
               <Text style={styles.unitsFooterLabel}>
                 {hasUnitsOrLessonsContent ? 'Change units' : 'Add units'}
               </Text>
@@ -804,6 +828,40 @@ export default function SubjectProgressPlanSection({
         onCancel={() => setShowDeletePlanConfirm(false)}
         onConfirm={handleDeletePlan}
       />
+
+      <Modal
+        visible={showCurrentUnitsModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCurrentUnitsModal(false)}
+      >
+        <View style={styles.currentUnitsModalBackdrop}>
+          <View style={styles.currentUnitsModalCard}>
+            <View style={styles.currentUnitsModalHeader}>
+              <Text style={styles.currentUnitsModalTitle}>Current units</Text>
+              <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7} {...webCursor}>
+                <Text style={styles.currentUnitsModalClose}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
+              {curriculumUnits.map((unit, index) => (
+                <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
+                  <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
+                  {(unit.lessons || []).length > 0 ? (
+                    (unit.lessons || []).map((lesson, lessonIndex) => (
+                      <Text key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`} style={styles.currentLessonRow}>
+                        {lessonIndex + 1}. {lesson.title || 'Lesson'}
+                      </Text>
+                    ))
+                  ) : (
+                    <Text style={styles.currentLessonEmpty}>No lessons saved yet.</Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <ConfirmDialog
         visible={!!rowPendingDelete}
@@ -1015,6 +1073,86 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginHorizontal: 6,
     fontWeight: '400',
+  },
+  currentUnitsModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  currentUnitsModalCard: {
+    width: '100%',
+    maxWidth: 760,
+    maxHeight: '80%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+  },
+  currentUnitsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  currentUnitsModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentUnitsModalClose: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+    ...(Platform.OS === 'web' && {
+      textDecorationLine: 'underline',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentUnitsModalScroll: {
+    flexGrow: 0,
+  },
+  currentUnitsModalScrollContent: {
+    paddingBottom: 8,
+    gap: 12,
+  },
+  currentUnitCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+    borderRadius: 12,
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+  },
+  currentUnitTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentLessonRow: {
+    fontSize: 14,
+    color: '#334155',
+    lineHeight: 20,
+    marginTop: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentLessonEmpty: {
+    fontSize: 13,
+    color: '#94a3b8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   row: {
     flexDirection: 'row',

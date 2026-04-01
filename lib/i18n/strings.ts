@@ -337,7 +337,7 @@ export const STRINGS = {
       draftLessonSlotMapIntro: "Lessons map to your class times in order:",
       cadenceGenerateLabel: "Generate curriculum",
       generateCurriculumIntro:
-        "We use your selected students, subject, plan dates, and class schedule to size units and lessons. Add anything else you want below.",
+        "We use your selected subject, that subject's information (like grade level and children attached), plan dates, and class schedule to size units and lessons. Add anything else you want below.",
       generateCurriculumFreeFormPlaceholder:
         "e.g. We will use your selected students, subject, and class days to generate curriculum. Add any other specific requirements or preferences like learner stage or education style here.",
       generateAndPreview: "Generate and preview →",
@@ -357,7 +357,7 @@ export const STRINGS = {
       previewSelectedDaysTimesTitle: "Preview selected days/times",
       availableInstructionalSlot: "Available slot",
       lessonsOverflowPastRange:
-        "{count} lessons don't have available dates in this range",
+        "You have units or lessons without assigned class days. {count} lessons don't have available dates in this range.",
       lessonsOverflowExtendSuggestion:
         "Add {extraDays} more class day(s) on your current weekdays and class times by extending your plan end date to {endDate}.",
       lessonsOverflowExtendCta: "Extend end date to {endDate}",

@@ -167,6 +167,107 @@ def _dedupe_empty_whole_family_slots_for_day(
     return len(remove_ids)
 
 
+def _find_existing_single_child_plan_slot_same_day(
+    supabase,
+    family_id: str,
+    academic_year_id: str,
+    subject_id: Any,
+    day: date,
+    child_id: Any,
+) -> Optional[str]:
+    """
+    Single-child equivalent of the whole-family same-day fallback.
+    When block_id changes during edit, adopt the existing empty plan_year row for
+    this child/subject/day instead of inserting a duplicate.
+    """
+    if subject_id is None or child_id is None:
+        return None
+    range_start_ts = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(day, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+    want = str(child_id).strip()
+    res = (
+        supabase.table("events")
+        .select("id, child_id, child_ids, curriculum_lesson_id")
+        .eq("family_id", family_id)
+        .eq("academic_year_id", academic_year_id)
+        .eq("subject_id", subject_id)
+        .eq("generated_by", "plan_year")
+        .is_("deleted_at", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+        .execute()
+    )
+    matches: List[Dict[str, Any]] = []
+    for e in res.data or []:
+        row_child_id = e.get("child_id")
+        if row_child_id is not None and str(row_child_id).strip() == want:
+            matches.append(e)
+            continue
+        row_child_ids = _normalized_child_id_set(e.get("child_ids"))
+        if want and want in row_child_ids:
+            matches.append(e)
+    if not matches:
+        return None
+
+    def _has_curriculum_slot(ev: Dict[str, Any]) -> bool:
+        cl = ev.get("curriculum_lesson_id")
+        return cl is not None and str(cl).strip() != ""
+
+    matches.sort(key=lambda r: (1 if _has_curriculum_slot(r) else 0, str(r.get("id") or "")))
+    return str(matches[0]["id"])
+
+
+def _dedupe_empty_single_child_slots_for_day(
+    supabase,
+    family_id: str,
+    academic_year_id: str,
+    subject_id: Any,
+    day: date,
+    child_id: Any,
+) -> int:
+    """Soft-delete extra empty single-child plan_year rows on the same day."""
+    if subject_id is None or child_id is None:
+        return 0
+    range_start_ts = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    range_end_ts = datetime.combine(day, datetime.max.time(), tzinfo=timezone.utc).isoformat()
+    want = str(child_id).strip()
+    res = (
+        supabase.table("events")
+        .select("id, child_id, child_ids")
+        .eq("family_id", family_id)
+        .eq("academic_year_id", academic_year_id)
+        .eq("subject_id", subject_id)
+        .eq("generated_by", "plan_year")
+        .is_("deleted_at", "null")
+        .is_("curriculum_lesson_id", "null")
+        .gte("start_ts", range_start_ts)
+        .lte("start_ts", range_end_ts)
+        .execute()
+    )
+    matches: List[Dict[str, Any]] = []
+    for e in res.data or []:
+        row_child_id = e.get("child_id")
+        if row_child_id is not None and str(row_child_id).strip() == want:
+            matches.append(e)
+            continue
+        row_child_ids = _normalized_child_id_set(e.get("child_ids"))
+        if want and want in row_child_ids:
+            matches.append(e)
+    if len(matches) <= 1:
+        return 0
+    matches.sort(key=lambda r: str(r.get("id") or ""))
+    keep_id = str(matches[0]["id"])
+    remove_ids = [str(x["id"]) for x in matches[1:] if str(x["id"]) != keep_id]
+    if not remove_ids:
+        return 0
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("events").update({"deleted_at": now}).in_("id", remove_ids).eq("family_id", family_id).execute()
+    except Exception:
+        return 0
+    return len(remove_ids)
+
+
 def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
     payload = {
         "start_ts": row["start_ts"],
@@ -419,6 +520,39 @@ def regenerate_block(
             else:
                 reconciled.append(ins)
         to_insert = reconciled
+    elif (not is_whole_family) and to_insert:
+        reconciled: List[Dict[str, Any]] = []
+        for ins in to_insert:
+            cid = ins.get("child_id")
+            if cid is None:
+                reconciled.append(ins)
+                continue
+            d_ins = _event_date_from_start_ts(ins)
+            if d_ins is None:
+                reconciled.append(ins)
+                continue
+            dup_id = _find_existing_single_child_plan_slot_same_day(
+                supabase,
+                family_id,
+                academic_year_id,
+                ins.get("subject_id"),
+                d_ins,
+                cid,
+            )
+            if dup_id:
+                to_update.append({
+                    "id": dup_id,
+                    "start_ts": ins["start_ts"],
+                    "end_ts": ins["end_ts"],
+                    "subject_id": ins["subject_id"],
+                    "title": ins["title"],
+                    "generation_batch_id": ins["generation_batch_id"],
+                    "source_block_id": ins.get("source_block_id"),
+                    "is_flexible": True,
+                })
+            else:
+                reconciled.append(ins)
+        to_insert = reconciled
 
     # Only delete events that fall within the regeneration window (>= start_date) and are no longer desired
     for (d, cid), e in existing_by_key.items():
@@ -474,6 +608,16 @@ def regenerate_block(
                 deleted_count += _dedupe_empty_whole_family_slots_for_day(
                     supabase, family_id, academic_year_id, sid, d, child_ids
                 )
+    elif occ_dates:
+        sid = block.get("subject_id")
+        if sid is not None:
+            for d in occ_dates:
+                for cid in child_ids:
+                    if cid is None:
+                        continue
+                    deleted_count += _dedupe_empty_single_child_slots_for_day(
+                        supabase, family_id, academic_year_id, sid, d, cid
+                    )
 
     if log_event_fn and user_id:
         log_event_fn(

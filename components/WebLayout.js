@@ -261,6 +261,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
   const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
+  const [planYearInitialUnitStructureMethod, setPlanYearInitialUnitStructureMethod] = useState(null);
   /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
   const planYearModalReturnSubjectIdRef = useRef(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
@@ -280,6 +281,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setPlanYearSkipInitialPlanSummary(false);
     setPlanYearInitialSubjectId(null);
     setPlanYearInitialMaterialId(null);
+    setPlanYearInitialUnitStructureMethod(null);
   }, []);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -1880,6 +1882,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     };
   }, [activeTab]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (event) => {
+      const patch = event?.detail?.patch;
+      const patchId = patch?.id;
+      if (!patchId) return;
+      setEventModalInitialEvent((prev) => {
+        if (!prev || String(prev.id) !== String(patchId)) return prev;
+        return {
+          ...prev,
+          ...patch,
+        };
+      });
+    };
+    window.addEventListener('eventPatched', handler);
+    return () => window.removeEventListener('eventPatched', handler);
+  }, []);
+
   // Subject overview → Home review inbox (parent)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1960,6 +1980,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const yearIdFromEvent = detail.academicYearId;
       const subjectId = detail.subjectId ?? null;
       const materialId = detail.materialId ?? null;
+      const initialUnitStructureMethod = detail.initialUnitStructureMethod ?? null;
       const openToEditList = detail.openToEditList === true;
       const openAsModal = detail.openAsModal === true;
       const skipPlanSummary = detail.skipPlanSummary === true;
@@ -1983,6 +2004,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       );
       setPlanYearInitialSubjectId(subjectId);
       setPlanYearInitialMaterialId(materialId);
+      setPlanYearInitialUnitStructureMethod(initialUnitStructureMethod);
 
       if (effectiveOpenAsModal) {
         planYearModalReturnSubjectIdRef.current = subjectId || null;
@@ -2456,11 +2478,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const rightToolbarActiveKeyForIcons =
     activeRightTool === 'tasks' || activeRightTool === 'backlog'
       ? null
-      : (activeRightTool ??
-        (currentView === 'plan-year' ? 'build-plan' :
-          currentView === 'edit-year' ? 'edit-plan' :
-            currentView === 'attendance' ? 'attendance' :
-              null));
+      : (currentView === 'plan-year' ? 'build-plan' :
+        currentView === 'edit-year' ? 'edit-plan' :
+          currentView === 'attendance' ? 'attendance' :
+            activeRightTool);
   /** When true, Month/Week/To-do should not use purple (right bar or full-screen plan view is primary). */
   const rightToolbarClaimsPlannerSegmentFocus =
     (activeRightTool != null && !['tasks', 'backlog'].includes(activeRightTool)) ||
@@ -3604,6 +3625,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         highlightFromPlanHealth={planYearHighlightFromHealth}
         initialSubjectId={planYearInitialSubjectId}
         initialMaterialId={planYearInitialMaterialId}
+                    initialUnitStructureMethod={planYearInitialUnitStructureMethod}
         onOpenBuildCurriculum={(params) => {
           setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
                       setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
@@ -3814,7 +3836,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       {/* Planning Modal - mostly full screen - unified Plan my year + Edit subject structure */}
       <PlanYearModal
-        key={planYearInitialAcademicYearId || 'unified-planning-modal'}
+        key={`${planYearInitialAcademicYearId || 'unified-planning-modal'}-${planYearInitialUnitStructureMethod || 'default'}`}
         visible={showPlanningModal}
         onClose={() => {
           const sid = planYearModalReturnSubjectIdRef.current;
@@ -3834,6 +3856,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setPlanYearSkipInitialPlanSummary(false);
             setPlanYearInitialSubjectId(null);
             setPlanYearInitialMaterialId(null);
+            setPlanYearInitialUnitStructureMethod(null);
           }, 300);
         }}
         familyId={familyId}
@@ -3850,6 +3873,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         highlightFromPlanHealth={planYearHighlightFromHealth}
         initialSubjectId={planYearInitialSubjectId}
         initialMaterialId={planYearInitialMaterialId}
+        initialUnitStructureMethod={planYearInitialUnitStructureMethod}
         onOpenBuildCurriculum={(params) => {
           setBuildCurriculumInitialSubjectId(params.subjectId || null);
           setBuildCurriculumInitialSubjectName(params.subjectName || null);

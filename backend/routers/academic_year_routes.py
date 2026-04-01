@@ -1764,6 +1764,47 @@ async def get_event_for_plan_slot(
         )
 
 
+@router.get("/plan_events")
+async def get_academic_year_plan_events(
+    family_id: str = Query(..., description="Family UUID"),
+    academic_year_id: str = Query(..., description="Academic year UUID"),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Return actual saved events for one academic year.
+    Used by planner edit/summary surfaces to avoid relying on stale plan_slot_labels.
+    """
+    try:
+        fid = get_family_id_for_user(user["id"])
+        if not fid or fid != family_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Family ID mismatch")
+
+        supabase = get_admin_client()
+        select_cols = (
+            "id, title, start_ts, end_ts, subject_id, status, event_type, unit, lesson, "
+            "curriculum_unit_title, curriculum_metadata, is_placeholder, generated_by, academic_year_id"
+        )
+        res = (
+            supabase.table("events")
+            .select(select_cols)
+            .eq("family_id", family_id)
+            .eq("academic_year_id", academic_year_id)
+            .is_("deleted_at", "null")
+            .order("start_ts", desc=False)
+            .execute()
+        )
+        return {"events": list(res.data or [])}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("academic_year.plan_events.error", user_id=user.get("id"), error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load academic year events: {str(e)}",
+        )
+
+
 @router.get("/by_id")
 async def get_academic_year_by_id(
     academic_year_id: str = Query(..., alias="academic_year_id", description="Academic year UUID"),

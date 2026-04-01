@@ -64,6 +64,7 @@ import {
   applyToCalendar,
   clearPlaceholders,
   getAcademicYear,
+  getAcademicYearPlanEvents,
   getPlanHealth,
   invalidatePlanHealthCache,
   computeSchedulePotential,
@@ -73,8 +74,8 @@ import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlanne
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
-import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraft, commitManualDraft, commitParsedDraft, commitGeneratedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
-import { buildImportStreamPreviewDisplay } from '../../lib/parseStreamHumanPreview';
+import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraftStream, commitManualDraft, commitParsedDraft, commitGeneratedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { buildHumanPreviewFromPartialJson, buildImportStreamPreviewDisplay } from '../../lib/parseStreamHumanPreview';
 import { getMaterials } from '../../lib/services/materialsClient';
 import {
   PLAN_MY_YEAR_LOGISTICS_FIRST,
@@ -707,6 +708,16 @@ function editPlanListSortKey(ay) {
   return lines.line1 || ay?.year_name || '';
 }
 
+function extractPlanSubjectNamesFromYearName(ay) {
+  const name = ay?.year_name || '';
+  const parts = name.split(' · ').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 3) return [];
+  return parts[1]
+    .split(',')
+    .map((s) => s.replace(/\s*\+\d+\s*$/, '').trim())
+    .filter(Boolean);
+}
+
 /**
  * True when at least one scheduling block references a subject id that still exists (e.g. after subject delete + recreate
  * with the same name, old block UUIDs are orphaned — subject page shows "Build plan" and slot lines show "Subject").
@@ -1115,11 +1126,28 @@ function buildPlanYearGeneratePlanningContext({
     return g ? `${name} (grade ${g})` : name;
   });
   const blockForSubject = (blocks || []).find((b) => String(b.subject_id) === sid);
+  const subjectGrade =
+    subject?.grade_level ??
+    subject?.grade ??
+    subject?.gradeLevel ??
+    subject?.level ??
+    null;
+  const normalizedSubjectGrade =
+    subjectGrade != null && String(subjectGrade).trim() !== '' ? String(subjectGrade).trim() : null;
   const lines = [
+    `Subject: ${subject.name || 'Subject'}.`,
     `Plan date range: ${startDate || '(not set)'} through ${endDate || '(not set)'}.`,
     `Approximate instructional class sessions in this range for "${subject.name || 'this subject'}": ${slotCount} (from your plan calendar, weekdays, class times, and exclusions).`,
     'Aim for a total lesson count in the same ballpark as this slot count unless the user explicitly asks for a different scope.',
   ];
+  if (normalizedSubjectGrade) {
+    lines.push(`Subject grade level: ${normalizedSubjectGrade}.`);
+  }
+  lines.push(
+    childLines.length
+      ? `Children attached to this subject: ${childLines.join('; ')}.`
+      : 'Children attached to this subject: none listed on the subject.'
+  );
   if (childLines.length) {
     lines.push(`Students: ${childLines.join('; ')}.`);
   }
@@ -1132,6 +1160,10 @@ function buildPlanYearGeneratePlanningContext({
     lines.push(`Typical cadence for this subject: ${daysLabel}; session window: ${timeLabel}.`);
   }
   return lines.join('\n');
+}
+
+function curriculumStructureCacheKey(subjectId, academicYearId = null) {
+  return `${String(subjectId || '')}::${String(academicYearId || 'none')}`;
 }
 
 /** Minimum end date (YYYY-MM-DD) so this subject gains `overflowCount` more instructional slots vs current `endDate`. */
@@ -1299,8 +1331,19 @@ export default function PlanYearModal({
   highlightFromPlanHealth = false,
   initialSubjectId = null,
   initialMaterialId = null,
+  initialUnitStructureMethod = null,
 }) {
   const toast = useToast();
+  const initialPlanSourceForDirectUnitOpen =
+    initialUnitStructureMethod === 'manual'
+      ? 'paste'
+      : initialUnitStructureMethod === 'paste_plain'
+        ? 'paste_plain'
+        : initialUnitStructureMethod === 'upload'
+          ? 'upload'
+          : initialUnitStructureMethod === 'generate'
+            ? 'generate'
+            : 'placeholders';
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1419,7 +1462,7 @@ export default function PlanYearModal({
   const [publicHolidaysList, setPublicHolidaysList] = useState([]);
   const [publicHolidaysLoading, setPublicHolidaysLoading] = useState(false);
   const [planningScope, setPlanningScope] = useState(null); // null | 'full_year' | 'one_subject' | 'placeholders_only' | 'build_from_material'
-  const [planSource, setPlanSource] = useState('placeholders'); // 'placeholders' | 'upload' | 'link' | 'paste' | 'paste_plain' | 'generate'
+  const [planSource, setPlanSource] = useState(initialPlanSourceForDirectUnitOpen); // 'placeholders' | 'upload' | 'link' | 'paste' | 'paste_plain' | 'generate'
   const [sourceUrl, setSourceUrl] = useState('');
   const [pastedText, setPastedText] = useState('');
   const [materials, setMaterials] = useState([]);
@@ -1434,7 +1477,9 @@ export default function PlanYearModal({
   const [sectionScheduleExpanded, setSectionScheduleExpanded] = useState(false);
   const [sectionDatesExpanded, setSectionDatesExpanded] = useState(false);
   // 'source' | 'unit_structure' | 'logistics' | 'preview' (scope removed). Entry step from getInitialPlanStep.
-  const [planStep, setPlanStep] = useState(() => getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+  const [planStep, setPlanStep] = useState(() =>
+    initialUnitStructureMethod ? 'unit_structure' : getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST)
+  );
   const [showPlanManagerView, setShowPlanManagerView] = useState(() => !!openToEditPlanList); // when true and pickerOnly, show Edit plan list; when false and pickerOnly, show entry choice (Plan Manager / Create New Plan)
   const [planSummaryYearId, setPlanSummaryYearId] = useState(null); // when set, show plan summary view (like event summary) before editing
   const [editingFromSummary, setEditingFromSummary] = useState(false); // true when we opened logistics from "Edit Plan" on plan summary (header = Edit > Review, Back = to summary)
@@ -1444,6 +1489,9 @@ export default function PlanYearModal({
   const [planSummaryStrikeKeys, setPlanSummaryStrikeKeys] = useState([]);
   const planSummaryGhostLinesRef = useRef(new Map());
   const planSummaryCalendarRefreshTimerRef = useRef(null);
+  const [planSummaryCurriculumBySubjectId, setPlanSummaryCurriculumBySubjectId] = useState({});
+  const [planSummaryActualEvents, setPlanSummaryActualEvents] = useState([]);
+  const curriculumStructureCacheRef = useRef(new Map());
   const [showPreviewScreen, setShowPreviewScreen] = useState(false);
   const [parsedContent, setParsedContent] = useState(null); // { unit, lessons, pacing } from buildCurriculum for upload/link/paste
   const [parsingContent, setParsingContent] = useState(false);
@@ -1467,6 +1515,7 @@ export default function PlanYearModal({
   const [targetScopeFromSettings, setTargetScopeFromSettings] = useState('overall'); // 'overall' | 'per_subject' from family_planner_settings
   const [planningDefaultsData, setPlanningDefaultsData] = useState(null); // { settings, exclusions } for Planning defaults summary
   const [planningDefaultsLoading, setPlanningDefaultsLoading] = useState(false);
+  const [loadedPlanCurriculumSubjectIds, setLoadedPlanCurriculumSubjectIds] = useState([]);
   
   // Unit Structure step state
   const [unitStructureData, setUnitStructureData] = useState(null); // { units: [{ title, lessons: [...] }] }
@@ -1483,6 +1532,8 @@ export default function PlanYearModal({
   /** Readable live lines while import parse streams (not raw JSON). */
   const [importParseStreamPreview, setImportParseStreamPreview] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [generateStreamStatus, setGenerateStreamStatus] = useState('');
+  const [generateStreamPreview, setGenerateStreamPreview] = useState('');
   const [unitStructureError, setUnitStructureError] = useState(null);
   /** From GET /subject-events-structure: events.source (manual | plain_text_parsed | …) for cadence UX */
   const [savedContentSource, setSavedContentSource] = useState(null);
@@ -2597,11 +2648,16 @@ export default function PlanYearModal({
   const lessonSchedulePreviewPlan = useMemo(() => {
     const flatDraft = flattenUnitLessonsForPreview((manualDraft || draftData)?.units);
     const flatSaved = flattenUnitLessonsForPreview(unitStructureData?.units);
-    const lessons = flatDraft.length > 0 ? flatDraft : flatSaved;
     const curriculumSubjectId =
       flatDraft.length > 0
         ? unitPipelineSubjectId || singleBlockSubjectId
         : lastSavedUnitSubjectId || unitPipelineSubjectId || singleBlockSubjectId;
+    const canUseSavedCurriculum =
+      flatDraft.length === 0 &&
+      flatSaved.length > 0 &&
+      curriculumSubjectId != null &&
+      loadedPlanCurriculumSubjectIds.includes(String(curriculumSubjectId));
+    const lessons = flatDraft.length > 0 ? flatDraft : canUseSavedCurriculum ? flatSaved : [];
     const built = buildLessonSchedulePreviewRows(
       previewSlotLines,
       lessons,
@@ -2620,6 +2676,7 @@ export default function PlanYearModal({
     unitPipelineSubjectId,
     singleBlockSubjectId,
     lastSavedUnitSubjectId,
+    loadedPlanCurriculumSubjectIds,
   ]);
 
   /** Per preview row: counterparty + suggested shift for inline conflict copy. */
@@ -2733,7 +2790,12 @@ export default function PlanYearModal({
       await Promise.all(
         subjectIds.map(async (sid) => {
           try {
-            const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid);
+            const effectiveYearId = academicYearId || initialAcademicYearId || null;
+            const { data, error } = await fetchSubjectCurriculumEventsStructure(
+              familyId,
+              sid,
+              effectiveYearId
+            );
             if (cancelled) return;
             if (error) {
               next[sid] = false;
@@ -2838,6 +2900,10 @@ export default function PlanYearModal({
       setAcademicYearId(null);
       setLoadError(null);
       loadedYearIdRef.current = null;
+      setUnitStructureData(null);
+      setLastSavedUnitSubjectId(null);
+      setLoadedPlanCurriculumSubjectIds([]);
+      setPlanSummaryCurriculumBySubjectId({});
     }
   }, [visible, openForNewPlan, initialAcademicYearId]);
 
@@ -2848,6 +2914,10 @@ export default function PlanYearModal({
       setStartDate('');
       setEndDate('');
       setBlocks([]);
+      setUnitStructureData(null);
+      setLastSavedUnitSubjectId(null);
+      setLoadedPlanCurriculumSubjectIds([]);
+      setPlanSummaryCurriculumBySubjectId({});
     }
   }, [visible, initialAcademicYearId]);
 
@@ -2895,6 +2965,50 @@ export default function PlanYearModal({
       }),
     );
   }, [previousPlans, baseSubjectList, familyId]);
+
+  const existingPlansForSelectedSubjects = useMemo(() => {
+    const selectedIds = (selectedSubjectIds || []).map(String).filter(Boolean);
+    if (!familyId || selectedIds.length === 0) return [];
+    const selectedNameById = new Map(
+      (baseSubjectList || [])
+        .filter((s) => s?.id != null && s?.name)
+        .map((s) => [String(s.id), String(s.name).trim().toLowerCase()]),
+    );
+    const selectedNames = new Set(
+      selectedIds
+        .map((id) => selectedNameById.get(id))
+        .filter(Boolean),
+    );
+    return editPlanListRows
+      .map((ay) => {
+        const cached =
+          planSummaryCacheRef.current.get(ay.id) ||
+          getPlanYearFullDataFromCache(familyId, ay.id);
+        const planSubjectIds = [
+          ...new Set(
+            (cached?.plan?.blocks || [])
+              .map((b) => b?.subject_id)
+              .filter(Boolean)
+              .map(String),
+          ),
+        ];
+        const matchedSubjectIds = planSubjectIds.filter((id) => selectedIds.includes(String(id)));
+        const matchedSubjectNames =
+          matchedSubjectIds.length > 0
+            ? matchedSubjectIds
+                .map((id) => baseSubjectList.find((s) => String(s.id) === String(id))?.name)
+                .filter(Boolean)
+            : extractPlanSubjectNamesFromYearName(ay).filter((name) => selectedNames.has(String(name).toLowerCase()));
+        if (matchedSubjectIds.length === 0 && matchedSubjectNames.length === 0) return null;
+        return {
+          id: ay.id,
+          yearName: ay.year_name || 'Plan',
+          matchedSubjectNames: [...new Set(matchedSubjectNames)],
+          cached,
+        };
+      })
+      .filter(Boolean);
+  }, [familyId, selectedSubjectIds, baseSubjectList, editPlanListRows]);
 
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;
@@ -3039,6 +3153,163 @@ export default function PlanYearModal({
       }
     },
     [familyId, startDate, planSummaryYearId, prefetchYearSummaryForEditList],
+  );
+
+  const applyExtendedPlanEndDateFromSummary = useCallback(
+    async (extYmd) => {
+      if (!extYmd || !/^\d{4}-\d{2}-\d{2}$/.test(extYmd)) return;
+      if (!familyId || !planSummaryYearId || !planSummaryData?.plan) {
+        applyExtendedPlanEndDate(extYmd);
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      try {
+        const holidaySettings = planSummaryData.holiday_settings || {};
+        const holidayRegion =
+          holidaySettings.holiday_region ||
+          (holidaySettings.holiday_country_code
+            ? `${holidaySettings.holiday_country_code}${holidaySettings.holiday_region ? `:${holidaySettings.holiday_region}` : ''}`
+            : 'US');
+        const customHolidays = Array.isArray(planSummaryData.holidays)
+          ? planSummaryData.holidays
+              .filter((h) => (h.type || 'CUSTOM_HOLIDAY') === 'CUSTOM_HOLIDAY')
+              .map((h) => ({
+                date: typeof h.date === 'string' ? h.date.slice(0, 10) : String(h.date || '').slice(0, 10),
+                name: h.name || '',
+                type: h.type || 'CUSTOM_HOLIDAY',
+              }))
+          : [];
+        const { data: exclusions } = await getAcademicYearExclusions(planSummaryYearId);
+        const customBreaksForApply = Array.isArray(exclusions)
+          ? exclusions
+              .filter((e) => e?.exclusion_type === 'break')
+              .map((e) => ({
+                start: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : String(e.start_date || '').slice(0, 10),
+                end: typeof e.end_date === 'string' ? e.end_date.slice(0, 10) : String(e.end_date || '').slice(0, 10),
+                name: e.label || 'Break',
+              }))
+          : [];
+        const blocksForApply = (planSummaryData.plan.blocks || []).map((b) => ({
+          block_id: b.block_id,
+          subject_id: b.subject_id ?? null,
+          placeholder_label: b.placeholder_label || undefined,
+          child_ids: Array.isArray(b.child_ids) ? b.child_ids : [],
+          weekdays: Array.isArray(b.weekdays) ? b.weekdays : [],
+          start_time: b.start_time || '09:00',
+          end_time: b.end_time || '10:00',
+          all_day: !!b.all_day,
+        }));
+        const payload = {
+          academic_year_id: planSummaryYearId,
+          family_id: familyId,
+          start_date: planSummaryData.plan.start_date || planSummaryData.start_date || '',
+          end_date: extYmd,
+          follow_public_holidays: holidaySettings.follow_global_holidays !== false,
+          holiday_region: holidayRegion,
+          excluded_holiday_dates: holidaySettings.excluded_holiday_dates || [],
+          custom_holidays: customHolidays,
+          custom_breaks: customBreaksForApply,
+          target_instructional_days:
+            (planSummaryData.plan.constraint_mode === 'days' ? planSummaryData.plan.target_days : null) ??
+            TARGET_INSTRUCTIONAL_DAYS_DEFAULT,
+          subjects: [...new Set(blocksForApply.map((b) => b.subject_id).filter(Boolean))],
+          constraint_mode: planSummaryData.plan.constraint_mode || 'none',
+          target_days: planSummaryData.plan.target_days ?? null,
+          target_hours: planSummaryData.plan.target_hours ?? null,
+          child_id: null,
+          replace_placeholders: true,
+          blocks: blocksForApply,
+          year_name: planSummaryData.year_name || undefined,
+          timezone: (function getClientTimezone() {
+            try {
+              if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+                const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                if (tz && typeof tz === 'string') return tz.trim();
+              }
+            } catch (_) {}
+            return 'America/New_York';
+          })(),
+        };
+        const { data, error } = await applyToCalendar(payload);
+        if (error) throw error;
+        setEndDate(extYmd);
+        if (familyId && payload.start_date) {
+          setPlanBuildLogisticsDatesCache(familyId, payload.start_date, extYmd);
+        }
+        const optimisticSlotLines = buildPreviewSlotLinesForPlanYear({
+          startDate: payload.start_date,
+          endDate: extYmd,
+          blocks: blocksForApply,
+          customHolidays,
+          customBreaks: customBreaksForApply,
+          baseSubjectList,
+          children,
+          allFamilyChildIds,
+        });
+        if (typeof window !== 'undefined' && data?.academic_year_id) {
+          const subjectIds = [...new Set(blocksForApply.map((b) => b?.subject_id).filter(Boolean).map(String))];
+          window.dispatchEvent(
+            new CustomEvent('planSlotsCreated', {
+              detail: {
+                academicYearId: data.academic_year_id,
+                subjectIds,
+                slots: optimisticSlotLines.map((line) => ({
+                  id: `optimistic-plan-slot-${data.academic_year_id}-${line.blockId || 'slot'}-${line.date}`,
+                  academic_year_id: data.academic_year_id,
+                  title: line.subjectName || 'Lesson',
+                  subject_id: line.subjectId ?? null,
+                  start_local: line.timeLabel === 'All day' ? '09:00' : (String(line.timeLabel || '').split('–')[0] || '09:00').trim(),
+                  end_local: line.timeLabel === 'All day' ? '15:00' : (String(line.timeLabel || '').split('–')[1] || '10:00').trim(),
+                  date_local: line.date,
+                  child_id: null,
+                  generated_by: 'plan_year',
+                  is_flexible: true,
+                })),
+              },
+            }),
+          );
+          window.dispatchEvent(
+            new CustomEvent('planSlotsUpdated', {
+              detail: {
+                academicYearId: data.academic_year_id,
+                subjectIds,
+                slots: optimisticSlotLines.map((line) => ({
+                  date_local: line.date,
+                  subject_id: line.subjectId ?? null,
+                  title: line.subjectName || 'Lesson',
+                  start_local: line.timeLabel === 'All day' ? '09:00' : (String(line.timeLabel || '').split('–')[0] || '09:00').trim(),
+                  end_local: line.timeLabel === 'All day' ? '15:00' : (String(line.timeLabel || '').split('–')[1] || '10:00').trim(),
+                })),
+              },
+            }),
+          );
+        }
+        bumpPlanSurfacesAfterMutation(data?.academic_year_id ?? planSummaryYearId);
+        toast.push(
+          t('planMyYear.multiSubjectUnits.lessonsOverflowExtendCta', { endDate: formatDateDisplay(extYmd) }),
+          'success',
+        );
+      } catch (err) {
+        const errMsg = err?.message || 'Failed to extend plan end date.';
+        setError(errMsg);
+        toast.push(errMsg, 'error');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [
+      familyId,
+      planSummaryYearId,
+      planSummaryData,
+      applyExtendedPlanEndDate,
+      baseSubjectList,
+      children,
+      allFamilyChildIds,
+      bumpPlanSurfacesAfterMutation,
+      t,
+      toast,
+    ],
   );
 
   useEffect(() => {
@@ -3276,6 +3547,11 @@ export default function PlanYearModal({
           setPlanSummaryData(data);
         }
       });
+      getAcademicYearPlanEvents(familyId, planSummaryYearId).then(({ data, error }) => {
+        if (!error) {
+          setPlanSummaryActualEvents(Array.isArray(data?.events) ? data.events : []);
+        }
+      });
     };
     window.addEventListener('eventDeleted', handler);
     return () => window.removeEventListener('eventDeleted', handler);
@@ -3285,8 +3561,86 @@ export default function PlanYearModal({
     if (!planSummaryYearId) {
       setPlanSummaryStrikeKeys([]);
       planSummaryGhostLinesRef.current = new Map();
+      setPlanSummaryCurriculumBySubjectId({});
+      setPlanSummaryActualEvents([]);
     }
   }, [planSummaryYearId]);
+
+  useEffect(() => {
+    if (!planSummaryYearId || !familyId) {
+      setPlanSummaryActualEvents([]);
+      return;
+    }
+    let cancelled = false;
+    getAcademicYearPlanEvents(familyId, planSummaryYearId).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) {
+        setPlanSummaryActualEvents([]);
+        return;
+      }
+      setPlanSummaryActualEvents(Array.isArray(data?.events) ? data.events : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [planSummaryYearId, familyId]);
+
+  useEffect(() => {
+    if (!planSummaryData || !familyId || !planSummaryYearId) return;
+    const blocks = Array.isArray(planSummaryData?.plan?.blocks) ? planSummaryData.plan.blocks : [];
+    const planSlotLabels = Array.isArray(planSummaryData?.plan?.plan_slot_labels) ? planSummaryData.plan.plan_slot_labels : [];
+    const subjectIds = [
+      ...new Set(
+        planSlotLabels
+          .filter((label) => !label?.open_plan_slot && ((label?.unit || '').trim() || (label?.lesson || '').trim()))
+          .map((label) => label?.subject_id)
+          .filter(Boolean)
+          .map(String),
+      ),
+    ];
+    if (subjectIds.length === 0) {
+      setPlanSummaryCurriculumBySubjectId({});
+      return;
+    }
+    const cachedEntries = subjectIds
+      .map((subjectId) => [
+        subjectId,
+        curriculumStructureCacheRef.current.get(
+          curriculumStructureCacheKey(subjectId, planSummaryYearId)
+        ) || null,
+      ])
+      .filter(([, value]) => value);
+    if (cachedEntries.length > 0) {
+      setPlanSummaryCurriculumBySubjectId((prev) => ({
+        ...prev,
+        ...Object.fromEntries(cachedEntries),
+      }));
+    }
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        subjectIds.map(async (subjectId) => {
+          const cacheKey = curriculumStructureCacheKey(subjectId, planSummaryYearId);
+          const cached = curriculumStructureCacheRef.current.get(cacheKey);
+          if (cached) return [subjectId, cached];
+          try {
+            const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId, planSummaryYearId);
+            if (error || !data) return [subjectId, null];
+            curriculumStructureCacheRef.current.set(cacheKey, data);
+            return [subjectId, data];
+          } catch (_) {
+            return [subjectId, null];
+          }
+        }),
+      );
+      if (!cancelled) {
+        setPlanSummaryCurriculumBySubjectId(Object.fromEntries(entries));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [planSummaryData, familyId, planSummaryYearId]);
 
   // After event save/edit elsewhere, refresh plan summary so titles and slot lines stay in sync
   useEffect(() => {
@@ -3297,6 +3651,11 @@ export default function PlanYearModal({
         if (!error && data) {
           planSummaryCacheRef.current.set(planSummaryYearId, data);
           setPlanSummaryData({ ...data });
+        }
+      });
+      getAcademicYearPlanEvents(familyId, planSummaryYearId).then(({ data, error }) => {
+        if (!error) {
+          setPlanSummaryActualEvents(Array.isArray(data?.events) ? data.events : []);
         }
       });
     };
@@ -3457,6 +3816,16 @@ export default function PlanYearModal({
           setPlanSubjectTargetsOverride(overrides);
         }
         const planBlocks = Array.isArray(p.blocks) ? p.blocks : [];
+        const planCurriculumSubjectIds = [
+          ...new Set(
+            (Array.isArray(p.plan_slot_labels) ? p.plan_slot_labels : [])
+              .filter((label) => !label?.open_plan_slot && ((label?.unit || '').trim() || (label?.lesson || '').trim()))
+              .map((label) => label?.subject_id)
+              .filter(Boolean)
+              .map(String),
+          ),
+        ];
+        setLoadedPlanCurriculumSubjectIds(planCurriculumSubjectIds);
         if (planBlocks.length > 0) {
           const subjectIdsFromPlan = Array.from(
             new Set(
@@ -3749,6 +4118,53 @@ export default function PlanYearModal({
     setSelectedMaterialId(initialMaterialId);
   }, [visible, initialMaterialId]);
 
+  useEffect(() => {
+    if (!visible || !initialUnitStructureMethod || !initialSubjectId) return;
+    const subjectExists = baseSubjectList.some((s) => String(s.id) === String(initialSubjectId));
+    if (!subjectExists) return;
+    const method = String(initialUnitStructureMethod);
+    setSelectedSubjectIds([initialSubjectId]);
+    setUnitFocusSubjectId(initialSubjectId);
+    setParsedContent(null);
+    setParseContentError(null);
+    setParsingContent(false);
+    setCadenceDifferentMethodNotice(null);
+    suppressManualCurriculumHydrateRef.current = false;
+    if (method === 'manual') {
+      setPlanSource('paste');
+      setDraftData(null);
+      setRawText('');
+      setUnitStructureStep('input');
+      setManualDraft(createInitialManualDraft());
+      setExpandedUnitIndexManual(0);
+      setExpandedUnits(new Set([0]));
+    } else if (method === 'paste_plain') {
+      setPlanSource('paste_plain');
+      setManualDraft(null);
+      setDraftData(null);
+      setUnitStructureStep('input');
+      setRawText('');
+      setExpandedUnits(new Set());
+      setExpandedUnitIndexManual(0);
+    } else if (method === 'upload') {
+      setPlanSource('upload');
+      setManualDraft(null);
+      setDraftData(null);
+      setUnitStructureStep('input');
+      setRawText('');
+    } else if (method === 'generate') {
+      setPlanSource('generate');
+      setManualDraft(null);
+      setDraftData(null);
+      setUnitStructureStep('input');
+      setRawText('');
+    } else {
+      return;
+    }
+    setPlanStep('unit_structure');
+    setStartCreatingNew(true);
+  }, [visible, initialUnitStructureMethod, initialSubjectId, baseSubjectList]);
+
   // When modal opens for new plan (no existing plan), leave subject selection empty until the user picks
   const prevVisibleRef = useRef(false);
   useEffect(() => {
@@ -3840,9 +4256,17 @@ export default function PlanYearModal({
         setLoadingUnitStructure(true);
         try {
           const subjectId = curriculumFetchSubjectId;
-          const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
+          const effectiveYearId = academicYearId || initialAcademicYearId || null;
+          const cacheKey = curriculumStructureCacheKey(subjectId, effectiveYearId);
+          const cached = curriculumStructureCacheRef.current.get(cacheKey);
+          const { data, error } = cached
+            ? { data: cached, error: null }
+            : await fetchSubjectCurriculumEventsStructure(familyId, subjectId, effectiveYearId);
           if (error) throw error;
           const units = Array.isArray(data?.units) ? data.units : [];
+          if (data) {
+            curriculumStructureCacheRef.current.set(cacheKey, data);
+          }
           setSavedContentSource(data?.saved_content_source ?? null);
           setUnitStructureData({ units });
           if (units.some((u) => (u.lessons || []).length > 0)) {
@@ -3859,7 +4283,7 @@ export default function PlanYearModal({
       };
       loadUnitStructure();
     }
-  }, [planStep, curriculumFetchSubjectId, familyId, unitStructureData, loadingUnitStructure, draftData, manualDraft]);
+  }, [planStep, curriculumFetchSubjectId, familyId, unitStructureData, loadingUnitStructure, draftData, manualDraft, academicYearId, initialAcademicYearId]);
 
   // Keep saved curriculum source in sync on logistics (even when unitStructureData was already loaded)
   useEffect(() => {
@@ -3868,15 +4292,23 @@ export default function PlanYearModal({
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, curriculumFetchSubjectId);
+        const effectiveYearId = academicYearId || initialAcademicYearId || null;
+        const cacheKey = curriculumStructureCacheKey(curriculumFetchSubjectId, effectiveYearId);
+        const cached = curriculumStructureCacheRef.current.get(cacheKey);
+        const { data, error } = cached
+          ? { data: cached, error: null }
+          : await fetchSubjectCurriculumEventsStructure(familyId, curriculumFetchSubjectId, effectiveYearId);
         if (cancelled || error) return;
+        if (data) {
+          curriculumStructureCacheRef.current.set(cacheKey, data);
+        }
         setSavedContentSource(data?.saved_content_source ?? null);
       } catch (_) {}
     })();
     return () => {
       cancelled = true;
     };
-  }, [planStep, familyId, curriculumFetchSubjectId]);
+  }, [planStep, familyId, curriculumFetchSubjectId, academicYearId, initialAcademicYearId]);
 
   // Load materials when upload is selected (for inline select)
   const loadMaterialsForUpload = useCallback(async () => {
@@ -4003,8 +4435,11 @@ export default function PlanYearModal({
     const slotCount = countPreviewSlotsForSubject(previewSlotLines, String(availableSubject.id));
     setGenerating(true);
     setUnitStructureError(null);
+    setGenerateStreamStatus('Preparing subject and plan context...');
+    setGenerateStreamPreview('');
     try {
-      const { data, error: err } = await generateCurriculumDraft({
+      let streamed = '';
+      const { data, error: err } = await generateCurriculumDraftStream({
         subject_id: availableSubject.id,
         family_id: familyId,
         subject_name: availableSubject.name || '',
@@ -4018,6 +4453,14 @@ export default function PlanYearModal({
         include_projects: true,
         include_materials: true,
         include_pacing: true,
+      }, {
+        onStatus: (text) => {
+          setGenerateStreamStatus(text || '');
+        },
+        onDelta: (chunk) => {
+          streamed += chunk;
+          setGenerateStreamPreview(buildHumanPreviewFromPartialJson(streamed));
+        },
       });
       if (err || !data) {
         setUnitStructureError(err?.message || 'Failed to generate curriculum');
@@ -4651,6 +5094,53 @@ export default function PlanYearModal({
 
       if (data?.academic_year_id) {
         setAcademicYearId(data.academic_year_id);
+      }
+      if (typeof window !== 'undefined' && data?.academic_year_id) {
+        const optimisticSlotLines = buildPreviewSlotLinesForPlanYear({
+          startDate,
+          endDate: effectiveEndDate,
+          blocks,
+          customHolidays,
+          customBreaks,
+          baseSubjectList,
+          children,
+          allFamilyChildIds,
+        });
+        window.dispatchEvent(
+          new CustomEvent('planSlotsCreated', {
+            detail: {
+              academicYearId: data.academic_year_id,
+              subjectIds: [...new Set((blocks || []).map((b) => b?.subject_id).filter(Boolean).map(String))],
+              slots: optimisticSlotLines.map((line) => ({
+                id: `optimistic-plan-slot-${data.academic_year_id}-${line.blockId || 'slot'}-${line.date}`,
+                academic_year_id: data.academic_year_id,
+                title: line.subjectName || 'Lesson',
+                subject_id: line.subjectId ?? null,
+                start_local: line.timeLabel === 'All day' ? '09:00' : (String(line.timeLabel || '').split('–')[0] || '09:00').trim(),
+                end_local: line.timeLabel === 'All day' ? '15:00' : (String(line.timeLabel || '').split('–')[1] || '10:00').trim(),
+                date_local: line.date,
+                child_id: null,
+                generated_by: 'plan_year',
+                is_flexible: true,
+              })),
+            },
+          }),
+        );
+        window.dispatchEvent(
+          new CustomEvent('planSlotsUpdated', {
+            detail: {
+              academicYearId: data.academic_year_id,
+              subjectIds: [...new Set((blocks || []).map((b) => b?.subject_id).filter(Boolean).map(String))],
+              slots: optimisticSlotLines.map((line) => ({
+                date_local: line.date,
+                subject_id: line.subjectId ?? null,
+                title: line.subjectName || 'Lesson',
+                start_local: line.timeLabel === 'All day' ? '09:00' : (String(line.timeLabel || '').split('–')[0] || '09:00').trim(),
+                end_local: line.timeLabel === 'All day' ? '15:00' : (String(line.timeLabel || '').split('–')[1] || '10:00').trim(),
+              })),
+            },
+          }),
+        );
       }
       await refreshPreviousPlansList();
 
@@ -7191,6 +7681,30 @@ export default function PlanYearModal({
                         editable={!generating}
                         {...(Platform.OS === 'web' && { cursor: 'text' })}
                       />
+                      {generating || generateStreamStatus || generateStreamPreview ? (
+                        <View
+                          style={{
+                            marginTop: 12,
+                            padding: 12,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            backgroundColor: '#F8FAFC',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: FG, marginBottom: 6 }}>
+                            Generation progress
+                          </Text>
+                          <Text style={{ fontSize: 13, color: TEXT_SECONDARY, lineHeight: 19 }}>
+                            {generateStreamStatus || 'Drafting curriculum...'}
+                          </Text>
+                          {generateStreamPreview ? (
+                            <Text style={{ marginTop: 8, fontSize: 13, color: FG, lineHeight: 20 }}>
+                              {generateStreamPreview}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ) : null}
                       {unitStructureError && (
                         <View style={{ marginTop: 12, padding: 12, backgroundColor: '#fee2e2', borderRadius: 8 }}>
                           <Text style={{ fontSize: 14, color: ERROR }}>{unitStructureError}</Text>
@@ -7573,7 +8087,14 @@ export default function PlanYearModal({
                     : (blocks.length > 0 ? ['Whole family'] : []);
                   const subjectNames = subjectIds.map((id) => baseSubjectList.find((s) => String(s.id) === String(id))?.name).filter(Boolean);
                   const planSlotLabelsForTitle = Array.isArray(data.plan?.plan_slot_labels) ? data.plan.plan_slot_labels : [];
-                  const unitTopics = [...new Set(planSlotLabelsForTitle.map((l) => (l.unit || '').trim()).filter(Boolean))];
+                  const actualEvents = Array.isArray(planSummaryActualEvents) ? planSummaryActualEvents : [];
+                  const actualEventUnitTopics = actualEvents
+                    .map((ev) => String(ev?.unit || ev?.curriculum_unit_title || '').trim())
+                    .filter(Boolean);
+                  const unitTopics = [...new Set([
+                    ...planSlotLabelsForTitle.map((l) => (l.unit || '').trim()).filter(Boolean),
+                    ...actualEventUnitTopics,
+                  ])];
                   const summaryTitleParts = [
                     assigneeNames.length ? assigneeNames.join(', ') : 'Whole family',
                     subjectNames.length ? subjectNames.join(', ') : 'No subject',
@@ -7600,9 +8121,20 @@ export default function PlanYearModal({
                     const s = startLocal == null ? '' : String(startLocal).trim().replace(/^(\d):/, '0$1:');
                     return `${ymd}|${String(subjectId)}|${s}`;
                   };
-                  const existingEventKeys = new Set(
-                    planEventDates.map((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local || ''))
-                  );
+                  const actualEventsByKey = new Map();
+                  actualEvents.forEach((ev) => {
+                    const sid = ev?.subject_id;
+                    const startTs = ev?.start_ts;
+                    if (!sid || !startTs) return;
+                    const dt = new Date(startTs);
+                    if (Number.isNaN(dt.getTime())) return;
+                    const ymd = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+                    const startLocal = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+                    actualEventsByKey.set(eventExistsKey(ymd, sid, startLocal), ev);
+                  });
+                  const existingEventKeys = actualEventsByKey.size > 0
+                    ? new Set(actualEventsByKey.keys())
+                    : new Set(planEventDates.map((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local || '')));
                   const summarySlotLines = (() => {
                     if (!planStart || !planEnd || blocks.length === 0) return [];
                     const exclusionRanges = [];
@@ -7624,20 +8156,38 @@ export default function PlanYearModal({
                           startLocal,
                           academicYearId: planSummaryYearId,
                         };
-                        const label = planSlotLabels.find(
-                          (l) => l.date_ymd === ymd && String(l.subject_id) === String(block.subject_id) && (startLocal == null ? l.start_local == null : (l.start_local === startLocal || (l.start_local && startLocal && l.start_local.replace(/^0/, '') === startLocal.replace(/^0/, ''))))
-                        );
-                        if (label) {
-                          if ((label.unit || '').trim()) line.unitTopic = (label.unit || '').trim();
-                          if ((label.lesson || '').trim()) line.lessonTitle = (label.lesson || '').trim();
-                          if (label.open_plan_slot) {
+                        const actualEvent = actualEventsByKey.get(key);
+                        if (actualEvent) {
+                          const actualUnit = String(actualEvent.unit || actualEvent.curriculum_unit_title || '').trim();
+                          const actualLesson = String(
+                            actualEvent.lesson ||
+                            actualEvent.curriculum_metadata?.lesson_label ||
+                            actualEvent.title ||
+                            ''
+                          ).trim();
+                          if (actualUnit) line.unitTopic = actualUnit;
+                          if (actualEvent.is_placeholder) {
                             line.lessonTitle = s('planMyYear.multiSubjectUnits.availableInstructionalSlot');
+                          } else if (actualLesson) {
+                            line.lessonTitle = actualLesson;
                           }
+                          if (actualEvent.id) line.eventId = actualEvent.id;
+                        } else {
+                          const label = planSlotLabels.find(
+                            (l) => l.date_ymd === ymd && String(l.subject_id) === String(block.subject_id) && (startLocal == null ? l.start_local == null : (l.start_local === startLocal || (l.start_local && startLocal && l.start_local.replace(/^0/, '') === startLocal.replace(/^0/, ''))))
+                          );
+                          if (label) {
+                            if ((label.unit || '').trim()) line.unitTopic = (label.unit || '').trim();
+                            if ((label.lesson || '').trim()) line.lessonTitle = (label.lesson || '').trim();
+                            if (label.open_plan_slot) {
+                              line.lessonTitle = s('planMyYear.multiSubjectUnits.availableInstructionalSlot');
+                            }
+                          }
+                          const matchingEvent = planEventDates.find((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local) === key);
+                          if (matchingEvent && matchingEvent.has_attachment) line.hasAttachment = true;
+                          const evId = matchingEvent?.event_id ?? matchingEvent?.id;
+                          if (evId) line.eventId = evId;
                         }
-                        const matchingEvent = planEventDates.find((e) => eventExistsKey(e.date_ymd, e.subject_id, e.start_local) === key);
-                        if (matchingEvent && matchingEvent.has_attachment) line.hasAttachment = true;
-                        const evId = matchingEvent?.event_id ?? matchingEvent?.id;
-                        if (evId) line.eventId = evId;
                         lines.push(line);
                       });
                     });
@@ -7662,6 +8212,47 @@ export default function PlanYearModal({
                     out.sort((a, b) => a.date.localeCompare(b.date) || (a.timeLabel || '').localeCompare(b.timeLabel || ''));
                     return out;
                   })();
+                  const summaryOverflowItems = subjectIds
+                    .map((subjectId) => {
+                      const curriculumData = planSummaryCurriculumBySubjectId[String(subjectId)];
+                      const flatLessons = flattenUnitLessonsForPreview(curriculumData?.units || []);
+                      if (!flatLessons.length) return null;
+                      const preview = buildLessonSchedulePreviewRows(
+                        mergedSlotLines,
+                        flatLessons,
+                        String(subjectId),
+                        s('planMyYear.multiSubjectUnits.availableInstructionalSlot'),
+                      );
+                      if (!preview?.overflowCount) return null;
+                      const extendEndYmd = findExtendedEndDateForLessonOverflow({
+                        startDate: planStart,
+                        endDate: planEnd,
+                        overflowCount: preview.overflowCount,
+                        curriculumSubjectId: String(subjectId),
+                        blocks,
+                        customHolidays: Array.isArray(data.holidays)
+                          ? data.holidays
+                              .filter((h) => (h.type || 'CUSTOM_HOLIDAY') === 'CUSTOM_HOLIDAY')
+                              .map((h) => ({
+                                date: typeof h.date === 'string' ? h.date.slice(0, 10) : String(h.date || '').slice(0, 10),
+                                name: h.name || '',
+                                type: 'CUSTOM_HOLIDAY',
+                              }))
+                          : [],
+                        customBreaks: [],
+                        baseSubjectList,
+                        children,
+                        allFamilyChildIds,
+                      });
+                      return {
+                        subjectId: String(subjectId),
+                        subjectName:
+                          baseSubjectList.find((s) => String(s.id) === String(subjectId))?.name || 'Subject',
+                        overflowCount: preview.overflowCount,
+                        extendEndYmd,
+                      };
+                    })
+                    .filter(Boolean);
                   return (
                     <>
                       <View style={[styles.planSummaryHeaderOuter, styles.planSummaryPadded]}>
@@ -7712,6 +8303,47 @@ export default function PlanYearModal({
                       <View style={styles.planSummaryDividerFullWrap}>
                         <View style={styles.planSummaryDividerFull} />
                       </View>
+                      {summaryOverflowItems.length > 0 ? (
+                        <View style={[styles.planSummaryPadded, { marginTop: 8, marginBottom: 6 }]}>
+                          {summaryOverflowItems.map((item) => (
+                            <View
+                              key={`summary-overflow-${item.subjectId}`}
+                              style={{
+                                marginBottom: 8,
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                backgroundColor: ELIGIBILITY_CARD_BG,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: ELIGIBILITY_CARD_BORDER,
+                              }}
+                            >
+                              <Text style={{ fontSize: 12, color: TEXT_SECONDARY, lineHeight: 17 }}>
+                                <Text style={{ fontWeight: '600', color: FG }}>{item.subjectName}</Text>
+                                <Text style={{ color: TEXT_SECONDARY }}>
+                                  {` - ${t('planMyYear.multiSubjectUnits.lessonsOverflowPastRange', {
+                                    count: item.overflowCount,
+                                  })}`}
+                                </Text>
+                                {item.extendEndYmd ? (
+                                  <Text style={{ color: TEXT_SECONDARY }}>
+                                    {' '}
+                                  </Text>
+                                ) : null}
+                                {item.extendEndYmd ? (
+                                  <Text
+                                    onPress={() => applyExtendedPlanEndDateFromSummary(item.extendEndYmd)}
+                                    style={{ color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    {t('planMyYear.multiSubjectUnits.lessonsOverflowExtendCta', { endDate: formatDateDisplay(item.extendEndYmd) })}
+                                  </Text>
+                                ) : null}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
                       {mergedSlotLines.length > 0 ? (
                         <>
                           <View style={[styles.planSummaryPadded, { marginTop: 4, marginBottom: 8 }]}>
@@ -8538,6 +9170,45 @@ export default function PlanYearModal({
                         })}
                       </View>
                   )}
+                  {openForNewPlan && !academicYearId && existingPlansForSelectedSubjects.length > 0 ? (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        backgroundColor: ELIGIBILITY_CARD_BG,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: ELIGIBILITY_CARD_BORDER,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
+                        {existingPlansForSelectedSubjects.length === 1
+                          ? `A plan already exists for ${existingPlansForSelectedSubjects[0].matchedSubjectNames.join(', ')}. `
+                          : `Plans already exist for ${existingPlansForSelectedSubjects
+                              .flatMap((p) => p.matchedSubjectNames)
+                              .filter(Boolean)
+                              .slice(0, 3)
+                              .join(', ')}. `}
+                        <Text
+                          onPress={() => {
+                            const existingPlan = existingPlansForSelectedSubjects[0];
+                            if (!existingPlan) return;
+                            setStartCreatingNew(false);
+                            setShowPlanManagerView(true);
+                            setPlanSummaryData(existingPlan.cached || planSummaryCacheRef.current.get(existingPlan.id) || null);
+                            setPlanSummaryError(null);
+                            setPlanSummaryYearId(existingPlan.id);
+                          }}
+                          style={{ color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          Open it in Edit Plan.
+                        </Text>
+                        <Text style={{ color: TEXT_SECONDARY }}> You can still continue building a new one.</Text>
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
                 </View>
 
@@ -9823,7 +10494,11 @@ export default function PlanYearModal({
                               const subjectId = unitPipelineSubjectId;
                               try {
                                 const { data: structureData, error: structureErr } =
-                                  await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
+                                  await fetchSubjectCurriculumEventsStructure(
+                                    familyId,
+                                    subjectId,
+                                    academicYearId || initialAcademicYearId || null
+                                  );
                                 if (!structureErr && Array.isArray(structureData?.units)) {
                                   setSavedContentSource(structureData?.saved_content_source ?? null);
                                   setUnitStructureData({ units: structureData.units });
@@ -10823,7 +11498,11 @@ export default function PlanYearModal({
                           const subjectId = unitPipelineSubjectId;
                           try {
                             const { data: structureData, error: structureErr } =
-                              await fetchSubjectCurriculumEventsStructure(familyId, subjectId);
+                              await fetchSubjectCurriculumEventsStructure(
+                                familyId,
+                                subjectId,
+                                academicYearId || initialAcademicYearId || null
+                              );
                             if (!structureErr && Array.isArray(structureData?.units)) {
                               setSavedContentSource(structureData?.saved_content_source ?? null);
                               setUnitStructureData({ units: structureData.units });
@@ -11123,6 +11802,7 @@ export default function PlanYearModal({
               if (typeof window !== 'undefined') {
                 invalidatePlanHealthCache();
                 window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: planSummaryYearId } }));
                 window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 setTimeout(() => window.dispatchEvent(new CustomEvent('refreshCalendar')), 150);
               }
@@ -11181,6 +11861,7 @@ export default function PlanYearModal({
               if (typeof window !== 'undefined') {
                 invalidatePlanHealthCache();
                 window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: planSummaryYearId } }));
                 window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 setTimeout(() => window.dispatchEvent(new CustomEvent('refreshCalendar')), 150);
               }

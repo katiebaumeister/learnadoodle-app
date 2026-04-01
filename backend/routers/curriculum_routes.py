@@ -642,6 +642,7 @@ def _curriculum_event_display_date(ev: Dict[str, Any]) -> Optional[str]:
 async def get_subject_curriculum_events_structure(
     family_id: str = Query(...),
     subject_id: str = Query(...),
+    academic_year_id: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
@@ -654,7 +655,7 @@ async def get_subject_curriculum_events_structure(
         if not fid or str(fid) != str(family_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
         supabase = get_admin_client()
-        res = (
+        events_query = (
             supabase.table("events")
             .select(
                 "id, title, curriculum_unit_title, curriculum_lesson_sequence, curriculum_metadata, start_ts, is_reference_date"
@@ -663,6 +664,11 @@ async def get_subject_curriculum_events_structure(
             .eq("subject_id", subject_id)
             .eq("is_curriculum_related", True)
             .is_("deleted_at", "null")
+        )
+        if academic_year_id:
+            events_query = events_query.eq("academic_year_id", academic_year_id)
+        res = (
+            events_query
             .order("curriculum_unit_title", desc=False)
             .order("curriculum_lesson_sequence", desc=False)
             .execute()
@@ -704,16 +710,17 @@ async def get_subject_curriculum_events_structure(
             units_out.append({"title": title, "lessons": lessons})
         units_out.sort(key=lambda u: u.get("title") or "")
         # How curriculum was last materialized (for Plan Year cadence: same-method vs empty replace UX)
-        src_res = (
+        source_query = (
             supabase.table("events")
             .select("source")
             .eq("family_id", family_id)
             .eq("subject_id", subject_id)
             .eq("is_curriculum_related", True)
             .is_("deleted_at", "null")
-            .limit(80)
-            .execute()
         )
+        if academic_year_id:
+            source_query = source_query.eq("academic_year_id", academic_year_id)
+        src_res = source_query.limit(80).execute()
         sources = []
         for r in src_res.data or []:
             sval = (r.get("source") or "").strip()
@@ -1011,6 +1018,68 @@ async def generate_curriculum_draft_endpoint(
     except Exception as e:
         log_event("curriculum.generate_draft.error", error=str(e), family_id=body.family_id)
         raise HTTPException(status_code=500, detail="Failed to generate curriculum draft")
+
+
+@router.post("/generate-draft-stream")
+async def generate_curriculum_draft_stream_endpoint(
+    body: GenerateCurriculumDraftRequest,
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """
+    Stream safe progress updates plus partial generator output, then the final curriculum draft.
+    """
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id or family_id != body.family_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
+
+    from services.curriculum_generation_service import (
+        stream_generate_curriculum_draft as do_stream_generate,
+    )
+
+    async def ndjson_gen():
+        try:
+            async for chunk in do_stream_generate(
+                subject_id=body.subject_id,
+                family_id=body.family_id,
+                subject_name=body.subject_name,
+                generation_scope=body.generation_scope,
+                planning_context=body.planning_context,
+                user_id=user["id"],
+                child_ids=body.child_ids,
+                learner_stage=body.learner_stage,
+                age_range=body.age_range,
+                duration_mode=body.duration_mode,
+                custom_weeks=body.custom_weeks,
+                lesson_count_target=body.lesson_count_target,
+                typical_lesson_minutes=body.typical_lesson_minutes,
+                educational_style=body.educational_style,
+                rigor_level=body.rigor_level,
+                include_assessments=body.include_assessments,
+                include_projects=body.include_projects,
+                include_materials=body.include_materials,
+                include_pacing=body.include_pacing,
+                special_instructions=body.special_instructions,
+            ):
+                yield chunk
+        except ValueError as e:
+            log_event("curriculum.generate_draft_stream.validation_error", error=str(e), family_id=body.family_id)
+            yield (json.dumps({"type": "error", "message": str(e)}) + "\n").encode("utf-8")
+        except Exception as e:
+            log_event("curriculum.generate_draft_stream.error", error=str(e), family_id=body.family_id)
+            yield (
+                json.dumps({"type": "error", "message": "Failed to generate curriculum draft"}) + "\n"
+            ).encode("utf-8")
+
+    return StreamingResponse(
+        ndjson_gen(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/commit-generated-draft", response_model=CommitGeneratedCurriculumResponse)

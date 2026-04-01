@@ -20,7 +20,7 @@ Implementation note (Generate Curriculum feature):
 import json
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Allowed values for DB (curriculum_lessons CHECK constraints)
 MODALITY_ALLOWED = {"reading", "video", "hands_on", "discussion", "practice", "quiz", "project"}
@@ -388,3 +388,106 @@ async def generate_curriculum_draft(
             raise ValueError(f"Invalid JSON from curriculum generator: {e}") from e
 
     return validate_and_normalize_draft(raw, subject_id=subject_id, family_id=family_id)
+
+
+async def stream_generate_curriculum_draft(
+    subject_id: str,
+    family_id: str,
+    subject_name: str,
+    generation_scope: str,
+    user_id: str,
+    *,
+    child_ids: Optional[List[str]] = None,
+    learner_stage: Optional[str] = None,
+    age_range: Optional[Dict[str, int]] = None,
+    duration_mode: str = "multi_unit_course",
+    custom_weeks: Optional[int] = None,
+    lesson_count_target: Optional[int] = None,
+    typical_lesson_minutes: Optional[int] = None,
+    educational_style: Optional[str] = None,
+    rigor_level: Optional[str] = None,
+    include_assessments: bool = True,
+    include_projects: bool = True,
+    include_materials: bool = True,
+    include_pacing: bool = True,
+    special_instructions: Optional[str] = None,
+    planning_context: Optional[str] = None,
+) -> AsyncGenerator[bytes, None]:
+    """
+    Stream safe generation progress plus partial JSON deltas, then emit the final normalized draft.
+    This exposes user-visible progress, not hidden chain-of-thought.
+    """
+    import os
+    from openai import AsyncOpenAI
+
+    def _event(payload: Dict[str, Any]) -> bytes:
+        return (json.dumps(payload) + "\n").encode("utf-8")
+
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    user_content = build_user_prompt(
+        subject_name=subject_name,
+        generation_scope=generation_scope,
+        learner_stage=learner_stage,
+        duration_mode=duration_mode,
+        custom_weeks=custom_weeks,
+        lesson_count_target=lesson_count_target,
+        typical_lesson_minutes=typical_lesson_minutes,
+        educational_style=educational_style,
+        rigor_level=rigor_level,
+        include_assessments=include_assessments,
+        include_projects=include_projects,
+        include_materials=include_materials,
+        include_pacing=include_pacing,
+        special_instructions=special_instructions,
+        planning_context=planning_context,
+    )
+    system_content = build_system_prompt()
+
+    yield _event({"type": "status", "text": f"Reviewing {subject_name} details and plan setup..."})
+    if planning_context:
+        yield _event({"type": "status", "text": "Using subject info, attached children, dates, and class schedule to size the draft..."})
+    else:
+        yield _event({"type": "status", "text": "Using the subject request details to size the draft..."})
+    yield _event({"type": "status", "text": "Drafting units and lessons..."})
+
+    stream = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.4,
+        response_format={"type": "json_object"},
+        timeout=120.0,
+        stream=True,
+    )
+
+    chunks: List[str] = []
+    async for part in stream:
+        delta = None
+        try:
+            delta = part.choices[0].delta.content
+        except Exception:
+            delta = None
+        if not delta:
+            continue
+        chunks.append(delta)
+        yield _event({"type": "delta", "text": delta})
+
+    content = "".join(chunks)
+    if not content or not content.strip():
+        raise ValueError("Empty response from curriculum generator")
+
+    yield _event({"type": "status", "text": "Finalizing curriculum draft..."})
+
+    try:
+        raw = json.loads(content)
+    except json.JSONDecodeError as e:
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            raw = json.loads(match.group(0))
+        else:
+            raise ValueError(f"Invalid JSON from curriculum generator: {e}") from e
+
+    draft = validate_and_normalize_draft(raw, subject_id=subject_id, family_id=family_id)
+    yield _event({"type": "complete", "data": draft})
