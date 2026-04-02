@@ -3,6 +3,11 @@ import { auth } from '../lib/supabase'
 
 const AuthContext = createContext({})
 
+const getGoogleAuthRedirectTo = () => {
+  if (typeof window === 'undefined') return undefined
+  return `${window.location.origin}/home`
+}
+
 export const useAuth = () => {
   return useContext(AuthContext)
 }
@@ -69,6 +74,30 @@ export const AuthProvider = ({ children }) => {
         return false;
       }
 
+      const applyOAuthSession = (nextSession) => {
+        if (mounted) {
+          setSession(nextSession ?? null);
+          setUser(nextSession?.user ?? null);
+          setLoading(false);
+        }
+      };
+
+      const finalizeOAuthUrl = () => {
+        const hasInvite = url.searchParams.has('invite');
+        const shouldRouteToHome = !hasInvite && (pathname === '/' || pathname === '/login' || pathname === '/signup');
+
+        if (shouldRouteToHome) {
+          const nextUrl = new URL(`${url.origin}/home`);
+          window.history.replaceState({}, '', nextUrl.toString());
+          window.dispatchEvent(new PopStateEvent('popstate'));
+          return true;
+        }
+
+        window.history.replaceState({}, '', url.toString());
+        window.dispatchEvent(new PopStateEvent('popstate'));
+        return true;
+      };
+
       if (accessToken && refreshToken && typeof auth.setSession === 'function') {
         try {
           const { data, error: sessionError } = await auth.setSession({
@@ -77,20 +106,14 @@ export const AuthProvider = ({ children }) => {
           });
           if (sessionError) throw sessionError;
 
-          if (mounted) {
-            setSession(data?.session ?? null);
-            setUser(data?.session?.user ?? null);
-            setLoading(false);
-          }
+          applyOAuthSession(data?.session);
 
           url.searchParams.delete('access_token');
           url.searchParams.delete('refresh_token');
           url.searchParams.delete('error');
           url.searchParams.delete('error_description');
           url.hash = '';
-          window.history.replaceState({}, '', url.toString());
-          window.dispatchEvent(new PopStateEvent('popstate'));
-          return true;
+          return finalizeOAuthUrl();
         } catch (_) {
           if (mounted) {
             setLoading(false);
@@ -107,29 +130,13 @@ export const AuthProvider = ({ children }) => {
         const { data, error: exchangeError } = await auth.exchangeCodeForSession(code);
         if (exchangeError) throw exchangeError;
 
-        if (mounted) {
-          setSession(data?.session ?? null);
-          setUser(data?.session?.user ?? null);
-          setLoading(false);
-        }
+        applyOAuthSession(data?.session);
 
         url.searchParams.delete('code');
         url.searchParams.delete('state');
         url.searchParams.delete('error');
         url.searchParams.delete('error_description');
-        const hasInvite = url.searchParams.has('invite');
-        const shouldRouteToHome = !hasInvite && (pathname === '/' || pathname === '/login' || pathname === '/signup');
-
-        if (shouldRouteToHome) {
-          const nextUrl = new URL(`${url.origin}/home`);
-          window.history.replaceState({}, '', nextUrl.toString());
-          window.dispatchEvent(new PopStateEvent('popstate'));
-          return true;
-        }
-
-        window.history.replaceState({}, '', url.toString());
-        window.dispatchEvent(new PopStateEvent('popstate'));
-        return true;
+        return finalizeOAuthUrl();
       } catch (_) {
         if (mounted) {
           setLoading(false);
@@ -222,9 +229,7 @@ export const AuthProvider = ({ children }) => {
 
   const signInWithGoogle = async (options = {}) => {
     try {
-      const redirectTo = options.redirectTo || (typeof window !== 'undefined'
-        ? `${window.location.origin}/home`
-        : undefined)
+      const redirectTo = options.redirectTo || getGoogleAuthRedirectTo()
       const { data, error } = await auth.signInWithGoogle({ redirectTo })
       if (error) throw error
       return { data, error: null }

@@ -178,8 +178,7 @@ export default function AuthScreen() {
   const handleGoogleAuth = async () => {
     setLoading(true)
     try {
-      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/home` : undefined
-      const { error } = await signInWithGoogle({ redirectTo })
+      const { error } = await signInWithGoogle()
       if (error) {
         Alert.alert('Error', error.message || 'Failed to start Google sign in')
       }
