@@ -1090,8 +1090,8 @@ const styles = StyleSheet.create({
   },
   authButton: {
     backgroundColor: '#60a5fa', // Blue button to match theme
-    paddingVertical: 14,
-    minHeight: 56,
+    paddingVertical: 10,
+    minHeight: 48,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1129,8 +1129,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#d1d5db',
-    paddingVertical: 14,
-    minHeight: 56,
+    paddingVertical: 10,
+    minHeight: 48,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',

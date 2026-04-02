@@ -475,8 +475,8 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: '#667eea',
     borderRadius: 10,
-    padding: 15,
-    minHeight: 56,
+    padding: 12,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
@@ -484,8 +484,8 @@ const styles = StyleSheet.create({
   googleButton: {
     backgroundColor: '#ffffff',
     borderRadius: 10,
-    padding: 15,
-    minHeight: 56,
+    padding: 12,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,

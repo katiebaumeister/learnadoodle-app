@@ -88,11 +88,14 @@ export const AuthProvider = ({ children }) => {
         const shouldRouteToHome = !hasInvite && (pathname === '/' || pathname === '/login' || pathname === '/signup');
 
         if (shouldRouteToHome) {
-          window.location.replace(`${url.origin}/home`);
+          const nextUrl = new URL(`${url.origin}/home`);
+          window.history.replaceState({}, '', nextUrl.toString());
+          window.dispatchEvent(new PopStateEvent('popstate'));
           return true;
         }
 
         window.history.replaceState({}, '', url.toString());
+        window.dispatchEvent(new PopStateEvent('popstate'));
         return true;
       } catch (_) {
         if (mounted) {
