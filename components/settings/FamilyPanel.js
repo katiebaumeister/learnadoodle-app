@@ -1339,7 +1339,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   setGoogleAccountEmail(integration.account_email);
                 }
               } else if (integration.provider === 'youtube') {
-                setProviderConnection('youtube', integration.connected);
+                setProviderConnection('youtube', false);
               }
             });
             
@@ -1391,7 +1391,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               setGoogleAccountEmail(integration.account_email);
             }
           } else if (integration.provider === 'youtube') {
-            setProviderConnection('youtube', integration.connected);
+            setProviderConnection('youtube', false);
           }
         });
       }
@@ -1491,30 +1491,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         } else {
           throw new Error('OAuth popup not supported on this platform');
         }
-      } else if (providerKey === 'youtube') {
-        // YouTube uses API key, not OAuth - just check if it's configured
-        const res = await fetch(`${apiBase}/api/integrations/status`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-        });
-
-        if (res.ok) {
-          const statusData = await res.json();
-          const youtubeIntegration = statusData.find(i => i.provider === 'youtube');
-          
-          if (youtubeIntegration && youtubeIntegration.connected) {
-            setProviderConnection('youtube', true);
-            toast.push('YouTube API is configured and ready to use', 'success');
-          } else {
-            toast.push('YouTube API key is not configured. Please contact support.', 'error');
-          }
-        } else {
-          throw new Error('Failed to check YouTube status');
-        }
-        setConnectingProvider(null);
       } else {
-        // Other providers - placeholder for now
+        const comingSoonProviders = ['dropbox', 'notion', 'youtube', 'quizlet', 'vimeo', 'canvas'];
+        if (comingSoonProviders.includes(providerKey)) {
+          setShowComingSoonModal(true);
+          setConnectingProvider(null);
+          return;
+        }
+
         toast.push(`${providerKey} connection coming soon`, 'info');
         setConnectingProvider(null);
       }
@@ -1552,9 +1536,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         setGoogleAccountEmail(null);
         clearConnectionStatusCache();
         toast.push('Google account disconnected', 'success');
-      } else if (providerKey === 'youtube') {
-        // YouTube uses API key, can't be "disconnected" per se
-        toast.push('YouTube API key is configured at the system level and cannot be disconnected here', 'info');
       } else {
         // Other providers
         setProviderConnection(providerKey, false);
@@ -1624,6 +1605,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google';
+                const isComingSoon = ['dropbox', 'notion'].includes(key);
                 const isHovered = hoveredConnectionKey === key;
 
                 return (
@@ -1654,6 +1636,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             {!isConnected && isRecommended && (
                               <View style={styles.connectionRecommendedChip}>
                                 <Text style={styles.connectionRecommendedText}>Recommended</Text>
+                              </View>
+                            )}
+                            {!isConnected && isComingSoon && (
+                              <View style={styles.connectionComingSoonChip}>
+                                <Text style={styles.connectionComingSoonText}>Coming soon</Text>
                               </View>
                             )}
                           </View>
@@ -1726,6 +1713,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
+                const isComingSoon = ['youtube', 'quizlet', 'vimeo', 'canvas'].includes(key);
                 const isHovered = hoveredConnectionKey === key;
 
                 return (
@@ -1753,9 +1741,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                 <Text style={styles.connectionStatusText}>Connected</Text>
                               </View>
                             )}
+                            {isComingSoon && (
+                              <View style={styles.connectionComingSoonChip}>
+                                <Text style={styles.connectionComingSoonText}>Coming soon</Text>
+                              </View>
+                            )}
                           </View>
                           <Text style={styles.connectionRowDescription}>{description}</Text>
-                          {isConnected && (
+                          {isConnected && !isComingSoon && (
                             <Text style={styles.connectionLastSynced}>Last synced today</Text>
                           )}
                         </View>
@@ -5232,6 +5225,20 @@ function createStyles(tokens) {
       fontSize: 12,
       fontWeight: '600',
       color: '#d97706',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    connectionComingSoonChip: {
+      backgroundColor: '#e5e7eb',
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    connectionComingSoonText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#4b5563',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),

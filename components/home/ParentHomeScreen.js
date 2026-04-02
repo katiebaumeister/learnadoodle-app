@@ -32,6 +32,7 @@ export default function ParentHomeScreen({
   onAddMaterial,
   onAddSubject,
   onAddChild,
+  hideRailOnboardingCards = false,
 }) {
   const session = useSession();
   const [homeData, setHomeData] = useState(null);
@@ -460,6 +461,7 @@ export default function ParentHomeScreen({
         onViewAll={() => onNavigate?.('review-inbox')}
         onInviteChild={handleInviteChildFromRail}
         onGoToPlanner={() => onNavigate?.('planner')}
+        hideOnboardingCards={hideRailOnboardingCards}
       />
     </View>
   );

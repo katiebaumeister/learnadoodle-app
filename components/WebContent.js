@@ -8356,9 +8356,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   const renderContent = (plannerTabsReturnNull = false) => {
     const homeFamilyIdForContent = familyId || propSession?.family_id || null;
-    const renderParentHomeCommon = (fid) => (
+    const renderParentHomeCommon = (fid, options = {}) => (
       <ParentHomeScreen
         familyId={fid}
+        hideRailOnboardingCards={options.hideRailOnboardingCards === true}
         onNavigate={onTabChange}
         onAddEvent={() => {
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -8513,7 +8514,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               />
             );
           }
-          return renderParentHomeCommon(homeFamilyIdForContent);
+          return renderParentHomeCommon(homeFamilyIdForContent, {
+            hideRailOnboardingCards: propSession?.role_flags?.isChild === true,
+          });
         }
         if (isChild && hasAccessibleChildren) {
           return (
@@ -8522,6 +8525,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onNavigate={onTabChange}
             />
           );
+        }
+        if (isChild) {
+          return renderParentHomeCommon(homeFamilyIdForContent, { hideRailOnboardingCards: true });
         }
         if (isTutor) {
           return (
