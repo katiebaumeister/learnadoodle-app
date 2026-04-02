@@ -189,7 +189,15 @@ export const AuthProvider = ({ children }) => {
 
   const signInWithGoogle = async (options = {}) => {
     try {
-      const redirectTo = options.redirectTo || (typeof window !== 'undefined' ? window.location.origin : undefined)
+      const redirectTo = options.redirectTo || (typeof window !== 'undefined'
+        ? (() => {
+            const host = window.location.hostname || ''
+            const canonical = (host === 'www.learnadoodle.com' || host === 'learnadoodle.com')
+              ? 'https://learnadoodle.com'
+              : window.location.origin
+            return `${canonical}/home`
+          })()
+        : undefined)
       const { data, error } = await auth.signInWithGoogle({ redirectTo })
       if (error) throw error
       return { data, error: null }

@@ -391,7 +391,13 @@ export default function WebAuthScreen() {
     clearMessages();
     setLoading(true);
     try {
-      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const redirectTo = typeof window !== 'undefined' ? (() => {
+        const host = window.location.hostname || '';
+        const canonical = (host === 'www.learnadoodle.com' || host === 'learnadoodle.com')
+          ? 'https://learnadoodle.com'
+          : window.location.origin;
+        return `${canonical}/home`;
+      })() : undefined;
       const { error } = await signInWithGoogle({ redirectTo });
       if (error) {
         setErrorMessage(error.message || 'Failed to start Google sign in');
