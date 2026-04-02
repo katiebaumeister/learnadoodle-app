@@ -23,6 +23,7 @@ from routers.util import (
 from llm import llm_extract_outline, llm_suggest_plan
 from llm_skills import llm_extract_skills
 from auth import get_current_user, rate_limiter
+from ai_usage_ledger import record_ai_usage
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
@@ -134,6 +135,19 @@ async def parse_syllabus(body: ParseSyllabusBody):
         
         # Persist outline
         saved = await util_save_outline(body.syllabus_id, outline)
+        
+        try:
+            supa = get_admin_client()
+            syll = supa.table("syllabi").select("family_id").eq("id", body.syllabus_id).maybe_single().execute()
+            fid = syll.data.get("family_id") if syll.data else None
+            if fid:
+                record_ai_usage(
+                    fid,
+                    "parseUploadedMaterial",
+                    metadata={"route": "parse-syllabus", "syllabus_id": body.syllabus_id},
+                )
+        except Exception:
+            pass
         
         return {
             "sections": saved.get("sections_count", 0),
@@ -348,6 +362,13 @@ async def parse_syllabus_enhanced(body: ParseSyllabusEnhancedBody):
             "evidence_linked": linked_count if body.child_id else 0
         }
         
+        record_ai_usage(
+            body.family_id,
+            "parseUploadedMaterial",
+            idempotency_key=f"parse_enhanced_{body.syllabus_id}",
+            metadata={"route": "parse-syllabus-enhanced", "syllabus_id": body.syllabus_id},
+        )
+        
         # Include pending backlog items for review if not creating them
         if body.child_id and not body.create_backlog_items and "pending_backlog_items" in locals():
             result["pending_backlog_items"] = pending_backlog_items
@@ -538,6 +559,18 @@ async def suggest_plan(body: SuggestPlanBody):
                 "reason": body.reason
             },
             proposal=proposal
+        )
+        
+        _plan_action = "generatePlanMultiWeek" if body.horizon_weeks > 1 else "generatePlanWeek"
+        record_ai_usage(
+            body.family_id,
+            _plan_action,
+            idempotency_key=f"suggest_plan_{plan_id}" if plan_id else None,
+            metadata={
+                "route": "suggest-plan",
+                "horizon_weeks": body.horizon_weeks,
+                "reason": body.reason,
+            },
         )
         
         result = {

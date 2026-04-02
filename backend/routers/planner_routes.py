@@ -31,6 +31,7 @@ from auth import get_current_user, rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family, get_placeholder_conversion_fields, require_onboarding_complete
 from logger import log_event
 from supabase_client import get_admin_client
+from ai_usage_ledger import record_ai_usage
 
 router = APIRouter(prefix="/api/planner", tags=["planner"])
 events_router = APIRouter(prefix="/api/events", tags=["events"])
@@ -1846,6 +1847,13 @@ async def plan_week_endpoint(
         
         run_id = f"pw_{family_id}_{int(datetime.now().timestamp())}"
         
+        record_ai_usage(
+            family_id,
+            "generatePlanWeek",
+            idempotency_key=run_id,
+            metadata={"route": "plan_week", "week_start": body.week_start},
+        )
+        
         return {
             "summary": summary,
             "patch": patch,
@@ -2312,6 +2320,13 @@ async def preview_resolve_conflicts(
         
         plan_id = f"rc_{family_id}_{int(datetime.now().timestamp())}"
         
+        record_ai_usage(
+            family_id,
+            "resolveConflicts",
+            idempotency_key=plan_id,
+            metadata={"route": "resolve_conflicts/preview"},
+        )
+        
         return {
             "plan_id": plan_id,
             "conflicts": conflicts,
@@ -2661,6 +2676,12 @@ async def ai_chat_endpoint(
         except Exception as e:
             log_event("planner.ai_chat.llm_error", user_id=user["id"], family_id=family_id, error=str(e))
             raise HTTPException(status_code=500, detail=f"AI service unavailable: {str(e)}")
+        
+        record_ai_usage(
+            family_id,
+            "chatbotPlannerAware",
+            metadata={"route": "ai_chat"},
+        )
         
         # Format response
         response_text = coach_response.get("response", "I've analyzed your question based on the available data.")

@@ -22,6 +22,7 @@ from auth import get_current_user, rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family
 from logger import log_event
 from supabase_client import get_admin_client
+from ai_usage_ledger import record_ai_usage
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
 
@@ -954,6 +955,12 @@ async def build_curriculum(
             user_id=user["id"]
         )
         
+        record_ai_usage(
+            family_id,
+            "curriculumImportStructuring",
+            metadata={"route": "curriculum/build", "mode": body.mode},
+        )
+        
         return result
         
     except HTTPException:
@@ -1008,6 +1015,11 @@ async def generate_curriculum_draft_endpoint(
             subject_id=body.subject_id,
             units_count=len(draft.get("units", [])),
             user_id=user["id"],
+        )
+        record_ai_usage(
+            body.family_id,
+            "curriculumImportStructuring",
+            metadata={"route": "curriculum/generate-draft", "subject_id": body.subject_id},
         )
         return draft
     except ValueError as e:

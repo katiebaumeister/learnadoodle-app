@@ -5,7 +5,7 @@ Part of Phase 1 - Year-Round Intelligence Core
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import sys
 from pathlib import Path
 import time
@@ -21,6 +21,8 @@ from auth import get_current_user, rate_limiter
 from helpers import get_family_id_for_user, child_belongs_to_family
 from logger import log_event
 from metrics import increment_counter
+from services.rebalance_rhythm import compute_rebalance_rhythm
+from ai_usage_ledger import record_ai_usage
 
 try:
     from supabase_client import get_admin_client
@@ -99,6 +101,21 @@ class RebalanceOut(BaseModel):
     moves: List[RebalanceMove]
     count: int
     error: Optional[str] = None
+
+
+class RebalanceRhythmInput(BaseModel):
+    familyId: str
+    weekStart: Optional[str] = None  # YYYY-MM-DD (defaults to Monday of current week)
+    horizonWeeks: int = Field(default=4, ge=1, le=12)
+    childIds: Optional[List[str]] = None
+
+
+class RebalanceRhythmOut(BaseModel):
+    ok: bool
+    moves: List[RebalanceMove]
+    count: int
+    error: Optional[str] = None
+    insights: Optional[Dict[str, Any]] = None
 
 
 # ============================================================
@@ -470,6 +487,12 @@ async def rebalance_schedule(
             ))
         
         log_event("year.rebalance.success", user_id=user["id"], move_count=len(moves))
+        record_ai_usage(
+            family_id,
+            "rebalanceSingleWeek",
+            idempotency_key=f"year_rebalance_{body.yearPlanId}_{body.eventId}_{body.newStart}",
+            metadata={"route": "year/rebalance"},
+        )
         return RebalanceOut(
             ok=True,
             moves=moves,
@@ -483,6 +506,80 @@ async def rebalance_schedule(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to rebalance: {str(e)}"
+        )
+
+
+@router.post("/rebalance-rhythm", response_model=RebalanceRhythmOut)
+async def rebalance_rhythm_schedule(
+    body: RebalanceRhythmInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    """
+    Preview rhythm rebalance: spread scheduled minutes across instructional weekdays using
+    academic year plan targets; optionally surface backlog hints when weeks are light.
+    """
+    log_event("year.rebalance_rhythm.start", user_id=user["id"], family_hash=hash_family_id(body.familyId))
+    try:
+        user_family_id = get_family_id_for_user(user["id"])
+        if not user_family_id or user_family_id != body.familyId:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Family mismatch",
+            )
+
+        if body.weekStart:
+            try:
+                ws = datetime.fromisoformat(body.weekStart[:10]).date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid weekStart. Use YYYY-MM-DD",
+                )
+        else:
+            today = datetime.now(timezone.utc).date()
+            ws = today - timedelta(days=today.weekday())
+
+        supabase = get_admin_client()
+        result = compute_rebalance_rhythm(
+            supabase,
+            body.familyId,
+            ws,
+            horizon_weeks=body.horizonWeeks,
+            child_ids_filter=body.childIds,
+        )
+        moves = [
+            RebalanceMove(
+                eventId=m["eventId"],
+                currentStart=m["currentStart"],
+                proposedStart=m["proposedStart"],
+                reason=m["reason"],
+            )
+            for m in result.get("moves", [])
+        ]
+        log_event(
+            "year.rebalance_rhythm.success",
+            user_id=user["id"],
+            move_count=len(moves),
+        )
+        record_ai_usage(
+            body.familyId,
+            "rebalanceSingleWeek",
+            metadata={"route": "year/rebalance-rhythm", "horizon_weeks": body.horizonWeeks, "week_start": ws.isoformat()},
+        )
+        return RebalanceRhythmOut(
+            ok=True,
+            moves=moves,
+            count=len(moves),
+            insights=result.get("insights"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event("year.rebalance_rhythm.error", user_id=user["id"], error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed rhythm rebalance: {str(e)}",
         )
 
 

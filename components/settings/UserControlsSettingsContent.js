@@ -171,7 +171,6 @@ export default function UserControlsSettingsContent({
   return (
     <View style={styles.container}>
       <Text style={styles.title}>User Controls</Text>
-      <Text style={styles.lead}>Choose what invited children and tutors can do in your family.</Text>
       <Text style={styles.helperText}>
         When a permission is off, learners and tutors can still view content they already have access to - they just
         cannot add or change items in that area.
@@ -247,15 +246,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  lead: {
-    fontSize: 15,
-    color: '#6b7280',
-    lineHeight: 22,
-    marginBottom: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   helperText: {

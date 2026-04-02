@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -30,6 +30,8 @@ import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import UserControlsSettingsContent from './UserControlsSettingsContent';
 import GoogleDriveImportModal from './GoogleDriveImportModal';
+import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
+import { fetchFamilyAiUnitsUsedThisMonth } from '../../lib/aiUsageSubscription';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 
@@ -149,6 +151,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Active section for sidebar navigation
   const [activeSection, setActiveSection] = useState(propInitialSection || 'profile');
+  /** Monthly AI units (internal); drives Subscription 80% warning. */
+  const [aiUsedUnitsThisMonth, setAiUsedUnitsThisMonth] = useState(null);
 
   // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
   useEffect(() => {
@@ -156,6 +160,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setActiveSection(propInitialSection);
     }
   }, [propInitialSection]);
+
+  useEffect(() => {
+    if (activeSection !== 'subscription' || !familyId) return;
+    let cancelled = false;
+    (async () => {
+      const units = await fetchFamilyAiUnitsUsedThisMonth(familyId);
+      if (!cancelled) setAiUsedUnitsThisMonth(units);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, familyId]);
 
   // Modal state
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
@@ -2591,102 +2607,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         );
       }
       
-      case 'doodlemax':
+      case 'subscription':
         return (
-          <View style={styles.mainContentInner}>
-            {/* Premium Header Card */}
-            <View style={styles.doodleMaxHeaderCard}>
-              <View style={styles.doodleMaxBadge}>
-                <Crown size={16} color="#ffffff" />
-                <Text style={styles.doodleMaxBadgeText}>PREMIUM</Text>
-              </View>
-              <Text style={styles.doodleMaxHeaderTitle}>Unlock the full power of Learnadoodle</Text>
-              <Text style={styles.doodleMaxHeaderSubtitle}>Get DoodleMax to supercharge your family's learning journey</Text>
-              <TouchableOpacity
-                style={styles.doodleMaxStartButton}
-                onPress={() => toast.push('DoodleMax subscription coming soon!', 'info')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.doodleMaxStartButtonText}>START DOODLEMAX</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Features Section */}
-            <Text style={styles.doodleMaxFeaturesTitle}>What you'll get with Learnadoodle Premium</Text>
-            <View style={styles.subsectionDivider} />
-            
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <Infinity size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Unlimited Smart Tokens</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>No limits on AI planning, rescheduling, or insights</Text>
-              </View>
-            </View>
-
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <Calendar size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Year & Multi-Year Planning</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>Plan semesters, school years, and long-term goals</Text>
-              </View>
-            </View>
-
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <Users size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Tutor & Co-Teacher Sharing</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>Invite tutors, co-ops, or partners into planning</Text>
-              </View>
-            </View>
-
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <BarChart2 size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Learning & Motivation Reports</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>See how teaching is landing - focus, energy, momentum</Text>
-              </View>
-            </View>
-
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <Heart size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Connection Report</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>Insights to strengthen the parent-child learning relationship</Text>
-              </View>
-            </View>
-
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <FileText size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Automatic Records & Exports</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>Attendance, progress, and summaries - done for you</Text>
-              </View>
-            </View>
-
-            <View style={styles.doodleMaxFeatureItem}>
-              <View style={styles.doodleMaxFeatureIcon}>
-                <SlidersHorizontal size={16} color="#6b7280" />
-              </View>
-              <View style={styles.doodleMaxFeatureText}>
-                <Text style={styles.doodleMaxFeatureName}>Advanced Views & Filters</Text>
-                <Text style={styles.doodleMaxFeatureDesc}>Learning Goals, workload, and child-specific lenses</Text>
-              </View>
-            </View>
+          <View style={[styles.mainContentInner, styles.mainContentSubscriptionShell]}>
+            <SubscriptionScreen
+              onStoreLinksComingSoon={() => setShowComingSoonModal(true)}
+              aiUsedUnitsThisMonth={aiUsedUnitsThisMonth}
+            />
           </View>
         );
-      
+
       case 'help':
         const faqSections = [
           {
@@ -3793,7 +3723,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           ]} 
           contentContainerStyle={[
             styles.mainContentContainer,
-            (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') && styles.mainContentContainerAbout
+            (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') && styles.mainContentContainerAbout,
+            activeSection === 'subscription' && styles.mainContentContainerSubscriptionFill,
           ]}
         >
           {renderMainContent()}
@@ -3856,16 +3787,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
           {/* Subscription Card — hidden for linked tutors/children; child self-signup from onboarding only */}
           {showFamilySubscriptionCard ? (
-            <View style={styles.sidebarCard}>
+            <TouchableOpacity
+              style={[
+                styles.sidebarCard,
+                activeSection === 'subscription' && styles.sidebarSubscriptionCardActive,
+              ]}
+              onPress={() => setActiveSection('subscription')}
+              activeOpacity={0.9}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
               <Text style={styles.sidebarCardTitle}>Subscription</Text>
               <View style={styles.sidebarSubscriptionContent}>
                 <View style={styles.sidebarSubscriptionInfo}>
-                  <TouchableOpacity
-                    onPress={() => setShowComingSoonModal(true)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.sidebarSubscriptionPlan}>DoodleMax Plan</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.sidebarSubscriptionPlan}>Family plan</Text>
                   <View style={styles.sidebarSubscriptionStatusRow}>
                     <View style={styles.sidebarSubscriptionStatusChip}>
                       <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
@@ -3874,7 +3808,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   </View>
                 </View>
               </View>
-            </View>
+            </TouchableOpacity>
           ) : null}
 
           {/* Support Card */}
@@ -4557,6 +4491,18 @@ function createStyles(tokens) {
       paddingRight: 32,
       alignItems: 'center',
     },
+    mainContentContainerSubscriptionFill: {
+      flexGrow: 1,
+    },
+    mainContentSubscriptionShell: {
+      flex: 1,
+      minWidth: 0,
+      width: '100%',
+      backgroundColor: '#ffffff',
+      ...(Platform.OS === 'web' && {
+        minHeight: '100%',
+      }),
+    },
     mainContentInner: {
       width: '100%',
     },
@@ -4886,6 +4832,10 @@ function createStyles(tokens) {
       paddingHorizontal: 20,
       flexShrink: 0,
     },
+    sidebarSubscriptionCardActive: {
+      backgroundColor: '#f3f4f6',
+      borderColor: '#d1d5db',
+    },
     sidebarCardTitle: {
       fontSize: 14,
       fontWeight: '700',
@@ -5115,9 +5065,9 @@ function createStyles(tokens) {
       }),
     },
     connectionsSectionTitle: {
-      fontSize: 20,
-      fontWeight: '700',
-      color: '#111827',
+      fontSize: 18,
+      fontWeight: '600',
+      color: '#374151',
       marginTop: 0,
       marginBottom: 12,
       ...(Platform.OS === 'web' && {

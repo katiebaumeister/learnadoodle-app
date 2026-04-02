@@ -55,6 +55,8 @@ except ImportError:
     spec.loader.exec_module(supabase_client)
     get_admin_client = supabase_client.get_admin_client
 
+from ai_usage_ledger import record_ai_usage
+
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
@@ -690,6 +692,12 @@ async def pack_week(
                 events=events_list,
                 notes=notes,
                 taskRunId=task_id
+            )
+            record_ai_usage(
+                family_id,
+                "generatePlanWeek",
+                idempotency_key=str(task_id),
+                metadata={"route": "ai/pack_week", "week_start": body.weekStart},
             )
             print(f"[AI_ROUTES] Response object created successfully")
             return response

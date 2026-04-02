@@ -68,7 +68,7 @@ import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader from './AppLoader';
-import { comingSoonModalStyles } from '../theme/comingSoonModalTheme';
+import RebalanceModal from './year/RebalanceModal';
 
 /** Parent-only post-onboarding explorer tour (spotlight copy). */
 const EXPLORER_PARENT_STEPS = [
@@ -265,6 +265,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
   const planYearModalReturnSubjectIdRef = useRef(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
+  const [rebalanceEvent, setRebalanceEvent] = useState(null);
+  const [rebalanceYearPlanId, setRebalanceYearPlanId] = useState(null);
   const [showPlanYearDropdown, setShowPlanYearDropdown] = useState(false);
   const planYearDropdownButtonRef = useRef(null);
   const planYearDropdownRef = useRef(null);
@@ -3635,7 +3637,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
                       setShowBuildCurriculumModal(true);
                     }}
-                    onOpenRebalance={() => setShowRebalanceModal(true)}
+                    onOpenRebalance={(params) => {
+                      setRebalanceEvent(params?.event ?? null);
+                      setRebalanceYearPlanId(params?.yearPlanId ?? null);
+                      setShowRebalanceModal(true);
+                    }}
                     onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
                     onOpenManualCurriculumBuilder={(detail) => {
                       setManualCurriculumBuilderContext({
@@ -3695,6 +3701,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   }}
                   onRebalance={() => {
                     setActiveRightTool('rebalance');
+                    setRebalanceEvent(null);
+                    setRebalanceYearPlanId(null);
                     setShowRebalanceModal(true);
                   }}
                   onBuildPlan={() => {
@@ -3884,8 +3892,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setShowBuildCurriculumModal(true);
         }}
         onOpenRebalance={(params) => {
-          setRebalanceEventId(params.eventId || null);
-          setRebalanceYearPlanId(params.yearPlanId || null);
+          setRebalanceEvent(params?.event ?? null);
+          setRebalanceYearPlanId(params?.yearPlanId ?? null);
           setShowRebalanceModal(true);
         }}
         onOpenManualCurriculumBuilder={(detail) => {
@@ -4101,6 +4109,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
         onOpenRebalance={() => {
           setShowAIToolsModal(false);
+          setRebalanceEvent(null);
+          setRebalanceYearPlanId(null);
           setShowRebalanceModal(true);
         }}
         onOpenWhatIf={() => {
@@ -4218,57 +4228,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
       />
 
-      {/* Rebalance — coming soon */}
-      <Modal
+      <RebalanceModal
         visible={showRebalanceModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
+        event={rebalanceEvent}
+        yearPlanId={rebalanceYearPlanId}
+        familyId={familyId}
+        onClose={() => {
           setShowRebalanceModal(false);
+          setRebalanceEvent(null);
+          setRebalanceYearPlanId(null);
           setActiveRightTool(null);
         }}
-      >
-        <TouchableOpacity
-          activeOpacity={1}
-          style={comingSoonModalStyles.overlay}
-          onPress={() => {
-            setShowRebalanceModal(false);
-            setActiveRightTool(null);
-          }}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
-            style={comingSoonModalStyles.content}
-          >
-            <TouchableOpacity
-              onPress={() => {
-                setShowRebalanceModal(false);
-                setActiveRightTool(null);
-              }}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              style={comingSoonModalStyles.close}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={24} color="#64748B" />
-            </TouchableOpacity>
-            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
-            <Text style={comingSoonModalStyles.body}>
-              This feature is in development. Stay tuned for updates!
-            </Text>
-            <TouchableOpacity
-              onPress={() => {
-                setShowRebalanceModal(false);
-                setActiveRightTool(null);
-              }}
-              style={comingSoonModalStyles.button}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        onSuccess={() => {
+          fetchFamilyData();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }}
+      />
 
       {/* Export planner date range modal */}
       <Modal
