@@ -58,12 +58,45 @@ export const AuthProvider = ({ children }) => {
       const code = url.searchParams.get('code');
       const error = url.searchParams.get('error');
       const errorDescription = url.searchParams.get('error_description');
+      const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+      const accessToken = hashParams.get('access_token') || url.searchParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token') || url.searchParams.get('refresh_token');
 
       if (error) {
         if (mounted) {
           setLoading(false);
         }
         return false;
+      }
+
+      if (accessToken && refreshToken && typeof auth.setSession === 'function') {
+        try {
+          const { data, error: sessionError } = await auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (sessionError) throw sessionError;
+
+          if (mounted) {
+            setSession(data?.session ?? null);
+            setUser(data?.session?.user ?? null);
+            setLoading(false);
+          }
+
+          url.searchParams.delete('access_token');
+          url.searchParams.delete('refresh_token');
+          url.searchParams.delete('error');
+          url.searchParams.delete('error_description');
+          url.hash = '';
+          window.history.replaceState({}, '', url.toString());
+          window.dispatchEvent(new PopStateEvent('popstate'));
+          return true;
+        } catch (_) {
+          if (mounted) {
+            setLoading(false);
+          }
+          return false;
+        }
       }
 
       if (!code || typeof auth.exchangeCodeForSession !== 'function') {
