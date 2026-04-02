@@ -166,7 +166,16 @@ async def get_integration_status(
             log_event("integrations.status.calendar_integrations_query_failed", user_id=user["id"], error=str(e))
             # Continue with empty integrations dict
         
-        # Get Google Calendar status (from google_calendar_credentials if exists)
+        # Get Google Drive / Docs status (preferred for the Connected accounts page)
+        google_drive_email = None
+        try:
+            google_drive_res = supabase.table("google_drive_credentials").select("account_email").eq("family_id", family_id).limit(1).execute()
+            if google_drive_res.data and len(google_drive_res.data) > 0:
+                google_drive_email = google_drive_res.data[0].get("account_email")
+        except Exception as e:
+            log_event("integrations.status.google_drive_credentials_query_failed", user_id=user["id"], error=str(e))
+
+        # Fallback: legacy Google Calendar credential status
         google_email = None
         try:
             google_cred_res = supabase.table("google_calendar_credentials").select("account_email").eq("family_id", family_id).limit(1).execute()
@@ -178,13 +187,13 @@ async def get_integration_status(
         
         statuses = []
         
-        # Google Calendar
+        # Google (Drive / Docs / Classroom card in settings; falls back to legacy calendar credential)
         google_integration = integrations.get("google")
-        google_connected = bool(google_email) or bool(google_integration and google_integration.get("access_token"))
+        google_connected = bool(google_drive_email) or bool(google_email) or bool(google_integration and google_integration.get("access_token"))
         statuses.append(IntegrationStatusOut(
             provider="google",
             connected=google_connected,
-            account_email=google_email or (google_integration and google_integration.get("account_email")),
+            account_email=google_drive_email or google_email or (google_integration and google_integration.get("account_email")),
             ics_url=None,
             quota_info=None
         ))

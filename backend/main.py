@@ -20,6 +20,7 @@ if str(backend_dir) not in sys.path:
 from routers.llm_routes import router as llm_router
 from routers.external_routes import router as external_router
 from routers.google_calendar import router as google_calendar_router
+from routers.google_drive import router as google_drive_router
 from routers.onboarding_routes import router as onboarding_router
 from routers.state_standards_routes import router as state_standards_router
 from routers.year_routes import router as year_router
@@ -216,6 +217,7 @@ async def log_requests(request, call_next):
 app.include_router(llm_router)
 app.include_router(external_router)
 app.include_router(google_calendar_router)
+app.include_router(google_drive_router)
 app.include_router(onboarding_router)
 app.include_router(state_standards_router)
 app.include_router(year_router)

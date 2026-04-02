@@ -16,6 +16,8 @@ import { getAPIBase } from '../lib/apiClient';
 import { auth as supabaseAuth } from '../lib/supabase';
 import LandingPage from './LandingPage';
 
+const googleLogo = require('../assets/google.png');
+
 function formatConfirmationSentAt(isoString) {
   if (!isoString) return '';
   try {
@@ -49,7 +51,7 @@ export default function WebAuthScreen() {
   const [resendFeedback, setResendFeedback] = useState('');
   const [justClosedModal, setJustClosedModal] = useState(false);
 
-  const { signIn, signUp, resetPassword } = useAuth();
+  const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth();
 
   const isExistingEmailError = (msg) => {
     if (!msg || typeof msg !== 'string') return false;
@@ -380,6 +382,22 @@ export default function WebAuthScreen() {
       }
     } catch (error) {
       setErrorMessage('An unexpected error occurred: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { error } = await signInWithGoogle({ redirectTo });
+      if (error) {
+        setErrorMessage(error.message || 'Failed to start Google sign in');
+      }
+    } catch (error) {
+      setErrorMessage(error?.message || 'Failed to start Google sign in');
     } finally {
       setLoading(false);
     }
@@ -793,6 +811,26 @@ export default function WebAuthScreen() {
             {loading ? 'Sending link…' : (isSignUp ? 'Send sign up link' : 'Sign In')}
           </Text>
         </TouchableOpacity>
+
+        {!isResetPassword ? (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+            <TouchableOpacity
+              style={[styles.googleButton, loading && styles.disabledButton]}
+              onPress={handleGoogleAuth}
+              disabled={loading}
+            >
+              <View style={styles.googleButtonContent}>
+                <Image source={googleLogo} style={styles.googleButtonIcon} resizeMode="contain" />
+                <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+              </View>
+            </TouchableOpacity>
+          </>
+        ) : null}
         
         <View style={styles.linkContainer}>
           <TouchableOpacity
@@ -1053,8 +1091,10 @@ const styles = StyleSheet.create({
   authButton: {
     backgroundColor: '#60a5fa', // Blue button to match theme
     paddingVertical: 14,
+    minHeight: 56,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 24,
   },
   disabledButton: {
@@ -1064,6 +1104,52 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: 'bold',
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#d1d5db',
+  },
+  dividerText: {
+    color: '#6b7280',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  googleButton: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    paddingVertical: 14,
+    minHeight: 56,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  googleButtonIcon: {
+    width: 24,
+    height: 24,
+  },
+  googleButtonText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
     textTransform: 'uppercase',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

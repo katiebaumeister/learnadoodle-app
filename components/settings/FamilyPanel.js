@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, Crown, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Infinity, Calendar, Users, BarChart2, Heart, FileText, SlidersHorizontal, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
@@ -25,9 +25,11 @@ import InviteChildModal from '../InviteChildModal';
 import AddSubjectModal from '../AddSubjectModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import TaskCreateModal from '../TaskCreateModal';
+import ParsePlainTextModal from '../ParsePlainTextModal';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import UserControlsSettingsContent from './UserControlsSettingsContent';
+import GoogleDriveImportModal from './GoogleDriveImportModal';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 
@@ -114,13 +116,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const skipPreferencesSaveRef = useRef(true);
   
   // Notification preferences state
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [notifDailyUpdates, setNotifDailyUpdates] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notifDailyUpdates, setNotifDailyUpdates] = useState(false);
   const [notifWeeklyProgress, setNotifWeeklyProgress] = useState(false);
-  const [notifPlanningInsights, setNotifPlanningInsights] = useState(true);
-  const [notifMotivation, setNotifMotivation] = useState(true);
+  const [notifPlanningInsights, setNotifPlanningInsights] = useState(false);
+  const [notifMotivation, setNotifMotivation] = useState(false);
   const [notifParentGuidance, setNotifParentGuidance] = useState(false);
-  const [notifProductUpdates, setNotifProductUpdates] = useState(true);
+  const [notifProductUpdates, setNotifProductUpdates] = useState(false);
   const [notifAnnouncements, setNotifAnnouncements] = useState(false);
   
   // App preferences state
@@ -162,6 +164,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editingSubjectInModal, setEditingSubjectInModal] = useState(null);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showGoogleDriveImportModal, setShowGoogleDriveImportModal] = useState(false);
+  const [showGoogleCurriculumModal, setShowGoogleCurriculumModal] = useState(false);
+  const [googleCurriculumMaterialId, setGoogleCurriculumMaterialId] = useState(null);
+  const [googleCurriculumSourceTitle, setGoogleCurriculumSourceTitle] = useState('');
+  const [googleCurriculumSubjectId, setGoogleCurriculumSubjectId] = useState(null);
   const [expandedFAQSection, setExpandedFAQSection] = useState(null);
   const [expandedFAQQuestion, setExpandedFAQQuestion] = useState(null);
   
@@ -279,7 +286,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Full family payload (including members[]) — server sees linked children; props/RLS often do not
   useEffect(() => {
-    if (activeSection !== 'members' || !user) return;
+    if ((activeSection !== 'members' && activeSection !== 'user-controls') || !user) return;
     const fid = family?.id || familyId || propFamilyId;
     if (!fid) return;
     let cancelled = false;
@@ -573,15 +580,15 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           if (!notifErr && notifRow) {
             if (notifRow.notification_types && typeof notifRow.notification_types === 'object') {
               const nt = notifRow.notification_types;
-              setNotifDailyUpdates(nt.daily_updates !== false);
+              setNotifDailyUpdates(nt.daily_updates === true);
               setNotifWeeklyProgress(nt.weekly_progress === true);
-              setNotifPlanningInsights(nt.planning_insights !== false);
-              setNotifMotivation(nt.motivation !== false);
+              setNotifPlanningInsights(nt.planning_insights === true);
+              setNotifMotivation(nt.motivation === true);
               setNotifParentGuidance(nt.parent_guidance === true);
-              setNotifProductUpdates(nt.product_updates !== false);
+              setNotifProductUpdates(nt.product_updates === true);
               setNotifAnnouncements(nt.announcements === true);
             }
-            setNotificationsEnabled(notifRow.email_notifications_enabled !== false);
+            setNotificationsEnabled(notifRow.email_notifications_enabled === true);
           }
         }
       } catch (_) {
@@ -1303,6 +1310,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }));
   };
 
+  const clearConnectionStatusCache = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && familyId) {
+      localStorage.removeItem(`connection_status_${familyId}`);
+    }
+  }, [familyId]);
+
   // Load connection status from API
   const loadConnectionStatus = async (useCache = true, showLoading = false) => {
     if (!user || !familyId || isChildMode) return;
@@ -1411,7 +1424,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
     const handleMessage = (event) => {
       // Listen for OAuth completion messages
-      if (event.data && event.data.type === 'GOOGLE_OAUTH_SUCCESS') {
+      if (event.data && (event.data.type === 'GOOGLE_OAUTH_SUCCESS' || event.data.type === 'GOOGLE_DRIVE_OAUTH_SUCCESS')) {
+        clearConnectionStatusCache();
         loadConnectionStatus();
         toast.push('Google account connected successfully', 'success');
       } else if (event.data && event.data.type === 'GOOGLE_OAUTH_ERROR') {
@@ -1422,7 +1436,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [clearConnectionStatusCache, toast]);
 
   const handleConnectProvider = async (providerKey) => {
     if (connectingProvider) return;
@@ -1438,8 +1452,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       }
 
       if (providerKey === 'google') {
-        // Start Google OAuth flow
-        const res = await fetch(`${apiBase}/api/google/calendar/oauth/start?family_id=${familyId}`, {
+        // Start Google Drive / Docs OAuth flow
+        const res = await fetch(`${apiBase}/api/google/drive/oauth/start?family_id=${familyId}`, {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
@@ -1447,7 +1461,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.detail || 'Failed to start Google OAuth');
+          throw new Error(errorData.detail || 'Failed to start Google Drive OAuth');
         }
 
         const data = await res.json();
@@ -1456,7 +1470,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         if (Platform.OS === 'web' && data.auth_url) {
           const popup = window.open(
             data.auth_url,
-            'Google OAuth',
+            'Google Drive OAuth',
             'width=600,height=700,scrollbars=yes,resizable=yes'
           );
 
@@ -1466,13 +1480,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               clearInterval(checkClosed);
               // Reload connection status after a short delay
               setTimeout(() => {
+                clearConnectionStatusCache();
                 loadConnectionStatus();
                 setConnectingProvider(null);
               }, 1000);
             }
           }, 500);
 
-          toast.push('Complete Google connection in the popup window', 'info');
+          toast.push('Complete Google Drive connection in the popup window', 'info');
         } else {
           throw new Error('OAuth popup not supported on this platform');
         }
@@ -1520,8 +1535,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       }
 
       if (providerKey === 'google') {
-        // Disconnect Google Calendar
-        const res = await fetch(`${apiBase}/api/google/calendar/credential`, {
+        // Disconnect Google Drive / Docs
+        const res = await fetch(`${apiBase}/api/google/drive/credential`, {
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
@@ -1535,6 +1550,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
         setProviderConnection('google', false);
         setGoogleAccountEmail(null);
+        clearConnectionStatusCache();
         toast.push('Google account disconnected', 'success');
       } else if (providerKey === 'youtube') {
         // YouTube uses API key, can't be "disconnected" per se
@@ -1549,6 +1565,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       toast.push(err.message || 'Failed to disconnect account', 'error');
     }
   };
+
+  const handleGoogleDriveImportedForCurriculum = useCallback(({ materialId, title, subjectId }) => {
+    setGoogleCurriculumMaterialId(materialId || null);
+    setGoogleCurriculumSourceTitle(title || '');
+    setGoogleCurriculumSubjectId(subjectId || null);
+    setShowGoogleCurriculumModal(true);
+    setShowGoogleDriveImportModal(false);
+  }, []);
 
   // Render content based on active section
   const renderMainContent = () => {
@@ -1571,7 +1595,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       case 'user-controls':
         return (
           <View style={[styles.mainContentInner, { flex: 1, minHeight: 0 }]}>
-            <UserControlsSettingsContent familyId={familyId || family?.id} />
+            <UserControlsSettingsContent
+              familyId={familyId || family?.id}
+              familyMembers={family?.members || []}
+              children={children}
+              childInviteSummaries={childInviteSummaries}
+              onInviteChildPress={() => handleOpenChildInviteModal(null)}
+              onInviteTutorPress={() => {
+                setError(null);
+                setTutorInviteEmail('');
+                setShowTutorInviteModal(true);
+              }}
+            />
           </View>
         );
       case 'connections':
@@ -1637,6 +1672,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             <TouchableOpacity
                               style={styles.connectionManageButton}
                               onPress={() => {
+                                if (key === 'google') {
+                                  setShowGoogleDriveImportModal(true);
+                                  return;
+                                }
                                 toast.push('Connection settings coming soon for this provider', 'info');
                               }}
                               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -2032,17 +2071,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.notifSection}>
               <Text style={styles.subsectionTitle}>General</Text>
               <View style={styles.subsectionDivider} />
+
+              <NotificationCheckbox
+                value={notificationsEnabled}
+                onValueChange={setNotificationsEnabled}
+                label="Email"
+              />
               
-              <NotificationCheckbox
-                value={notifDailyUpdates}
-                onValueChange={setNotifDailyUpdates}
-                label="Daily updates"
-              />
-              <NotificationCheckbox
-                value={notifWeeklyProgress}
-                onValueChange={setNotifWeeklyProgress}
-                label="Weekly progress"
-              />
               <NotificationCheckbox
                 value={notifPlanningInsights}
                 onValueChange={setNotifPlanningInsights}
@@ -3806,11 +3841,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'planner-settings' && styles.sidebarButtonActive]} onPress={() => setActiveSection('planner-settings')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'planner-settings' && styles.sidebarButtonTextActive]}>Planning Preferences</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.sidebarButtonText}>Connected accounts</Text>
+            <TouchableOpacity
+              style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]}
+              onPress={() => setActiveSection('connections')}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>
+                Connected accounts
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sidebarButton} onPress={() => setShowComingSoonModal(true)} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.sidebarButtonText}>Notifications</Text>
+            <TouchableOpacity
+              style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]}
+              onPress={() => setActiveSection('notifications')}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>
+                Notifications
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -4190,6 +4237,44 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       />
       <AddMaterialModal visible={showAddMaterialModal} onClose={() => setShowAddMaterialModal(false)} familyId={family?.id || familyId} />
       <TaskCreateModal visible={showTaskModal} onClose={() => setShowTaskModal(false)} familyId={family?.id || familyId} />
+      <GoogleDriveImportModal
+        visible={showGoogleDriveImportModal}
+        onClose={() => setShowGoogleDriveImportModal(false)}
+        familyId={family?.id || familyId}
+        children={children}
+        subjects={subjects}
+        onImported={() => {
+          clearConnectionStatusCache();
+          loadConnectionStatus(false);
+        }}
+        onImportedForCurriculum={handleGoogleDriveImportedForCurriculum}
+      />
+      <ParsePlainTextModal
+        visible={showGoogleCurriculumModal}
+        onClose={() => {
+          setShowGoogleCurriculumModal(false);
+          setGoogleCurriculumMaterialId(null);
+          setGoogleCurriculumSourceTitle('');
+          setGoogleCurriculumSubjectId(null);
+        }}
+        subjectId={googleCurriculumSubjectId || null}
+        subjectName={
+          subjects.find((subject) => String(subject.id) === String(googleCurriculumSubjectId))?.name ||
+          subjects.find((subject) => String(subject.id) === String(googleCurriculumSubjectId))?.title ||
+          'Subject'
+        }
+        familyId={family?.id || familyId}
+        childIds={children.map((child) => child.id)}
+        initialMaterialId={googleCurriculumMaterialId}
+        initialSourceTitle={googleCurriculumSourceTitle}
+        autoStartOnOpen
+        onSaved={() => {
+          setShowGoogleCurriculumModal(false);
+          setGoogleCurriculumMaterialId(null);
+          setGoogleCurriculumSourceTitle('');
+          setGoogleCurriculumSubjectId(null);
+        }}
+      />
 
       <InviteChildModal
         visible={showChildInviteModal}
@@ -7381,7 +7466,7 @@ function createStyles(tokens) {
     },
     feedbackSubmitButtonText: {
       fontSize: 16,
-      fontWeight: '500',
+      fontWeight: '700',
       color: '#FFFFFF',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", sans-serif',

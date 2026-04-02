@@ -4,7 +4,7 @@
  * Raw text is preserved in syllabus_imports; canonical curriculum_units/curriculum_lessons saved on commit.
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -59,6 +59,9 @@ export default function ParsePlainTextModal({
   familyId,
   childIds = [],
   onSaved,
+  initialMaterialId = null,
+  initialSourceTitle = '',
+  autoStartOnOpen = false,
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
@@ -81,6 +84,8 @@ export default function ParsePlainTextModal({
   const [expandedUnitIndex, setExpandedUnitIndex] = useState(0);
   const [showUnassigned, setShowUnassigned] = useState(true);
   const [showIgnored, setShowIgnored] = useState(false);
+  const [materialId, setMaterialId] = useState(initialMaterialId);
+  const autoStartedRef = useRef(false);
 
   const resetForm = useCallback(() => {
     setStep('form');
@@ -88,7 +93,17 @@ export default function ParsePlainTextModal({
     setError(null);
     setParsing(false);
     setExpandedUnitIndex(0);
-  }, []);
+    setMaterialId(initialMaterialId);
+    setSourceTitle(initialSourceTitle || '');
+    autoStartedRef.current = false;
+  }, [initialMaterialId, initialSourceTitle]);
+
+  useEffect(() => {
+    if (!visible) return;
+    setMaterialId(initialMaterialId);
+    setSourceTitle(initialSourceTitle || '');
+    autoStartedRef.current = false;
+  }, [visible, initialMaterialId, initialSourceTitle]);
 
   const handleClose = useCallback(() => {
     resetForm();
@@ -101,7 +116,7 @@ export default function ParsePlainTextModal({
       return;
     }
     const text = (rawText || '').trim();
-    if (!text) {
+    if (!text && !materialId) {
       setError(s('courseStructure.importExtract.noContent'));
       return;
     }
@@ -116,6 +131,7 @@ export default function ParsePlainTextModal({
           family_id: familyId,
           subject_name: subjectName,
           raw_text: text,
+          material_id: materialId || null,
           source_title: sourceTitle.trim() || null,
           source_type: sourceType === 'auto_detect' ? null : sourceType,
           parse_mode: parseMode === 'auto_detect' ? null : parseMode,
@@ -159,7 +175,14 @@ export default function ParsePlainTextModal({
     extractAssignments,
     extractAssessments,
     specialInstructions,
+    materialId,
   ]);
+
+  useEffect(() => {
+    if (!visible || !autoStartOnOpen || !materialId || parsing || step !== 'form' || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    handleExtract();
+  }, [autoStartOnOpen, handleExtract, materialId, parsing, step, visible]);
 
   const updateDraftUnit = useCallback((unitIndex, field, value) => {
     setDraft((prev) => {
@@ -252,15 +275,15 @@ export default function ParsePlainTextModal({
                   <>
                     <Text style={styles.label}>{s('courseStructure.importExtract.pasteLabel')}</Text>
                     <TextInput
-                      style={[styles.input, styles.textArea]}
+                      style={[styles.input, styles.textArea, materialId ? styles.inputDisabled : null]}
                       value={rawText}
                       onChangeText={setRawText}
-                      placeholder={s('courseStructure.importExtract.pastePlaceholder')}
+                      placeholder={materialId ? 'Using imported library material text' : s('courseStructure.importExtract.pastePlaceholder')}
                       placeholderTextColor="#9ca3af"
                       multiline
                       numberOfLines={10}
                       textAlignVertical="top"
-                      editable
+                      editable={!materialId}
                     />
                   </>
                 ) : (
@@ -556,6 +579,7 @@ const styles = StyleSheet.create({
   formGroup: { marginBottom: 16 },
   label: { fontSize: 14, fontWeight: '500', color: '#374151', marginBottom: 6 },
   input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#111827', backgroundColor: '#fff' },
+  inputDisabled: { backgroundColor: '#f8fafc', color: '#6b7280' },
   textArea: { minHeight: 160 },
   textAreaSmall: { minHeight: 56 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

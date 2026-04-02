@@ -51,9 +51,63 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
+    const handleOAuthCallback = async () => {
+      if (typeof window === 'undefined') return false;
+      const url = new URL(window.location.href);
+      const pathname = url.pathname.replace(/\/$/, '') || '/';
+      const code = url.searchParams.get('code');
+      const error = url.searchParams.get('error');
+      const errorDescription = url.searchParams.get('error_description');
+
+      if (error) {
+        if (mounted) {
+          setLoading(false);
+        }
+        return false;
+      }
+
+      if (!code || typeof auth.exchangeCodeForSession !== 'function') {
+        return false;
+      }
+
+      try {
+        const { data, error: exchangeError } = await auth.exchangeCodeForSession(code);
+        if (exchangeError) throw exchangeError;
+
+        if (mounted) {
+          setSession(data?.session ?? null);
+          setUser(data?.session?.user ?? null);
+          setLoading(false);
+        }
+
+        url.searchParams.delete('code');
+        url.searchParams.delete('state');
+        url.searchParams.delete('error');
+        url.searchParams.delete('error_description');
+        const hasInvite = url.searchParams.has('invite');
+        const shouldRouteToHome = !hasInvite && (pathname === '/' || pathname === '/login' || pathname === '/signup');
+
+        if (shouldRouteToHome) {
+          window.location.replace(`${url.origin}/home`);
+          return true;
+        }
+
+        window.history.replaceState({}, '', url.toString());
+        return true;
+      } catch (_) {
+        if (mounted) {
+          setLoading(false);
+        }
+        return false;
+      }
+    };
+
     // Get initial session with retry logic
     const getInitialSession = async () => {
       try {
+        const handledOAuth = await handleOAuthCallback();
+        if (handledOAuth) return;
+
         const { data: { session }, error } = await auth.getCurrentSession();
         
         if (error) {
@@ -130,6 +184,17 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
+  const signInWithGoogle = async (options = {}) => {
+    try {
+      const redirectTo = options.redirectTo || (typeof window !== 'undefined' ? window.location.origin : undefined)
+      const { data, error } = await auth.signInWithGoogle({ redirectTo })
+      if (error) throw error
+      return { data, error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
+  }
+
   const signOut = async () => {
     try {
       const { error } = await auth.signOut()
@@ -185,6 +250,7 @@ export const AuthProvider = ({ children }) => {
     loading,
     signUp,
     signIn,
+    signInWithGoogle,
     signOut,
     signOutLocal,
     resetPassword,

@@ -9,8 +9,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Image,
 } from 'react-native'
 import { useAuth } from '../contexts/AuthContext'
+
+const googleLogo = require('../assets/google.png')
 
 export default function AuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false)
@@ -22,7 +25,7 @@ export default function AuthScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   
-  const { signIn, signUp, resetPassword } = useAuth()
+  const { signIn, signUp, signInWithGoogle, resetPassword } = useAuth()
 
   const isExistingEmailError = (msg) => {
     if (!msg || typeof msg !== 'string') return false
@@ -172,6 +175,21 @@ export default function AuthScreen() {
     setIsSignUp(false)
   }
 
+  const handleGoogleAuth = async () => {
+    setLoading(true)
+    try {
+      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined
+      const { error } = await signInWithGoogle({ redirectTo })
+      if (error) {
+        Alert.alert('Error', error.message || 'Failed to start Google sign in')
+      }
+    } catch (error) {
+      Alert.alert('Error', error?.message || 'Failed to start Google sign in')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <KeyboardAvoidingView 
       style={styles.container}
@@ -314,6 +332,26 @@ export default function AuthScreen() {
                 }
               </Text>
             </TouchableOpacity>
+
+            {!isResetPassword && (
+              <>
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+                <TouchableOpacity
+                  style={[styles.googleButton, loading && styles.buttonDisabled]}
+                  onPress={handleGoogleAuth}
+                  disabled={loading}
+                >
+                  <View style={styles.googleButtonContent}>
+                    <Image source={googleLogo} style={styles.googleButtonIcon} resizeMode="contain" />
+                    <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {!isResetPassword && !isSignUp && (
@@ -385,6 +423,22 @@ const styles = StyleSheet.create({
   form: {
     marginBottom: 20,
   },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#d1d5db',
+  },
+  dividerText: {
+    color: '#6b7280',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   input: {
     backgroundColor: '#f7fafc',
     borderRadius: 10,
@@ -422,8 +476,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#667eea',
     borderRadius: 10,
     padding: 15,
+    minHeight: 56,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 10,
+  },
+  googleButton: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    padding: 15,
+    minHeight: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  googleButtonIcon: {
+    width: 24,
+    height: 24,
   },
   buttonDisabled: {
     backgroundColor: '#a0aec0',
@@ -432,6 +508,15 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  googleButtonText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   switchButton: {
     alignItems: 'center',
