@@ -1,36 +1,99 @@
 import React, { useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { PlanKey } from '../../constants/subscription';
 import type { BillingMode } from '../../components/subscription/BillingToggle';
-import { SubscriptionAppDownloadBanner } from '../../components/subscription/SubscriptionAppDownloadBanner';
 import { SubscriptionPlansSection } from '../../components/subscription/SubscriptionPlansSection';
 import { SubscriptionSupportStrip } from '../../components/subscription/SubscriptionSupportStrip';
 import { UpgradeConfirmModal } from '../../components/subscription/UpgradeConfirmModal';
 import { UsageLimitModal } from '../../components/subscription/UsageLimitModal';
 
 type SubscriptionScreenProps = {
-  onStoreLinksComingSoon?: () => void;
+  /**
+   * When set (e.g. from Family settings), plan CTAs, billing, usage, and app-store footer
+   * open the host “coming soon” flow instead of real checkout / modals.
+   */
+  onComingSoon?: () => void;
   aiUsedUnitsThisMonth?: number | null;
+  /** When set with the app shell (e.g. Family panel), keeps plan in sync with sidebar. */
+  currentPlan?: PlanKey;
+  onCurrentPlanChange?: (plan: PlanKey) => void;
 };
 
+function PressableFooterHint({ onPress }: { onPress?: () => void }) {
+  const body = (
+    <Text style={footerHintStyles.text}>Available on iOS & Android</Text>
+  );
+  if (onPress) {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={footerHintStyles.wrap}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}
+      >
+        {body}
+      </Pressable>
+    );
+  }
+  return <View style={footerHintStyles.wrap}>{body}</View>;
+}
+
+const footerHintStyles = StyleSheet.create({
+  wrap: {
+    marginTop: 6,
+    alignItems: 'center',
+  },
+  text: {
+    fontSize: 12,
+    color: '#999999',
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+});
+
 export default function SubscriptionScreen({
-  onStoreLinksComingSoon,
+  onComingSoon,
   aiUsedUnitsThisMonth = null,
+  currentPlan: currentPlanProp,
+  onCurrentPlanChange,
 }: SubscriptionScreenProps) {
   const [billingMode, setBillingMode] = useState<BillingMode>('monthly');
-  const [currentPlan, setCurrentPlan] = useState<PlanKey>('family');
+  const [internalPlan, setInternalPlan] = useState<PlanKey>('family');
+  const planControlled = currentPlanProp !== undefined;
+  const currentPlan = planControlled ? currentPlanProp! : internalPlan;
+  const setCurrentPlan = (plan: PlanKey) => {
+    onCurrentPlanChange?.(plan);
+    if (!planControlled) setInternalPlan(plan);
+  };
   const [selectedPlan, setSelectedPlan] = useState<PlanKey | null>(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showUsageLimitModal, setShowUsageLimitModal] = useState(false);
 
   const handleSelectPlan = (planKey: PlanKey) => {
     if (planKey === currentPlan) return;
+    if (onComingSoon) {
+      onComingSoon();
+      return;
+    }
     setSelectedPlan(planKey);
     setShowUpgradeModal(true);
   };
 
   const openBillingPortal = () => {
+    if (onComingSoon) {
+      onComingSoon();
+      return;
+    }
     /* Stripe customer portal */
+  };
+
+  const openUsageOptions = () => {
+    if (onComingSoon) {
+      onComingSoon();
+      return;
+    }
+    setShowUsageLimitModal(true);
   };
 
   return (
@@ -61,9 +124,9 @@ export default function SubscriptionScreen({
           currentPlan={currentPlan}
           aiUsedUnitsThisMonth={aiUsedUnitsThisMonth}
           onOpenBilling={openBillingPortal}
-          onViewUsageOptions={() => setShowUsageLimitModal(true)}
+          onViewUsageOptions={openUsageOptions}
         />
-        <SubscriptionAppDownloadBanner onComingSoon={onStoreLinksComingSoon} />
+        <PressableFooterHint onPress={onComingSoon} />
       </View>
 
       <UpgradeConfirmModal
@@ -100,13 +163,9 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#FFFFFF',
     flexGrow: 1,
-    ...(Platform.OS === 'web' && {
-      justifyContent: 'space-between',
-    }),
     gap: 0,
   },
   zoneTop: {
-    marginBottom: 8,
     width: '100%',
   },
   pageTitle: {
@@ -122,6 +181,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#374151',
+    marginTop: 0,
     marginBottom: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -133,14 +193,14 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   zonePlans: {
-    flexGrow: 1,
-    flexShrink: 1,
-    minHeight: 0,
     width: '100%',
+    flexShrink: 0,
   },
   zoneFooter: {
-    gap: 8,
-    marginTop: 4,
-    paddingBottom: 4,
+    width: '100%',
+    flexShrink: 0,
+    gap: 0,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
 });

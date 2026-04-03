@@ -105,15 +105,13 @@ function staggerCell(key: PlanKey) {
 const styles = StyleSheet.create({
   section: {
     width: '100%',
-    flexGrow: 1,
-    flexShrink: 1,
-    minHeight: 0,
+    flexShrink: 0,
   },
   anchorRow: {
     flexDirection: 'row',
     flexWrap: 'nowrap',
     gap: 12,
-    marginBottom: 6,
+    marginBottom: 4,
     alignItems: 'flex-end',
   },
   anchorCell: {
@@ -143,12 +141,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#64748B',
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   plansGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 10,
     alignItems: 'stretch',
   },
   plansGridTripleAlign: {
@@ -177,7 +175,7 @@ const styles = StyleSheet.create({
   billingCenter: {
     width: '100%',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 8,
   },
   toggleCentered: {
     alignSelf: 'center',

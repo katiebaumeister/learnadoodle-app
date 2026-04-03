@@ -69,6 +69,19 @@ function getFamilyRowEditValue(storedFamilyName) {
   return stripYouLabelForEdit(storedFamilyName);
 }
 
+/** Sidebar + subscription screen product label (matches plan tier). */
+function subscriptionSidebarProductLabel(planKey) {
+  switch (planKey) {
+    case 'free':
+      return 'Learnadoodle Free';
+    case 'familyPlus':
+      return 'Learnadoodle Family+';
+    case 'family':
+    default:
+      return 'Learnadoodle Family';
+  }
+}
+
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
@@ -153,6 +166,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [activeSection, setActiveSection] = useState(propInitialSection || 'profile');
   /** Monthly AI units (internal); drives Subscription 80% warning. */
   const [aiUsedUnitsThisMonth, setAiUsedUnitsThisMonth] = useState(null);
+  /** Mirrors Subscription screen current plan for sidebar label (stub until billing API). */
+  const [subscriptionPlanKey, setSubscriptionPlanKey] = useState('family');
 
   // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
   useEffect(() => {
@@ -2611,8 +2626,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         return (
           <View style={[styles.mainContentInner, styles.mainContentSubscriptionShell]}>
             <SubscriptionScreen
-              onStoreLinksComingSoon={() => setShowComingSoonModal(true)}
+              onComingSoon={() => setShowComingSoonModal(true)}
               aiUsedUnitsThisMonth={aiUsedUnitsThisMonth}
+              currentPlan={subscriptionPlanKey}
+              onCurrentPlanChange={setSubscriptionPlanKey}
             />
           </View>
         );
@@ -3799,7 +3816,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={styles.sidebarCardTitle}>Subscription</Text>
               <View style={styles.sidebarSubscriptionContent}>
                 <View style={styles.sidebarSubscriptionInfo}>
-                  <Text style={styles.sidebarSubscriptionPlan}>Family plan</Text>
+                  <Text style={styles.sidebarSubscriptionPlan}>
+                    {subscriptionSidebarProductLabel(subscriptionPlanKey)}
+                  </Text>
                   <View style={styles.sidebarSubscriptionStatusRow}>
                     <View style={styles.sidebarSubscriptionStatusChip}>
                       <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>

@@ -99,11 +99,6 @@ export function PlanCard({ plan, billingMode, currentPlan, renewalLabel = 'Renew
               {ctaLabel}
             </Text>
           </Pressable>
-          {isPrimaryCta ? (
-            <Text style={styles.ctaMicro} numberOfLines={2}>
-              Unlock compliance + advanced planning
-            </Text>
-          ) : null}
         </View>
       )}
     </View>
@@ -115,7 +110,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'column',
     borderRadius: 16,
-    padding: 18,
+    padding: 14,
     borderWidth: 1,
     overflow: 'hidden',
   },
@@ -125,8 +120,8 @@ const styles = StyleSheet.create({
   cardFree: {
     backgroundColor: '#FAFAFA',
     borderColor: '#E5E5E5',
-    padding: 14,
-    paddingVertical: 14,
+    padding: 12,
+    paddingVertical: 12,
   },
   cardFreeCurrent: {
     shadowColor: '#0f172a',
@@ -168,7 +163,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: '#111827',
-    marginBottom: 6,
+    marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -181,7 +176,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
     lineHeight: 34,
-    marginBottom: 6,
+    marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -194,7 +189,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: '#525252',
     fontWeight: '500',
-    marginBottom: 4,
+    marginBottom: 2,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -205,11 +200,11 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#E5E7EB',
-    marginVertical: 12,
+    marginVertical: 8,
     alignSelf: 'stretch',
   },
   features: {
-    gap: 10,
+    gap: 7,
   },
   benefitRow: {
     flexDirection: 'row',
@@ -236,13 +231,13 @@ const styles = StyleSheet.create({
   flexSpacer: {
     flexGrow: 1,
     flexShrink: 0,
-    minHeight: 12,
+    minHeight: 6,
   },
   currentFooter: {
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 44,
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 8,
     borderRadius: 12,
     backgroundColor: '#ECFDF5',
@@ -279,12 +274,12 @@ const styles = StyleSheet.create({
     }),
   },
   ctaBlock: {
-    gap: 8,
+    gap: 4,
     alignItems: 'stretch',
   },
   cta: {
-    height: 44,
-    maxHeight: 44,
+    height: 40,
+    maxHeight: 40,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -316,14 +311,5 @@ const styles = StyleSheet.create({
   ctaTextFree: {
     color: '#57534E',
     fontWeight: '600',
-  },
-  ctaMicro: {
-    fontSize: 11,
-    lineHeight: 14,
-    textAlign: 'center',
-    color: '#57534E',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
 });

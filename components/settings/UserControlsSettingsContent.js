@@ -132,6 +132,12 @@ export default function UserControlsSettingsContent({
           <Text style={styles.savingHint}>Saving…</Text>
         ) : null}
       </View>
+      {title === 'Child Permissions' ? (
+        <Text style={styles.cardPermissionExplainer}>
+          When a permission is off, learners and tutors can still view content they already have access to - they just
+          cannot add or change items in that area.
+        </Text>
+      ) : null}
       {CONTROL_ROWS.map((row, index) => (
         <View
           key={`${title}-${row.id}`}
@@ -171,10 +177,6 @@ export default function UserControlsSettingsContent({
   return (
     <View style={styles.container}>
       <Text style={styles.title}>User Controls</Text>
-      <Text style={styles.helperText}>
-        When a permission is off, learners and tutors can still view content they already have access to - they just
-        cannot add or change items in that area.
-      </Text>
 
       {contextLoading ? (
         <View style={styles.loadingRow}>
@@ -248,11 +250,12 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  helperText: {
+  cardPermissionExplainer: {
     fontSize: 13,
     color: '#374151',
     lineHeight: 20,
-    marginBottom: 24,
+    marginTop: 4,
+    marginBottom: 16,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

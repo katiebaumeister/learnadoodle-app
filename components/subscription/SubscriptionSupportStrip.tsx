@@ -1,7 +1,11 @@
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { PlanKey } from '../../constants/subscription';
-import { isAiUsageHigh } from '../../constants/aiUsageUnits';
+import {
+  PLAN_MONTHLY_AI_UNITS,
+  fractionOfMonthlyAiUsed,
+  isAiUsageHigh,
+} from '../../constants/aiUsageUnits';
 
 type Props = {
   currentPlan: PlanKey;
@@ -16,27 +20,56 @@ export function SubscriptionSupportStrip({
   onOpenBilling,
   onViewUsageOptions,
 }: Props) {
-  const showHighUsage =
-    aiUsedUnitsThisMonth != null && isAiUsageHigh(aiUsedUnitsThisMonth, currentPlan);
+  const limit = PLAN_MONTHLY_AI_UNITS[currentPlan];
+  const used = aiUsedUnitsThisMonth ?? null;
+  const hasUsageData = used != null;
+  const pct = hasUsageData ? Math.round(fractionOfMonthlyAiUsed(used, currentPlan) * 100) : null;
+  const barWidth = pct == null ? 0 : Math.min(100, Math.max(0, pct));
+  const high = hasUsageData && isAiUsageHigh(used, currentPlan);
 
   return (
-    <View style={styles.footerRow}>
-      <View style={styles.card}>
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>Manage subscription</Text>
+      <View style={styles.sectionRule} />
+
+      <View style={[styles.card, styles.cardGap]}>
         <Text style={styles.cardTitle}>Billing</Text>
-        <Text style={styles.cardBody}>Payment & renewal</Text>
-        <Pressable onPress={onOpenBilling} hitSlop={6} {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}>
+        <Text style={styles.cardSub}>Payment & renewal</Text>
+        <Pressable
+          onPress={onOpenBilling}
+          hitSlop={6}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}
+        >
           <Text style={styles.link}>Open billing →</Text>
         </Pressable>
       </View>
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>AI usage</Text>
-        {showHighUsage ? (
-          <Text style={styles.warn}>Most of included AI used this month.</Text>
-        ) : (
-          <Text style={styles.cardBody}>Limits & upgrades</Text>
-        )}
-        <Pressable onPress={onViewUsageOptions} hitSlop={6} {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}>
+        <Text style={styles.cardSub}>Limits & upgrades</Text>
+
+        {hasUsageData ? (
+          <View style={styles.meterBlock}>
+            <View style={styles.track}>
+              <View
+                style={[
+                  styles.fill,
+                  { width: `${barWidth}%` },
+                  high && styles.fillWarn,
+                ]}
+              />
+            </View>
+            <Text style={[styles.meterCaption, high && styles.meterCaptionWarn]}>
+              {used} / {limit} actions this month
+            </Text>
+          </View>
+        ) : null}
+
+        <Pressable
+          onPress={onViewUsageOptions}
+          hitSlop={6}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' as const })}
+        >
           <Text style={styles.link}>View usage →</Text>
         </Pressable>
       </View>
@@ -45,57 +78,91 @@ export function SubscriptionSupportStrip({
 }
 
 const styles = StyleSheet.create({
-  footerRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    alignItems: 'stretch',
-    marginTop: 4,
+  section: {
+    width: '100%',
     marginBottom: 8,
+    paddingTop: 20,
   },
-  card: {
-    flex: 1,
-    flexBasis: 0,
-    minWidth: 0,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E7E5E4',
-    gap: 4,
-    justifyContent: 'flex-start',
-  },
-  cardTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1c1917',
-    marginBottom: 2,
+  sectionLabel: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginTop: 0,
+    marginBottom: 14,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  cardBody: {
-    fontSize: 11,
-    lineHeight: 15,
+  sectionRule: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 24,
+    alignSelf: 'stretch',
+  },
+  card: {
+    backgroundColor: '#FAFAFA',
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  cardGap: {
+    marginBottom: 8,
+  },
+  cardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1c1917',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  cardSub: {
+    fontSize: 12,
+    lineHeight: 16,
     color: '#78716C',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  warn: {
-    fontSize: 11,
-    lineHeight: 15,
-    color: '#B45309',
+  meterBlock: {
+    gap: 8,
+    marginTop: 2,
+    marginBottom: 2,
+  },
+  track: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  fill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: '#2563EB',
+  },
+  fillWarn: {
+    backgroundColor: '#D97706',
+  },
+  meterCaption: {
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '600',
+    color: '#57534E',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  meterCaptionWarn: {
+    color: '#B45309',
   },
   link: {
     fontSize: 12,
     fontWeight: '600',
     color: '#2563EB',
-    marginTop: 4,
+    marginTop: 2,
+    alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
