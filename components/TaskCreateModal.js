@@ -1451,8 +1451,9 @@ export default function TaskCreateModal({
       return;
     }
 
-    if (countsTowardPlan && assigneeIds.length > 1) {
-      toast.push('Choose one child so this event counts toward that child\'s plan.', 'error');
+    // Only require one assignee when attaching to a specific plan; "No plan" allows multiple children.
+    if (countsTowardPlan && selectedAcademicYearId != null && assigneeIds.length > 1) {
+      toast.push('Choose one child when adding this event to a plan.', 'error');
       return;
     }
 

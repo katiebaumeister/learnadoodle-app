@@ -15,6 +15,7 @@ import {
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
+import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan'
 import { getHolidaysForRange, getEventForPlanSlot } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
@@ -3774,6 +3775,23 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         return prev; // Return unchanged for now
       });
     });
+  }, [familyId, subjectsOverviewCache]);
+
+  // Preload Progress (plan + curriculum) for all subjects into subjectProgressPlanCache
+  // so Subject detail → Progress avoids skeleton when opening a subject after load.
+  useEffect(() => {
+    if (!familyId || !subjectsOverviewCache || subjectsOverviewCache.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await prefetchAllSubjectProgressPlans(familyId, subjectsOverviewCache, { concurrency: 3 });
+      } catch (e) {
+        if (!cancelled) console.warn('[WebContent] Prefetch subject progress plan:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [familyId, subjectsOverviewCache]);
 
   // Handle subjects overview cache updates

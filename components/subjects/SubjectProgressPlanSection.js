@@ -293,6 +293,25 @@ export default function SubjectProgressPlanSection({
     return () => window.removeEventListener('refreshSubjectDetail', h);
   }, [subjectId, loadPlan, loadUnits]);
 
+  /** When background prefetch fills the cache, hydrate UI without waiting for local fetch. */
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const h = (e) => {
+      const { familyId: fid, subjectId: sid } = e.detail || {};
+      if (String(fid) !== String(familyId) || String(sid) !== String(subjectId)) return;
+      const c = getSubjectProgressCache(familyId, subjectId);
+      if (!c) return;
+      setAcademicYearId(c.academicYearId ?? null);
+      setPlanData(c.planData ?? null);
+      setSlotLines(Array.isArray(c.slotLines) ? c.slotLines : []);
+      setCurriculumUnits(Array.isArray(c.curriculumUnits) ? c.curriculumUnits : []);
+      setLoadingPlan(false);
+      setLoadingUnits(false);
+    };
+    window.addEventListener('subjectProgressPlanCacheUpdated', h);
+    return () => window.removeEventListener('subjectProgressPlanCacheUpdated', h);
+  }, [familyId, subjectId]);
+
   const hasPlan = !!academicYearId && !!planData?.plan?.blocks?.some((b) => String(b.subject_id) === String(subjectId));
   const hasUnits = curriculumUnits.length > 0;
 
