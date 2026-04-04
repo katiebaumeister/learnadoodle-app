@@ -1526,9 +1526,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             (updatedEvent.date_local && String(updatedEvent.date_local).trim().slice(0, 10)) ||
             localDateKeyFromTs(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local) ||
             eventDate.toISOString().split('T')[0];
-          // child_id might be nested or have different name
-          const childId = updatedEvent.child_id || updatedEvent.childId || updatedEvent.student_id || 
-                         (updatedEvent.data && (updatedEvent.data.child_id || updatedEvent.data.childId || updatedEvent.data.student_id));
+          // child_id might be nested or missing on whole-family events (use first of child_ids)
+          const fromChildIds = (ids) =>
+            Array.isArray(ids) && ids.length > 0 && ids[0] != null ? ids[0] : null;
+          const childId =
+            updatedEvent.child_id ||
+            updatedEvent.childId ||
+            updatedEvent.student_id ||
+            fromChildIds(updatedEvent.child_ids) ||
+            (updatedEvent.data &&
+              (updatedEvent.data.child_id ||
+                updatedEvent.data.childId ||
+                updatedEvent.data.student_id ||
+                fromChildIds(updatedEvent.data.child_ids)));
           
           // Try to get familyId from event if not available from state
           const eventFamilyId = familyId || updatedEvent.family_id || updatedEvent.familyId ||
