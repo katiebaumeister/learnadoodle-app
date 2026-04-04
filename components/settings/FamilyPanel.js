@@ -1292,8 +1292,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const CONNECTION_PROVIDERS = [
     {
       key: 'google',
-      label: 'Google Drive/Docs/Classroom',
-      description: 'Connect once to access Google Drive files, Google Docs, and sync with Google Classroom.',
+      label: 'Google Drive & Docs',
+      description:
+        'Connect to import files from Google Drive and text from Google Docs into your library and planning tools.',
       image: googleLogo,
     },
     {

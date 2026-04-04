@@ -162,6 +162,7 @@ export default function PrivacyPage({ onNavigateToLogin, onNavigateToSignUp }) {
             </Text>
             <View style={styles.list}>
               <Text style={styles.listItem}>• Infrastructure and hosting providers (e.g., Supabase for data storage; Render for hosting/logs where applicable)</Text>
+              <Text style={styles.listItem}>• AI processing providers (e.g., OpenAI) when you use AI or curriculum features that send content for analysis—only to provide those features, not for advertising or unrelated model training</Text>
               <Text style={styles.listItem}>• Analytics providers (e.g., Google Analytics on the Site, if enabled by your cookie choices)</Text>
               <Text style={styles.listItem}>• Platform providers (e.g., Apple and Google for app distribution and platform services)</Text>
               <Text style={styles.listItem}>• Payment processors (e.g., Stripe or app stores, if paid plans are offered)</Text>
@@ -186,6 +187,31 @@ export default function PrivacyPage({ onNavigateToLogin, onNavigateToSignUp }) {
               <Text style={styles.listItem}>• protect the rights, safety, and security of users, Learnadoodle, or the public,</Text>
               <Text style={styles.listItem}>• investigate fraud or security issues.</Text>
             </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Connected Google account (Drive, Docs, and Calendar)</Text>
+            <Text style={styles.text}>
+              If you choose to connect a Google account (optional), Learnadoodle uses Google’s APIs only as described here and only to provide features you use in the app.
+            </Text>
+            <Text style={styles.text}>
+              What we access
+            </Text>
+            <View style={styles.list}>
+              <Text style={styles.listItem}>• Google Drive and Google Docs (read-only): content you explicitly choose to import—for example, files you select in our import flow. We export Google Docs as plain text and may extract text from supported files (such as PDFs) so you can store them in your family library and use them in planning.</Text>
+              <Text style={styles.listItem}>• Google Calendar: calendar events for the Google account and calendar you authorize, so we can show or sync scheduling information in Learnadoodle and, when you choose to sync, create or update events on your Google Calendar (typically your primary calendar).</Text>
+            </View>
+            <Text style={styles.text}>
+              How we use and store it
+            </Text>
+            <View style={styles.list}>
+              <Text style={styles.listItem}>• OAuth tokens needed to access your Google account on your behalf are stored securely with our infrastructure provider and used only to provide the connections and actions you request (imports, calendar sync, and related features).</Text>
+              <Text style={styles.listItem}>• Imported Drive/Docs content is stored as part of your Learnadoodle materials and is tied to your family account. Calendar-related data (such as links between Learnadoodle events and Google Calendar events) is stored so sync can work until you disconnect or delete it.</Text>
+              <Text style={styles.listItem}>• If you use AI or curriculum tools that process library materials (including content originally imported from Google), portions of that text may be sent to our AI provider (e.g., OpenAI) solely to generate or structure educational planning output you asked for in the product. We do not sell Google user data, use it for advertising, or transfer it to data brokers.</Text>
+            </View>
+            <Text style={styles.text}>
+              You can disconnect Google Drive/Docs from Family → Connected accounts (or equivalent), and disconnect or stop Google Calendar from the integration or calendar settings in the app where that connection is offered. Disconnecting stops new API access; imported materials and any synced calendar links may remain until you delete them or remove the connection as the app allows.
+            </Text>
           </View>
 
           <View style={styles.section}>

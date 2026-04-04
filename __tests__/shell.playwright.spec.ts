@@ -27,7 +27,7 @@ test.describe('Learnadoodle shell interactions', () => {
     await expect(page.locator('text=Weekly Objectives')).toBeVisible();
 
     await page.getByRole('tab', { name: 'Integrations' }).click();
-    await expect(page.locator('text=Connect Google Classroom')).toBeVisible();
+    await expect(page.locator('text=Connect Google Drive')).toBeVisible();
   });
 
   test('top bar search submits on enter', async ({ page }) => {

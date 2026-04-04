@@ -215,6 +215,18 @@ export default function TermsPage({ onNavigateToLogin, onNavigateToSignUp }) {
             <Text style={styles.text}>
               Your use of the Services is governed by our Privacy Policy. By using the Services, you consent to our collection, use, and sharing practices as described there, including processing and storage in the United States.
             </Text>
+            <Text style={styles.text}>
+              Optional Google integrations. If you connect a Google account, you authorize Learnadoodle to use Google’s APIs only to provide the features you use, as further described in our Privacy Policy. That may include:
+            </Text>
+            <View style={styles.list}>
+              <Text style={styles.listItem}>• Read-only access to Google Drive and Google Docs for files and documents you explicitly choose to import into your library and planning tools.</Text>
+              <Text style={styles.listItem}>• Access to Google Calendar events you authorize, including creating or updating events on your Google Calendar when you choose to sync scheduling from Learnadoodle.</Text>
+              <Text style={styles.listItem}>• Secure storage of OAuth tokens with our infrastructure providers so those features can operate on your behalf until you disconnect.</Text>
+              <Text style={styles.listItem}>• Where you use AI or curriculum features that process imported materials, sending portions of that content to our AI provider (e.g., OpenAI) solely to produce the in-app outputs you request—not for advertising, sale, or transfer to data brokers.</Text>
+            </View>
+            <Text style={styles.text}>
+              You may disconnect Google integrations from Family or account settings (for example, Connected accounts for Drive/Docs and the calendar integration settings where offered). Your use of Google’s services remains subject to Google’s terms and policies. The Privacy Policy contains the full description of how we handle Google user data.
+            </Text>
           </View>
 
           <View style={styles.section}>
@@ -338,7 +350,7 @@ export default function TermsPage({ onNavigateToLogin, onNavigateToSignUp }) {
 
           <View style={styles.section}>
             <Text style={styles.text}>
-              Last revised: February 5, 2026
+              Last revised: April 3, 2026
             </Text>
           </View>
         </View>

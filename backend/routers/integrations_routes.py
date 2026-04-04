@@ -187,7 +187,7 @@ async def get_integration_status(
         
         statuses = []
         
-        # Google (Drive / Docs / Classroom card in settings; falls back to legacy calendar credential)
+        # Google (Drive / Docs card in settings; falls back to legacy calendar credential)
         google_integration = integrations.get("google")
         google_connected = bool(google_drive_email) or bool(google_email) or bool(google_integration and google_integration.get("access_token"))
         statuses.append(IntegrationStatusOut(

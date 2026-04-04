@@ -139,7 +139,7 @@ export default function RightRail({
         accessibilityRole="button"
         accessibilityLabel="Connect Google account"
       >
-        <Text style={styles.integrationButton}>Connect Google Classroom</Text>
+        <Text style={styles.integrationButton}>Connect Google Drive</Text>
       </TouchableOpacity>
       <View style={styles.integrationField}>
         <Text style={styles.integrationLabel}>Subscribe via ICS</Text>
