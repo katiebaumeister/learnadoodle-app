@@ -116,6 +116,26 @@ function FooterCol({ title, links, onShowComingSoon }) {
       <View style={styles.footerColLinks}>
         {links.map(([label, href, onPress], index) => {
           const isAppLink = href === '/apps/android' || href === '/apps/ios';
+          const useSemanticLink =
+            Platform.OS === 'web' &&
+            href &&
+            !href.startsWith('#') &&
+            !onPress &&
+            !isAppLink;
+
+          if (useSemanticLink) {
+            return (
+              <Text
+                key={index}
+                accessibilityRole="link"
+                href={href}
+                style={styles.footerColLink}
+              >
+                {label}
+              </Text>
+            );
+          }
+
           return (
             <TouchableOpacity
               key={index}

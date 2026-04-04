@@ -549,6 +549,25 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             <Text style={styles.footerCopyright}>
               © {new Date().getFullYear()} Learnadoodle, Inc. All rights reserved.
             </Text>
+            {Platform.OS === 'web' && (
+              <View style={styles.footerLegalRow}>
+                <Text
+                  accessibilityRole="link"
+                  href="/privacy"
+                  style={styles.footerLegalLink}
+                >
+                  Privacy Policy
+                </Text>
+                <Text style={styles.footerLegalSep}>·</Text>
+                <Text
+                  accessibilityRole="link"
+                  href="/terms"
+                  style={styles.footerLegalLink}
+                >
+                  Terms of Service
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -602,6 +621,27 @@ function FooterCol({ title, links, onShowComingSoon }) {
       <View style={styles.footerColLinks}>
         {links.map(([label, href, onPress], index) => {
           const isAppLink = href === '/apps/android' || href === '/apps/ios';
+          // Real <a href> on web so OAuth / branding crawlers (e.g. Google) can find Privacy Policy.
+          const useSemanticLink =
+            Platform.OS === 'web' &&
+            href &&
+            !href.startsWith('#') &&
+            !onPress &&
+            !isAppLink;
+
+          if (useSemanticLink) {
+            return (
+              <Text
+                key={index}
+                accessibilityRole="link"
+                href={href}
+                style={styles.footerColLink}
+              >
+                {label}
+              </Text>
+            );
+          }
+
           return (
             <TouchableOpacity
               key={index}
@@ -1176,6 +1216,35 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  footerLegalRow: {
+    ...(Platform.OS === 'web'
+      ? {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+          alignItems: 'center',
+          marginTop: 12,
+          gap: 8,
+        }
+      : {}),
+  },
+  footerLegalLink: {
+    fontSize: 14,
+    color: '#64748b',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      textDecorationLine: 'underline',
+      cursor: 'pointer',
+    }),
+  },
+  footerLegalSep: {
+    fontSize: 14,
+    color: '#94a3b8',
+    marginHorizontal: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   footerCopyright: {
     fontSize: 10,

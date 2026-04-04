@@ -1,5 +1,4 @@
 import os
-import secrets
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
@@ -10,8 +9,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from auth import get_current_user, rate_limiter
-from cache import get_cached, set_cached
 from helpers import get_family_id_for_user
+from oauth_state import create_signed_oauth_state, parse_signed_oauth_state
 from logger import log_event
 from supabase_client import get_admin_client
 from google_calendar_service import (
@@ -41,14 +40,14 @@ def _get_google_client() -> tuple[str, str, str]:
     return client_id, client_secret, redirect_uri
 
 
-def _build_state(user_id: str, family_id: str) -> str:
-    state = secrets.token_urlsafe(24)
-    set_cached(
-        f"google_oauth_state:{state}",
-        {"user_id": user_id, "family_id": family_id},
+def _build_state(user_id: str, family_id: str, google_client_secret: str) -> str:
+    return create_signed_oauth_state(
+        user_id=user_id,
+        family_id=family_id,
+        purpose="google_calendar",
+        google_client_secret=google_client_secret,
         ttl_seconds=STATE_TTL_SECONDS,
     )
-    return state
 
 
 @router.get("/debug/redirect-uri")
@@ -92,8 +91,8 @@ async def start_oauth(
     if not resolved_family_id:
         raise HTTPException(status_code=400, detail="Family not found")
 
-    client_id, _, redirect_uri = _get_google_client()
-    state = _build_state(user["id"], resolved_family_id)
+    client_id, client_secret, redirect_uri = _get_google_client()
+    state = _build_state(user["id"], resolved_family_id, client_secret)
 
     scope_param = " ".join(DEFAULT_SCOPES)
     query = {
@@ -113,16 +112,16 @@ async def start_oauth(
 
 @router.get("/oauth/callback")
 async def oauth_callback(state: str, code: Optional[str] = None, error: Optional[str] = None):
-    cache_key = f"google_oauth_state:{state}"
-    state_value = get_cached(cache_key)
+    client_id, client_secret, redirect_uri = _get_google_client()
+    state_value = parse_signed_oauth_state(
+        state, purpose="google_calendar", google_client_secret=client_secret
+    )
     if not state_value:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
     if error:
         log_event("google.oauth.error", state=state, error=error)
         raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
-
-    client_id, client_secret, redirect_uri = _get_google_client()
 
     data = {
         "code": code,

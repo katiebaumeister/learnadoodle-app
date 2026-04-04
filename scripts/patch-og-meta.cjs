@@ -40,7 +40,14 @@ const imageUrl = SITE_URL + '/og-image.png';
 
 const KEYWORDS = 'homeschool planning, homeschool app, flexible curriculum, homeschool schedule, learning progress, homeschool records, neurodiverse learning, homeschool for families';
 
+// Google Search Console (HTML tag method): set GOOGLE_SITE_VERIFICATION to the
+// `content` value shown in Search Console (not the whole meta tag). Optional.
+const GOOGLE_SITE_VERIFICATION = process.env.GOOGLE_SITE_VERIFICATION || '';
+
 const metaTags = [
+  GOOGLE_SITE_VERIFICATION
+    ? '<meta name="google-site-verification" content="' + String(GOOGLE_SITE_VERIFICATION).replace(/"/g, '&quot;') + '" />'
+    : '',
   '<meta name="description" content="' + META_DESCRIPTION.replace(/"/g, '&quot;') + '" />',
   '<meta name="keywords" content="' + KEYWORDS + '" />',
   '<meta name="robots" content="index, follow" />',
@@ -55,7 +62,9 @@ const metaTags = [
   '<meta name="twitter:title" content="' + TITLE.replace(/"/g, '&quot;') + '" />',
   '<meta name="twitter:description" content="' + META_DESCRIPTION.replace(/"/g, '&quot;') + '" />',
   '<meta name="twitter:image" content="' + imageUrl + '" />',
-].join('\n    ');
+]
+  .filter(Boolean)
+  .join('\n    ');
 
 let html = fs.readFileSync(distHtml, 'utf8');
 
@@ -68,7 +77,14 @@ const metaKeywordsRegex = /<meta\s+name="keywords"\s+content="[^"]*"\s*\/?\s*>\s
 const metaRobotsRegex = /<meta\s+name="robots"\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
 const canonicalRegex = /<link\s+rel="canonical"\s+href="[^"]*"\s*\/?\s*>\s*\n?/gi;
 const ogTwitterRegex = /<meta\s+(property="og:[^"]+"|name="twitter:[^"]+")\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
-html = html.replace(metaDescriptionRegex, '').replace(metaKeywordsRegex, '').replace(metaRobotsRegex, '').replace(canonicalRegex, '').replace(ogTwitterRegex, '');
+const googleSiteVerRegex = /<meta\s+name="google-site-verification"\s+content="[^"]*"\s*\/?\s*>\s*\n?/gi;
+html = html
+  .replace(metaDescriptionRegex, '')
+  .replace(metaKeywordsRegex, '')
+  .replace(metaRobotsRegex, '')
+  .replace(canonicalRegex, '')
+  .replace(ogTwitterRegex, '')
+  .replace(googleSiteVerRegex, '');
 
 // Inject after <head> or at start of head
 if (html.includes('<head>')) {
@@ -79,3 +95,6 @@ if (html.includes('<head>')) {
 
 fs.writeFileSync(distHtml, html);
 console.log('[patch-og-meta] Injected Open Graph and Twitter meta tags into dist/index.html');
+if (GOOGLE_SITE_VERIFICATION) {
+  console.log('[patch-og-meta] Added google-site-verification meta (Search Console HTML tag method)');
+}
