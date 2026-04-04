@@ -287,6 +287,7 @@ export default function SubjectProgressPlanSection({
     const h = (e) => {
       if (e.detail?.subjectId === subjectId) {
         loadPlan({ silent: true });
+        loadUnits({ silent: true });
       }
     };
     window.addEventListener('refreshSubjectDetail', h);
@@ -388,10 +389,31 @@ export default function SubjectProgressPlanSection({
     });
   }, [curriculumUnits, mergedScheduleRows]);
 
-  const hasCurrentUnitsModalContent = useMemo(
-    () => curriculumUnits.some((u) => (u.lessons || []).length > 0),
-    [curriculumUnits]
-  );
+  /** Group plan slot lines with a lesson label for the “View current units” modal when API units are empty. */
+  const planSlotUnitsForModal = useMemo(() => {
+    const byUnit = new Map();
+    for (const line of slotLines) {
+      const lt = (line.lessonTitle || '').trim();
+      if (!lt || /available instructional slot/i.test(lt)) continue;
+      const ut = (line.unitTopic || '').trim() || 'Plan schedule';
+      if (!byUnit.has(ut)) byUnit.set(ut, []);
+      const datePart = line.dateLabel || line.date || '';
+      const label = datePart ? `${datePart} · ${lt}` : lt;
+      const key = line.eventId ? String(line.eventId) : `${line.date}|${line.startLocal || ''}|${lt}`;
+      byUnit.get(ut).push({ id: key, title: label });
+    }
+    return Array.from(byUnit.entries()).map(([title, lessons]) => ({ title, lessons }));
+  }, [slotLines]);
+
+  const hasCurrentUnitsModalContent = useMemo(() => {
+    if (curriculumUnits.some((u) => (u.lessons || []).length > 0)) return true;
+    return planSlotUnitsForModal.some((u) => (u.lessons || []).length > 0);
+  }, [curriculumUnits, planSlotUnitsForModal]);
+
+  const unitsForCurrentUnitsModal = useMemo(() => {
+    if (curriculumUnits.some((u) => (u.lessons || []).length > 0)) return curriculumUnits;
+    return planSlotUnitsForModal;
+  }, [curriculumUnits, planSlotUnitsForModal]);
 
   const refreshPlanCaches = useCallback(() => {
     if (familyId && academicYearId) {
@@ -863,20 +885,27 @@ export default function SubjectProgressPlanSection({
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
-              {curriculumUnits.map((unit, index) => (
-                <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
-                  <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
-                  {(unit.lessons || []).length > 0 ? (
-                    (unit.lessons || []).map((lesson, lessonIndex) => (
-                      <Text key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`} style={styles.currentLessonRow}>
-                        {lessonIndex + 1}. {lesson.title || 'Lesson'}
-                      </Text>
-                    ))
-                  ) : (
-                    <Text style={styles.currentLessonEmpty}>No lessons saved yet.</Text>
-                  )}
-                </View>
-              ))}
+              {unitsForCurrentUnitsModal.length === 0 ? (
+                <Text style={styles.currentLessonEmpty}>No units or lessons to show yet.</Text>
+              ) : (
+                unitsForCurrentUnitsModal.map((unit, index) => (
+                  <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
+                    <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
+                    {(unit.lessons || []).length > 0 ? (
+                      (unit.lessons || []).map((lesson, lessonIndex) => (
+                        <Text
+                          key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
+                          style={styles.currentLessonRow}
+                        >
+                          {lessonIndex + 1}. {lesson.title || 'Lesson'}
+                        </Text>
+                      ))
+                    ) : (
+                      <Text style={styles.currentLessonEmpty}>No lessons saved yet.</Text>
+                    )}
+                  </View>
+                ))
+              )}
             </ScrollView>
           </View>
         </View>

@@ -639,6 +639,32 @@ def _curriculum_event_display_date(ev: Dict[str, Any]) -> Optional[str]:
     return s[:10] if len(s) >= 10 else None
 
 
+def _event_has_explicit_unit_or_lesson(ev: Dict[str, Any]) -> bool:
+    """User-set unit/lesson on a calendar event (excludes bare plan placeholders with only subject title)."""
+    unit = (ev.get("curriculum_unit_title") or ev.get("unit") or "").strip()
+    lesson = (ev.get("lesson") or "").strip()
+    meta = ev.get("curriculum_metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    if not lesson:
+        lesson = str(meta.get("lesson_label") or "").strip()
+    return bool(unit or lesson)
+
+
+def _include_event_in_year_scoped_structure(ev: Dict[str, Any]) -> bool:
+    """Within one academic year: curriculum rows and plan-linked events with explicit unit/lesson."""
+    if ev.get("is_curriculum_related"):
+        return True
+    if not ev.get("counts_toward_plan"):
+        return False
+    return _event_has_explicit_unit_or_lesson(ev)
+
+
 @router.get("/subject-events-structure")
 async def get_subject_curriculum_events_structure(
     family_id: str = Query(...),
@@ -656,18 +682,21 @@ async def get_subject_curriculum_events_structure(
         if not fid or str(fid) != str(family_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
         supabase = get_admin_client()
+        select_cols = (
+            "id, title, curriculum_unit_title, unit, lesson, curriculum_lesson_sequence, curriculum_metadata, "
+            "start_ts, is_reference_date, is_curriculum_related, counts_toward_plan"
+        )
         events_query = (
             supabase.table("events")
-            .select(
-                "id, title, curriculum_unit_title, curriculum_lesson_sequence, curriculum_metadata, start_ts, is_reference_date"
-            )
+            .select(select_cols)
             .eq("family_id", family_id)
             .eq("subject_id", subject_id)
-            .eq("is_curriculum_related", True)
             .is_("deleted_at", "null")
         )
         if academic_year_id:
             events_query = events_query.eq("academic_year_id", academic_year_id)
+        else:
+            events_query = events_query.eq("is_curriculum_related", True)
         res = (
             events_query
             .order("curriculum_unit_title", desc=False)
@@ -675,6 +704,8 @@ async def get_subject_curriculum_events_structure(
             .execute()
         )
         rows = res.data or []
+        if academic_year_id:
+            rows = [ev for ev in rows if _include_event_in_year_scoped_structure(ev)]
         units_map: Dict[str, List[Dict[str, Any]]] = {}
         for ev in rows:
             utitle = (ev.get("curriculum_unit_title") or ev.get("unit") or "").strip() or "Untitled Unit"
@@ -693,7 +724,12 @@ async def get_subject_curriculum_events_structure(
                     minutes = max(1, min(480, int(me))) if me is not None else 60
                 except (TypeError, ValueError):
                     minutes = 60
-            lesson_display = (meta.get("lesson_label") or "").strip() or (ev.get("title") or "").strip() or "Lesson"
+            lesson_display = (
+                (meta.get("lesson_label") or "").strip()
+                or (ev.get("lesson") or "").strip()
+                or (ev.get("title") or "").strip()
+                or "Lesson"
+            )
             units_map[utitle].append(
                 {
                     "id": str(ev["id"]),

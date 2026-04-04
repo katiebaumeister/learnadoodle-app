@@ -7978,6 +7978,9 @@ export default function PlanYearModal({
     </>
   );
 
+  /** Subject-detail links (Manual input, Paste, etc.) should show unit structure full-screen, not logistics behind a nested modal. */
+  const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail && initialUnitStructureMethod);
+
   const useModalFlatLf =
     ((PLAN_MY_YEAR_LOGISTICS_FIRST && !pickerOnly) || (renderInline && showYourPlansList)) &&
     !subjectDetailOverlayChrome;
@@ -9011,7 +9014,8 @@ export default function PlanYearModal({
                 </View>
               </View>
             </ScrollView>
-          ) : planStep === 'unit_structure' && !PLAN_MY_YEAR_LOGISTICS_FIRST ? (
+          ) : planStep === 'unit_structure' &&
+            (!PLAN_MY_YEAR_LOGISTICS_FIRST || inlineUnitStructureFromSubjectDetail) ? (
             renderPlanYearUnitStructureScroll()
           ) : (
             <>
@@ -10265,7 +10269,9 @@ export default function PlanYearModal({
               </View>
             )}
           </ScrollView>
-          {PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'unit_structure' && (
+          {PLAN_MY_YEAR_LOGISTICS_FIRST &&
+            planStep === 'unit_structure' &&
+            !inlineUnitStructureFromSubjectDetail && (
             <Modal
               animationType="fade"
               transparent
@@ -11255,7 +11261,10 @@ export default function PlanYearModal({
           )}
 
           {/* Footer - Build Curriculum style: Cancel + rounded primary, no icons. Hidden on entry choice and when showing plan summary. */}
-          {!showEntryChoice && !planSummaryYearId && !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'unit_structure') && !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' && isHomeschool) && (
+          {!showEntryChoice &&
+            !planSummaryYearId &&
+            !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'unit_structure' && !inlineUnitStructureFromSubjectDetail) &&
+            !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' && isHomeschool) && (
           <View style={[styles.footer, pickerOnly && styles.pickerFooter]}>
             {planStep === 'preview' ? (
               <View style={{ width: '100%' }}>
@@ -11358,7 +11367,8 @@ export default function PlanYearModal({
                   <Text style={styles.primaryButtonText}>Next</Text>
                 </TouchableOpacity>
               </>
-            ) : planStep === 'unit_structure' && !PLAN_MY_YEAR_LOGISTICS_FIRST ? (
+            ) : planStep === 'unit_structure' &&
+              (!PLAN_MY_YEAR_LOGISTICS_FIRST || inlineUnitStructureFromSubjectDetail) ? (
               <>
                 <TouchableOpacity
                   onPress={() => {
