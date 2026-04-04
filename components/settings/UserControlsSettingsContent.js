@@ -124,16 +124,15 @@ export default function UserControlsSettingsContent({
   const showChildInviteCard = !showEmptyState && !showChildControls;
   const showTutorInviteCard = !showEmptyState && !showTutorControls;
 
-  const renderPermissionsCard = (title) => (
-    <View style={[styles.card, saving && styles.cardSaving]}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>{title}</Text>
-        {saving ? (
-          <Text style={styles.savingHint}>Saving…</Text>
-        ) : null}
+  const renderPermissionsSection = (title) => (
+    <View>
+      <View style={styles.sectionRow}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {saving ? <Text style={styles.savingHint}>Saving…</Text> : null}
       </View>
+      <View style={styles.subsectionDivider} />
       {title === 'Child Permissions' ? (
-        <Text style={styles.cardPermissionExplainer}>
+        <Text style={styles.permissionExplainer}>
           When a permission is off, learners and tutors can still view content they already have access to - they just
           cannot add or change items in that area.
         </Text>
@@ -160,17 +159,20 @@ export default function UserControlsSettingsContent({
     </View>
   );
 
-  const renderInviteCard = (title, text, buttonLabel) => (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Text style={styles.inviteCardText}>{text}</Text>
-      <TouchableOpacity
-        style={styles.inviteButton}
-        onPress={buttonLabel === 'Invite child' ? onInviteChildPress : onInviteTutorPress}
-        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-      >
-        <Text style={styles.inviteButtonText}>{buttonLabel}</Text>
-      </TouchableOpacity>
+  const renderInviteSection = (title, text, buttonLabel) => (
+    <View>
+      <View style={styles.sectionRow}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <TouchableOpacity
+          style={styles.inviteButton}
+          onPress={buttonLabel === 'Invite child' ? onInviteChildPress : onInviteTutorPress}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={styles.inviteButtonText}>{buttonLabel}</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.subsectionDivider} />
+      <Text style={styles.inviteSectionText}>{text}</Text>
     </View>
   );
 
@@ -187,21 +189,21 @@ export default function UserControlsSettingsContent({
 
       <View style={styles.sections}>
         {showEmptyState ? (
-          <View style={styles.emptyCard}>
+          <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>Invite a child or tutor to manage permissions</Text>
             <Text style={styles.emptyText}>
               User controls appear once a child or tutor has been invited to your family.
             </Text>
             <View style={styles.emptyActions}>
               <TouchableOpacity
-                style={styles.inviteButton}
+                style={[styles.inviteButton, styles.inviteButtonAlignStart]}
                 onPress={onInviteChildPress}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Text style={styles.inviteButtonText}>Invite child</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.inviteButton}
+                style={[styles.inviteButton, styles.inviteButtonAlignStart]}
                 onPress={onInviteTutorPress}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
@@ -211,26 +213,32 @@ export default function UserControlsSettingsContent({
           </View>
         ) : null}
 
-        {showChildControls
-          ? renderPermissionsCard('Child Permissions')
-          : null}
-        {showChildInviteCard
-          ? renderInviteCard(
+        {showChildControls ? (
+          <View style={[styles.sectionBlock, styles.sectionBlockFirst]}>
+            {renderPermissionsSection('Child Permissions')}
+          </View>
+        ) : null}
+        {showChildInviteCard ? (
+          <View style={[styles.sectionBlock, styles.sectionBlockFirst]}>
+            {renderInviteSection(
               'Child Permissions',
               'Invite a child to set permissions for student accounts.',
               'Invite child'
-            )
-          : null}
-        {showTutorControls
-          ? renderPermissionsCard('Tutor Permissions')
-          : null}
-        {showTutorInviteCard
-          ? renderInviteCard(
+            )}
+          </View>
+        ) : null}
+        {showTutorControls ? (
+          <View style={styles.sectionBlock}>{renderPermissionsSection('Tutor Permissions')}</View>
+        ) : null}
+        {showTutorInviteCard ? (
+          <View style={styles.sectionBlock}>
+            {renderInviteSection(
               'Tutor Permissions',
               'Invite a tutor to set permissions for tutor accounts.',
               'Invite tutor'
-            )
-          : null}
+            )}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -245,16 +253,42 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '800',
     color: '#111827',
-    marginBottom: 12,
+    marginBottom: 32,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  cardPermissionExplainer: {
+  sectionBlock: {
+    marginTop: 28,
+  },
+  sectionBlockFirst: {
+    marginTop: 0,
+  },
+  sectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subsectionDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 20,
+  },
+  permissionExplainer: {
     fontSize: 13,
     color: '#374151',
     lineHeight: 20,
-    marginTop: 4,
     marginBottom: 16,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -272,50 +306,17 @@ const styles = StyleSheet.create({
   },
   sections: {
     width: '100%',
-    gap: 20,
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    padding: 16,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-    }),
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  cardSaving: {
-    opacity: 0.92,
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   savingHint: {
     fontSize: 12,
     color: '#6b7280',
-    marginBottom: 8,
-  },
-  emptyCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    padding: 20,
+    flexShrink: 0,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  emptyState: {
+    width: '100%',
   },
   emptyTitle: {
     fontSize: 18,
@@ -340,18 +341,21 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
   },
+  inviteButtonAlignStart: {
+    alignSelf: 'flex-start',
+  },
   inviteButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
+    flexShrink: 0,
     backgroundColor: '#ffffff',
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    marginTop: 4,
     ...(Platform.OS === 'web' && {
       transition: 'all 0.2s ease',
     }),
@@ -364,11 +368,10 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  inviteCardText: {
+  inviteSectionText: {
     fontSize: 14,
     color: '#6b7280',
     lineHeight: 20,
-    marginTop: 4,
     marginBottom: 16,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
