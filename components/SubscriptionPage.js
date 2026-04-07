@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,38 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
+import { SUBSCRIPTION_PLANS } from '../constants/subscription';
+
+const family = SUBSCRIPTION_PLANS.family;
+const familyPlus = SUBSCRIPTION_PLANS.familyPlus;
+
+function anchorProps(id) {
+  return Platform.OS === 'web'
+    ? { id, collapsable: false }
+    : { nativeID: id, collapsable: false };
+}
 
 export default function SubscriptionPage({ onNavigateToLogin, onNavigateToSignUp }) {
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof document === 'undefined') {
+      return undefined;
+    }
+    const scrollToHash = () => {
+      const raw = window.location.hash?.replace(/^#/, '') || '';
+      if (raw !== 'learnadoodle-family' && raw !== 'learnadoodle-family-plus') return;
+      const el = document.getElementById(raw);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    const t = requestAnimationFrame(() => {
+      scrollToHash();
+    });
+    return () => cancelAnimationFrame(t);
+  }, []);
+
   return (
     <View style={styles.container}>
-      {/* Header with Login/Sign Up buttons */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
           <Text style={styles.logo}>learnadoodle</Text>
@@ -34,40 +61,64 @@ export default function SubscriptionPage({ onNavigateToLogin, onNavigateToSignUp
         </View>
       </View>
 
-      {/* Content */}
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         <View style={styles.pageContainer}>
-          <Text style={styles.pageTitle}>Super Doodle</Text>
-          
-          {/* Introduction Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Upgrade Your Learning Experience</Text>
-            <Text style={styles.text}>
-              Super Doodle is the premium subscription that unlocks advanced features and tools to help your family get the most out of Learnadoodle.
-            </Text>
-          </View>
+          <Text style={styles.pageTitle}>Learnadoodle plans</Text>
+          <Text style={styles.lead}>
+            Start free in the app with one child, then upgrade to a paid plan when you want the full family
+            experience. Below is how Learnadoodle Family and Learnadoodle Family + compare.
+          </Text>
 
-          {/* Features Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>What's Included</Text>
+          <View {...anchorProps('learnadoodle-family')} style={styles.tierSection}>
+            <Text style={styles.tierKicker}>Paid plan</Text>
+            <Text style={styles.sectionTitle}>Learnadoodle Family</Text>
+            <Text style={styles.tierTagline}>{family.tagline}</Text>
+            <Text style={styles.textMuted}>{family.positioningLine}</Text>
+            <View style={styles.pricingBlock}>
+              <Text style={styles.priceLine}>
+                <Text style={styles.priceEmphasis}>${family.monthlyPrice}/mo</Text>
+                <Text style={styles.text}> or </Text>
+                <Text style={styles.priceEmphasis}>${family.annualPrice}/yr</Text>
+                <Text style={styles.text}> billed annually</Text>
+              </Text>
+            </View>
+            <Text style={styles.whatsIncluded}>What&apos;s included</Text>
             <View style={styles.list}>
-              <Text style={styles.listItem}>• Advanced planning and scheduling tools</Text>
-              <Text style={styles.listItem}>• Priority support and assistance</Text>
-              <Text style={styles.listItem}>• Enhanced progress tracking and analytics</Text>
-              <Text style={styles.listItem}>• Access to premium templates and resources</Text>
-              <Text style={styles.listItem}>• Early access to new features</Text>
+              {family.features.map((line) => (
+                <Text key={line} style={styles.listItem}>
+                  • {line}
+                </Text>
+              ))}
             </View>
           </View>
 
-          {/* Pricing Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Pricing</Text>
-            <Text style={styles.text}>
-              Super Doodle subscription details and pricing information will be available soon. Check back for updates!
+          <View {...anchorProps('learnadoodle-family-plus')} style={[styles.tierSection, styles.tierSectionLast]}>
+            <Text style={styles.tierKicker}>Paid plan</Text>
+            <Text style={styles.sectionTitle}>Learnadoodle Family +</Text>
+            <Text style={styles.tierTagline}>{familyPlus.tagline}</Text>
+            <Text style={styles.textMuted}>{familyPlus.positioningLine}</Text>
+            <Text style={styles.compareBlurb}>
+              Everything in Learnadoodle Family, plus records-focused tools and higher limits for families who need
+              compliance, transcripts, and advanced planning.
             </Text>
+            <View style={styles.pricingBlock}>
+              <Text style={styles.priceLine}>
+                <Text style={styles.priceEmphasis}>${familyPlus.monthlyPrice}/mo</Text>
+                <Text style={styles.text}> or </Text>
+                <Text style={styles.priceEmphasis}>${familyPlus.annualPrice}/yr</Text>
+                <Text style={styles.text}> billed annually</Text>
+              </Text>
+            </View>
+            <Text style={styles.whatsIncluded}>What&apos;s included</Text>
+            <View style={styles.list}>
+              {familyPlus.features.map((line) => (
+                <Text key={line} style={styles.listItem}>
+                  • {line}
+                </Text>
+              ))}
+            </View>
           </View>
 
-          {/* CTA Section */}
           <View style={styles.section}>
             <TouchableOpacity
               style={styles.ctaButton}
@@ -169,41 +220,120 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '700',
     color: '#ffffff',
-    marginBottom: 48,
+    marginBottom: 16,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  section: {
-    marginBottom: 64,
+  lead: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#e2e8f0',
+    marginBottom: 40,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  tierSection: {
+    marginBottom: 48,
+    paddingBottom: 40,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.25)',
+  },
+  tierSectionLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 8,
+    marginBottom: 24,
+  },
+  tierKicker: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sectionTitle: {
     fontSize: 28,
     fontWeight: '600',
     color: '#ffffff',
-    marginBottom: 24,
+    marginBottom: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  tierTagline: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#f1f5f9',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  textMuted: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#cbd5e1',
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  compareBlurb: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#e2e8f0',
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  pricingBlock: {
+    marginBottom: 20,
+  },
+  priceLine: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#e2e8f0',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  priceEmphasis: {
+    fontWeight: '700',
+    color: '#ffffff',
   },
   text: {
     fontSize: 16,
-    lineHeight: 24,
-    color: '#ffffff',
-    marginBottom: 16,
+    color: '#e2e8f0',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  whatsIncluded: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  section: {
+    marginBottom: 32,
+  },
   list: {
-    marginTop: 8,
-    marginBottom: 16,
+    marginTop: 4,
   },
   listItem: {
     fontSize: 16,
-    lineHeight: 24,
+    lineHeight: 26,
     color: '#ffffff',
-    marginBottom: 12,
+    marginBottom: 8,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -215,7 +345,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
+    marginTop: 8,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),

@@ -12,6 +12,7 @@ import { View, Text, StyleSheet, Platform, ScrollView, TouchableOpacity } from '
 import { Plus, Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
+import { isAbortLikeError } from '../../lib/apiClient';
 import RoleHomeShell from './RoleHomeShell';
 import HomeHeroCard from './HomeHeroCard';
 import TodayScheduleCard from './TodayScheduleCard';
@@ -157,8 +158,10 @@ export default function ParentHomeScreen({
       });
 
       if (error) {
-        console.error('[ParentHomeScreen] RPC error:', error);
-        if (!silent) {
+        if (!isAbortLikeError(error)) {
+          console.error('[ParentHomeScreen] RPC error:', error);
+        }
+        if (!silent && !isAbortLikeError(error)) {
           setError(error);
         }
         // Set empty data structure to prevent infinite loading
@@ -173,7 +176,9 @@ export default function ParentHomeScreen({
         try {
           await loadNotificationCount();
         } catch (e) {
-          console.error('[ParentHomeScreen] Error loading notification count:', e);
+          if (!isAbortLikeError(e)) {
+            console.error('[ParentHomeScreen] Error loading notification count:', e);
+          }
         }
         return;
       }
@@ -194,8 +199,10 @@ export default function ParentHomeScreen({
       // Load notification count
       await loadNotificationCount();
     } catch (error) {
-      console.error('[ParentHomeScreen] Error loading data:', error);
-      if (!silent) {
+      if (!isAbortLikeError(error)) {
+        console.error('[ParentHomeScreen] Error loading data:', error);
+      }
+      if (!silent && !isAbortLikeError(error)) {
         setError(error);
       }
       // Set empty data to prevent infinite loading
@@ -251,7 +258,9 @@ export default function ParentHomeScreen({
       }
       setNotificationCount(count || 0);
     } catch (error) {
-      console.error('[ParentHomeScreen] Error loading notification count:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('[ParentHomeScreen] Error loading notification count:', error);
+      }
       setNotificationCount(0);
     }
   };

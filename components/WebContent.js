@@ -489,7 +489,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 import { Ionicons } from '@expo/vector-icons'
 import { Clock, ArrowRight, UserCircle, Link, MapPin, Eye, Plus, Upload, Copy, Sparkles, Download, Users, Settings, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { proposeReschedule, getWeekStart, apiRequest } from '../lib/apiClient'
+import { proposeReschedule, getWeekStart, apiRequest, isAbortLikeError } from '../lib/apiClient'
 import { createEventViaSupabaseRpc, deleteEvent as deletePlannerEvent, restoreEventFromTrash, permanentlyDeleteTrashEvent } from '../lib/services/plannerClientWithOffline'
 import {
   prefetchWeekViewIntoOffline,
@@ -2610,7 +2610,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
         setIsCalendarDataLoaded(true);
       } catch (err) {
-        console.error('[WebContent] refreshCalendarData failed:', err);
+        if (!isAbortLikeError(err)) {
+          console.error('[WebContent] refreshCalendarData failed:', err);
+        }
         setCalendarDataCache((prev) => ({ ...prev, [monthKey]: {} }));
       } finally {
         if (dropStartTime != null && typeof performance !== 'undefined') {
@@ -3157,7 +3159,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           .maybeSingle();
 
         if (profileError) {
-          console.error('Error fetching profile for home:', profileError);
+          if (!isAbortLikeError(profileError)) {
+            console.error('Error fetching profile for home:', profileError);
+          }
           setHomeLoading(false);
         if (onHomeLoadingChange) onHomeLoadingChange(false);
           return;
@@ -3697,7 +3701,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           setSubjectsOverviewCache(data);
         }
       } catch (err) {
-        console.error('[WebContent] Error preloading subjects overview:', err);
+        if (!isAbortLikeError(err)) {
+          console.error('[WebContent] Error preloading subjects overview:', err);
+        }
       } finally {
         if (!isCancelled) onSubjectsLoadingChange?.(false);
       }
@@ -3888,7 +3894,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         setMaterialsCacheTimestamp(Date.now());
       })
       .catch((err) => {
-        console.warn('[WebContent] Error pre-loading materials:', err);
+        if (!isAbortLikeError(err)) {
+          console.warn('[WebContent] Error pre-loading materials:', err);
+        }
       });
     const now = new Date();
     const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -5614,7 +5622,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const normalized = (tracks || []).map(t => ({ id: t.id, name: t.name }));
       setAvailableTracks(normalized);
     } catch (error) {
-      console.error('Error fetching tracks:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('Error fetching tracks:', error);
+      }
       setAvailableTracks([]);
     }
   };
@@ -5631,7 +5641,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (error) throw error;
       setAvailableActivities(activities || []);
     } catch (error) {
-      console.error('Error fetching activities:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('Error fetching activities:', error);
+      }
       setAvailableActivities([]);
     }
   };
@@ -7727,7 +7739,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         setProgressData({ yearLabel: '2025-2026', start: '2025-08-01', end: '2026-07-31', percent: 0 })
       }
     } catch (e) {
-      console.warn('loadProgress failed:', e)
+      if (!isAbortLikeError(e)) {
+        console.warn('loadProgress failed:', e)
+      }
       setProgressData({ yearLabel: '2025-2026', start: '2025-08-01', end: '2026-07-31', percent: 0 })
     }
   }
@@ -7775,7 +7789,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         })
       }
     } catch (e) {
-      console.warn('loadTasks failed:', e)
+      if (!isAbortLikeError(e)) {
+        console.warn('loadTasks failed:', e)
+      }
       setTasksData({
         todo: [{ id: 'p1', name: 'Math worksheet 3' }],
         inProgress: [{ id: 'p2', name: 'Read chapter 2' }],

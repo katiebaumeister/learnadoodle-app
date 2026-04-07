@@ -73,7 +73,11 @@ import { applySetupProgressFromNavigation, isSetupGuideComplete } from '../lib/d
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 
-/** Parent-only post-onboarding explorer tour (spotlight copy). */
+/**
+ * Parent-only post-onboarding explorer tour (spotlight copy).
+ * Retired: parent onboarding is the Doodle setup checklist in SearchModal (DoodleSetupGuidePanel).
+ * Kept for reference; prefs are auto-marked complete so the overlay never shows.
+ */
 const EXPLORER_PARENT_STEPS = [
   {
     targetId: 'explorer-tour-sidebar-planner',
@@ -2433,13 +2437,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const isLearner = !!(session.role_flags?.isChild || session.role_flags?.isTutor);
 
     if (isParent && !tour.parent.done && !tour.parent.skipped) {
-      const s =
-        typeof tour.parent.step === 'number' && tour.parent.step >= 0 && tour.parent.step <= 2
-          ? tour.parent.step
-          : 0;
-      setExplorerParentStep(s);
-      setExplorerParentTourOpen(true);
+      // Migrate: replace spotlight tour with Doodle setup guide (chatbot checklist). Do not open overlay.
+      setExplorerParentTourOpen(false);
       setLearnerQuickStartOpen(false);
+      void persistExplorerTourMerge(authUserId, { parent: { done: true, step: 3 } }).then(({ error }) => {
+        if (!error) mergeExplorerTourInProfile({ parent: { done: true, step: 3 } });
+      });
     } else if (isLearner && !tour.learner.done && !tour.learner.skipped) {
       setExplorerParentTourOpen(false);
       setLearnerQuickStartOpen(true);

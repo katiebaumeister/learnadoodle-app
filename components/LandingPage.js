@@ -445,7 +445,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
                   }}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
+                  <Text style={styles.superDoodleButtonText}>VIEW PLANS</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -470,7 +470,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
                   }
                 }}
               >
-                <Text style={styles.superDoodleButtonText}>UPGRADE NOW</Text>
+                <Text style={styles.superDoodleButtonText}>VIEW PLANS</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -507,9 +507,8 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
               title="Products"
               links={[
                 ['Learnadoodle', '/'],
-                ['Super Doodle', '/products/super-doodle'],
-                ['Gift Super Doodle', '/products/gift-super-doodle'],
-                ['Doodle Max', '/products/doodle-max'],
+                ['Learnadoodle Family', '/products/super-doodle#learnadoodle-family'],
+                ['Learnadoodle Family +', '/products/super-doodle#learnadoodle-family-plus'],
               ]}
             />
             <FooterCol
@@ -549,25 +548,6 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             <Text style={styles.footerCopyright}>
               © {new Date().getFullYear()} Learnadoodle, Inc. All rights reserved.
             </Text>
-            {Platform.OS === 'web' && (
-              <View style={styles.footerLegalRow}>
-                <Text
-                  accessibilityRole="link"
-                  href="/privacy"
-                  style={styles.footerLegalLink}
-                >
-                  Privacy Policy
-                </Text>
-                <Text style={styles.footerLegalSep}>·</Text>
-                <Text
-                  accessibilityRole="link"
-                  href="/terms"
-                  style={styles.footerLegalLink}
-                >
-                  Terms of Service
-                </Text>
-              </View>
-            )}
           </View>
         </View>
       </View>
@@ -1216,35 +1196,6 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  footerLegalRow: {
-    ...(Platform.OS === 'web'
-      ? {
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-          alignItems: 'center',
-          marginTop: 12,
-          gap: 8,
-        }
-      : {}),
-  },
-  footerLegalLink: {
-    fontSize: 14,
-    color: '#64748b',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      textDecorationLine: 'underline',
-      cursor: 'pointer',
-    }),
-  },
-  footerLegalSep: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginHorizontal: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   footerCopyright: {
     fontSize: 10,

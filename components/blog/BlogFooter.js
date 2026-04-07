@@ -29,9 +29,8 @@ export default function BlogFooter() {
             title="Products"
             links={[
               ['Learnadoodle', '/'],
-              ['Super Doodle', '/products/super-doodle'],
-              ['Gift Super Doodle', '/products/gift-super-doodle'],
-              ['Doodle Max', '/products/doodle-max'],
+              ['Learnadoodle Family', '/products/super-doodle#learnadoodle-family'],
+              ['Learnadoodle Family +', '/products/super-doodle#learnadoodle-family-plus'],
             ]}
           />
           <FooterCol

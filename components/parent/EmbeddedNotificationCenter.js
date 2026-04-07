@@ -10,6 +10,7 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from '
 import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
+import { isAbortLikeError } from '../../lib/apiClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -189,7 +190,9 @@ export default function EmbeddedNotificationCenter({
         await loadLinkedChildAccounts(childRows);
       }
     } catch (error) {
-      console.error('[EmbeddedNotificationCenter] Error loading data:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('[EmbeddedNotificationCenter] Error loading data:', error);
+      }
     } finally {
       setDataReady(true);
     }
@@ -239,7 +242,9 @@ export default function EmbeddedNotificationCenter({
       const { data: helpData, error: helpError } = await helpQ;
 
       if (helpError && helpError.code !== '42P01' && helpError.code !== 'PGRST200') {
-        console.error('[EmbeddedNotificationCenter] Error loading help requests:', helpError);
+        if (!isAbortLikeError(helpError)) {
+          console.error('[EmbeddedNotificationCenter] Error loading help requests:', helpError);
+        }
       }
 
       const allAssignments = [...(data || []), ...(helpData || [])];
@@ -249,7 +254,9 @@ export default function EmbeddedNotificationCenter({
 
       setAssignments(uniqueAssignments);
     } catch (error) {
-      console.error('[EmbeddedNotificationCenter] Error loading assignments:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('[EmbeddedNotificationCenter] Error loading assignments:', error);
+      }
       setAssignments([]);
     }
   };
@@ -271,7 +278,9 @@ export default function EmbeddedNotificationCenter({
       }
       const { data: assignRows, error: assignErr } = await assignQ;
       if (assignErr && assignErr.code !== '42P01' && assignErr.code !== 'PGRST200') {
-        console.error('[EmbeddedNotificationCenter] Error loading linked assignments:', assignErr);
+        if (!isAbortLikeError(assignErr)) {
+          console.error('[EmbeddedNotificationCenter] Error loading linked assignments:', assignErr);
+        }
       }
       const parentAssignedEventIds = collectParentAssignedLinkedEventIds(assignRows || []);
 
@@ -302,7 +311,9 @@ export default function EmbeddedNotificationCenter({
       const { data, error } = await eventsQ;
 
       if (error) {
-        console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
+        if (!isAbortLikeError(error)) {
+          console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
+        }
         setUpcomingEvents([]);
         return;
       }
@@ -332,7 +343,9 @@ export default function EmbeddedNotificationCenter({
       const comingUpOnly = filterEventsForComingUpRail(eventsWithSubjects, parentAssignedEventIds);
       setUpcomingEvents(comingUpOnly);
     } catch (error) {
-      console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
+      }
       setUpcomingEvents([]);
     }
   };
@@ -351,7 +364,9 @@ export default function EmbeddedNotificationCenter({
       setChildren(rows);
       return rows;
     } catch (error) {
-      console.error('[EmbeddedNotificationCenter] Error loading children:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('[EmbeddedNotificationCenter] Error loading children:', error);
+      }
       setChildren([]);
       return [];
     }
@@ -389,7 +404,9 @@ export default function EmbeddedNotificationCenter({
       );
       setHasLinkedChildAccount(linked);
     } catch (error) {
-      console.error('[EmbeddedNotificationCenter] Error loading family_members:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('[EmbeddedNotificationCenter] Error loading family_members:', error);
+      }
       // Do not fall back to “has child profiles” — that shows the wrong card when RLS fails
       // or data is ambiguous; prefer invite until membership can be read reliably.
       setHasLinkedChildAccount(false);
