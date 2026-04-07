@@ -77,6 +77,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     }
     return true;
   };
+
+  /** Empty array is truthy — only skip API when parent actually prefetched rows. */
+  const preloadedMaterialsUsable =
+    Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0;
   
   // Get child colors for dots
   const getChildDotColor = (childId) => {
@@ -91,8 +95,14 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   // 
   const [materials, setMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
   const [allMaterials, setAllMaterials] = useState([]); // Store all materials for stats
-  const [loadingMaterials, setLoadingMaterials] = useState(() => preloadedMaterials == null);
-  const [initialLoadComplete, setInitialLoadComplete] = useState(() => preloadedMaterials != null);
+  const [loadingMaterials, setLoadingMaterials] = useState(() => {
+    if (preloadedMaterials == null) return true;
+    if (Array.isArray(preloadedMaterials) && preloadedMaterials.length === 0) return true;
+    return false;
+  });
+  const [initialLoadComplete, setInitialLoadComplete] = useState(() =>
+    Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0
+  );
   const [error, setError] = useState(null);
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
@@ -140,14 +150,14 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
   // Use preloaded materials if available and no filters are applied
   useEffect(() => {
-    if (preloadedMaterials && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
+    if (preloadedMaterialsUsable && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
       setMaterials(preloadedMaterials);
       setLoadingMaterials(false);
       setInitialLoadComplete(true);
       setError(null);
       return;
     }
-  }, [preloadedMaterials, searchQuery, selectedChildId, selectedSubjectId]);
+  }, [preloadedMaterials, preloadedMaterialsUsable, searchQuery, selectedChildId, selectedSubjectId]);
 
   useEffect(() => {
     if (!familyId) {
@@ -156,14 +166,14 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       return;
     }
     
-    // Skip loading if we have preloaded materials and no filters
-    if (preloadedMaterials && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
+    // Skip loading if we have a non-empty preloaded list and no filters
+    if (preloadedMaterialsUsable && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
       return;
     }
     
     loadMaterials();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects, preloadedMaterials]);
+  }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects, preloadedMaterials, preloadedMaterialsUsable]);
 
   // Load children if not provided
   const [localChildren, setLocalChildren] = useState(children);
@@ -285,7 +295,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     }
   };
 
-  const loadMaterials = async () => {
+  const loadMaterials = async (forceFromServer = false) => {
     if (!familyId) {
       setError('No family ID provided');
       setLoadingMaterials(false);
@@ -294,7 +304,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
     // Parent prefetched list arrived (e.g. Library opened right after app load): skip redundant fetch.
     if (
-      preloadedMaterials &&
+      !forceFromServer &&
+      preloadedMaterialsUsable &&
       searchQuery === '' &&
       selectedChildId === '' &&
       selectedSubjectId === null
@@ -354,7 +365,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     const onLibraryMaterialsRefresh = (e) => {
       const fid = e?.detail?.familyId;
       if (fid && fid !== familyId) return;
-      loadMaterialsRef.current?.();
+      loadMaterialsRef.current?.(true);
       (async () => {
         try {
           const data = await getMaterials(familyId, {}, session ?? null);
@@ -442,7 +453,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
 
   const handleReviewSaved = () => {
-    loadMaterials();
+    loadMaterials(true);
     if (selectedMaterial) {
       // Reload selected material
       getMaterials(familyId, {}, session)
@@ -508,7 +519,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       emitSubjectDetailMaterialSyncWeb(data, familyId, mergedSubjectsForMaterialLookup, 'materialDeleted');
 
       // Reload materials
-      await loadMaterials();
+      await loadMaterials(true);
       // Reload deleted materials if bin is open
       if (showDeletedBin) {
         await loadDeletedMaterials();
@@ -898,7 +909,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         action: 'restored',
       });
 
-      await loadMaterials();
+      await loadMaterials(true);
       await loadDeletedMaterials();
       toast.push(`${itemName} restored`, 'success');
     } catch (error) {
@@ -1175,7 +1186,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           <Text style={styles.errorText}>Error: {error}</Text>
           <TouchableOpacity
             style={styles.retryButton}
-            onPress={loadMaterials}
+            onPress={() => loadMaterials(true)}
           >
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
@@ -1837,7 +1848,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         onSaved={() => {
           setShowAddModal(false);
           setAddModalDefaultRole(null);
-          loadMaterials();
+          loadMaterials(true);
         }}
         familyId={familyId}
         children={children}
@@ -1865,7 +1876,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           const materialId = editingMaterial?.id;
           
           // Reload materials to get updated data including reviews
-          await loadMaterials();
+          await loadMaterials(true);
           
           // Close the edit modal
           setEditingMaterial(null);
@@ -1919,7 +1930,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
             setShowReviewModal(false);
             setReviewMaterial(null);
             setReviewChildId(null);
-            loadMaterials();
+            loadMaterials(true);
             if (selectedMaterial && selectedMaterial.id === reviewMaterial.id) {
               // Reload selected material if it's the one being reviewed
               getMaterials(familyId, {}, session)
@@ -3404,19 +3415,29 @@ const styles = StyleSheet.create({
   },
   emptyAskDoodle: {
     flexShrink: 0,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    backgroundColor: colors.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: '#7c3aed',
     borderWidth: 1,
-    borderColor: colors.accent,
+    borderColor: '#7c3aed',
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
   },
   emptyAskDoodleText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#ffffff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptySectionLabel: {

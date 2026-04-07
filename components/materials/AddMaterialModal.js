@@ -77,6 +77,17 @@ function fmt(d) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** "syllabus.pdf" → "syllabus"; "My Report.final.pdf" → "My Report.final" */
+function titleFromUploadedFilename(filename) {
+  if (!filename || typeof filename !== 'string') return '';
+  const trimmed = filename.trim();
+  if (!trimmed) return '';
+  const lastDot = trimmed.lastIndexOf('.');
+  if (lastDot <= 0) return trimmed;
+  const base = trimmed.slice(0, lastDot).trim();
+  return base || trimmed;
+}
+
 export default function AddMaterialModal({
   visible,
   onClose,
@@ -619,7 +630,12 @@ export default function AddMaterialModal({
         type: file.type,
         path: finalPath,
       });
-      
+
+      const defaultTitle = titleFromUploadedFilename(file.name);
+      if (defaultTitle) {
+        setTitle((prev) => (prev.trim() ? prev : defaultTitle));
+      }
+
       // Store URL in appropriate field based on file type
       // Note: For private buckets, fileUrl might be null, but we have storage_path which is what matters
       // Don't overwrite providerUrl if it already has a value - uploaded files take precedence

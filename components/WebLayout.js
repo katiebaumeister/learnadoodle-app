@@ -5048,13 +5048,13 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#9ECFFB',
+    backgroundColor: '#7c3aed',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.85)',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 14px rgba(158, 207, 251, 0.4)',
+      boxShadow: '0 4px 14px rgba(124, 58, 237, 0.4)',
     }),
     ...(Platform.OS !== 'web' && {
       elevation: 8,

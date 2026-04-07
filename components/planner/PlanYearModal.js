@@ -7997,8 +7997,10 @@ export default function PlanYearModal({
   /** Subject-detail links (Manual input, Paste, etc.) should show unit structure full-screen, not logistics behind a nested modal. */
   const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail && initialUnitStructureMethod);
 
+  /** Flush/square corners only when embedded in the planner (`renderInline`). Overlay modals (Library, toolbar, etc.) keep `styles.modal` rounding. */
   const useModalFlatLf =
-    ((PLAN_MY_YEAR_LOGISTICS_FIRST && !pickerOnly) || (renderInline && showYourPlansList)) &&
+    renderInline &&
+    ((PLAN_MY_YEAR_LOGISTICS_FIRST && !pickerOnly) || showYourPlansList) &&
     !subjectDetailOverlayChrome;
 
   const modalContent = (
