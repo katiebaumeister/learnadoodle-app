@@ -1506,7 +1506,9 @@ export default function PlanYearModal({
   const [entryChoiceHoverKey, setEntryChoiceHoverKey] = useState(null); // 'edit' | 'create' for arrow on hover
   const [footerCancelHover, setFooterCancelHover] = useState(false);
   const [highlightBlockIndex, setHighlightBlockIndex] = useState(null);
-  
+  /** Block row indices to outline when Apply fails: missing weekday chips for that subject/block. */
+  const [cadenceWeekdayHighlightIndices, setCadenceWeekdayHighlightIndices] = useState([]);
+
   // Plan-level subject targets (editable in scope step; saved with plan)
   const [planSubjectTargetsOverride, setPlanSubjectTargetsOverride] = useState({}); // { subjectId: { mode, days, hours } }
   /** Snapshot of cadence per subject id (synced from `blocks` when multi-subject flag is on). */
@@ -4172,12 +4174,16 @@ export default function PlanYearModal({
     setStartCreatingNew(true);
   }, [visible, initialUnitStructureMethod, initialSubjectId, baseSubjectList]);
 
-  // When modal opens for new plan (no existing plan), leave subject selection empty until the user picks
+  // When modal opens for new plan (no existing plan): no selection until the user picks, unless there is exactly one subject.
   const prevVisibleRef = useRef(false);
   useEffect(() => {
     if (visible && !prevVisibleRef.current && !initialAcademicYearId) {
       if (baseSubjectList.length > 0 && !initialSubjectId) {
-        setSelectedSubjectIds([]);
+        if (baseSubjectList.length === 1) {
+          setSelectedSubjectIds([baseSubjectList[0].id]);
+        } else {
+          setSelectedSubjectIds([]);
+        }
       }
     }
     if (visible && !prevVisibleRef.current) {
@@ -4207,6 +4213,16 @@ export default function PlanYearModal({
     }
     prevVisibleRef.current = visible;
   }, [visible, baseSubjectList, initialAcademicYearId]);
+
+  const singleSubjectDefaultId = baseSubjectList.length === 1 ? baseSubjectList[0].id : null;
+  useEffect(() => {
+    if (!visible || initialAcademicYearId || initialSubjectId) return;
+    if (singleSubjectDefaultId == null) return;
+    setSelectedSubjectIds((prev) => {
+      if (prev.length > 0) return prev;
+      return [singleSubjectDefaultId];
+    });
+  }, [visible, initialAcademicYearId, initialSubjectId, singleSubjectDefaultId]);
 
   // Prune selectedSubjectIds if subject list shrinks (e.g. data reload)
   useEffect(() => {
@@ -5375,6 +5391,15 @@ export default function PlanYearModal({
     }, 150);
   }, []);
 
+  const scrollToCadenceSection = useCallback(() => {
+    setTimeout(() => {
+      const y = scheduleSectionYRef.current;
+      if (typeof y === 'number' && scrollRef.current) {
+        scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
+      }
+    }, 150);
+  }, []);
+
   /** Keep Family settings, subject modals, and subject detail in sync after planner saves. */
   const dispatchPlanningPrefsSynced = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -5473,6 +5498,7 @@ export default function PlanYearModal({
   }, [visible]);
 
   const handleApplyToCalendar = async () => {
+    setCadenceWeekdayHighlightIndices([]);
     if (!preconditionsMet) {
       setError(isPlaceholderOnlyScope ? 'Add at least 1 child and at least one learning block.' : 'Add at least 1 child and 1 subject to generate a year plan.');
       return;
@@ -5510,11 +5536,35 @@ export default function PlanYearModal({
       return;
     }
     if (blocks.length > 0 && !cadenceWeekdaysSatisfied) {
-      setError(
-        effectiveSubjectIds.length > 0
-          ? 'Choose at least one day of the week in Cadence for each selected subject.'
-          : 'Choose at least one day of the week for each learning block.'
-      );
+      const indicesToHighlight = [];
+      if (effectiveSubjectIds.length > 0) {
+        const unsatisfiedSubjectIds = effectiveSubjectIds.filter((subjectId) =>
+          !blocks.some(
+            (b) =>
+              b.subject_id != null &&
+              String(b.subject_id) === String(subjectId) &&
+              (b.weekdays || []).length > 0
+          )
+        );
+        const unsatisfiedSet = new Set(unsatisfiedSubjectIds.map(String));
+        blocks.forEach((b, idx) => {
+          if (!b.subject_id || (b.weekdays || []).length > 0) return;
+          if (unsatisfiedSet.has(String(b.subject_id))) {
+            indicesToHighlight.push(idx);
+          }
+        });
+      } else if (isPlaceholderOnlyScope) {
+        blocks.forEach((b, idx) => {
+          if ((b.weekdays || []).length === 0) indicesToHighlight.push(idx);
+        });
+      } else {
+        blocks.forEach((b, idx) => {
+          if ((b.weekdays || []).length === 0) indicesToHighlight.push(idx);
+        });
+      }
+      setCadenceWeekdayHighlightIndices(indicesToHighlight);
+      setError('Select a day of week chip to continue.');
+      scrollToCadenceSection();
       return;
     }
     if (academicYearId && applyFromMode === 'date' && !applyFromDate) {
@@ -5859,6 +5909,10 @@ export default function PlanYearModal({
   };
 
   const updateBlock = (index, updates) => {
+    if (updates.weekdays !== undefined) {
+      setCadenceWeekdayHighlightIndices([]);
+      setError(null);
+    }
     setBlocks(blocks.map((b, i) => (i === index ? { ...b, ...updates } : b)));
   };
 
@@ -5919,6 +5973,7 @@ export default function PlanYearModal({
       setCalendarEventsForConflicts([]);
       setCadenceConflictsResolvedFeedback(false);
       pendingCadenceResolveAckRef.current = false;
+      setCadenceWeekdayHighlightIndices([]);
     }
   }, [visible]);
 
@@ -8709,9 +8764,33 @@ export default function PlanYearModal({
                     </ScrollView>
                   </>
                 ) : (
-                  <Text style={styles.planYearGlanceHelp}>
-                    {t('planMyYear.modal.emptyPlanListZeroRowsHint')}
-                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline' }}>
+                    <Text style={styles.planYearGlanceHelp}>
+                      {t('planMyYear.modal.emptyPlanListZeroRowsHint')}{' '}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setShowPlanManagerView(false);
+                        setStartCreatingNew(true);
+                        setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+                      }}
+                      accessibilityRole="link"
+                      accessibilityLabel={t('planMyYear.modal.emptyPlanListStartBuildingLink')}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text
+                        style={[
+                          styles.planYearGlanceHelp,
+                          { color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' },
+                        ]}
+                      >
+                        {t('planMyYear.modal.emptyPlanListStartBuildingLink')}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={styles.planYearGlanceHelp}>.</Text>
+                  </View>
                 )}
               </View>
             </ScrollView>
@@ -9855,6 +9934,7 @@ export default function PlanYearModal({
                       const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
                       const weekdays = block.weekdays || [];
                       const isHighlighted = highlightBlockIndex === idx;
+                      const cadenceWeekdayHighlight = cadenceWeekdayHighlightIndices.includes(idx);
                       return (
                         <View
                           key={block.block_id}
@@ -9862,6 +9942,14 @@ export default function PlanYearModal({
                             styles.blockRow,
                             blocks.length === 1 && styles.blockRowNoDivider,
                             isHighlighted && { backgroundColor: 'rgba(66, 133, 244, 0.08)', borderRadius: 8, padding: 12, marginBottom: 12 },
+                            cadenceWeekdayHighlight && {
+                              borderWidth: 2,
+                              borderColor: ERROR,
+                              borderRadius: 10,
+                              padding: 10,
+                              marginBottom: 8,
+                              backgroundColor: 'rgba(239, 68, 68, 0.06)',
+                            },
                           ]}
                         >
                           <Text style={styles.blockRowSubject}>{blockSubjectLabel}</Text>
@@ -9990,6 +10078,11 @@ export default function PlanYearModal({
                             </View>
                           )}
                           </View>
+                          {cadenceWeekdayHighlight ? (
+                            <Text style={{ fontSize: 12, color: ERROR, marginTop: 8, fontWeight: '500' }}>
+                              Select a day of week chip to continue.
+                            </Text>
+                          ) : null}
                         </View>
                       );
                     })}
@@ -10247,12 +10340,12 @@ export default function PlanYearModal({
                         styles.primaryButton,
                         styles.planYearGenerateCta,
                         cadenceYieldsInstructionalSlots && { marginTop: 20 },
-                        (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled,
+                        (saving || loading) && styles.buttonDisabled,
                       ]}
                       onPress={handleApplyToCalendar}
-                      disabled={saving || loading || !preconditionsMet || !feasible}
+                      disabled={saving || loading}
                       {...(Platform.OS === 'web' && {
-                        cursor: saving || loading || !preconditionsMet || !feasible ? 'not-allowed' : 'pointer',
+                        cursor: saving || loading ? 'wait' : 'pointer',
                       })}
                     >
                       {saving ? (
@@ -11298,12 +11391,12 @@ export default function PlanYearModal({
                     style={[
                       styles.primaryButton,
                       styles.planYearGenerateCtaFooter,
-                      (saving || loading || !preconditionsMet || !feasible) && styles.buttonDisabled,
+                      (saving || loading) && styles.buttonDisabled,
                     ]}
                     onPress={handleApplyToCalendar}
-                    disabled={saving || loading || !preconditionsMet || !feasible}
+                    disabled={saving || loading}
                     {...(Platform.OS === 'web' && {
-                      cursor: saving || loading || !preconditionsMet || !feasible ? 'not-allowed' : 'pointer',
+                      cursor: saving || loading ? 'wait' : 'pointer',
                     })}
                   >
                     {saving ? (

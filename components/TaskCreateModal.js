@@ -3251,6 +3251,18 @@ export default function TaskCreateModal({
                       ) : (
                         <>
                           <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              color: MUTED,
+                              marginTop: 2,
+                              marginBottom: 6,
+                              lineHeight: 17,
+                              ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+                            }}
+                          >
+                            New plans can be added from Build plan in the right toolbar.
+                          </Text>
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                             <TouchableOpacity
                               onPress={() => setSelectedAcademicYearId(null)}

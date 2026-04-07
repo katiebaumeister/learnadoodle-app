@@ -93,6 +93,8 @@ export const STRINGS = {
       emptyPlanFooterHint: "Plans connect your schedule, lessons, and progress.",
       /** Empty list after fetch: same header as when rows exist, no onboarding cards. */
       emptyPlanListZeroRowsHint: "No plans yet.",
+      /** Link after empty hint — starts the new plan wizard. */
+      emptyPlanListStartBuildingLink: "Start building",
     },
 
     sections: {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw, CalendarPlus } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -34,6 +34,7 @@ import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
 import { fetchFamilyAiUnitsUsedThisMonth } from '../../lib/aiUsageSubscription';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
+import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 
 /** Strip trailing " (you)" so edit fields never show that suffix (view-only cue). */
 function stripYouLabelForEdit(raw) {
@@ -209,6 +210,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editSubjectName, setEditSubjectName] = useState('');
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
+  const [openingPlanForSubjectId, setOpeningPlanForSubjectId] = useState(null);
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
   // Account deletion (Profile Danger Zone)
   const [showDangerZoneAccount, setShowDangerZoneAccount] = useState(false);
@@ -1290,9 +1292,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const CONNECTION_PROVIDERS = [
     {
       key: 'google',
-      label: 'Google Drive & Docs',
+      label: 'Google',
       description:
-        'Connect to import files from Google Drive and text from Google Docs into your library and planning tools.',
+        'Import files from Google Drive into your family library and sync Google Calendar with your Learnadoodle planner.',
       image: googleLogo,
     },
     {
@@ -1310,7 +1312,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     {
       key: 'youtube',
       label: 'YouTube',
-      description: 'Save favorite learning videos and channels into your library.',
+      description: 'Embed learning videos into lessons so students can access directly from assignments.',
       image: youtubeLogo,
     },
     {
@@ -1579,6 +1581,65 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setShowGoogleDriveImportModal(false);
   }, []);
 
+  /** Same routing as Subject Progress “Build plan” / “Edit plan”: existing year → edit/summary; else new structured plan modal. */
+  const handleOpenBuildPlanForSubject = useCallback(
+    async (subject) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined') {
+        toast.push('Build plan is available in the web app.', 'info');
+        return;
+      }
+      const fid = familyId || family?.id;
+      if (!subject?.id || !fid) {
+        toast.push('Unable to open Build plan. Try again in a moment.', 'info');
+        return;
+      }
+      setOpeningPlanForSubjectId(subject.id);
+      try {
+        const { academicYearId } = await findAcademicYearPlanForSubject(fid, subject.id);
+        if (academicYearId) {
+          window.dispatchEvent(
+            new CustomEvent('openPlanYearModal', {
+              detail: {
+                from: 'subject_detail',
+                subjectId: subject.id,
+                academicYearId,
+                openAsModal: true,
+                openToEditList: false,
+                skipPlanSummary: true,
+              },
+            })
+          );
+        } else {
+          window.dispatchEvent(
+            new CustomEvent('openPlanYearModal', {
+              detail: {
+                from: 'subject_detail',
+                subjectId: subject.id,
+                openAsModal: true,
+                openDirectlyToScope: true,
+              },
+            })
+          );
+        }
+      } catch (e) {
+        console.warn('[FamilyPanel] handleOpenBuildPlanForSubject', e);
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: subject.id,
+              openAsModal: true,
+              openDirectlyToScope: true,
+            },
+          })
+        );
+      } finally {
+        setOpeningPlanForSubjectId(null);
+      }
+    },
+    [familyId, family?.id, toast]
+  );
+
   // Render content based on active section
   const renderMainContent = () => {
     switch (activeSection) {
@@ -1629,7 +1690,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google';
-                const isComingSoon = ['dropbox', 'notion'].includes(key);
                 const isHovered = hoveredConnectionKey === key;
 
                 return (
@@ -1660,11 +1720,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             {!isConnected && isRecommended && (
                               <View style={styles.connectionRecommendedChip}>
                                 <Text style={styles.connectionRecommendedText}>Recommended</Text>
-                              </View>
-                            )}
-                            {!isConnected && isComingSoon && (
-                              <View style={styles.connectionComingSoonChip}>
-                                <Text style={styles.connectionComingSoonText}>Coming soon</Text>
                               </View>
                             )}
                           </View>
@@ -1737,7 +1792,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
-                const isComingSoon = ['youtube', 'quizlet', 'canvas'].includes(key);
                 const isHovered = hoveredConnectionKey === key;
 
                 return (
@@ -1765,14 +1819,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                 <Text style={styles.connectionStatusText}>Connected</Text>
                               </View>
                             )}
-                            {isComingSoon && (
-                              <View style={styles.connectionComingSoonChip}>
-                                <Text style={styles.connectionComingSoonText}>Coming soon</Text>
-                              </View>
-                            )}
                           </View>
                           <Text style={styles.connectionRowDescription}>{description}</Text>
-                          {isConnected && !isComingSoon && (
+                          {isConnected && !['youtube', 'quizlet', 'canvas'].includes(key) && (
                             <Text style={styles.connectionLastSynced}>Last synced today</Text>
                           )}
                         </View>
@@ -2597,8 +2646,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                   ]}
                                   onPress={() => handleEditSubject(subject)}
                                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  accessibilityLabel="Edit subject"
                                 >
                                   <Pencil size={16} color="#374151" />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.subjectActionButton,
+                                    isHovered && styles.subjectActionButtonHovered,
+                                    openingPlanForSubjectId === subject.id && styles.buttonDisabled,
+                                  ]}
+                                  onPress={() => handleOpenBuildPlanForSubject(subject)}
+                                  disabled={openingPlanForSubjectId === subject.id}
+                                  {...(Platform.OS === 'web' && {
+                                    cursor: openingPlanForSubjectId === subject.id ? 'not-allowed' : 'pointer',
+                                  })}
+                                  accessibilityLabel="Build plan"
+                                >
+                                  {openingPlanForSubjectId === subject.id ? (
+                                    <ActivityIndicator size="small" color="#0d9488" />
+                                  ) : (
+                                    <CalendarPlus size={16} color="#0d9488" />
+                                  )}
                                 </TouchableOpacity>
                               </View>
                             )}
@@ -5187,20 +5256,6 @@ function createStyles(tokens) {
       fontSize: 12,
       fontWeight: '600',
       color: '#d97706',
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
-    },
-    connectionComingSoonChip: {
-      backgroundColor: '#e5e7eb',
-      borderRadius: 12,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-    },
-    connectionComingSoonText: {
-      fontSize: 12,
-      fontWeight: '600',
-      color: '#4b5563',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
