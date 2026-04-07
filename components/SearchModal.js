@@ -27,7 +27,7 @@ import {
 import { deleteSubjectCascadeForFamily, dispatchSubjectDeletedSideEffects } from '../lib/services/deleteSubjectCascade.js'
 import DoodlePendingCommitBar from './assistant/DoodlePendingCommitBar.js'
 import DoodleSetupGuidePanel from './assistant/DoodleSetupGuidePanel.js'
-import { isSetupGuideComplete } from '../lib/doodleSetupGuide.js'
+import { isSetupGuideComplete, messageRequestsSetupGuideUI } from '../lib/doodleSetupGuide.js'
 
 export default function SearchModal({ visible, onClose, onNavigate, initialPrompt = null }) {
   const { user } = useAuth()
@@ -44,6 +44,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
   const searchInputRef = useRef(null)
   const handleSearchRef = useRef(null)
   const [skippedGuideThisOpen, setSkippedGuideThisOpen] = useState(false)
+  const [setupGuideReplay, setSetupGuideReplay] = useState(false)
   const [setupProgressTick, setSetupProgressTick] = useState(0)
 
   useEffect(() => {
@@ -57,6 +58,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
   useEffect(() => {
     if (visible) {
       setSkippedGuideThisOpen(false)
+      setSetupGuideReplay(false)
       initializeModal()
       // Animate in
       Animated.parallel([
@@ -122,7 +124,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
     setupProgressTick >= 0 &&
     messages.length === 0 &&
     user?.id &&
-    !isSetupGuideComplete(user.id) &&
+    (!isSetupGuideComplete(user.id) || setupGuideReplay) &&
     !skippedGuideThisOpen
   const showCenteredIntro = messages.length === 0 && !showSetupGuide
 
@@ -132,6 +134,14 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
     }
 
     const userMessage = searchQuery.trim();
+
+    if (isParent && user?.id && messageRequestsSetupGuideUI(userMessage)) {
+      setSearchQuery('')
+      setMessages([])
+      setSetupGuideReplay(true)
+      setSkippedGuideThisOpen(false)
+      return
+    }
 
     setSearchQuery('')
     setIsLoading(true)
@@ -1392,11 +1402,15 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             {showSetupGuide ? (
               <DoodleSetupGuidePanel
                 userId={user.id}
+                showCompletedChecklist={setupGuideReplay}
                 onNavigate={(target) => {
                   if (onNavigate) onNavigate(target)
                   onClose()
                 }}
-                onGoToChat={() => setSkippedGuideThisOpen(true)}
+                onGoToChat={() => {
+                  setSkippedGuideThisOpen(true)
+                  setSetupGuideReplay(false)
+                }}
               />
             ) : showCenteredIntro ? (
               <Text style={styles.introText}>{INTRO_TEXT}</Text>

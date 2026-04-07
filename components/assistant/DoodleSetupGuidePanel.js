@@ -9,7 +9,7 @@ import {
   isSetupGuideComplete,
 } from '../../lib/doodleSetupGuide';
 
-export default function DoodleSetupGuidePanel({ userId, onNavigate, onGoToChat }) {
+export default function DoodleSetupGuidePanel({ userId, onNavigate, onGoToChat, showCompletedChecklist = false }) {
   const [, setTick] = useState(0);
   const progress = useMemo(() => loadSetupProgress(userId), [userId, setTick]);
 
@@ -25,12 +25,16 @@ export default function DoodleSetupGuidePanel({ userId, onNavigate, onGoToChat }
   const complete = userId && isSetupGuideComplete(userId);
   const pct = total ? Math.round((done / total) * 100) : 0;
 
-  if (complete) return null;
+  if (complete && !showCompletedChecklist) return null;
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>Setup guide</Text>
-      <Text style={styles.subtitle}>Visit each area once — we check them off when you land there.</Text>
+      <Text style={styles.subtitle}>
+        {showCompletedChecklist
+          ? 'Here’s your checklist again — tap a step to jump there, or use Undo to adjust.'
+          : 'Visit each area once — we check them off when you land there.'}
+      </Text>
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${pct}%` }]} />
       </View>
