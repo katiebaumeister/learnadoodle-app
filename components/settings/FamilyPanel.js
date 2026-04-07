@@ -153,7 +153,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     notion: false,
     youtube: false,
     quizlet: false,
-    vimeo: false,
     canvas: false,
   });
   const [connectingProvider, setConnectingProvider] = useState(null);
@@ -393,7 +392,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const notionLogo = require('../../assets/notion.png');
   const youtubeLogo = require('../../assets/youtube.png');
   const quizletLogo = require('../../assets/quizlet.png');
-  const vimeoLogo = require('../../assets/vimeo.png');
   const canvasLogo = require('../../assets/canvas.png');
 
   // Update local state when prop changes
@@ -1322,12 +1320,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       image: quizletLogo,
     },
     {
-      key: 'vimeo',
-      label: 'Vimeo',
-      description: 'Access educational videos and courses from your Vimeo account.',
-      image: vimeoLogo,
-    },
-    {
       key: 'canvas',
       label: 'Canvas',
       description: 'Sync assignments, courses, and materials from Canvas LMS.',
@@ -1524,7 +1516,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           throw new Error('OAuth popup not supported on this platform');
         }
       } else {
-        const comingSoonProviders = ['dropbox', 'notion', 'youtube', 'quizlet', 'vimeo', 'canvas'];
+        const comingSoonProviders = ['dropbox', 'notion', 'youtube', 'quizlet', 'canvas'];
         if (comingSoonProviders.includes(providerKey)) {
           setShowComingSoonModal(true);
           setConnectingProvider(null);
@@ -1741,11 +1733,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
-                ['youtube', 'quizlet', 'vimeo', 'canvas'].includes(p.key)
+                ['youtube', 'quizlet', 'canvas'].includes(p.key)
               ).map(({ key, label, description, image }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
-                const isComingSoon = ['youtube', 'quizlet', 'vimeo', 'canvas'].includes(key);
+                const isComingSoon = ['youtube', 'quizlet', 'canvas'].includes(key);
                 const isHovered = hoveredConnectionKey === key;
 
                 return (

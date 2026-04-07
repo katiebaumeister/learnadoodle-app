@@ -366,20 +366,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const sessionRestricted = !!(session?.role_flags?.isChild || session?.role_flags?.isTutor);
   const denyFamilyEventEdit = sessionRestricted && !familyUserControls.allowed('events');
 
-  const [homeLoading, setHomeLoading] = useState(false); // WebContent home fetch runs in background; shell must not wait on it
-  const [plannerLoading, setPlannerLoading] = useState(true); // planner month preload so first open has events
-  /** Direct /planner entry: keep AppLoader up until first month grid fetch completes (no empty-then-pop-in). */
-  const [initialPathWasPlanner] = useState(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
-    const p = (window.location.pathname || '').replace(/\/$/, '') || '/';
-    return p === '/planner';
-  });
+  /** Home / planner data hydrate in WebContent in the background — shell never blocks on tab data. */
   /** null until first fetch — matches EventDetails query (deduped, limit 24) for Add to plan? chips */
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState(null);
   /** null = not loaded yet; rows seed EventModal help/submission strips without a blocking fetch */
   const [preloadedFamilyAssignments, setPreloadedFamilyAssignments] = useState(null);
-  const [subjectsLoading, setSubjectsLoading] = useState(true); // subjects overview preload
-  const [materialsLoading, setMaterialsLoading] = useState(true); // materials list preload
   // Derived: must come after session/state used below (avoid TDZ)
   const onboardingBlocked = !!(
     session &&
@@ -402,8 +393,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       (onboardingBlocked &&
         (!onboardingUiReady || !onboardingModalReady)) ||
       !shellAssetsReady ||
-      !homeReady ||
-      (initialPathWasPlanner && sessionFamilyId && plannerLoading))
+      !homeReady)
   );
 
   useEffect(() => {
@@ -2599,9 +2589,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const showTopPlannerSegmentHighlight =
     ['month', 'board', 'tasks'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
 
-  // Show full-screen loading when home tab is loading
-  const showFullScreenLoading = activeTab === 'home' && homeLoading;
-
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {
     const crumbs = [];
@@ -3650,10 +3637,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 onTabChange={handleTabChange}
                 onSubtabChange={setActiveSubtab}
                 pendingDoodlePrompt={null}
-                onHomeLoadingChange={setHomeLoading}
-                onPlannerLoadingChange={setPlannerLoading}
-                onSubjectsLoadingChange={setSubjectsLoading}
-                onMaterialsLoadingChange={setMaterialsLoading}
                 onConsumeDoodlePrompt={() => {}}
                 onCalendarViewChange={(view) => {
                   // View change handled by WebContent
@@ -5048,13 +5031,13 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#7c3aed',
+    backgroundColor: '#9ECFFB',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.85)',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 14px rgba(124, 58, 237, 0.4)',
+      boxShadow: '0 4px 14px rgba(158, 207, 251, 0.4)',
     }),
     ...(Platform.OS !== 'web' && {
       elevation: 8,

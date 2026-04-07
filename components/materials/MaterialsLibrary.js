@@ -10,7 +10,6 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  ActivityIndicator,
   Platform,
   Alert,
   Image,
@@ -95,14 +94,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   // 
   const [materials, setMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
   const [allMaterials, setAllMaterials] = useState([]); // Store all materials for stats
-  const [loadingMaterials, setLoadingMaterials] = useState(() => {
-    if (preloadedMaterials == null) return true;
-    if (Array.isArray(preloadedMaterials) && preloadedMaterials.length === 0) return true;
-    return false;
-  });
-  const [initialLoadComplete, setInitialLoadComplete] = useState(() =>
-    Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0
-  );
   const [error, setError] = useState(null);
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
@@ -126,8 +117,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjects, setSubjects] = useState(preloadedSubjects || []); // Deduplicated for filter display
   const [allSubjectsForModal, setAllSubjectsForModal] = useState([]); // Full list with child_id for AddMaterialModal
-  const [loadingSubjects, setLoadingSubjects] = useState(!(preloadedSubjects && preloadedSubjects.length > 0));
-  const [showSubjectsLoading, setShowSubjectsLoading] = useState(false);
   const [sortBy, setSortBy] = useState('date'); // 'date' | 'alphabetical'
   const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
   const [hoveredItemId, setHoveredItemId] = useState(null);
@@ -152,8 +141,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   useEffect(() => {
     if (preloadedMaterialsUsable && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
       setMaterials(preloadedMaterials);
-      setLoadingMaterials(false);
-      setInitialLoadComplete(true);
       setError(null);
       return;
     }
@@ -161,7 +148,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
   useEffect(() => {
     if (!familyId) {
-      setLoadingMaterials(false);
       setError('No family ID provided');
       return;
     }
@@ -227,16 +213,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     loadSubjects();
   }, [familyId]);
 
-  // Avoid "Loading..." flash for subjects chips: only show after a short delay
-  useEffect(() => {
-    if (!loadingSubjects) {
-      setShowSubjectsLoading(false);
-      return;
-    }
-    const t = setTimeout(() => setShowSubjectsLoading(true), 250);
-    return () => clearTimeout(t);
-  }, [loadingSubjects]);
-
   // Load all materials (without filters) for determining if user has any materials at all
   useEffect(() => {
     if (!familyId || allMaterials.length > 0) return; // Only load once if empty
@@ -255,13 +231,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
   // Set allMaterials for stats when materials are loaded (only when no filters are applied)
   useEffect(() => {
-    if (!searchQuery && !selectedChildId && !selectedSubjectId && !loadingMaterials) {
+    if (!searchQuery && !selectedChildId && !selectedSubjectId) {
       setAllMaterials(materials);
     }
-  }, [materials, loadingMaterials, searchQuery, selectedChildId, selectedSubjectId]);
+  }, [materials, searchQuery, selectedChildId, selectedSubjectId]);
 
   const loadSubjects = async () => {
-    setLoadingSubjects(true);
     try {
       const { data, error } = await supabase
         .from('subject')
@@ -290,15 +265,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     } catch (error) {
       console.warn('[MaterialsLibrary] Error loading subjects:', error);
       setSubjects([]);
-    } finally {
-      setLoadingSubjects(false);
     }
   };
 
   const loadMaterials = async (forceFromServer = false) => {
     if (!familyId) {
       setError('No family ID provided');
-      setLoadingMaterials(false);
       return;
     }
 
@@ -311,13 +283,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       selectedSubjectId === null
     ) {
       setMaterials(preloadedMaterials);
-      setLoadingMaterials(false);
-      setInitialLoadComplete(true);
       setError(null);
       return;
     }
 
-    setLoadingMaterials(true);
     setError(null);
     try {
       const filters = {};
@@ -347,12 +316,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         loadSubjects();
       }
       // allMaterials will be set by useEffect for stats
-      setInitialLoadComplete(true);
     } catch (err) {
       setError(err.message || 'Failed to load materials');
-      setInitialLoadComplete(true);
-    } finally {
-      setLoadingMaterials(false);
     }
   };
 
@@ -1123,10 +1088,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           </View>
 
           {loadingDeleted ? (
-            <View style={styles.deletedBinLoading}>
-              <ActivityIndicator size="small" color={colors.accent} />
-              <Text style={styles.deletedBinLoadingText}>Loading deleted items...</Text>
-            </View>
+            <View style={styles.deletedBinLoading} />
           ) : deletedMaterials.length === 0 ? (
             <View style={styles.deletedBinEmpty}>
               <Text style={styles.deletedBinEmptyText}>No deleted items</Text>
@@ -1190,11 +1152,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           >
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
-        </View>
-      ) : (!initialLoadComplete && loadingMaterials) ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.loadingText}>Loading materials...</Text>
         </View>
       ) : hasNoMaterials ? (
         <ScrollView
@@ -1551,11 +1508,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
                       </TouchableOpacity>
                     );
                   })}
-                {subjects.length === 0 && showSubjectsLoading && (
-                  <Text style={{ fontSize: 12, color: colors.muted, paddingVertical: 5 }}>
-                    Loading…
-                  </Text>
-                )}
               </ScrollView>
             </View>
 

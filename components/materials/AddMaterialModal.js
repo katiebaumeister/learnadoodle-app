@@ -652,10 +652,97 @@ export default function AddMaterialModal({
         // Don't clear providerUrl if it has a value
       }
 
-      // Note: We don't create an upload record here anymore - that's handled when saving the material
-      // The uploads table has been consolidated into materials table
+      // Note: We don't create an upload record here anymore — create a materials row now so Library updates.
+      // Previously only storage ran until the user picked a type and tapped Save; many users stopped after upload.
 
-      Alert.alert('Success', 'File uploaded successfully');
+      if (!material) {
+        const effectiveRole =
+          (role && String(role).trim()) ||
+          (defaultRole ? String(defaultRole) : '') ||
+          'resource';
+        const titleForRow =
+          (title && title.trim()) ||
+          defaultTitle ||
+          file.name;
+        const tags = [`role:${effectiveRole}`];
+        if (isSubscription && subscriptionFrequency) {
+          tags.push(`subscription:${subscriptionFrequency}`);
+        }
+
+        setLoading(true);
+        try {
+          const { createFileMaterial } = await import('../../lib/services/materialsClient');
+          const subjectIdForSave =
+            selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+              ? selectedSubjectId
+              : null;
+          const subjectKeyForSave =
+            selectedSubjectId === DRAFT_SUBJECT_MATERIAL_ID
+              ? draftSubjectNameTrim || null
+              : subjectIdForSave
+                ? allSubjects.find((s) => s.id === subjectIdForSave)?.name || null
+                : null;
+
+          const created = await createFileMaterial({
+            familyId,
+            storagePath: finalPath,
+            title: titleForRow,
+            mime: file.type || 'application/octet-stream',
+            bytes: file.size || 0,
+            tags,
+            notes: null,
+            subjectId: subjectIdForSave,
+            subjectKey: subjectKeyForSave,
+            url: fileUrl || null,
+          });
+
+          if (created?.id && selectedChildIds.length > 0 && familyId) {
+            await Promise.all(
+              selectedChildIds.map((childId) =>
+                linkMaterialToChild(created.id, childId, familyId, 'planned')
+              )
+            );
+          }
+
+          setRole(effectiveRole);
+          setTitle(titleForRow);
+
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('materialUpdated', {
+                detail: { materialId: created.id, familyId, action: 'created' },
+              })
+            );
+            window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            const subId =
+              selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+                ? selectedSubjectId
+                : created?.subject_id;
+            if (subId) {
+              window.dispatchEvent(
+                new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } })
+              );
+            }
+          }
+
+          console.log('[AddMaterialModal] Material saved to library after upload:', created?.id);
+          if (onSaved) onSaved(created);
+          onClose();
+        } catch (persistErr) {
+          console.error('[AddMaterialModal] Failed to persist material after upload:', persistErr);
+          setRole(effectiveRole);
+          setTitle((prev) => (prev.trim() ? prev : titleForRow));
+          Alert.alert(
+            'File uploaded',
+            `Your file is in storage but could not be added to the library: ${persistErr.message || 'Unknown error'}. Choose a type and tap Save to try again.`
+          );
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        Alert.alert('Success', 'File uploaded successfully');
+      }
     } catch (error) {
       Alert.alert('Upload Error', error.message || 'Failed to upload file');
     } finally {

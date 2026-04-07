@@ -663,7 +663,7 @@ function childLabelFromEvent(ev, children) {
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, onHomeLoadingChange, onPlannerLoadingChange, onSubjectsLoadingChange, onMaterialsLoadingChange, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
   /** Same user across Supabase token refresh; avoids re-running home/family effects on every tab focus. */
   const authUserId = user?.id ?? null;
 
@@ -725,7 +725,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   // Home data state (top-level to avoid hooks inside render helpers)
   const [homeData, setHomeData] = useState(null);
-  const [homeLoading, setHomeLoading] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState(null);
   const [conversationStarters, setConversationStarters] = useState([]);
   const [weeklyProgress, setWeeklyProgress] = useState({});
@@ -813,10 +812,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [materialsCache, setMaterialsCache] = useState(null);
   const [materialsCacheTimestamp, setMaterialsCacheTimestamp] = useState(null);
 
-  // Library no longer blocks the shell; keep parent flag cleared (was tied to removed materials-only prefetch).
+  // Hydrate Library list from session tab cache so navigation feels instant (API refresh still runs in preload).
   useEffect(() => {
-    onMaterialsLoadingChange?.(false);
-  }, [familyId, onMaterialsLoadingChange]);
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+    try {
+      const raw = sessionStorage.getItem(`ld_web_materials_${familyId}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed?.data)) return;
+      setMaterialsCache((prev) => (prev == null ? parsed.data : prev));
+      setMaterialsCacheTimestamp((prev) => (prev == null ? (parsed.t || Date.now()) : prev));
+    } catch (_) {}
+  }, [familyId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId || !Array.isArray(materialsCache)) return;
+    try {
+      sessionStorage.setItem(
+        `ld_web_materials_${familyId}`,
+        JSON.stringify({ t: materialsCacheTimestamp || Date.now(), data: materialsCache })
+      );
+    } catch (_) {}
+  }, [familyId, materialsCache, materialsCacheTimestamp]);
 
   // Invalidate materials cache when library changes (e.g. syllabus added from Edit Subject) so Library tab isn’t stale
   useEffect(() => {
@@ -2521,7 +2538,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       const preserveEventId = options.preserveEventId || null;
       const allChildren = options.allChildren === true; // when true, fetch all family events (e.g. for plan summary slot lookup)
-      if (!background) setCalendarDataLoading(true);
       try {
         const [monthResult, holidaysResult] = await Promise.all([
           supabase.rpc('get_month_view', {
@@ -2618,7 +2634,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (dropStartTime != null && typeof performance !== 'undefined') {
           console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData finished');
         }
-        if (!background) setCalendarDataLoading(false);
       }
     })();
 
@@ -3043,7 +3058,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         window.removeEventListener('eventDeleted', handleEventDeletedForHome);
       }
     };
-  }, [activeTab, homeData, authUserId, homeSelectedDate, refreshCalendarData, onHomeLoadingChange]);
+  }, [activeTab, homeData, authUserId, homeSelectedDate, refreshCalendarData]);
 
   // Listen for rebalance modal events from PlannerWeek
   useEffect(() => {
@@ -3147,8 +3162,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   useEffect(() => {
     const fetchHomeData = async () => {
       if (!authUserId) {
-        setHomeLoading(false);
-        if (onHomeLoadingChange) onHomeLoadingChange(false);
         return;
       }
       try {
@@ -3162,8 +3175,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (!isAbortLikeError(profileError)) {
             console.error('Error fetching profile for home:', profileError);
           }
-          setHomeLoading(false);
-        if (onHomeLoadingChange) onHomeLoadingChange(false);
           return;
         }
 
@@ -3189,8 +3200,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             });
             // Set conversation starters from cache if available
             setConversationStarters(cachedData?.conversation_starters || []);
-            setHomeLoading(false);
-            if (onHomeLoadingChange) onHomeLoadingChange(false);
             
             // Check if family has any events in the events table
             (async () => {
@@ -3304,8 +3313,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             };
             
             setHomeData(initialData);
-            setHomeLoading(false);
-            if (onHomeLoadingChange) onHomeLoadingChange(false);
             
             // Cache the initial data
             saveHomeDataToCache(profileData.family_id, selectedDateStr, initialData);
@@ -3358,9 +3365,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         }
       } catch (err) {
         console.error('Unexpected error fetching home data:', err);
-      } finally {
-        setHomeLoading(false);
-        if (onHomeLoadingChange) onHomeLoadingChange(false);
       }
     };
 
@@ -3683,16 +3687,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // so that Subjects screens don't need to block on their own fetches. Report to parent for initial load overlay.
   useEffect(() => {
     if (!familyId) {
-      onSubjectsLoadingChange?.(false);
       return;
     }
     if (subjectsOverviewCache) {
-      onSubjectsLoadingChange?.(false);
       return;
     }
 
     let isCancelled = false;
-    onSubjectsLoadingChange?.(true);
 
     const loadInitialSubjectsOverview = async () => {
       try {
@@ -3704,8 +3705,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (!isAbortLikeError(err)) {
           console.error('[WebContent] Error preloading subjects overview:', err);
         }
-      } finally {
-        if (!isCancelled) onSubjectsLoadingChange?.(false);
       }
     };
 
@@ -3713,9 +3712,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
     return () => {
       isCancelled = true;
-      onSubjectsLoadingChange?.(false);
     };
-  }, [familyId, subjectsOverviewCache, onSubjectsLoadingChange]);
+  }, [familyId, subjectsOverviewCache, propSession]);
 
   // Preload subject detail data for all subjects when overview is loaded
   useEffect(() => {
@@ -3861,7 +3859,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const plannerHolidaysCacheRef = useRef({})
   useEffect(() => { plannerHolidaysCacheRef.current = plannerHolidaysCache; }, [plannerHolidaysCache])
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
-  const [calendarDataLoading, setCalendarDataLoading] = useState(false)
   // Pre-fetched planner tasks + attendance (null = not yet loaded for this family)
   const [plannerPreloadedBacklog, setPlannerPreloadedBacklog] = useState(null)
   const [plannerPreloadedTrash, setPlannerPreloadedTrash] = useState(null)
@@ -3874,7 +3871,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const plannerPreloadedForFamilyRef = useRef(null);
   useEffect(() => {
     if (!familyId) {
-      onPlannerLoadingChange?.(false);
       setPlannerPreloadedBacklog(null);
       setPlannerPreloadedTrash(null);
       setPlannerAttendanceSnapshot(null);
@@ -3886,7 +3882,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     setPlannerPreloadedBacklog(null);
     setPlannerPreloadedTrash(null);
     setPlannerAttendanceSnapshot(null);
-    onPlannerLoadingChange?.(true);
     // Library list: same moment as planner month — not chained after calendar (avoids “Loading materials…” on first Library open).
     getMaterials(familyId, {}, propSession)
       .then((data) => {
@@ -3904,7 +3899,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     prefetchPlanEditListForFamily(familyId).catch(() => {});
     refreshCalendarData(now)
       .then(() => {
-        onPlannerLoadingChange?.(false);
         Promise.all([
           refreshCalendarData(prevMonth, { background: true }),
           refreshCalendarData(nextMonth, { background: true }),
@@ -3917,9 +3911,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       })
       .catch((err) => {
         console.error('[WebContent] Planner preload failed:', err);
-        onPlannerLoadingChange?.(false);
       });
-  }, [familyId, refreshCalendarData, onPlannerLoadingChange, propSession]);
+  }, [familyId, refreshCalendarData, propSession]);
 
   const plannerChildrenKey = useMemo(
     () => (Array.isArray(children) ? children.map((c) => c?.id).filter(Boolean).sort().join(',') : ''),
@@ -8188,15 +8181,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
-    const pv = String(propPlannerView || 'month').toLowerCase();
-    const isMonthPlannerShell = pv === 'month';
-    const plannerVisibleMonthKey = `${date.getFullYear()}-${date.getMonth()}`;
-    const monthDataHydrated = Object.prototype.hasOwnProperty.call(calendarDataCache, plannerVisibleMonthKey);
-    const showPlannerMonthHydrating =
-      !!familyId &&
-      isMonthPlannerShell &&
-      (activeTab === 'planner' || activeTab === 'calendar') &&
-      !monthDataHydrated;
     return (
       <View
         style={{
@@ -8233,19 +8217,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
           />
         ) : null}
-        {showPlannerMonthHydrating ? (
-          <View
-            style={{
-              flex: 1,
-              minHeight: 280,
-              alignItems: 'center',
-              justifyContent: 'center',
-              ...(Platform.OS === 'web' ? { minHeight: 'min(60vh, 480px)' } : null),
-            }}
-          >
-            <ActivityIndicator size="large" />
-          </View>
-        ) : (
         <CenterPane
         date={date}
         events={plannerEventsForMonth}
@@ -8346,7 +8317,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         preloadedTrashEvents={plannerPreloadedTrash}
         plannerAttendanceSnapshot={plannerAttendanceSnapshot}
       />
-        )}
       </View>
     );
   };
