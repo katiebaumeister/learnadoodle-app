@@ -29,7 +29,7 @@ import DoodlePendingCommitBar from './assistant/DoodlePendingCommitBar.js'
 import DoodleSetupGuidePanel from './assistant/DoodleSetupGuidePanel.js'
 import { isSetupGuideComplete } from '../lib/doodleSetupGuide.js'
 
-export default function SearchModal({ visible, onClose, onNavigate }) {
+export default function SearchModal({ visible, onClose, onNavigate, initialPrompt = null }) {
   const { user } = useAuth()
   const session = useSession()
   const isParent = session?.role_flags?.isParent === true
@@ -87,6 +87,13 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
       ]).start()
     }
   }, [visible])
+
+  // Prefill composer when opened via Library / deep link (see openDoodleSearchModal in WebLayout)
+  useEffect(() => {
+    if (!visible || !initialPrompt || typeof initialPrompt !== 'string') return
+    const t = initialPrompt.trim()
+    if (t) setSearchQuery(t)
+  }, [visible, initialPrompt])
 
   const initializeModal = async () => {
     if (!user?.id) return

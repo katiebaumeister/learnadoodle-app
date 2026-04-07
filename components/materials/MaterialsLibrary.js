@@ -15,7 +15,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, BookOpen, Edit2, Sparkles } from 'lucide-react';
+import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, ClipboardList, PenLine, ArrowRight, Compass } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -97,6 +97,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [addModalDefaultRole, setAddModalDefaultRole] = useState(null);
   const [editingMaterial, setEditingMaterial] = useState(null);
   const [viewingMaterial, setViewingMaterial] = useState(null);
   const [showPdfViewer, setShowPdfViewer] = useState(false);
@@ -987,6 +988,103 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     }
   };
 
+  const navigateToSubjectsHub = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.__ldSearchNavigate === 'function') {
+      window.__ldSearchNavigate('subjects');
+    }
+  };
+
+  const getFirstSubjectForStructuredFlows = () => {
+    const list = mergedSubjectsForMaterialLookup;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    return list[0];
+  };
+
+  const openUploadSyllabusFlow = () => {
+    if (!ensureCanEditMaterials()) return;
+    setAddModalDefaultRole('syllabus');
+    setShowAddModal(true);
+  };
+
+  const openPasteLessonListFlow = () => {
+    if (!ensureCanEditMaterials()) return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      toast.push('Paste and extract is available in the web app.', 'info');
+      return;
+    }
+    const subj = getFirstSubjectForStructuredFlows();
+    if (!subj) {
+      toast.push('Add a subject first — then you can turn a pasted list into units and lessons.', 'info');
+      navigateToSubjectsHub();
+      return;
+    }
+    const childIds = parseChildIds(subj.child_id || '');
+    window.dispatchEvent(
+      new CustomEvent('openParsePlainTextModal', {
+        detail: {
+          subjectId: subj.id,
+          subjectName: subj.name,
+          familyId,
+          childIds,
+        },
+      })
+    );
+  };
+
+  const openManualCurriculumFlow = () => {
+    if (!ensureCanEditMaterials()) return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      toast.push('Manual curriculum builder is available in the web app.', 'info');
+      return;
+    }
+    const subj = getFirstSubjectForStructuredFlows();
+    if (!subj) {
+      toast.push('Add a subject first — then you can add units and lessons manually.', 'info');
+      navigateToSubjectsHub();
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent('openManualCurriculumBuilderModal', {
+        detail: {
+          subjectId: subj.id,
+          subjectName: subj.name,
+          familyId,
+        },
+      })
+    );
+  };
+
+  const openBrowseExamplesFlow = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.__ldSearchNavigate === 'function') {
+      window.__ldSearchNavigate('subjects');
+    }
+  };
+
+  const openAskDoodleFromLibrary = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const nm =
+      (effectiveChildren[0] && (effectiveChildren[0].first_name || effectiveChildren[0].name)) || 'your child';
+    window.dispatchEvent(
+      new CustomEvent('openDoodleSearchModal', {
+        detail: { initialPrompt: `What should ${nm} learn this month?` },
+      })
+    );
+  };
+
+  const openStarterTemplatePrompt = (label) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      toast.push('Open Learnadoodle on the web to plan with Doodle.', 'info');
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent('openDoodleSearchModal', {
+        detail: {
+          initialPrompt: `Help me draft a learning plan based on this template: ${label}. Ask me a few questions to tailor it to my family.`,
+        },
+      })
+    );
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.mainContent}>
@@ -1025,6 +1123,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
               style={styles.newButton}
               onPress={() => {
                 if (!ensureCanEditMaterials()) return;
+                setAddModalDefaultRole(null);
                 setShowAddModal(true);
               }}
               activeOpacity={0.8}
@@ -1134,27 +1233,167 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           <Text style={styles.loadingText}>Loading materials...</Text>
         </View>
       ) : hasNoMaterials ? (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIconContainer}>
-            <BookOpen size={64} color={colors.muted || '#9ca3af'} strokeWidth={1.5} />
+        <ScrollView
+          style={styles.emptyStateScroll}
+          contentContainerStyle={styles.emptyStateScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.emptyStateLayout}>
+            <View style={styles.emptyHeroRow}>
+              <View style={styles.emptyIllustration}>
+                <View style={styles.emptyIllustrationBg}>
+                  <View style={styles.bookStack}>
+                    <View style={[styles.bookLayer, styles.bookLayerBack]} />
+                    <View style={[styles.bookLayer, styles.bookLayerMid]} />
+                    <View style={[styles.bookLayer, styles.bookLayerFront]} />
+                  </View>
+                  <View style={styles.calOverlay}>
+                    <Calendar size={26} color={colors.accent} strokeWidth={2} />
+                  </View>
+                </View>
+                <View style={styles.flowMiniRow}>
+                  <View style={styles.flowMiniCard}>
+                    <Text style={styles.flowMiniCardText}>Lesson</Text>
+                  </View>
+                  <ArrowRight size={14} color={colors.muted} />
+                  <View style={styles.flowMiniCard}>
+                    <Text style={styles.flowMiniCardText}>Unit</Text>
+                  </View>
+                  <ArrowRight size={14} color={colors.muted} />
+                  <View style={styles.flowMiniCard}>
+                    <Text style={styles.flowMiniCardText}>Calendar</Text>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.emptyHeroCopy}>
+                <Text style={styles.emptyKicker}>This is where your learning system lives</Text>
+                <Text style={styles.emptyTitleLarge}>Build your child&apos;s learning library</Text>
+                <Text style={styles.emptySubtitle}>
+                  Everything your planner learns from starts here — you&apos;re about to build something powerful.
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.emptyIntegrationLine}>
+              Materials automatically connect to your planner, progress, and records.
+            </Text>
+
+            <View style={styles.emptyAiRow}>
+              <Sparkles size={16} color={colors.accent} strokeWidth={2} />
+              <Text style={styles.emptyAiText}>
+                I can turn anything into a plan — syllabus, book list, or just an idea.
+              </Text>
+            </View>
+            {Platform.OS === 'web' ? (
+              <TouchableOpacity
+                style={styles.emptyAskDoodle}
+                onPress={openAskDoodleFromLibrary}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.emptyAskDoodleText}>Ask Doodle</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <Text style={styles.emptySectionLabel}>Start with a path</Text>
+            <View style={styles.emptyCardGrid}>
+              <TouchableOpacity
+                style={styles.emptyPathCard}
+                onPress={openUploadSyllabusFlow}
+                activeOpacity={0.88}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <View style={styles.emptyPathCardIcon}>
+                  <Upload size={20} color={colors.accent} />
+                </View>
+                <Text style={styles.emptyPathCardTitle}>Upload syllabus</Text>
+                <Text style={styles.emptyPathCardBody}>Turn a PDF or doc into a structured plan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.emptyPathCard}
+                onPress={openPasteLessonListFlow}
+                activeOpacity={0.88}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <View style={styles.emptyPathCardIcon}>
+                  <ClipboardList size={20} color={colors.accent} />
+                </View>
+                <Text style={styles.emptyPathCardTitle}>Paste lesson list</Text>
+                <Text style={styles.emptyPathCardBody}>We&apos;ll organize it into units + schedule</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.emptyPathCard}
+                onPress={openManualCurriculumFlow}
+                activeOpacity={0.88}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <View style={styles.emptyPathCardIcon}>
+                  <PenLine size={20} color={colors.accent} />
+                </View>
+                <Text style={styles.emptyPathCardTitle}>Start from scratch</Text>
+                <Text style={styles.emptyPathCardBody}>Build your own curriculum manually</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.emptyPathCard}
+                onPress={openBrowseExamplesFlow}
+                activeOpacity={0.88}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <View style={styles.emptyPathCardIcon}>
+                  <Compass size={20} color={colors.accent} />
+                </View>
+                <Text style={styles.emptyPathCardTitle}>Browse examples</Text>
+                <Text style={styles.emptyPathCardBody}>See how other families structure learning</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.emptyPrimaryCta}
+              onPress={() => {
+                if (!ensureCanEditMaterials()) return;
+                setAddModalDefaultRole(null);
+                setShowAddModal(true);
+              }}
+              activeOpacity={0.88}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#ffffff" />
+              <Text style={styles.emptyPrimaryCtaText}>Turn something into a plan</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.emptySectionLabelMuted}>What this becomes</Text>
+            <View style={styles.emptyPreviewRow}>
+              <View style={styles.emptyPreviewCard}>
+                <Text style={styles.emptyPreviewTitle}>Algebra I – Unit 1</Text>
+                <Text style={styles.emptyPreviewLine}>• 12 lessons</Text>
+                <Text style={styles.emptyPreviewLine}>• 3 weeks</Text>
+                <Text style={styles.emptyPreviewLineMuted}>• Synced to planner</Text>
+              </View>
+              <View style={styles.emptyPreviewCard}>
+                <Text style={styles.emptyPreviewTitle}>Reading – Charlotte&apos;s Web</Text>
+                <Text style={styles.emptyPreviewLine}>• Reading + discussion</Text>
+                <Text style={styles.emptyPreviewLineMuted}>• Progress tracked</Text>
+              </View>
+            </View>
+
+            <Text style={styles.emptySectionLabelMuted}>Starter templates</Text>
+            <View style={styles.emptyTemplateRow}>
+              {['Kindergarten reading plan', 'Middle school science (project-based)', 'Afterschool math practice'].map(
+                (label) => (
+                  <TouchableOpacity
+                    key={label}
+                    style={styles.emptyTemplateChip}
+                    onPress={() => openStarterTemplatePrompt(label)}
+                    activeOpacity={0.85}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.emptyTemplateChipText}>{label}</Text>
+                  </TouchableOpacity>
+                )
+              )}
+            </View>
           </View>
-          <Text style={styles.emptyTitle}>
-            Your family library starts here
-          </Text>
-          <Text style={styles.emptyText}>
-            Add syllabi, lesson plans, assignments, and resources, and track how each child responds over time.
-          </Text>
-          <TouchableOpacity
-            style={styles.emptyButton}
-            onPress={() => {
-              if (!ensureCanEditMaterials()) return;
-              setShowAddModal(true);
-            }}
-          >
-            <Plus size={18} color={colors.accent} />
-            <Text style={styles.emptyButtonText}>Add your first material</Text>
-          </TouchableOpacity>
-        </View>
+        </ScrollView>
       ) : (
         <>
           {/* Filters Dropdown Modal */}
@@ -1666,14 +1905,19 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       {/* Add Material Modal */}
       <AddMaterialModal
         visible={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={() => {
+          setShowAddModal(false);
+          setAddModalDefaultRole(null);
+        }}
         onSaved={() => {
           setShowAddModal(false);
+          setAddModalDefaultRole(null);
           loadMaterials();
         }}
         familyId={familyId}
         children={children}
         allSubjects={allSubjectsForModal}
+        defaultRole={addModalDefaultRole}
       />
 
       {/* Material Details Modal (View Mode) */}
@@ -3033,6 +3277,362 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
+  },
+  emptyStateScroll: {
+    flex: 1,
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  emptyStateScrollContent: {
+    paddingBottom: 48,
+    paddingHorizontal: 4,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 920,
+      width: '100%',
+      alignSelf: 'center',
+    }),
+  },
+  emptyStateLayout: {
+    width: '100%',
+  },
+  emptyHeroRow: {
+    flexDirection: 'column',
+    gap: 20,
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 36,
+    }),
+  },
+  emptyIllustration: {
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      minWidth: 260,
+      flexShrink: 0,
+    }),
+  },
+  emptyIllustrationBg: {
+    width: 200,
+    height: 140,
+    borderRadius: 16,
+    backgroundColor: '#f0f4ff',
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    overflow: 'visible',
+    position: 'relative',
+  },
+  bookStack: {
+    position: 'absolute',
+    left: 36,
+    bottom: 18,
+    width: 120,
+    height: 72,
+  },
+  bookLayer: {
+    position: 'absolute',
+    left: 0,
+    width: 112,
+    height: 22,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  bookLayerBack: {
+    bottom: 0,
+    backgroundColor: '#dbeafe',
+    borderColor: '#bfdbfe',
+    opacity: 0.55,
+  },
+  bookLayerMid: {
+    bottom: 14,
+    backgroundColor: '#e0e7ff',
+    borderColor: '#c7d2fe',
+    opacity: 0.75,
+  },
+  bookLayerFront: {
+    bottom: 28,
+    backgroundColor: '#eef2ff',
+    borderColor: '#a5b4fc',
+  },
+  calOverlay: {
+    position: 'absolute',
+    right: 20,
+    top: 22,
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.08)',
+    }),
+  },
+  flowMiniRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    opacity: 0.85,
+  },
+  flowMiniCard: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  flowMiniCardText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.muted,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyHeroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  emptyKicker: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    color: colors.muted,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyTitleLarge: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 10,
+    lineHeight: 28,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptySubtitle: {
+    fontSize: 15,
+    color: colors.muted,
+    lineHeight: 22,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyIntegrationLine: {
+    fontSize: 13,
+    color: colors.muted,
+    marginTop: 8,
+    marginBottom: 16,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyAiRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#faf5ff',
+    borderWidth: 1,
+    borderColor: '#f3e8ff',
+  },
+  emptyAiText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#6b21a8',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyAskDoodle: {
+    alignSelf: 'flex-start',
+    marginBottom: 22,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: colors.accent,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  emptyAskDoodleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptySectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: colors.text,
+    textTransform: 'uppercase',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptySectionLabelMuted: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: colors.muted,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+    marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyCardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 20,
+  },
+  emptyPathCard: {
+    flexGrow: 1,
+    minWidth: 148,
+    maxWidth: '100%',
+    ...(Platform.OS === 'web' && {
+      flexBasis: '47%',
+      maxWidth: 440,
+    }),
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+    }),
+  },
+  emptyPathCardIcon: {
+    marginBottom: 8,
+  },
+  emptyPathCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyPathCardBody: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyPrimaryCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    alignSelf: 'stretch',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+    marginBottom: 28,
+  },
+  emptyPrimaryCtaText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyPreviewRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 8,
+  },
+  emptyPreviewCard: {
+    flex: 1,
+    minWidth: 200,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    backgroundColor: '#fafafa',
+    opacity: 0.92,
+  },
+  emptyPreviewTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.muted,
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyPreviewLine: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyPreviewLineMuted: {
+    fontSize: 12,
+    color: '#9ca3af',
+    lineHeight: 18,
+    marginTop: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyTemplateRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  emptyTemplateChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  emptyTemplateChipText: {
+    fontSize: 13,
+    color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyIconContainer: {
     marginBottom: 24,

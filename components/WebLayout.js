@@ -172,6 +172,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
   const [showDoodleSearchModal, setShowDoodleSearchModal] = useState(false);
+  /** Optional prefilled prompt when opening Doodle from Library (or other callers). */
+  const [doodleSearchInitialPrompt, setDoodleSearchInitialPrompt] = useState(null);
   const [showPlanningModal, setShowPlanningModal] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
@@ -2156,6 +2158,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openParsePlainTextModal', handler);
   }, [familyId]);
 
+  // Open Doodle chat from anywhere (e.g. Library empty state — optional initialPrompt in event detail)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      const d = e?.detail || {};
+      const p = d.initialPrompt;
+      setDoodleSearchInitialPrompt(typeof p === 'string' && p.trim() ? p.trim() : null);
+      setShowDoodleSearchModal(true);
+    };
+    window.addEventListener('openDoodleSearchModal', handler);
+    return () => window.removeEventListener('openDoodleSearchModal', handler);
+  }, []);
+
   // Listen for openManualCurriculumBuilderModal (from Edit Subject → Course Structure → Add unit manually)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -3915,14 +3930,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       {/* Doodle bot search modal - opened via floating Ask AI button */}
       {showDoodleSearchModal && (
-        <SearchModal visible={showDoodleSearchModal} onClose={() => setShowDoodleSearchModal(false)} onNavigate={handleDoodleNavigate} />
+        <SearchModal
+          visible={showDoodleSearchModal}
+          onClose={() => {
+            setShowDoodleSearchModal(false);
+            setDoodleSearchInitialPrompt(null);
+          }}
+          onNavigate={handleDoodleNavigate}
+          initialPrompt={doodleSearchInitialPrompt}
+        />
       )}
 
       {/* Ask AI — floating button (all main tabs including Home) */}
       {user && (
         <View style={styles.fabAskAIWrap}>
           <TouchableOpacity
-            onPress={() => setShowDoodleSearchModal(true)}
+            onPress={() => {
+              setDoodleSearchInitialPrompt(null);
+              setShowDoodleSearchModal(true);
+            }}
             style={styles.fabAskAI}
             activeOpacity={0.85}
             accessibilityLabel="Ask Learnadoodle"

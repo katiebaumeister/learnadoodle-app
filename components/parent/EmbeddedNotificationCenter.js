@@ -20,7 +20,7 @@ import {
 } from '../child/childHomeRailHelpers';
 
 const RAIL_CACHE_TTL_MS = 3 * 60 * 1000;
-const railCacheKey = (familyId) => `parent_home_rail_v1_${familyId}`;
+const railCacheKey = (familyId) => `parent_home_rail_v2_${familyId}`;
 
 function readRailCache(familyId) {
   if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return null;
@@ -28,12 +28,14 @@ function readRailCache(familyId) {
     const raw = sessionStorage.getItem(railCacheKey(familyId));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    const { ts, assignments, upcomingEvents, children } = parsed;
+    const { ts, assignments, upcomingEvents, children, hasLinkedChildAccount } = parsed;
     if (typeof ts !== 'number' || Date.now() - ts > RAIL_CACHE_TTL_MS) return null;
     return {
       assignments: Array.isArray(assignments) ? assignments : [],
       upcomingEvents: Array.isArray(upcomingEvents) ? upcomingEvents : [],
       children: Array.isArray(children) ? children : [],
+      hasLinkedChildAccount:
+        typeof hasLinkedChildAccount === 'boolean' ? hasLinkedChildAccount : undefined,
     };
   } catch {
     return null;
@@ -50,6 +52,27 @@ function writeRailCache(familyId, payload) {
   } catch {
     /* ignore quota */
   }
+}
+
+/** Sync snapshot for first paint — avoids “Needs attention” flash before network settles. */
+function readRailBootstrap(familyId) {
+  const c = readRailCache(familyId);
+  if (!c) {
+    return {
+      assignments: [],
+      upcomingEvents: [],
+      children: [],
+      hasLinkedChildAccount: false,
+      fromCache: false,
+    };
+  }
+  return {
+    assignments: c.assignments,
+    upcomingEvents: c.upcomingEvents,
+    children: c.children,
+    hasLinkedChildAccount: typeof c.hasLinkedChildAccount === 'boolean' ? c.hasLinkedChildAccount : false,
+    fromCache: true,
+  };
 }
 
 const SECTIONS = [
@@ -71,32 +94,49 @@ export default function EmbeddedNotificationCenter({
 }) {
   const session = useSession();
   const [loading, setLoading] = useState(false); // Start as false - no loading state
-  const [assignments, setAssignments] = useState([]);
-  const [upcomingEvents, setUpcomingEvents] = useState([]);
-  const [children, setChildren] = useState([]);
+  const [assignments, setAssignments] = useState(() => readRailBootstrap(familyId).assignments);
+  const [upcomingEvents, setUpcomingEvents] = useState(() => readRailBootstrap(familyId).upcomingEvents);
+  const [children, setChildren] = useState(() => readRailBootstrap(familyId).children);
   /** Child profile rows (can exist before any login invite is accepted). */
-  const [hasLinkedChildAccount, setHasLinkedChildAccount] = useState(false);
+  const [hasLinkedChildAccount, setHasLinkedChildAccount] = useState(
+    () => readRailBootstrap(familyId).hasLinkedChildAccount
+  );
+  /** True when sessionStorage had a fresh rail snapshot (enables rail UI before network). */
+  const [railBootstrapped, setRailBootstrapped] = useState(() => readRailBootstrap(familyId).fromCache);
   const [dataReady, setDataReady] = useState(false);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
   const [openModal, setOpenModal] = useState(null);
 
-  /** Hydrate from session cache before paint so the rail does not pop in empty on repeat visits. */
+  /** Re-read cache when family changes (same mount). */
   useLayoutEffect(() => {
-    if (!familyId) return;
-    const c = readRailCache(familyId);
-    if (!c) return;
-    setAssignments(c.assignments);
-    setUpcomingEvents(c.upcomingEvents);
-    setChildren(c.children);
+    if (!familyId) {
+      setRailBootstrapped(false);
+      return;
+    }
+    const b = readRailBootstrap(familyId);
+    if (b.fromCache) {
+      setAssignments(b.assignments);
+      setUpcomingEvents(b.upcomingEvents);
+      setChildren(b.children);
+      setHasLinkedChildAccount(b.hasLinkedChildAccount);
+      setRailBootstrapped(true);
+    } else {
+      setRailBootstrapped(false);
+    }
   }, [familyId]);
 
   useEffect(() => {
     if (dataReady && familyId) {
-      writeRailCache(familyId, { assignments, upcomingEvents, children });
+      writeRailCache(familyId, {
+        assignments,
+        upcomingEvents,
+        children,
+        hasLinkedChildAccount,
+      });
     }
-  }, [dataReady, familyId, assignments, upcomingEvents, children]);
+  }, [dataReady, familyId, assignments, upcomingEvents, children, hasLinkedChildAccount]);
 
   // Primitives only — full `session` from context was a new object whenever SessionProvider re-rendered (before useMemo).
   const sessionLoading = session?.loading;
@@ -384,15 +424,21 @@ export default function EmbeddedNotificationCenter({
         !a.need_help
     ) || assignments.some((a) => a.need_help === true);
 
+  /** Network finished OR we restored a fresh sessionStorage snapshot (no flash on repeat visits). */
+  const railReady = dataReady || railBootstrapped;
+
   const primaryCardMode = hideOnboardingCards
     ? 'none'
-    : dataReady && !hasLinkedChildAccount
+    : railReady && !hasLinkedChildAccount
       ? 'invite'
-      : dataReady && hasLinkedChildAccount && !hasInboxActivity
+      : railReady && hasLinkedChildAccount && !hasInboxActivity
         ? 'assign'
         : 'none';
-  /** Inbox chrome as soon as we know we are not in onboarding-card mode (primaryCardMode stays 'none' while loading). */
-  const showInboxTabs = hideOnboardingCards || primaryCardMode === 'none';
+  /** Inbox chrome when we’re past loading placeholder and not showing invite/assign primary card. */
+  const showInboxTabs = hideOnboardingCards || (railReady && primaryCardMode === 'none');
+
+  /** First visit / no cache: show stable skeleton instead of wrong “Needs attention” + empty tabs. */
+  const showRailLoadingPlaceholder = !railReady && !hideOnboardingCards;
 
   const sectionLabel =
     primaryCardMode === 'invite'
@@ -504,13 +550,27 @@ export default function EmbeddedNotificationCenter({
         <View style={styles.header}>
           <Text
             style={
-              primaryCardMode === 'none' ? styles.titleInbox : styles.titleOnboarding
+              showRailLoadingPlaceholder
+                ? styles.titleOnboarding
+                : primaryCardMode === 'none'
+                  ? styles.titleInbox
+                  : styles.titleOnboarding
             }
           >
-            {sectionLabel}
+            {showRailLoadingPlaceholder ? 'Next step' : sectionLabel}
           </Text>
         </View>
 
+        {showRailLoadingPlaceholder ? (
+          <View style={styles.railSkeletonWrap} accessibilityLabel="Loading">
+            <View style={styles.railSkeletonCard}>
+              <View style={styles.skeletonBarWide} />
+              <View style={styles.skeletonBarMed} />
+              <View style={styles.skeletonCta} />
+            </View>
+          </View>
+        ) : (
+          <>
         {primaryCardMode === 'invite' ? (
           <View style={styles.primaryCard}>
             <Text style={styles.primaryCardTitle}>Invite a child</Text>
@@ -706,6 +766,8 @@ export default function EmbeddedNotificationCenter({
             )}
           </>
         ) : null}
+          </>
+        )}
       </View>
 
       {selectedAssignment && openModal === 'submission' && (
@@ -782,6 +844,38 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  railSkeletonWrap: {
+    width: '100%',
+    marginBottom: 8,
+  },
+  railSkeletonCard: {
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    backgroundColor: 'rgba(238, 242, 255, 0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.12)',
+    gap: 10,
+  },
+  skeletonBarWide: {
+    height: 14,
+    borderRadius: 6,
+    backgroundColor: 'rgba(148, 163, 184, 0.28)',
+    width: '88%',
+  },
+  skeletonBarMed: {
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(148, 163, 184, 0.2)',
+    width: '100%',
+  },
+  skeletonCta: {
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: 'rgba(99, 102, 241, 0.22)',
+    width: '100%',
+    marginTop: 4,
   },
   primaryCard: {
     marginBottom: 14,

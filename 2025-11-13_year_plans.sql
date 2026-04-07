@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS year_plans (
   start_date date NOT NULL,
   end_date date NOT NULL,
   total_weeks int GENERATED ALWAYS AS (((end_date - start_date) / 7) + 1) STORED,
-  created_by uuid NOT NULL REFERENCES auth.users(id),
+  -- Nullable so auth user deletion can SET NULL (see migration year_plans_created_by_on_delete_set_null)
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()
 );
 
