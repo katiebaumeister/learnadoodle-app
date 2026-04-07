@@ -2259,11 +2259,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         window.history.replaceState({}, '', '/planner?view=month');
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
       }
-    } else if (target === 'navigate_setup_library') {
-      handleTabChange('materials');
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.pushState({}, '', '/materials');
-      }
     }
   }, [handleTabChange]);
 

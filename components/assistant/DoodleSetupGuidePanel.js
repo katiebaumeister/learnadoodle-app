@@ -10,12 +10,12 @@ import {
 } from '../../lib/doodleSetupGuide';
 
 export default function DoodleSetupGuidePanel({ userId, onNavigate, onGoToChat, showCompletedChecklist = false }) {
-  const [, setTick] = useState(0);
-  const progress = useMemo(() => loadSetupProgress(userId), [userId, setTick]);
+  const [progressTick, setProgressTick] = useState(0);
+  const progress = useMemo(() => loadSetupProgress(userId), [userId, progressTick]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => setTick((t) => t + 1);
+    const handler = () => setProgressTick((t) => t + 1);
     window.addEventListener('doodleSetupProgressChanged', handler);
     return () => window.removeEventListener('doodleSetupProgressChanged', handler);
   }, []);
