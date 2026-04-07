@@ -268,6 +268,32 @@ def _dedupe_empty_single_child_slots_for_day(
     return len(remove_ids)
 
 
+def _format_db_exc(exc: Exception) -> str:
+    """Compact message for PostgREST / DB errors in logs."""
+    parts = [type(exc).__name__, str(exc)]
+    details = getattr(exc, "details", None)
+    message = getattr(exc, "message", None)
+    code = getattr(exc, "code", None)
+    if message and message not in parts:
+        parts.append(f"message={message!r}")
+    if code:
+        parts.append(f"code={code!r}")
+    if details:
+        parts.append(f"details={details!r}")
+    return " | ".join(parts)
+
+
+def _looks_like_overlap_constraint_error(msg: str) -> bool:
+    m = (msg or "").lower()
+    return (
+        "exclusion" in m
+        or "overlap" in m
+        or "23p01" in m
+        or "conflicting key" in m
+        or "gist" in m
+    )
+
+
 def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
     payload = {
         "start_ts": row["start_ts"],
@@ -304,7 +330,8 @@ def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
     try:
         supabase.table("events").insert(row).execute()
         return True
-    except Exception:
+    except Exception as e1:
+        err1 = _format_db_exc(e1)
         fallback_row = dict(row)
         child_id = fallback_row.get("child_id")
         child_ids = fallback_row.get("child_ids")
@@ -315,7 +342,31 @@ def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
         try:
             supabase.table("events").insert(fallback_row).execute()
             return True
-        except Exception:
+        except Exception as e2:
+            err2 = _format_db_exc(e2)
+            # Plan-year placeholders are excluded from events_no_overlap_exclude (see migration
+            # 20260221_events_no_overlap_exclude_plan_year_placeholders). Use when the DB still
+            # enforces overlap on flexible rows (older constraint) or other overlap edge cases.
+            if _looks_like_overlap_constraint_error(err1) or _looks_like_overlap_constraint_error(err2):
+                ph_row = dict(fallback_row)
+                ph_row["is_placeholder"] = True
+                ph_row["generated_by"] = "plan_year"
+                ph_row["is_flexible"] = True
+                try:
+                    supabase.table("events").insert(ph_row).execute()
+                    return True
+                except Exception as e3:
+                    print(
+                        f"[BACKEND] block_regen insert failed (incl. placeholder fallback) subject={row.get('subject_id')} "
+                        f"start={row.get('start_ts')}: 1={err1} | 2={err2} | 3={_format_db_exc(e3)}",
+                        flush=True,
+                    )
+                    return False
+            print(
+                f"[BACKEND] block_regen insert failed subject={row.get('subject_id')} start={row.get('start_ts')}: "
+                f"1={err1} | 2={err2}",
+                flush=True,
+            )
             return False
 
 
@@ -573,7 +624,7 @@ def regenerate_block(
             else:
                 print(f"[BACKEND] block_regen update failed for id={row.get('id')}: overlap-safe fallback also failed", flush=True)
         except Exception as exc:
-            print(f"[BACKEND] block_regen update failed for id={row.get('id')}: {exc}", flush=True)
+            print(f"[BACKEND] block_regen update failed for id={row.get('id')}: {_format_db_exc(exc)}", flush=True)
 
     inserted_count = 0
     if to_insert:

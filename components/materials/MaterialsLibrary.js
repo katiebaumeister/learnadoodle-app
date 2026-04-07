@@ -1169,7 +1169,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Plus size={18} color="#ffffff" />
-                  <Text style={styles.emptyPrimaryCtaText}>Start adding assignments</Text>
+                  <Text style={styles.emptyPrimaryCtaText}>Start adding materials</Text>
                 </TouchableOpacity>
               </View>
             </View>
