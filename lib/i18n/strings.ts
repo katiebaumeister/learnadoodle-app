@@ -74,8 +74,27 @@ export const STRINGS = {
         "Choose subjects, set your date range and weekly pattern, then preview slots on the calendar — or add units first from the subject page and connect them later.",
       /** Edit plan list (inline planner) — same title scale as structuredClassPlansTitle. */
       editPlanTitle: "Edit plan",
-      editPlanHelp:
-        "Select a plan to view details or make changes. To add lesson structure without scheduling yet, use Add units on the subject page.",
+      editPlanListHelp: "Select a plan to view details or make changes.",
+      /** Empty “your plans” list — onboarding / start-first framing. */
+      emptyPlanListTitle: "Create your learning plan",
+      emptyPlanListSubtitle: "Nothing scheduled yet — let's build your plan.",
+      emptyPlanFlowUnits: "Units",
+      emptyPlanFlowSchedule: "Schedule",
+      emptyPlanFlowCalendar: "Calendar",
+      emptyPlanCardScheduleTitle: "Build a schedule",
+      emptyPlanCardScheduleBody:
+        "Set days, times, and rhythm. We'll help you distribute learning automatically.",
+      emptyPlanCardScheduleCta: "Start scheduling",
+      emptyPlanCardUnitsTitle: "Add lessons or units",
+      emptyPlanCardUnitsBody:
+        "Upload material or paste a syllabus. Structure learning before placing it on the calendar.",
+      emptyPlanCardUnitsCtaAdd: "Add units",
+      emptyPlanCardUnitsCtaChange: "Change units",
+      emptyPlanOr: "OR",
+      emptyPlanQuickTitle: "Quick start with AI",
+      emptyPlanQuickBody: "Tell us what you're learning and we'll build a starter plan.",
+      emptyPlanQuickCta: "Generate plan",
+      emptyPlanFooterHint: "Plans connect your schedule, lessons, and progress.",
     },
 
     sections: {

@@ -51,6 +51,7 @@ import {
   Pencil,
   RotateCcw,
   GripVertical,
+  Zap,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -2643,6 +2644,21 @@ export default function PlanYearModal({
     baseSubjectList,
     onClose,
   ]);
+
+  /** Empty “Edit plan” list: start cadence-first wizard (same as Create New Plan from entry choice). */
+  const beginScheduleFirstPlan = useCallback(() => {
+    setShowPlanManagerView(false);
+    setStartCreatingNew(true);
+    setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+  }, []);
+
+  /** Intelligence Hub → Plan the Year AI (WebLayout listens for openYearWizard). */
+  const openQuickStartWithAI = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new CustomEvent('openYearWizard'));
+    }
+    onClose?.();
+  }, [onClose]);
 
   /** Client-side lesson → slot lines (matches apply order; no DB placeholders required). */
   const lessonSchedulePreviewPlan = useMemo(() => {
@@ -8600,13 +8616,19 @@ export default function PlanYearModal({
           ) : showYourPlansList ? (
             <ScrollView
               style={[styles.content, renderInline && styles.planListScrollInline]}
-              contentContainerStyle={[styles.planListContentContainer, renderInline && styles.planListContentContainerInline]}
+              contentContainerStyle={[
+                styles.planListContentContainer,
+                renderInline && styles.planListContentContainerInline,
+                editPlanListRows.length === 0 && styles.planListContentContainerEmpty,
+              ]}
               showsVerticalScrollIndicator={false}
             >
-              <View style={styles.planYearGlanceHeaderWrap}>
-                <Text style={styles.planYearGlanceTitle}>{t('planMyYear.modal.editPlanTitle')}</Text>
-                <Text style={styles.planYearGlanceHelp}>{t('planMyYear.modal.editPlanHelp')}</Text>
-              </View>
+              {editPlanListRows.length > 0 ? (
+                <View style={styles.planYearGlanceHeaderWrap}>
+                  <Text style={styles.planYearGlanceTitle}>{t('planMyYear.modal.editPlanTitle')}</Text>
+                  <Text style={styles.planYearGlanceHelp}>{t('planMyYear.modal.editPlanListHelp')}</Text>
+                </View>
+              ) : null}
               {loadError && (
                 <View style={styles.errorBox}>
                   <Text style={styles.errorText}>{loadError}</Text>
@@ -8694,22 +8716,81 @@ export default function PlanYearModal({
                     </ScrollView>
                   </>
                 ) : (
-                  <View style={{ marginTop: 28, marginBottom: 16, paddingHorizontal: 4 }}>
-                    <Text style={[styles.mutedText, { fontSize: 16, lineHeight: 22, color: FG, marginBottom: 8 }]}>
-                      Start by scheduling, or organize lessons first — you can connect them anytime.
-                    </Text>
-                    <Text style={[styles.mutedText, { fontSize: 14, lineHeight: 20, marginBottom: 14 }]}>
-                      Create a new plan from the flow below when you’re ready for cadence and calendar slots.
-                    </Text>
+                  <View style={styles.planEmptyStateRoot}>
+                    <Text style={styles.planEmptyStateTitle}>{t('planMyYear.modal.emptyPlanListTitle')}</Text>
+                    <Text style={styles.planEmptyStateSubtitle}>{t('planMyYear.modal.emptyPlanListSubtitle')}</Text>
+
+                    <View style={styles.planEmptyFlowDiagram}>
+                      <View style={styles.planEmptyFlowNode}>
+                        <Text style={styles.planEmptyFlowNodeText}>{t('planMyYear.modal.emptyPlanFlowUnits')}</Text>
+                      </View>
+                      <Text style={styles.planEmptyFlowArrow}>→</Text>
+                      <View style={styles.planEmptyFlowNode}>
+                        <Text style={styles.planEmptyFlowNodeText}>{t('planMyYear.modal.emptyPlanFlowSchedule')}</Text>
+                      </View>
+                      <Text style={styles.planEmptyFlowArrow}>→</Text>
+                      <View style={styles.planEmptyFlowNode}>
+                        <Text style={styles.planEmptyFlowNodeText}>{t('planMyYear.modal.emptyPlanFlowCalendar')}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.planEmptyCardsRow}>
+                      <View style={[styles.planEmptyCard, styles.planEmptyCardPrimary]}>
+                        <View style={styles.planEmptyCardIconRow}>
+                          <Calendar size={22} color="#4f46e5" />
+                          <Text style={styles.planEmptyCardTitle}>{t('planMyYear.modal.emptyPlanCardScheduleTitle')}</Text>
+                        </View>
+                        <Text style={styles.planEmptyCardBody}>{t('planMyYear.modal.emptyPlanCardScheduleBody')}</Text>
+                        <TouchableOpacity
+                          onPress={beginScheduleFirstPlan}
+                          style={styles.planEmptyCardCta}
+                          activeOpacity={0.85}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.planEmptyCardCtaText}>{t('planMyYear.modal.emptyPlanCardScheduleCta')} →</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={[styles.planEmptyCard, styles.planEmptyCardSecondary]}>
+                        <View style={styles.planEmptyCardIconRow}>
+                          <BookOpen size={22} color="#0d9488" />
+                          <Text style={styles.planEmptyCardTitle}>{t('planMyYear.modal.emptyPlanCardUnitsTitle')}</Text>
+                        </View>
+                        <Text style={styles.planEmptyCardBody}>{t('planMyYear.modal.emptyPlanCardUnitsBody')}</Text>
+                        <TouchableOpacity
+                          onPress={dispatchContentFirstUnitsFlow}
+                          style={[styles.planEmptyCardCta, styles.planEmptyCardCtaSecondary]}
+                          activeOpacity={0.85}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={[styles.planEmptyCardCtaText, styles.planEmptyCardCtaTextSecondary]}>
+                            {hasAnySavedCurriculumUnits
+                              ? `${t('planMyYear.modal.emptyPlanCardUnitsCtaChange')} →`
+                              : `${t('planMyYear.modal.emptyPlanCardUnitsCtaAdd')} →`}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <Text style={styles.planEmptyOr}>{t('planMyYear.modal.emptyPlanOr')}</Text>
+
                     <TouchableOpacity
-                      onPress={dispatchContentFirstUnitsFlow}
-                      activeOpacity={0.75}
+                      style={styles.planEmptyQuickCard}
+                      onPress={openQuickStartWithAI}
+                      activeOpacity={0.88}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Text style={{ fontSize: 14, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
-                        {hasAnySavedCurriculumUnits ? 'Change units without scheduling ->' : 'Add units without scheduling ->'}
-                      </Text>
+                      <View style={styles.planEmptyQuickInner}>
+                        <Zap size={20} color="#a855f7" />
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.planEmptyQuickTitle}>{t('planMyYear.modal.emptyPlanQuickTitle')}</Text>
+                          <Text style={styles.planEmptyQuickBody}>{t('planMyYear.modal.emptyPlanQuickBody')}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.planEmptyQuickCta}>{t('planMyYear.modal.emptyPlanQuickCta')} →</Text>
                     </TouchableOpacity>
+
+                    <Text style={styles.planEmptyFooterHint}>{t('planMyYear.modal.emptyPlanFooterHint')}</Text>
                   </View>
                 )}
               </View>
@@ -12757,6 +12838,180 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     flexGrow: 1,
     width: '100%',
+  },
+  /** Empty “your plans” list: vertically centered, card-based quick start. */
+  planListContentContainerEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { minHeight: 420 } : {}),
+  },
+  planEmptyStateRoot: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  planEmptyStateTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.94)',
+    textAlign: 'center',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planEmptyStateSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: 'rgba(15, 23, 42, 0.58)',
+    textAlign: 'center',
+    marginBottom: 22,
+    paddingHorizontal: 8,
+  },
+  planEmptyFlowDiagram: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 22,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(241, 245, 249, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  planEmptyFlowNode: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(203, 213, 225, 0.9)',
+  },
+  planEmptyFlowNodeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(51, 65, 85, 0.95)',
+    letterSpacing: 0.3,
+  },
+  planEmptyFlowArrow: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(148, 163, 184, 0.95)',
+  },
+  planEmptyCardsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  planEmptyCard: {
+    flex: 1,
+    minWidth: 260,
+    maxWidth: 320,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+  },
+  planEmptyCardPrimary: {
+    backgroundColor: 'rgba(99, 102, 241, 0.07)',
+    borderColor: 'rgba(99, 102, 241, 0.22)',
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 4px 14px rgba(15, 23, 42, 0.06)' }
+      : { elevation: 2 }),
+  },
+  planEmptyCardSecondary: {
+    backgroundColor: 'rgba(20, 184, 166, 0.08)',
+    borderColor: 'rgba(13, 148, 136, 0.22)',
+  },
+  planEmptyCardIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  planEmptyCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.92)',
+    flex: 1,
+  },
+  planEmptyCardBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: 'rgba(15, 23, 42, 0.62)',
+    marginBottom: 14,
+  },
+  planEmptyCardCta: {
+    alignSelf: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#4f46e5',
+  },
+  planEmptyCardCtaSecondary: {
+    backgroundColor: '#0d9488',
+  },
+  planEmptyCardCtaText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  planEmptyCardCtaTextSecondary: {
+    color: '#fff',
+  },
+  planEmptyOr: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: 'rgba(148, 163, 184, 0.95)',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  planEmptyQuickCard: {
+    width: '100%',
+    maxWidth: 420,
+    alignSelf: 'center',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 18,
+    backgroundColor: 'rgba(168, 85, 247, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.22)',
+  },
+  planEmptyQuickInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 8,
+  },
+  planEmptyQuickTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.9)',
+    marginBottom: 4,
+  },
+  planEmptyQuickBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: 'rgba(15, 23, 42, 0.58)',
+  },
+  planEmptyQuickCta: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#7c3aed',
+  },
+  planEmptyFooterHint: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: 'rgba(100, 116, 139, 0.9)',
+    textAlign: 'center',
+    paddingHorizontal: 12,
   },
   planListScrollInline: {
     flex: 1,

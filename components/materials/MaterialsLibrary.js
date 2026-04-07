@@ -15,7 +15,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, ClipboardList, PenLine, ArrowRight, Compass } from 'lucide-react';
+import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, ClipboardList, PenLine, ArrowRight } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -1000,65 +1000,38 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     return list[0];
   };
 
-  const openUploadSyllabusFlow = () => {
-    if (!ensureCanEditMaterials()) return;
-    setAddModalDefaultRole('syllabus');
-    setShowAddModal(true);
-  };
-
-  const openPasteLessonListFlow = () => {
+  /** Opens the same unified Build plan (PlanYearModal) as the planner — not legacy add-material / parse / manual modals. */
+  const openPlanYearFromLibrary = (initialUnitStructureMethod) => {
     if (!ensureCanEditMaterials()) return;
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      toast.push('Paste and extract is available in the web app.', 'info');
+      toast.push('Build plan is available in the web app.', 'info');
       return;
     }
     const subj = getFirstSubjectForStructuredFlows();
     if (!subj) {
-      toast.push('Add a subject first — then you can turn a pasted list into units and lessons.', 'info');
+      toast.push('Add a subject first — then you can build a plan from here.', 'info');
       navigateToSubjectsHub();
       return;
     }
-    const childIds = parseChildIds(subj.child_id || '');
     window.dispatchEvent(
-      new CustomEvent('openParsePlainTextModal', {
+      new CustomEvent('openPlanYearModal', {
         detail: {
+          from: 'library',
+          openAsModal: true,
           subjectId: subj.id,
-          subjectName: subj.name,
-          familyId,
-          childIds,
+          initialUnitStructureMethod,
         },
       })
     );
   };
 
-  const openManualCurriculumFlow = () => {
-    if (!ensureCanEditMaterials()) return;
-    if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      toast.push('Manual curriculum builder is available in the web app.', 'info');
-      return;
-    }
-    const subj = getFirstSubjectForStructuredFlows();
-    if (!subj) {
-      toast.push('Add a subject first — then you can add units and lessons manually.', 'info');
-      navigateToSubjectsHub();
-      return;
-    }
-    window.dispatchEvent(
-      new CustomEvent('openManualCurriculumBuilderModal', {
-        detail: {
-          subjectId: subj.id,
-          subjectName: subj.name,
-          familyId,
-        },
-      })
-    );
-  };
+  const openUploadSyllabusFlow = () => openPlanYearFromLibrary('upload');
 
-  const openBrowseExamplesFlow = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.__ldSearchNavigate === 'function') {
-      window.__ldSearchNavigate('subjects');
-    }
-  };
+  const openPasteLessonListFlow = () => openPlanYearFromLibrary('paste_plain');
+
+  const openManualCurriculumFlow = () => openPlanYearFromLibrary('manual');
+
+  const openGenerateCurriculumFlow = () => openPlanYearFromLibrary('generate');
 
   const openAskDoodleFromLibrary = () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1067,20 +1040,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     window.dispatchEvent(
       new CustomEvent('openDoodleSearchModal', {
         detail: { initialPrompt: `What should ${nm} learn this month?` },
-      })
-    );
-  };
-
-  const openStarterTemplatePrompt = (label) => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      toast.push('Open Learnadoodle on the web to plan with Doodle.', 'info');
-      return;
-    }
-    window.dispatchEvent(
-      new CustomEvent('openDoodleSearchModal', {
-        detail: {
-          initialPrompt: `Help me draft a learning plan based on this template: ${label}. Ask me a few questions to tailor it to my family.`,
-        },
       })
     );
   };
@@ -1335,15 +1294,17 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.emptyPathCard}
-                onPress={openBrowseExamplesFlow}
+                onPress={openGenerateCurriculumFlow}
                 activeOpacity={0.88}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <View style={styles.emptyPathCardIcon}>
-                  <Compass size={20} color={colors.accent} />
+                  <Sparkles size={20} color={colors.accent} />
                 </View>
-                <Text style={styles.emptyPathCardTitle}>Browse examples</Text>
-                <Text style={styles.emptyPathCardBody}>See how other families structure learning</Text>
+                <Text style={styles.emptyPathCardTitle}>Generate curriculum</Text>
+                <Text style={styles.emptyPathCardBody}>
+                  AI drafts units and lessons from your goals — refine in Build plan
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -1360,38 +1321,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
               <Plus size={18} color="#ffffff" />
               <Text style={styles.emptyPrimaryCtaText}>Turn something into a plan</Text>
             </TouchableOpacity>
-
-            <Text style={styles.emptySectionLabelMuted}>What this becomes</Text>
-            <View style={styles.emptyPreviewRow}>
-              <View style={styles.emptyPreviewCard}>
-                <Text style={styles.emptyPreviewTitle}>Algebra I – Unit 1</Text>
-                <Text style={styles.emptyPreviewLine}>• 12 lessons</Text>
-                <Text style={styles.emptyPreviewLine}>• 3 weeks</Text>
-                <Text style={styles.emptyPreviewLineMuted}>• Synced to planner</Text>
-              </View>
-              <View style={styles.emptyPreviewCard}>
-                <Text style={styles.emptyPreviewTitle}>Reading – Charlotte&apos;s Web</Text>
-                <Text style={styles.emptyPreviewLine}>• Reading + discussion</Text>
-                <Text style={styles.emptyPreviewLineMuted}>• Progress tracked</Text>
-              </View>
-            </View>
-
-            <Text style={styles.emptySectionLabelMuted}>Starter templates</Text>
-            <View style={styles.emptyTemplateRow}>
-              {['Kindergarten reading plan', 'Middle school science (project-based)', 'Afterschool math practice'].map(
-                (label) => (
-                  <TouchableOpacity
-                    key={label}
-                    style={styles.emptyTemplateChip}
-                    onPress={() => openStarterTemplatePrompt(label)}
-                    activeOpacity={0.85}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={styles.emptyTemplateChipText}>{label}</Text>
-                  </TouchableOpacity>
-                )
-              )}
-            </View>
           </View>
         </ScrollView>
       ) : (
@@ -3284,6 +3213,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   emptyStateScrollContent: {
+    paddingTop: 28,
     paddingBottom: 48,
     paddingHorizontal: 4,
     ...(Platform.OS === 'web' && {
@@ -3495,18 +3425,6 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  emptySectionLabelMuted: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    color: colors.muted,
-    textTransform: 'uppercase',
-    marginBottom: 10,
-    marginTop: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   emptyCardGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -3566,70 +3484,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#ffffff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyPreviewRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 8,
-  },
-  emptyPreviewCard: {
-    flex: 1,
-    minWidth: 200,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#d1d5db',
-    backgroundColor: '#fafafa',
-    opacity: 0.92,
-  },
-  emptyPreviewTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.muted,
-    marginBottom: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyPreviewLine: {
-    fontSize: 13,
-    color: colors.muted,
-    lineHeight: 20,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyPreviewLineMuted: {
-    fontSize: 12,
-    color: '#9ca3af',
-    lineHeight: 18,
-    marginTop: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyTemplateRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  emptyTemplateChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: '#f3f4f6',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  emptyTemplateChipText: {
-    fontSize: 13,
-    color: colors.text,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

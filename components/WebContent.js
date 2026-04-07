@@ -7982,6 +7982,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onTabChange('settings', 'feedback');
       } else if (response.fetch === 'navigate_family' && onTabChange) {
         onTabChange('profile');
+      } else if (response.fetch === 'navigate_family_members' && onTabChange) {
+        onTabChange('settings', 'members');
       } else if (response.fetch === 'navigate_subjects' && onTabChange) {
         onTabChange('subjects');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {

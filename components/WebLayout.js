@@ -2234,6 +2234,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       handleTabChange('settings', 'feedback');
     } else if (target === 'navigate_family') {
       handleTabChange('profile');
+    } else if (target === 'navigate_family_members') {
+      handleTabChange('settings', 'members');
     } else if (target === 'navigate_subjects') {
       handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2275,8 +2277,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Doodle setup guide: mark checklist steps when user visits each area (parents only)
   useEffect(() => {
     if (!authUserId || session?.role_flags?.isParent !== true) return;
-    applySetupProgressFromNavigation(authUserId, { activeTab, currentView });
-  }, [authUserId, activeTab, currentView, session?.role_flags?.isParent]);
+    applySetupProgressFromNavigation(authUserId, { activeTab, currentView, activeSubtab });
+  }, [authUserId, activeTab, activeSubtab, currentView, session?.role_flags?.isParent]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
