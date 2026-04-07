@@ -1231,7 +1231,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         // Always fetch profile table for freshest name/phone
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('role, email, name, first_name, phone, avatar_url, app_preferences')
+          .select('role, email, name, first_name, phone, avatar_url, app_preferences, family_id')
           .eq('id', authUserId)
           .maybeSingle();
 
@@ -1245,6 +1245,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
             app_preferences: profileData?.app_preferences ?? null,
+            family_id: profileData?.family_id ?? meData?.family_id ?? null,
           };
           setUserRole(meData.role || profileData?.role || 'parent');
           setProfile(mergedProfile);
@@ -1266,6 +1267,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               phone: profileData.phone || '',
               avatar_url: profileData.avatar_url || null,
               app_preferences: profileData.app_preferences ?? null,
+              family_id: profileData.family_id ?? null,
             });
           }
         } else {
@@ -1276,6 +1278,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               email: user.email
             });
           }
+        }
+        if (profileData?.family_id) {
+          setFamilyId((fid) => fid || profileData.family_id);
         }
       } catch (error) {
         // Silent fallback - don't log errors here
@@ -1300,7 +1305,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('role, email, name, first_name, phone, avatar_url, app_preferences')
+          .select('role, email, name, first_name, phone, avatar_url, app_preferences, family_id')
           .eq('id', authUserId)
           .maybeSingle();
 
@@ -1313,9 +1318,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             phone: profileData?.phone || meData.phone || '',
             avatar_url: profileData?.avatar_url || meData.avatar_url || null,
             app_preferences: profileData?.app_preferences ?? null,
+            family_id: profileData?.family_id ?? meData?.family_id ?? null,
           };
           setUserRole(meData.role || profileData?.role || 'parent');
           setProfile(mergedProfile);
+          if (profileData?.family_id) {
+            setFamilyId((fid) => fid || profileData.family_id);
+          }
           return;
         }
 
@@ -1329,7 +1338,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             phone: profileData.phone || '',
             avatar_url: profileData.avatar_url || null,
             app_preferences: profileData.app_preferences ?? null,
+            family_id: profileData.family_id ?? null,
           });
+          if (profileData.family_id) {
+            setFamilyId((fid) => fid || profileData.family_id);
+          }
         }
       } catch (error) {
         // Silent fallback

@@ -36,6 +36,11 @@ import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils'
 import { defaultRequiresSubmissionHomeForEventType } from '../../lib/eventRequiresSubmissionHome';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
+import {
+  isPartOfRecurringSeries,
+  cleanPlannerEventId,
+  resolveSeriesMasterEventId,
+} from '../../lib/utils/recurringEventUtils';
 
 // Session-level guard: if this environment does not expose `lesson_standards`,
 // don't keep retrying the same failing request on every EventDetails mount.
@@ -771,6 +776,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const { user: authUser } = useAuth();
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
+  const [showRecurringDeleteModal, setShowRecurringDeleteModal] = useState(false);
   const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
   const [saving, setSaving] = useState(false);
   const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
@@ -2356,7 +2362,59 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     });
   }, [academicYears, preloadedAcademicYears]);
 
-  const handleDelete = async () => {
+  const performDeleteEntireSeries = async () => {
+    if (readOnly || !event?.id) return;
+    setDeleting(true);
+    try {
+      const cleanId = cleanPlannerEventId(String(event.id));
+      const masterEventId = resolveSeriesMasterEventId(event, cleanId);
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      let userFamilyId = familyId || event.family_id;
+      if (authUser) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('family_id')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        userFamilyId = profile?.family_id || userFamilyId;
+      }
+      if (!userFamilyId) {
+        throw new Error('Missing family');
+      }
+      let seriesQuery = supabase
+        .from('events')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('family_id', userFamilyId)
+        .or(`id.eq.${masterEventId},parent_event_id.eq.${masterEventId},recurrence_id.eq.${masterEventId}`)
+        .is('deleted_at', null);
+      const { error: seriesError } = await seriesQuery;
+      if (seriesError) throw seriesError;
+      toast.push('Series deleted', 'success');
+      if (onEventDeleted) onEventDeleted(masterEventId);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: masterEventId } }));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+      try {
+        const eventDate = event.start_ts
+          ? new Date(event.start_ts).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0];
+        logDeleteEvent(masterEventId, eventDate, event.child_id);
+      } catch (_) {}
+    } catch (err) {
+      const msg = err?.message || 'Failed to delete series';
+      toast.push(msg, 'error');
+      if (Platform.OS === 'web') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Error', msg);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const performDeleteSingleOccurrence = async () => {
     if (readOnly) return;
     if (!event?.id) {
       if (Platform.OS === 'web') {
@@ -2367,44 +2425,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return;
     }
 
-    // Use window.confirm on web, Alert.alert on native
-    let confirmed = false;
-    if (Platform.OS === 'web') {
-      confirmed = window.confirm('Are you sure you want to delete this event?');
-} else {
-      // For native, use Alert.alert with Promise wrapper
-      confirmed = await new Promise((resolve) => {
-    Alert.alert(
-      'Delete Event',
-      'Are you sure you want to delete this event?',
-      [
-            { 
-              text: 'Cancel', 
-              style: 'cancel',
-              onPress: () => {
-                resolve(false);
-              }
-            },
-        {
-          text: 'Delete',
-          style: 'destructive',
-              onPress: () => {
-                resolve(true);
-              },
-            },
-          ]
-        );
-      });
-    }
-    
-    if (!confirmed) {
-      return;
-    }
-
             setDeleting(true);
             try {
-      console.log('[EventDetails] Attempting to delete event:', event.id);
-      console.log('[EventDetails] Event details:', { id: event.id, family_id: event.family_id, title: event.title });
+      const deleteTargetId = cleanPlannerEventId(String(event.id));
+      console.log('[EventDetails] Attempting to delete event:', deleteTargetId);
+      console.log('[EventDetails] Event details:', { id: deleteTargetId, family_id: event.family_id, title: event.title });
       
       // Get the current user's family_id for the RPC function
       const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -2424,7 +2449,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // Try using RPC function first (bypasses RLS with SECURITY DEFINER)
       try {
         const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', {
-          _event_id: event.id,
+          _event_id: deleteTargetId,
           _family_id: userFamilyId
         });
         
@@ -2440,7 +2465,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           const { data: verifyData } = await supabase
             .from('events')
             .select('deleted_at')
-            .eq('id', event.id)
+            .eq('id', deleteTargetId)
             .maybeSingle();
           
           if (verifyData?.deleted_at) {
@@ -2448,14 +2473,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           toast.push('Event deleted', 'success');
           // RPC delete worked - call onEventDeleted and return
           if (onEventDeleted) {
-            onEventDeleted(event.id);
+            onEventDeleted(deleteTargetId);
           }
           
           // Log delete event action
           try {
             const eventDate = event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
             logDeleteEvent(
-              event.id,
+              deleteTargetId,
               eventDate,
               event.child_id
             );
@@ -2482,7 +2507,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const deleteQuery = supabase
         .from('events')
         .update({ deleted_at: new Date().toISOString() })
-        .eq('id', event.id)
+        .eq('id', deleteTargetId)
         .is('deleted_at', null); // Only update if not already deleted
 
       let directDeleteResult;
@@ -2532,14 +2557,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         const { data: checkData } = await supabase
           .from('events')
           .select('deleted_at')
-          .eq('id', event.id)
+          .eq('id', deleteTargetId)
           .maybeSingle();
         
         if (checkData?.deleted_at) {
           console.log('[EventDetails] Event is already soft-deleted');
           toast.push('Event deleted', 'success');
           if (onEventDeleted) {
-            onEventDeleted(event.id);
+            onEventDeleted(deleteTargetId);
           }
           return; // Exit early - already deleted
         }
@@ -2553,11 +2578,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       await new Promise(resolve => setTimeout(resolve, 200));
 
       // Verify soft deletion succeeded by checking if deleted_at is set
-      console.log('[EventDetails] Verifying soft deletion for event:', event.id);
+      console.log('[EventDetails] Verifying soft deletion for event:', deleteTargetId);
       const { data: verifyData, error: verifyError } = await supabase
         .from('events')
         .select('id, deleted_at')
-        .eq('id', event.id)
+        .eq('id', deleteTargetId)
         .maybeSingle();
 
       console.log('[EventDetails] Verification result:', { verifyData, verifyError });
@@ -2583,7 +2608,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           console.log('[EventDetails] Soft delete verified - deleted_at is set');
           toast.push('Event deleted', 'success');
           if (onEventDeleted) {
-            onEventDeleted(event.id);
+            onEventDeleted(deleteTargetId);
           }
           return; // Exit early - soft delete succeeded
         }
@@ -2591,14 +2616,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         // Event still exists and is not soft-deleted - delete failed
         console.error('[EventDetails] Delete failed - event still exists and is not deleted:', verifyData);
         console.error('[EventDetails] Direct delete query result:', { data, error });
-        console.error('[EventDetails] Event ID attempted:', event.id);
+        console.error('[EventDetails] Event ID attempted:', deleteTargetId);
         console.error('[EventDetails] Event family_id:', event.family_id);
         
         // Check if this might be an RLS issue by trying to read the event
         const { data: readData, error: readError } = await supabase
           .from('events')
           .select('id, family_id, status')
-          .eq('id', event.id)
+          .eq('id', deleteTargetId)
           .maybeSingle();
         
         console.log('[EventDetails] Can read event after delete attempt:', { readData, readError });
@@ -2618,18 +2643,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 status: 'canceled',
                 canceled_at: new Date().toISOString()
               })
-              .eq('id', event.id);
+              .eq('id', deleteTargetId);
             
             if (updateError) {
               console.error('[EventDetails] Soft delete also failed:', updateError);
-              throw new Error(`Delete operation failed: Event still exists in database. Event ID: ${event.id}. This may be due to database constraints, triggers, or RLS policies preventing deletion. Error: ${updateError.message}`);
+              throw new Error(`Delete operation failed: Event still exists in database. Event ID: ${deleteTargetId}. This may be due to database constraints, triggers, or RLS policies preventing deletion. Error: ${updateError.message}`);
             } else {
               console.log('[EventDetails] Soft delete succeeded - event marked as canceled');
               // Verify soft delete worked
               const { data: softVerifyData } = await supabase
                 .from('events')
                 .select('id, status')
-                .eq('id', event.id)
+                .eq('id', deleteTargetId)
                 .maybeSingle();
               
               if (softVerifyData && softVerifyData.status === 'canceled') {
@@ -2637,13 +2662,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 // Treat soft delete as success - call onEventDeleted
                 toast.push('Event deleted', 'success');
                 if (onEventDeleted) {
-                  onEventDeleted(event.id);
+                  onEventDeleted(deleteTargetId);
                 }
                 return; // Exit early - soft delete succeeded
               }
             }
           } catch (softDeleteErr) {
-            throw new Error(`Delete operation failed: Event still exists in database. Event ID: ${event.id}. This may be due to database constraints, triggers, or RLS policies preventing deletion.`);
+            throw new Error(`Delete operation failed: Event still exists in database. Event ID: ${deleteTargetId}. This may be due to database constraints, triggers, or RLS policies preventing deletion.`);
           }
         }
       } else {
@@ -2651,7 +2676,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           console.log('[EventDetails] Event not found during verification - assuming soft delete succeeded');
           toast.push('Event deleted', 'success');
           if (onEventDeleted) {
-            onEventDeleted(event.id);
+            onEventDeleted(deleteTargetId);
           }
           return; // Exit early
         }
@@ -2659,7 +2684,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // If we get here, soft deletion was successful
       toast.push('Event deleted', 'success');
       if (onEventDeleted) {
-        onEventDeleted(event.id);
+        onEventDeleted(deleteTargetId);
       }
               
       // Log delete event action (will be logged in PlannerWeek.handleEventDeleted if called from there)
@@ -2667,7 +2692,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       try {
         const eventDate = event.start_ts ? new Date(event.start_ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
         logDeleteEvent(
-          event.id,
+          deleteTargetId,
           eventDate,
           event.child_id
         );
@@ -2703,6 +2728,50 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             } finally {
               setDeleting(false);
             }
+  };
+
+  const handleDelete = async () => {
+    if (readOnly) return;
+    if (!event?.id) {
+      if (Platform.OS === 'web') {
+        window.alert('Error: Event ID is missing');
+      } else {
+        Alert.alert('Error', 'Event ID is missing');
+      }
+      return;
+    }
+
+    if (isPartOfRecurringSeries(event)) {
+      setShowRecurringDeleteModal(true);
+      return;
+    }
+
+    let confirmed = false;
+    if (Platform.OS === 'web') {
+      confirmed = window.confirm('Are you sure you want to delete this event?');
+    } else {
+      confirmed = await new Promise((resolve) => {
+        Alert.alert(
+          'Delete Event',
+          'Are you sure you want to delete this event?',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+              onPress: () => resolve(false),
+            },
+            {
+              text: 'Delete',
+              style: 'destructive',
+              onPress: () => resolve(true),
+            },
+          ]
+        );
+      });
+    }
+
+    if (!confirmed) return;
+    await performDeleteSingleOccurrence();
   };
 
   const toggleTag = (tag) => {
@@ -6453,6 +6522,96 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   return (
     <>
+      <Modal
+        visible={showRecurringDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!deleting) setShowRecurringDeleteModal(false);
+        }}
+      >
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.4)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+          }}
+          activeOpacity={1}
+          onPress={() => {
+            if (!deleting) setShowRecurringDeleteModal(false);
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => {
+              if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+            }}
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 16,
+              padding: 24,
+              maxWidth: 400,
+              width: '100%',
+              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,0.12)' } : {}),
+            }}
+          >
+            <Text style={[{ fontSize: 18, fontWeight: '700', color: '#111827' }, webCooper('700')]}>
+              Delete recurring event?
+            </Text>
+            <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280', lineHeight: 20 }}>
+              This event is part of a series. Delete only this occurrence, or remove every occurrence in the series.
+            </Text>
+            <View style={{ marginTop: 22, gap: 12 }}>
+              <TouchableOpacity
+                {...(Platform.OS === 'web' && { type: 'button' })}
+                onPress={async () => {
+                  setShowRecurringDeleteModal(false);
+                  await performDeleteSingleOccurrence();
+                }}
+                disabled={deleting}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 10,
+                  backgroundColor: '#f3f4f6',
+                  alignItems: 'center',
+                  ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }),
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: '#374151' }}>Delete this occurrence</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                {...(Platform.OS === 'web' && { type: 'button' })}
+                onPress={async () => {
+                  setShowRecurringDeleteModal(false);
+                  await performDeleteEntireSeries();
+                }}
+                disabled={deleting}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 10,
+                  backgroundColor: '#dc2626',
+                  alignItems: 'center',
+                  ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }),
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: '#ffffff' }}>Delete all in series</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                {...(Platform.OS === 'web' && { type: 'button' })}
+                onPress={() => !deleting && setShowRecurringDeleteModal(false)}
+                disabled={deleting}
+                style={{ paddingVertical: 8, alignItems: 'center', ...(Platform.OS === 'web' && { cursor: 'pointer' }) }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '500', color: '#2563eb' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
       <View style={{ flex: 1, backgroundColor: '#ffffff', minHeight: 400 }}>
         {editing ? renderEditForm() : renderViewMode()}
       </View>

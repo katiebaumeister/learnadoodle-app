@@ -19,6 +19,11 @@ import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressP
 import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
+import {
+  isPartOfRecurringSeries,
+  cleanPlannerEventId,
+  resolveSeriesMasterEventId,
+} from '../lib/utils/recurringEventUtils'
 
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
@@ -822,10 +827,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   
   // Family ID state (must be declared early to avoid TDZ errors)
   // Use propFamilyId if provided; fallback to session.family_id so home/planner have familyId on first paint
-  const [familyId, setFamilyId] = useState(propFamilyId || propSession?.family_id || null);
+  const [familyId, setFamilyId] = useState(
+    propFamilyId || propSession?.family_id || propProfile?.family_id || null
+  );
 
   // Materials cache for Library — hydrate from sessionStorage on first paint when possible (preload + effect still refresh).
-  const _materialsSessionInitial = readMaterialsSessionSnapshot(propFamilyId || propSession?.family_id || null);
+  const _materialsSessionInitial = readMaterialsSessionSnapshot(
+    propFamilyId || propSession?.family_id || propProfile?.family_id || null
+  );
   const [materialsCache, setMaterialsCache] = useState(() => _materialsSessionInitial.data);
   const [materialsCacheTimestamp, setMaterialsCacheTimestamp] = useState(() => _materialsSessionInitial.t);
 
@@ -3853,11 +3862,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   // Sync familyId from props and session (session can arrive before propFamilyId propagates)
   useEffect(() => {
-    const nextId = propFamilyId || propSession?.family_id || null;
+    const nextId = propFamilyId || propSession?.family_id || propProfile?.family_id || null;
     if (nextId) {
       setFamilyId(prev => (prev === nextId ? prev : nextId));
     }
-  }, [propFamilyId, propSession?.family_id]);
+  }, [propFamilyId, propSession?.family_id, propProfile?.family_id]);
 
   // Sync children from props
   useEffect(() => {
@@ -4640,16 +4649,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         });
       } else {
       let eventId = ev._originalId || ev.originalId || ev.id;
-      if (eventId && typeof eventId === 'string' && eventId.includes('-day-')) {
-        eventId = eventId.split('-day-')[0];
-      }
+      eventId = cleanPlannerEventId(eventId);
       menuItems.push({
         text: 'Edit Event',
         action: () => {
           window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
         },
       });
-      const isRecurringEvent = ev.recurrence_rule || ev.recurrence_id || ev.parent_event_id;
+      const isRecurringEvent = isPartOfRecurringSeries(ev);
       if (isRecurringEvent) {
         menuItems.push({
           text: 'Delete This Event',
@@ -4657,7 +4664,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
-            const cleanId = (eventId || '').split('-day-')[0];
+            const cleanId = cleanPlannerEventId(eventId || '');
             setConfirm({
               visible: true,
               title: 'Delete this occurrence?',
@@ -4693,7 +4700,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
-            const cleanId = (eventId || '').split('-day-')[0];
+            const cleanId = cleanPlannerEventId(eventId || '');
             setConfirm({
               visible: true,
               title: 'Delete all in series?',
@@ -4703,15 +4710,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               destructive: true,
               onConfirm: async () => {
                 try {
-                  let masterEventId = ev.parent_event_id || ev.recurrence_id;
-                  if (masterEventId && typeof masterEventId === 'string' && masterEventId.includes('-day-')) masterEventId = masterEventId.split('-day-')[0];
-                  if (ev.recurrence_rule && !masterEventId) masterEventId = cleanId;
-                  if (!masterEventId) masterEventId = cleanId;
-                  const { error: seriesError } = await supabase
+                  const masterEventId = resolveSeriesMasterEventId(ev, cleanId);
+                  let seriesQuery = supabase
                     .from('events')
                     .update({ deleted_at: new Date().toISOString() })
                     .or(`id.eq.${masterEventId},parent_event_id.eq.${masterEventId},recurrence_id.eq.${masterEventId}`)
                     .is('deleted_at', null);
+                  if (familyId) seriesQuery = seriesQuery.eq('family_id', familyId);
+                  const { error: seriesError } = await seriesQuery;
                   if (seriesError) {
                     const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
                     if (rpcError || !rpcData?.success) await deletePlannerEvent(cleanId, familyId);
@@ -4735,7 +4741,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
-            const cleanId = (eventId || '').split('-day-')[0];
+            const cleanId = cleanPlannerEventId(eventId || '');
             setConfirm({
               visible: true,
               title: 'Delete event?',
@@ -8370,7 +8376,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   );
 
   const renderContent = (plannerTabsReturnNull = false) => {
-    const homeFamilyIdForContent = familyId || propSession?.family_id || null;
+    const homeFamilyIdForContent =
+      familyId || propSession?.family_id || propProfile?.family_id || null;
     const renderParentHomeCommon = (fid, options = {}) => (
       <ParentHomeScreen
         familyId={fid}
@@ -8733,9 +8740,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'profile':
       case 'settings':
       case 'children-list': {
-        const panelFamilyId = familyId || propSession?.family_id;
+        const panelFamilyId =
+          familyId || propSession?.family_id || propProfile?.family_id || null;
         if (user && !panelFamilyId) {
-          return renderParentHomeCommon(homeFamilyIdForContent);
+          // Avoid flashing home while family id resolves (profile fetch / session sync)
+          return (
+            <View style={{ flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' }} />
+          );
         }
         return (
           <View style={{ flex: 1, minHeight: 0 }}>

@@ -20,6 +20,7 @@ import SaveTemplateModal from '../templates/SaveTemplateModal';
 // import ConstraintsTimeline from '../../app/components/schedule/ConstraintsTimeline';
 import { logDragDrop, logDeleteEvent } from '../../app/services/plannerInstrumentation';
 import NoteEditorModal from '../records/NoteEditorModal';
+import { isPartOfRecurringSeries } from '../../lib/utils/recurringEventUtils';
 
 // Helper functions
 function startOfWeek(d) {
@@ -837,7 +838,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       menuItems.push({ text: 'Edit Event', action: () => handleEventClick(event) });
       
       // Check if event is recurring
-      const isRecurringEvent = event.recurrence_rule || event.recurrence_id || event.parent_event_id;
+      const isRecurringEvent = isPartOfRecurringSeries(event);
       
       if (isRecurringEvent) {
         // Show options for recurring events
