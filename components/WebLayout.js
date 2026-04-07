@@ -3924,8 +3924,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         onEnsureFamily={ensureFamilyAndSet}
       />
 
-      {/* Doodle bot search modal - opened via floating Ask AI button */}
-      {showDoodleSearchModal && (
+      {/* Doodle bot search modal — keep mounted while logged in so chat state persists when closed */}
+      {user && (
         <SearchModal
           visible={showDoodleSearchModal}
           onClose={() => {

@@ -173,17 +173,9 @@ export default function CalendarView({ familyId, selectedChildId = null, onChild
         setLessons(lessonsData);
       }
 
-      // Fetch activities for this family
-      const { data: activitiesData } = await supabase
-        .from('activities')
-        .select('*')
-        .eq('family_id', selectedYear.family_id)
-        .order('created_at', { ascending: true });
-
-      if (activitiesData) {
-        // Store activities for calendar display
-        setActivities(activitiesData);
-      }
+      // Legacy `activities` table is not present in all deployments (404 on REST). Events/lessons cover scheduling.
+      const activitiesData = [];
+      setActivities([]);
 
       // Update marked dates with all the data
       updateMarkedDates(calendarDayMarks || [], holidaysData || [], lessonsData || [], activitiesData || []);

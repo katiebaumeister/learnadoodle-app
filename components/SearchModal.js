@@ -29,6 +29,40 @@ import DoodlePendingCommitBar from './assistant/DoodlePendingCommitBar.js'
 import DoodleSetupGuidePanel from './assistant/DoodleSetupGuidePanel.js'
 import { isSetupGuideComplete, messageRequestsSetupGuideUI } from '../lib/doodleSetupGuide.js'
 
+const DOODLE_CHAT_SESSION_KEY = 'learnadoodle_doodle_chat_v1'
+
+function readDoodleChatSession(userId, familyId) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !userId || !familyId) return null
+  try {
+    const raw = sessionStorage.getItem(DOODLE_CHAT_SESSION_KEY)
+    if (!raw) return null
+    const o = JSON.parse(raw)
+    if (o.userId !== userId || o.familyId !== familyId) return null
+    const msgs = Array.isArray(o.messages) ? o.messages : []
+    return { conversationId: o.conversationId || null, messages: msgs }
+  } catch {
+    return null
+  }
+}
+
+function writeDoodleChatSession(userId, familyId, conversationId, messages) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !userId || !familyId) return
+  try {
+    sessionStorage.setItem(
+      DOODLE_CHAT_SESSION_KEY,
+      JSON.stringify({
+        userId,
+        familyId,
+        conversationId: conversationId || null,
+        messages: messages || [],
+        savedAt: Date.now(),
+      })
+    )
+  } catch {
+    // storage full — ignore
+  }
+}
+
 export default function SearchModal({ visible, onClose, onNavigate, initialPrompt = null }) {
   const { user } = useAuth()
   const session = useSession()
@@ -46,6 +80,8 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
   const [skippedGuideThisOpen, setSkippedGuideThisOpen] = useState(false)
   const [setupGuideReplay, setSetupGuideReplay] = useState(false)
   const [setupProgressTick, setSetupProgressTick] = useState(0)
+  /** After first hydrate attempt for this user+family so we do not overwrite session before load */
+  const [sessionHydrationComplete, setSessionHydrationComplete] = useState(false)
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return
@@ -53,6 +89,27 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
     window.addEventListener('doodleSetupProgressChanged', h)
     return () => window.removeEventListener('doodleSetupProgressChanged', h)
   }, [])
+
+  // Load family as soon as user is known so sessionStorage can hydrate before the user opens the chat
+  useEffect(() => {
+    if (!user?.id) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('family_id')
+          .eq('id', user.id)
+          .single()
+        if (!cancelled && profile?.family_id) setFamilyId(profile.family_id)
+      } catch {
+        // ignore
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
 
   // Initialize when modal opens
   useEffect(() => {
@@ -97,25 +154,43 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
     if (t) setSearchQuery(t)
   }, [visible, initialPrompt])
 
+  // Restore chat from sessionStorage (same tab / full reload); in-memory state is kept by leaving SearchModal mounted when user is logged in
+  useEffect(() => {
+    if (!user?.id) return
+    if (!familyId) {
+      setSessionHydrationComplete(false)
+      return
+    }
+    const loaded = readDoodleChatSession(user.id, familyId)
+    if (loaded?.messages?.length) {
+      setMessages(loaded.messages)
+      if (loaded.conversationId) {
+        setDoodleConversationId(loaded.conversationId)
+        doodleConversationIdRef.current = loaded.conversationId
+      }
+    }
+    setSessionHydrationComplete(true)
+  }, [user?.id, familyId])
+
+  useEffect(() => {
+    if (!sessionHydrationComplete || !user?.id || !familyId) return
+    writeDoodleChatSession(user.id, familyId, doodleConversationIdRef.current || doodleConversationId, messages)
+  }, [messages, doodleConversationId, familyId, user?.id, sessionHydrationComplete])
+
   const initializeModal = async () => {
     if (!user?.id) return
     try {
-      // Get user's family_id
       const { data: profile } = await supabase
         .from('profiles')
         .select('family_id')
         .eq('id', user.id)
         .single()
-      
+
       if (profile?.family_id) {
         setFamilyId(profile.family_id)
       }
     } catch (error) {
       }
-    
-    setMessages([])
-    setDoodleConversationId(null)
-    doodleConversationIdRef.current = null
   }
 
   const INTRO_TEXT = `Hi! I'm Doodle , your fast chat assistant. Ask away... 🐩💌`
@@ -153,12 +228,18 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
     try {
       if (familyId) {
         let conversationId = doodleConversationIdRef.current || doodleConversationId
-        if (!conversationId) {
-          conversationId = await AIConversationService.createConversation(familyId, 'doodlebot', 'Doodle')
-          doodleConversationIdRef.current = conversationId
-          setDoodleConversationId(conversationId)
+        try {
+          if (!conversationId) {
+            conversationId = await AIConversationService.createConversation(familyId, 'doodlebot', 'Doodle')
+            doodleConversationIdRef.current = conversationId
+            setDoodleConversationId(conversationId)
+          }
+          if (conversationId) {
+            await AIConversationService.addMessage(conversationId, 'user', userMessage)
+          }
+        } catch (persistErr) {
+          console.warn('[SearchModal] Doodle conversation DB persist failed; continuing with reply:', persistErr?.message || persistErr)
         }
-        await AIConversationService.addMessage(conversationId, 'user', userMessage)
 
         const recentMessages = messages.map((m) => ({
           role: m.role,
@@ -223,7 +304,14 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
           ...(pendingCommit ? { pendingCommit } : {}),
         }
         setMessages([...newMessages, assistantMsg])
-        await AIConversationService.addMessage(conversationId, 'assistant', finalResponse)
+        const cid = doodleConversationIdRef.current || doodleConversationId
+        if (cid) {
+          try {
+            await AIConversationService.addMessage(cid, 'assistant', finalResponse)
+          } catch (persistAssistantErr) {
+            console.warn('[SearchModal] Doodle assistant message persist failed:', persistAssistantErr?.message || persistAssistantErr)
+          }
+        }
       }
     } catch (error) {
       console.error('Search error:', error)

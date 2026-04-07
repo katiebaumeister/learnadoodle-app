@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, ClipboardList, PenLine, ArrowRight } from 'lucide-react';
+import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, ArrowRight } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -976,56 +976,6 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     }
   };
 
-  const navigateToSubjectsHub = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.__ldSearchNavigate === 'function') {
-      window.__ldSearchNavigate('subjects');
-    }
-  };
-
-  const getFirstSubjectForStructuredFlows = () => {
-    const list = mergedSubjectsForMaterialLookup;
-    if (!Array.isArray(list) || list.length === 0) return null;
-    return list[0];
-  };
-
-  /** Opens the same unified Build plan (PlanYearModal) as the planner — not legacy add-material / parse / manual modals. */
-  const openPlanYearFromLibrary = (initialUnitStructureMethod) => {
-    if (!ensureCanEditMaterials()) return;
-    if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      toast.push('Build plan is available in the web app.', 'info');
-      return;
-    }
-    const subj = getFirstSubjectForStructuredFlows();
-    if (!subj) {
-      toast.push('Add a subject first — then you can build a plan from here.', 'info');
-      navigateToSubjectsHub();
-      return;
-    }
-    window.dispatchEvent(
-      new CustomEvent('openPlanYearModal', {
-        detail: {
-          from: 'library',
-          openAsModal: true,
-          subjectId: subj.id,
-          initialUnitStructureMethod,
-        },
-      })
-    );
-  };
-
-  const openUploadSyllabusFlow = () => openPlanYearFromLibrary('upload');
-
-  const openPasteLessonListFlow = () => openPlanYearFromLibrary('paste_plain');
-
-  const openManualCurriculumFlow = () => openPlanYearFromLibrary('manual');
-
-  const openGenerateCurriculumFlow = () => openPlanYearFromLibrary('generate');
-
-  /** Same as Generate curriculum card: unified PlanYearModal → generate / AI curriculum step. */
-  const openAskDoodleFromLibrary = () => {
-    openGenerateCurriculumFlow();
-  };
-
   return (
     <View style={styles.container}>
       <View style={styles.mainContent}>
@@ -1208,99 +1158,25 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
                 <Text style={styles.emptySubtitle}>
                   Everything your planner learns from starts here — you&apos;re about to build something powerful.
                 </Text>
+                <TouchableOpacity
+                  style={styles.emptyPrimaryCta}
+                  onPress={() => {
+                    if (!ensureCanEditMaterials()) return;
+                    setAddModalDefaultRole('assignment');
+                    setShowAddModal(true);
+                  }}
+                  activeOpacity={0.88}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={18} color="#ffffff" />
+                  <Text style={styles.emptyPrimaryCtaText}>Start adding assignments</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
             <Text style={styles.emptyIntegrationLine}>
               Materials automatically connect to your planner, progress, and records.
             </Text>
-
-            <View style={styles.emptyAiRow}>
-              <View style={styles.emptyAiRowCopy}>
-                <Sparkles size={16} color="#0ea5e9" strokeWidth={2} style={styles.emptyAiRowIcon} />
-                <Text style={styles.emptyAiText}>
-                  I can turn anything into a plan — syllabus, book list, or just an idea.
-                </Text>
-              </View>
-              {Platform.OS === 'web' ? (
-                <TouchableOpacity
-                  style={styles.emptyAskDoodle}
-                  onPress={openAskDoodleFromLibrary}
-                  activeOpacity={0.85}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={styles.emptyAskDoodleText}>Ask Doodle</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            <Text style={styles.emptySectionLabel}>Start with a path</Text>
-            <View style={styles.emptyCardGrid}>
-              <TouchableOpacity
-                style={styles.emptyPathCard}
-                onPress={openUploadSyllabusFlow}
-                activeOpacity={0.88}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.emptyPathCardIcon}>
-                  <Upload size={20} color={colors.accent} />
-                </View>
-                <Text style={styles.emptyPathCardTitle}>Upload syllabus</Text>
-                <Text style={styles.emptyPathCardBody}>Turn a PDF or doc into a structured plan</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.emptyPathCard}
-                onPress={openPasteLessonListFlow}
-                activeOpacity={0.88}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.emptyPathCardIcon}>
-                  <ClipboardList size={20} color={colors.accent} />
-                </View>
-                <Text style={styles.emptyPathCardTitle}>Paste lesson list</Text>
-                <Text style={styles.emptyPathCardBody}>We&apos;ll organize it into units + schedule</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.emptyPathCard}
-                onPress={openManualCurriculumFlow}
-                activeOpacity={0.88}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.emptyPathCardIcon}>
-                  <PenLine size={20} color={colors.accent} />
-                </View>
-                <Text style={styles.emptyPathCardTitle}>Start from scratch</Text>
-                <Text style={styles.emptyPathCardBody}>Build your own curriculum manually</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.emptyPathCard}
-                onPress={openGenerateCurriculumFlow}
-                activeOpacity={0.88}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.emptyPathCardIcon}>
-                  <Sparkles size={20} color={colors.accent} />
-                </View>
-                <Text style={styles.emptyPathCardTitle}>Generate curriculum</Text>
-                <Text style={styles.emptyPathCardBody}>
-                  AI drafts units and lessons from your goals — refine in Build plan
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              style={styles.emptyPrimaryCta}
-              onPress={() => {
-                if (!ensureCanEditMaterials()) return;
-                setAddModalDefaultRole('assignment');
-                setShowAddModal(true);
-              }}
-              activeOpacity={0.88}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#ffffff" />
-              <Text style={styles.emptyPrimaryCtaText}>Start adding assignments</Text>
-            </TouchableOpacity>
           </View>
         </ScrollView>
       ) : (
@@ -3190,13 +3066,15 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   emptyStateScrollContent: {
-    paddingTop: 28,
+    paddingTop: 48,
     paddingBottom: 48,
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
     ...(Platform.OS === 'web' && {
+      paddingLeft: 32,
       maxWidth: 920,
       width: '100%',
-      alignSelf: 'center',
+      alignSelf: 'flex-start',
+      alignItems: 'flex-start',
     }),
   },
   emptyStateLayout: {
@@ -3469,14 +3347,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    alignSelf: 'center',
+    alignSelf: 'flex-start',
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#111827',
     backgroundColor: '#111827',
-    marginBottom: 28,
+    marginTop: 16,
+    marginBottom: 0,
     ...Platform.select({
       web: {
         cursor: 'pointer',

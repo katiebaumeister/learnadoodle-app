@@ -5553,7 +5553,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           description: originalFormData.description || '',
           is_proposed: false,
           created_at: new Date().toISOString(),
-          family_year_id: (await supabase.from('family_years').select('id').eq('is_current', true).single()).data?.id
+          family_year_id: (
+            await supabase
+              .from('family_years')
+              .select('id')
+              .eq('family_id', familyId)
+              .eq('is_current', true)
+              .maybeSingle()
+          ).data?.id ?? null
         };
 
         // NOTE: schedule_overrides removed - holidays feature disabled
@@ -7479,7 +7486,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       })
       setTodaysEvents(events)
     } catch (error) {
-      console.error('Error fetching today\'s learning:', error)
+      if (!isAbortLikeError(error)) {
+        console.error('Error fetching today\'s learning:', error)
+      }
     } finally {
       setLoadingLearning(false)
     }
