@@ -26,6 +26,8 @@ import { TOKENS } from './constants';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
+/** Minutes logged when marking a day present with no scheduled events (matches assistant quick-mark default). */
+const STANDALONE_DAY_ATTENDANCE_MINUTES = 300;
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /** Allowed attendance range: full year before through full year after current year. */
@@ -277,6 +279,8 @@ export default function AttendanceView({
         );
         const eventIds = new Set(dayEvents.map((e) => String(e.id)));
         const hasEvent = (r) => r.event_id != null && eventIds.has(String(r.event_id));
+        const standalonePresent =
+          recordsForDay.some((r) => r.event_id == null && r.status === 'present');
         // Only count records for this day's events so we don't show "present" from unrelated records
         const presentForEvents = new Set(
           recordsForDay.filter((r) => r.status === 'present' && hasEvent(r)).map((r) => r.event_id)
@@ -287,8 +291,8 @@ export default function AttendanceView({
         const presentCount = presentForEvents.size;
         const absentCount = absentForEvents.size;
         if (dayEvents.length === 0) {
-          byChild[c.id][key] = 'noEvents';
-        } else if (presentCount >= 1) {
+          byChild[c.id][key] = standalonePresent ? 'present' : 'noEvents';
+        } else if (presentCount >= 1 || standalonePresent) {
           // Attended: at least one event has a present record for this child
           byChild[c.id][key] = 'present';
         } else {
@@ -622,10 +626,40 @@ export default function AttendanceView({
     const normKey = String(dateKey).slice(0, 10);
     const normChildId = String(childId);
     const dayEventsForChild = eventsByDateChild[normKey]?.[normChildId] || [];
+    const standaloneDay = attendanceRecords.find(
+      (r) =>
+        r.event_id == null &&
+        String(r.child_id) === normChildId &&
+        String(r.day_date).slice(0, 10) === normKey
+    );
+
+    // No instructional events: allow a single manual "day present" row (attendance-only workflow).
     if (dayEventsForChild.length === 0) {
-      toast.push('No events to mark for this day', 'info');
+      try {
+        if (standaloneDay?.status === 'present') {
+          await deleteAttendanceLog(standaloneDay.id);
+        } else {
+          const { error } = await createAttendanceLog({
+            family_id: familyIdResolved,
+            child_id: normChildId,
+            event_id: null,
+            day_date: normKey,
+            status: 'present',
+            minutes: STANDALONE_DAY_ATTENDANCE_MINUTES,
+          });
+          if (error) {
+            toast.push(error.message || 'Could not save attendance', 'error');
+            return;
+          }
+        }
+        setAttendanceRefreshKey((k) => k + 1);
+        notifyAttendanceUpdated();
+      } catch (_) {
+        setAttendanceRefreshKey((k) => k + 1);
+      }
       return;
     }
+
     // For "all present" check: this child must have at least one present record per their events that day
     const allPresentForChild = dayEventsForChild.every((e) => {
       const rec = attendanceRecords.find(
@@ -635,6 +669,10 @@ export default function AttendanceView({
     });
     try {
       if (allPresentForChild) {
+        // Clear manual day-only row if present (same click as unmarking scheduled lessons).
+        if (standaloneDay?.id) {
+          await deleteAttendanceLog(standaloneDay.id);
+        }
         // Mark day unattended for this child only
         for (const e of dayEventsForChild) {
           const assignedIds = getChildIdsForEvent(e);
@@ -671,6 +709,10 @@ export default function AttendanceView({
           notifyAttendanceUpdated();
         }, 150);
         return;
+      }
+      // Replacing manual-only attendance with event-based rows: remove standalone first.
+      if (standaloneDay?.id) {
+        await deleteAttendanceLog(standaloneDay.id);
       }
       // Mark day attended: include sibling events so the lesson group shows complete; mark all assigned children present and set event done
       const seenIds = new Set();
@@ -834,7 +876,7 @@ export default function AttendanceView({
             <View style={styles.drilldownDividerLine} />
             <Text style={styles.drilldownTitle}>Month drill-down</Text>
             <Text style={styles.drilldownHelp}>
-              Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
+              Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Use the year heatmap above to mark a day attended even when nothing is scheduled. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
             </Text>
             <View style={styles.drilldownGrid}>
               <View style={styles.calendarWithDivider}>

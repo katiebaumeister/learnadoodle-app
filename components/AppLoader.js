@@ -35,7 +35,33 @@ const SHELL_SOURCES = {
   ...AVATAR_SOURCES,
 };
 
-const TOTAL_PRELOAD = SHELL_IMAGE_IDS.length;
+/** Marketing / landing page PNGs — same batch as shell so first paint never waits on them */
+const LANDING_PAGE_IDS = [
+  'landingHero',
+  'landingSchedule',
+  'landingCurriculum',
+  'landingProgress',
+  'landingSupport',
+  'landingTeach',
+  'landingPrivacy',
+  'landingSuperdoodle',
+];
+const LANDING_PAGE_SOURCES = {
+  landingHero: require('../assets/landing.png'),
+  landingSchedule: require('../assets/schedule.png'),
+  landingCurriculum: require('../assets/curriculum.png'),
+  landingProgress: require('../assets/progress.png'),
+  landingSupport: require('../assets/support.png'),
+  landingTeach: require('../assets/teach.png'),
+  landingPrivacy: require('../assets/privacy.png'),
+  landingSuperdoodle: require('../assets/superdoodlesection.png'),
+};
+
+/** Shell + sidebar + FAB + avatars + landing — decoded before AppLoader gate opens */
+const CRITICAL_WEB_IMAGE_IDS = [...SHELL_IMAGE_IDS, ...LANDING_PAGE_IDS];
+const CRITICAL_WEB_SOURCES = { ...SHELL_SOURCES, ...LANDING_PAGE_SOURCES };
+
+const TOTAL_PRELOAD = CRITICAL_WEB_IMAGE_IDS.length;
 /** No extra delay after images decode — gate opens as soon as shell assets are loaded. */
 const GATE_MIN_CYCLE_MS = 0;
 const STALL_FALLBACK_MS = 60000;
@@ -55,8 +81,8 @@ function resolveUri(source) {
 let webShellImagesPromise = null;
 
 /**
- * Web: preload + decode all shell/toolbar PNGs once (singleton). Resolves when every asset
- * has loaded and (if supported) decoded so the sidebar/FAB can paint without pop-in.
+ * Web: preload + decode shell, toolbar, FAB, prof1–10, landing page PNGs once (singleton).
+ * Call from index.js so decoding runs in parallel with the JS bundle before React root.
  * No-op resolve on native.
  */
 export function ensureWebShellImagesLoaded() {
@@ -77,8 +103,8 @@ export function ensureWebShellImagesLoaded() {
       loaded.add(id);
       if (loaded.size >= TOTAL_PRELOAD) finish();
     };
-    SHELL_IMAGE_IDS.forEach((id) => {
-      const uri = resolveUri(SHELL_SOURCES[id]);
+    CRITICAL_WEB_IMAGE_IDS.forEach((id) => {
+      const uri = resolveUri(CRITICAL_WEB_SOURCES[id]);
       if (!uri) {
         onAssetDone(id);
         return;
@@ -139,10 +165,10 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
   const preloadImages =
     Platform.OS === 'web' ? null : (
       <View style={[styles.preloadWrap, { pointerEvents: 'none' }]}>
-        {SHELL_IMAGE_IDS.map((id) => (
+        {CRITICAL_WEB_IMAGE_IDS.map((id) => (
           <Image
             key={id}
-            source={SHELL_SOURCES[id]}
+            source={CRITICAL_WEB_SOURCES[id]}
             style={styles.preloadDecode}
             resizeMode="contain"
             onLoad={() => markLoaded(id)}

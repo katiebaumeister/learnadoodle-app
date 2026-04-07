@@ -89,10 +89,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
   
   // 
-  const [materials, setMaterials] = useState([]);
+  const [materials, setMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
   const [allMaterials, setAllMaterials] = useState([]); // Store all materials for stats
-  const [loadingMaterials, setLoadingMaterials] = useState(true);
-  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [loadingMaterials, setLoadingMaterials] = useState(() => preloadedMaterials == null);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(() => preloadedMaterials != null);
   const [error, setError] = useState(null);
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
@@ -162,7 +162,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     
     loadMaterials();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects]);
+  }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects, preloadedMaterials]);
 
   // Load children if not provided
   const [localChildren, setLocalChildren] = useState(children);
@@ -288,6 +288,20 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     if (!familyId) {
       setError('No family ID provided');
       setLoadingMaterials(false);
+      return;
+    }
+
+    // Parent prefetched list arrived (e.g. Library opened right after app load): skip redundant fetch.
+    if (
+      preloadedMaterials &&
+      searchQuery === '' &&
+      selectedChildId === '' &&
+      selectedSubjectId === null
+    ) {
+      setMaterials(preloadedMaterials);
+      setLoadingMaterials(false);
+      setInitialLoadComplete(true);
+      setError(null);
       return;
     }
 

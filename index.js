@@ -29,6 +29,13 @@ import 'react-native-gesture-handler';
 
 import { registerRootComponent } from 'expo';
 
+import { ensureWebShellImagesLoaded } from './components/AppLoader';
+
+// Decode shell + sidebar + FAB + prof avatars + landing PNGs ASAP (parallel with app JS)
+if (typeof window !== 'undefined') {
+  ensureWebShellImagesLoaded();
+}
+
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

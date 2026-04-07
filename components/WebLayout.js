@@ -69,6 +69,9 @@ import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
+import { applySetupProgressFromNavigation, isSetupGuideComplete } from '../lib/doodleSetupGuide';
+import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
+import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 
 /** Parent-only post-onboarding explorer tour (spotlight copy). */
 const EXPLORER_PARENT_STEPS = [
@@ -147,6 +150,7 @@ function isFamilyShellTab(tab) {
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
   const authUserId = user?.id ?? null;
+  const [doodleSetupGuideTick, setDoodleSetupGuideTick] = useState(0);
   // Try to get session from context if not provided as prop
   let session = propSession;
   try {
@@ -2218,6 +2222,29 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
     } else if (target === 'navigate_materials') {
       handleTabChange('materials');
+    } else if (target === 'navigate_setup_plan_year') {
+      handleTabChange('planner');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/planner?view=plan-year');
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
+      }
+    } else if (target === 'navigate_setup_attendance') {
+      handleTabChange('planner');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/planner?view=attendance');
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+      }
+    } else if (target === 'navigate_setup_planner_calendar') {
+      handleTabChange('planner');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/planner?view=month');
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
+      }
+    } else if (target === 'navigate_setup_library') {
+      handleTabChange('materials');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/materials');
+      }
     }
   }, [handleTabChange]);
 
@@ -2230,6 +2257,71 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, [handleSearchNavigate]);
+
+  // Doodle setup guide: mark checklist steps when user visits each area (parents only)
+  useEffect(() => {
+    if (!authUserId || session?.role_flags?.isParent !== true) return;
+    applySetupProgressFromNavigation(authUserId, { activeTab, currentView });
+  }, [authUserId, activeTab, currentView, session?.role_flags?.isParent]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onProgress = () => setDoodleSetupGuideTick((t) => t + 1);
+    window.addEventListener('doodleSetupProgressChanged', onProgress);
+    return () => window.removeEventListener('doodleSetupProgressChanged', onProgress);
+  }, []);
+
+  const showDoodleSetupBadge = useMemo(
+    () =>
+      Platform.OS === 'web' &&
+      !!authUserId &&
+      session?.role_flags?.isParent === true &&
+      !isSetupGuideComplete(authUserId),
+    [authUserId, session?.role_flags?.isParent, doodleSetupGuideTick]
+  );
+
+  const avatarUrlsToPreload = useMemo(
+    () => collectAvatarUrlsFromFamilyState(profile, children, family),
+    [profile, children, family]
+  );
+
+  // After sign-in: provider logos for Connected accounts (non-blocking)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !user?.id) return;
+    const run = () => preloadProviderConnectionLogos();
+    let idleId;
+    if (typeof requestIdleCallback !== 'undefined') {
+      idleId = requestIdleCallback(run, { timeout: 4000 });
+    } else {
+      idleId = setTimeout(run, 1);
+    }
+    return () => {
+      if (typeof cancelIdleCallback !== 'undefined' && typeof idleId === 'number') {
+        cancelIdleCallback(idleId);
+      } else {
+        clearTimeout(idleId);
+      }
+    };
+  }, [user?.id]);
+
+  // Remote https avatars (children, members, profile) — background
+  useEffect(() => {
+    if (Platform.OS !== 'web' || avatarUrlsToPreload.length === 0) return;
+    const run = () => preloadRemoteImageUrls(avatarUrlsToPreload);
+    let idleId;
+    if (typeof requestIdleCallback !== 'undefined') {
+      idleId = requestIdleCallback(run, { timeout: 6000 });
+    } else {
+      idleId = setTimeout(run, 1);
+    }
+    return () => {
+      if (typeof cancelIdleCallback !== 'undefined' && typeof idleId === 'number') {
+        cancelIdleCallback(idleId);
+      } else {
+        clearTimeout(idleId);
+      }
+    };
+  }, [avatarUrlsToPreload]);
 
   // Handler for Settings chip
 
@@ -3828,18 +3920,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       {/* Ask AI — floating button (all main tabs including Home) */}
       {user && (
-        <TouchableOpacity
-          onPress={() => setShowDoodleSearchModal(true)}
-          style={styles.fabAskAI}
-          activeOpacity={0.85}
-          accessibilityLabel="Ask Learnadoodle"
-          {...(Platform.OS === 'web' && {
-            cursor: 'pointer',
-            title: 'Ask Learnadoodle',
-          })}
-        >
-          <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
-        </TouchableOpacity>
+        <View style={styles.fabAskAIWrap}>
+          <TouchableOpacity
+            onPress={() => setShowDoodleSearchModal(true)}
+            style={styles.fabAskAI}
+            activeOpacity={0.85}
+            accessibilityLabel="Ask Learnadoodle"
+            {...(Platform.OS === 'web' && {
+              cursor: 'pointer',
+              title: 'Ask Learnadoodle',
+            })}
+          >
+            <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
+          </TouchableOpacity>
+          {showDoodleSetupBadge ? <View style={styles.fabSetupBadge} pointerEvents="none" /> : null}
+        </View>
       )}
 
       {/* Planning Modal - mostly full screen - unified Plan my year + Edit subject structure */}
@@ -4915,10 +5010,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ffffff',
   },
-  fabAskAI: {
+  fabAskAIWrap: {
     position: Platform.OS === 'web' ? 'fixed' : 'absolute',
     bottom: 24,
     right: 24,
+    width: 60,
+    height: 60,
+    ...(Platform.OS === 'web' && { zIndex: 9998 }),
+  },
+  fabAskAI: {
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -4929,7 +5029,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.85)',
     ...(Platform.OS === 'web' && {
       boxShadow: '0 4px 14px rgba(158, 207, 251, 0.4)',
-      zIndex: 9998,
     }),
     ...(Platform.OS !== 'web' && {
       elevation: 8,
@@ -4938,6 +5037,17 @@ const styles = StyleSheet.create({
       shadowOpacity: 0.25,
       shadowRadius: 4,
     }),
+  },
+  fabSetupBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#7c3aed',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   fabAskAIIcon: {
     width: 58,

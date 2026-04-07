@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, ScrollView, ActivityIndicator, Animated, Platform } from 'react-native'
 import { X, Send } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useSession } from '../contexts/SessionContext'
 import { processDoodleMessage, executeTool, getDisplayMessage, getToolName, getToolParams } from '../lib/doodleAssistant.js'
 import { getDisambiguation } from '../lib/assistant/responseContract.js'
 import { CHAT_COMMIT_KINDS, getPendingCommit, buildChatbotAuditPayload } from '../lib/assistant/chatCommit.js'
@@ -25,9 +26,13 @@ import {
 } from '../lib/assistant/familyRosterChatActions.js'
 import { deleteSubjectCascadeForFamily, dispatchSubjectDeletedSideEffects } from '../lib/services/deleteSubjectCascade.js'
 import DoodlePendingCommitBar from './assistant/DoodlePendingCommitBar.js'
+import DoodleSetupGuidePanel from './assistant/DoodleSetupGuidePanel.js'
+import { isSetupGuideComplete } from '../lib/doodleSetupGuide.js'
 
 export default function SearchModal({ visible, onClose, onNavigate }) {
   const { user } = useAuth()
+  const session = useSession()
+  const isParent = session?.role_flags?.isParent === true
   const [searchQuery, setSearchQuery] = useState('')
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
@@ -38,10 +43,20 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
   const scaleAnim = useRef(new Animated.Value(0.8)).current
   const searchInputRef = useRef(null)
   const handleSearchRef = useRef(null)
+  const [skippedGuideThisOpen, setSkippedGuideThisOpen] = useState(false)
+  const [setupProgressTick, setSetupProgressTick] = useState(0)
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return
+    const h = () => setSetupProgressTick((n) => n + 1)
+    window.addEventListener('doodleSetupProgressChanged', h)
+    return () => window.removeEventListener('doodleSetupProgressChanged', h)
+  }, [])
 
   // Initialize when modal opens
   useEffect(() => {
     if (visible) {
+      setSkippedGuideThisOpen(false)
       initializeModal()
       // Animate in
       Animated.parallel([
@@ -95,7 +110,14 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
   }
 
   const INTRO_TEXT = `Hi! I'm Doodle , your fast chat assistant. Ask away... 🐩💌`
-  const showCenteredIntro = messages.length === 0
+  const showSetupGuide =
+    isParent &&
+    setupProgressTick >= 0 &&
+    messages.length === 0 &&
+    user?.id &&
+    !isSetupGuideComplete(user.id) &&
+    !skippedGuideThisOpen
+  const showCenteredIntro = messages.length === 0 && !showSetupGuide
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -1355,9 +1377,21 @@ export default function SearchModal({ visible, onClose, onNavigate }) {
 
           <ScrollView
             style={styles.messagesContainer}
-            contentContainerStyle={[styles.messagesContent, showCenteredIntro && styles.messagesContentCentered]}
+            contentContainerStyle={[
+              styles.messagesContent,
+              (showCenteredIntro || showSetupGuide) && styles.messagesContentCentered,
+            ]}
           >
-            {showCenteredIntro ? (
+            {showSetupGuide ? (
+              <DoodleSetupGuidePanel
+                userId={user.id}
+                onNavigate={(target) => {
+                  if (onNavigate) onNavigate(target)
+                  onClose()
+                }}
+                onGoToChat={() => setSkippedGuideThisOpen(true)}
+              />
+            ) : showCenteredIntro ? (
               <Text style={styles.introText}>{INTRO_TEXT}</Text>
             ) : (
               <>

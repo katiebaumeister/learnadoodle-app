@@ -809,44 +809,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Use propFamilyId if provided; fallback to session.family_id so home/planner have familyId on first paint
   const [familyId, setFamilyId] = useState(propFamilyId || propSession?.family_id || null);
   
-  // Materials cache for pre-loading
+  // Materials cache for Library — filled in parallel with planner preload (see effect below) so opening Library rarely waits.
   const [materialsCache, setMaterialsCache] = useState(null);
   const [materialsCacheTimestamp, setMaterialsCacheTimestamp] = useState(null);
-  const [materialsCacheLoading, setMaterialsCacheLoading] = useState(false);
-  
-  // Pre-load materials when familyId is available (report to parent for initial load overlay)
+
+  // Library no longer blocks the shell; keep parent flag cleared (was tied to removed materials-only prefetch).
   useEffect(() => {
-    if (!familyId) {
-      onMaterialsLoadingChange?.(false);
-      return;
-    }
-    if (materialsCacheLoading) return;
-
-    // Only pre-load if cache is empty or older than 5 minutes
-    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-    const shouldPreload = !materialsCache ||
-                         !materialsCacheTimestamp ||
-                         (Date.now() - materialsCacheTimestamp > CACHE_TTL);
-
-    if (shouldPreload) {
-      setMaterialsCacheLoading(true);
-      onMaterialsLoadingChange?.(true);
-      getMaterials(familyId, {}, propSession)
-        .then(data => {
-          setMaterialsCache(data);
-          setMaterialsCacheTimestamp(Date.now());
-        })
-        .catch(err => {
-          console.warn('[WebContent] Error pre-loading materials:', err);
-        })
-        .finally(() => {
-          setMaterialsCacheLoading(false);
-          onMaterialsLoadingChange?.(false);
-        });
-    } else {
-      onMaterialsLoadingChange?.(false);
-    }
-  }, [familyId, materialsCache, materialsCacheTimestamp, materialsCacheLoading, onMaterialsLoadingChange]);
+    onMaterialsLoadingChange?.(false);
+  }, [familyId, onMaterialsLoadingChange]);
 
   // Invalidate materials cache when library changes (e.g. syllabus added from Edit Subject) so Library tab isn’t stale
   useEffect(() => {
@@ -3911,6 +3881,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     setPlannerPreloadedTrash(null);
     setPlannerAttendanceSnapshot(null);
     onPlannerLoadingChange?.(true);
+    // Library list: same moment as planner month — not chained after calendar (avoids “Loading materials…” on first Library open).
+    getMaterials(familyId, {}, propSession)
+      .then((data) => {
+        setMaterialsCache(data);
+        setMaterialsCacheTimestamp(Date.now());
+      })
+      .catch((err) => {
+        console.warn('[WebContent] Error pre-loading materials:', err);
+      });
     const now = new Date();
     const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -3932,7 +3911,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         console.error('[WebContent] Planner preload failed:', err);
         onPlannerLoadingChange?.(false);
       });
-  }, [familyId, refreshCalendarData, onPlannerLoadingChange]);
+  }, [familyId, refreshCalendarData, onPlannerLoadingChange, propSession]);
 
   const plannerChildrenKey = useMemo(
     () => (Array.isArray(children) ? children.map((c) => c?.id).filter(Boolean).sort().join(',') : ''),

@@ -234,7 +234,7 @@ export default function YearHeatmapGrid({
         )}
       </View>
       <Text style={styles.sectionHelp}>
-        Each row is one child; each cell is one day. Click a cell to mark that day as attended or unattended for that child. For lessons shared with multiple children, marking attended marks all of them; unmarking affects only that child. Scroll left and right for other months. Click a child’s name to export their report.
+        Each row is one child; each cell is one day. Click a cell to mark that day as attended or unattended for that child. You can mark a day even when no lessons are scheduled (attendance-only). For lessons shared with multiple children, marking attended marks all of them; unmarking affects only that child. Scroll left and right for other months. Click a child’s name to export their report.
       </Text>
       {isWeb ? (
         <View style={styles.topGrid}>

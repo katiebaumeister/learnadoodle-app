@@ -11,6 +11,8 @@ const AVATAR_SOURCES = {
   prof6: require('../../assets/prof6.png'),
   prof7: require('../../assets/prof7.png'),
   prof8: require('../../assets/prof8.png'),
+  prof9: require('../../assets/prof9.png'),
+  prof10: require('../../assets/prof10.png'),
 };
 
 /**
