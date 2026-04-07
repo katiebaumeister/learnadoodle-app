@@ -1033,15 +1033,9 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
   const openGenerateCurriculumFlow = () => openPlanYearFromLibrary('generate');
 
+  /** Same as Generate curriculum card: unified PlanYearModal → generate / AI curriculum step. */
   const openAskDoodleFromLibrary = () => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const nm =
-      (effectiveChildren[0] && (effectiveChildren[0].first_name || effectiveChildren[0].name)) || 'your child';
-    window.dispatchEvent(
-      new CustomEvent('openDoodleSearchModal', {
-        detail: { initialPrompt: `What should ${nm} learn this month?` },
-      })
-    );
+    openGenerateCurriculumFlow();
   };
 
   return (
@@ -1238,21 +1232,23 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
             </Text>
 
             <View style={styles.emptyAiRow}>
-              <Sparkles size={16} color={colors.accent} strokeWidth={2} />
-              <Text style={styles.emptyAiText}>
-                I can turn anything into a plan — syllabus, book list, or just an idea.
-              </Text>
+              <View style={styles.emptyAiRowCopy}>
+                <Sparkles size={16} color={colors.accent} strokeWidth={2} style={styles.emptyAiRowIcon} />
+                <Text style={styles.emptyAiText}>
+                  I can turn anything into a plan — syllabus, book list, or just an idea.
+                </Text>
+              </View>
+              {Platform.OS === 'web' ? (
+                <TouchableOpacity
+                  style={styles.emptyAskDoodle}
+                  onPress={openAskDoodleFromLibrary}
+                  activeOpacity={0.85}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.emptyAskDoodleText}>Ask Doodle</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
-            {Platform.OS === 'web' ? (
-              <TouchableOpacity
-                style={styles.emptyAskDoodle}
-                onPress={openAskDoodleFromLibrary}
-                activeOpacity={0.85}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.emptyAskDoodleText}>Ask Doodle</Text>
-              </TouchableOpacity>
-            ) : null}
 
             <Text style={styles.emptySectionLabel}>Start with a path</Text>
             <View style={styles.emptyCardGrid}>
@@ -1312,14 +1308,14 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
               style={styles.emptyPrimaryCta}
               onPress={() => {
                 if (!ensureCanEditMaterials()) return;
-                setAddModalDefaultRole(null);
+                setAddModalDefaultRole('assignment');
                 setShowAddModal(true);
               }}
               activeOpacity={0.88}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <Plus size={18} color="#ffffff" />
-              <Text style={styles.emptyPrimaryCtaText}>Turn something into a plan</Text>
+              <Text style={styles.emptyPrimaryCtaText}>Start adding assignments</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -3377,15 +3373,25 @@ const styles = StyleSheet.create({
   },
   emptyAiRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginBottom: 10,
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 22,
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 10,
     backgroundColor: '#faf5ff',
     borderWidth: 1,
     borderColor: '#f3e8ff',
+  },
+  emptyAiRowCopy: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  emptyAiRowIcon: {
+    flexShrink: 0,
   },
   emptyAiText: {
     flex: 1,
@@ -3397,8 +3403,7 @@ const styles = StyleSheet.create({
     }),
   },
   emptyAskDoodle: {
-    alignSelf: 'flex-start',
-    marginBottom: 22,
+    flexShrink: 0,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 8,
@@ -3473,19 +3478,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    alignSelf: 'stretch',
-    paddingVertical: 12,
+    alignSelf: 'center',
+    paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#111827',
     backgroundColor: '#111827',
     marginBottom: 28,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      },
+    }),
   },
   emptyPrimaryCtaText: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     color: '#ffffff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyIconContainer: {
