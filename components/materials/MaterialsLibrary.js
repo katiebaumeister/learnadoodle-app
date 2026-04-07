@@ -1201,7 +1201,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
             <View style={styles.emptyAiRow}>
               <View style={styles.emptyAiRowCopy}>
-                <Sparkles size={16} color={colors.accent} strokeWidth={2} style={styles.emptyAiRowIcon} />
+                <Sparkles size={16} color="#0ea5e9" strokeWidth={2} style={styles.emptyAiRowIcon} />
                 <Text style={styles.emptyAiText}>
                   I can turn anything into a plan — syllabus, book list, or just an idea.
                 </Text>
@@ -3342,9 +3342,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: '#faf5ff',
+    backgroundColor: '#f0f9ff',
     borderWidth: 1,
-    borderColor: '#f3e8ff',
+    borderColor: '#bae6fd',
   },
   emptyAiRowCopy: {
     flex: 1,
@@ -3359,7 +3359,7 @@ const styles = StyleSheet.create({
   emptyAiText: {
     flex: 1,
     fontSize: 14,
-    color: '#6b21a8',
+    color: '#0369a1',
     lineHeight: 20,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -3373,9 +3373,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 20,
-    backgroundColor: '#7c3aed',
+    backgroundColor: '#0ea5e9',
     borderWidth: 1,
-    borderColor: '#7c3aed',
+    borderColor: '#0ea5e9',
     ...Platform.select({
       web: {
         cursor: 'pointer',
