@@ -22,6 +22,7 @@ import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChil
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
 import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
+import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
@@ -122,13 +123,30 @@ export default function AddMaterialModal({
   const [subscriptionFrequency, setSubscriptionFrequency] = useState('monthly'); // 'monthly' or 'yearly'
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadedFileUrl, setUploadedFileUrl] = useState('');
-  
+  /** Add mode: after upload we persist a row immediately; keep modal open and treat this like edit for Save. */
+  const [postUploadMaterial, setPostUploadMaterial] = useState(null);
+  const postUploadMaterialRef = useRef(null);
+  const [scheduleLinksRefresh, setScheduleLinksRefresh] = useState(0);
+
   // Subjects data (filteredSubjects derived via useMemo to avoid setState-in-effect loop)
   const [allSubjects, setAllSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const loadingSubjectsRef = useRef(false);
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, NESTED_MODAL_STACK_Z);
+
+  useEffect(() => {
+    postUploadMaterialRef.current = postUploadMaterial;
+  }, [postUploadMaterial]);
+
+  useEffect(() => {
+    if (!visible) {
+      setPostUploadMaterial(null);
+      postUploadMaterialRef.current = null;
+    }
+  }, [visible]);
+
+  const effectiveMaterial = material || postUploadMaterial;
 
   // Pure computation: filter subjects by selected children. subject.child_id is semicolon-separated (e.g. "id1;id2").
   // When children are selected: show only subjects assigned to ALL selected children (or family-wide).
@@ -168,7 +186,7 @@ export default function AddMaterialModal({
 
   /* draftSubjectForMaterial reflected via draftSubjectNameTrim + draftChildIdsKey */
   const subjectsForPicker = useMemo(() => {
-    if (material) return filteredSubjects;
+    if (material || postUploadMaterial) return filteredSubjects;
     const base = filteredSubjects;
     if (!draftSubjectNameTrim) return base;
     if (base.some((s) => (s.name || '').trim() === draftSubjectNameTrim)) return base;
@@ -198,11 +216,11 @@ export default function AddMaterialModal({
     if (!isFamilyWide && !isForAllSelectedChildren) return base;
 
     return [...base, draftRow].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [material, filteredSubjects, draftSubjectNameTrim, draftChildIdsKey, selectedChildIds.join(',')]);
+  }, [material, postUploadMaterial, filteredSubjects, draftSubjectNameTrim, draftChildIdsKey, selectedChildIds.join(',')]);
 
   // If DB gains a real subject with the same name, move selection off the draft sentinel
   useEffect(() => {
-    if (!visible || material) return;
+    if (!visible || material || postUploadMaterial) return;
     if (selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID) return;
     if (subjectsForPicker.some((s) => s.id === DRAFT_SUBJECT_MATERIAL_ID)) return;
     if (!draftSubjectNameTrim) {
@@ -215,6 +233,7 @@ export default function AddMaterialModal({
   }, [
     visible,
     material,
+    postUploadMaterial,
     selectedSubjectId,
     subjectsForPicker,
     filteredSubjects,
@@ -386,23 +405,24 @@ export default function AddMaterialModal({
 
   // When subjects load in edit mode, resolve subject_key -> selectedSubjectId (separate so allSubjects doesn't trigger main edit effect)
   useEffect(() => {
-    if (!visible || !material || !material.subject_key || material.subject_id) return;
+    const src = material || postUploadMaterial;
+    if (!visible || !src || !src.subject_key || src.subject_id) return;
     if (allSubjects.length === 0) return;
-    const subject = allSubjects.find(s => s.name === material.subject_key);
+    const subject = allSubjects.find(s => s.name === src.subject_key);
     setSelectedSubjectId(subject ? subject.id : null);
-  }, [visible, material?.id, material?.subject_key, allSubjects]);
+  }, [visible, material?.id, material?.subject_key, postUploadMaterial?.id, postUploadMaterial?.subject_key, allSubjects]);
 
   // Apply type (role) from parent as soon as the add-material sheet opens — before paint so chips match "Add syllabus" / "Add lesson plan".
   useLayoutEffect(() => {
-    if (!visible || material) return;
+    if (!visible || material || postUploadMaterial) return;
     setRole(defaultRole ? String(defaultRole) : '');
-  }, [visible, material, defaultRole]);
+  }, [visible, material, postUploadMaterial, defaultRole]);
 
   // Separate effect for resetting form in add mode (stable deps: no array refs to avoid loop when parent passes defaultChildIds=[] or omits it)
   const defaultChildIdsKey = Array.isArray(defaultChildIds) ? defaultChildIds.join(',') : '';
   const defaultProviderUrlTrimmed = defaultProviderUrl ? String(defaultProviderUrl).trim() : '';
   useEffect(() => {
-    if (visible && !material) {
+    if (visible && !material && !postUploadMaterial) {
       setTitle('');
       setRole(defaultRole ? String(defaultRole) : '');
       const useDraft =
@@ -435,6 +455,7 @@ export default function AddMaterialModal({
   }, [
     visible,
     !!material,
+    !!postUploadMaterial,
     defaultRole,
     defaultSubjectId,
     defaultChildId,
@@ -669,66 +690,107 @@ export default function AddMaterialModal({
           tags.push(`subscription:${subscriptionFrequency}`);
         }
 
+        const subjectIdForSave =
+          selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+            ? selectedSubjectId
+            : null;
+        const subjectKeyForSave =
+          selectedSubjectId === DRAFT_SUBJECT_MATERIAL_ID
+            ? draftSubjectNameTrim || null
+            : subjectIdForSave
+              ? allSubjects.find((s) => s.id === subjectIdForSave)?.name || null
+              : null;
+
+        const existingPu = postUploadMaterialRef.current;
         setLoading(true);
         try {
-          const { createFileMaterial } = await import('../../lib/services/materialsClient');
-          const subjectIdForSave =
-            selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
-              ? selectedSubjectId
-              : null;
-          const subjectKeyForSave =
-            selectedSubjectId === DRAFT_SUBJECT_MATERIAL_ID
-              ? draftSubjectNameTrim || null
-              : subjectIdForSave
-                ? allSubjects.find((s) => s.id === subjectIdForSave)?.name || null
-                : null;
-
-          const created = await createFileMaterial({
-            familyId,
-            storagePath: finalPath,
-            title: titleForRow,
-            mime: file.type || 'application/octet-stream',
-            bytes: file.size || 0,
-            tags,
-            notes: null,
-            subjectId: subjectIdForSave,
-            subjectKey: subjectKeyForSave,
-            url: fileUrl || null,
-          });
-
-          if (created?.id && selectedChildIds.length > 0 && familyId) {
-            await Promise.all(
-              selectedChildIds.map((childId) =>
-                linkMaterialToChild(created.id, childId, familyId, 'planned')
-              )
-            );
-          }
-
-          setRole(effectiveRole);
-          setTitle(titleForRow);
-
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('materialUpdated', {
-                detail: { materialId: created.id, familyId, action: 'created' },
-              })
-            );
-            window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
-            window.dispatchEvent(new CustomEvent('refreshSubjects'));
-            const subId =
-              selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
-                ? selectedSubjectId
-                : created?.subject_id;
-            if (subId) {
+          if (existingPu?.id) {
+            const updatedRow = await updateMaterial(existingPu.id, {
+              title: titleForRow,
+              tags,
+              storage_path: finalPath,
+              mime: file.type || 'application/octet-stream',
+              bytes: file.size || 0,
+              provider_url: fileUrl || existingPu.provider_url || null,
+              subject_id: subjectIdForSave,
+              subject_key: subjectKeyForSave,
+            });
+            setPostUploadMaterial(updatedRow);
+            postUploadMaterialRef.current = updatedRow;
+            setRole(effectiveRole);
+            setTitle(titleForRow);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
               window.dispatchEvent(
-                new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } })
+                new CustomEvent('materialUpdated', {
+                  detail: { materialId: existingPu.id, familyId, action: 'updated' },
+                })
+              );
+              window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+              const subId =
+                selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+                  ? selectedSubjectId
+                  : updatedRow?.subject_id;
+              if (subId) {
+                window.dispatchEvent(
+                  new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } })
+                );
+              }
+            }
+            console.log('[AddMaterialModal] Material updated after re-upload:', updatedRow?.id);
+            setScheduleLinksRefresh((x) => x + 1);
+            if (onSaved) onSaved(updatedRow, { keepOpen: true });
+          } else {
+            const { createFileMaterial } = await import('../../lib/services/materialsClient');
+            const created = await createFileMaterial({
+              familyId,
+              storagePath: finalPath,
+              title: titleForRow,
+              mime: file.type || 'application/octet-stream',
+              bytes: file.size || 0,
+              tags,
+              notes: null,
+              subjectId: subjectIdForSave,
+              subjectKey: subjectKeyForSave,
+              url: fileUrl || null,
+            });
+
+            if (created?.id && selectedChildIds.length > 0 && familyId) {
+              await Promise.all(
+                selectedChildIds.map((childId) =>
+                  linkMaterialToChild(created.id, childId, familyId, 'planned')
+                )
               );
             }
-          }
 
-          console.log('[AddMaterialModal] Material saved to library after upload:', created?.id);
-          if (onSaved) onSaved(created);
-          onClose();
+            setPostUploadMaterial(created);
+            postUploadMaterialRef.current = created;
+            setRole(effectiveRole);
+            setTitle(titleForRow);
+
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('materialUpdated', {
+                  detail: { materialId: created.id, familyId, action: 'created' },
+                })
+              );
+              window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+              const subId =
+                selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
+                  ? selectedSubjectId
+                  : created?.subject_id;
+              if (subId) {
+                window.dispatchEvent(
+                  new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } })
+                );
+              }
+            }
+
+            console.log('[AddMaterialModal] Material saved to library after upload:', created?.id);
+            setScheduleLinksRefresh((x) => x + 1);
+            if (onSaved) onSaved(created, { keepOpen: true });
+          }
         } catch (persistErr) {
           console.error('[AddMaterialModal] Failed to persist material after upload:', persistErr);
           setRole(effectiveRole);
@@ -751,7 +813,8 @@ export default function AddMaterialModal({
   };
 
   // Check if form is valid (title and type are required, document required only for new materials)
-  const isFormValid = title.trim() && role && (material ? true : (uploadedFile && uploadedFile.path));
+  const isFormValid =
+    title.trim() && role && (effectiveMaterial ? true : uploadedFile && uploadedFile.path);
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -762,7 +825,8 @@ export default function AddMaterialModal({
       alert('Please select a type');
       return;
     }
-    if (!material && (!uploadedFile || !uploadedFile.path)) {
+    const m = material || postUploadMaterial;
+    if (!m && (!uploadedFile || !uploadedFile.path)) {
       alert('Please upload a document');
       return;
     }
@@ -782,8 +846,8 @@ export default function AddMaterialModal({
       /** Set in add mode only; shared by post-save events + onSaved below */
       let created = null;
 
-      if (material) {
-        // Edit mode: update existing material
+      if (m) {
+        // Edit mode: update existing material (includes post-upload row in add flow)
         const subjectName =
           selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
             ? allSubjects.find((s) => s.id === selectedSubjectId)?.name || null
@@ -807,7 +871,7 @@ export default function AddMaterialModal({
         };
 
         // If new file uploaded, update storage_path and mime
-        if (uploadedFile && uploadedFile.path && uploadedFile.path !== material.storage_path) {
+        if (uploadedFile && uploadedFile.path && uploadedFile.path !== m.storage_path) {
           updates.storage_path = uploadedFile.path;
           updates.mime = uploadedFile.type || 'application/octet-stream';
           updates.bytes = uploadedFile.size || 0;
@@ -834,7 +898,7 @@ export default function AddMaterialModal({
           
           // Merge review updates with existing updates
           Object.assign(updates, reviewUpdates);
-        } else if (material && (reviewChildId === null || (!reviewRating && !reviewEmotion && !reviewPacingFit && !reviewDifficulty && !reviewNotes.trim()))) {
+        } else if (m && (reviewChildId === null || (!reviewRating && !reviewEmotion && !reviewPacingFit && !reviewDifficulty && !reviewNotes.trim()))) {
           // Clear review if all fields are empty
           const reviewUpdates = {
             review_child_id: null,
@@ -850,7 +914,7 @@ export default function AddMaterialModal({
 
         console.log('[AddMaterialModal] Updating material with all fields including reviews:', updates);
         try {
-          const updated = await updateMaterial(material.id, updates);
+          const updated = await updateMaterial(m.id, updates);
         console.log('[AddMaterialModal] Material updated successfully. Review fields in response:', {
           review_child_id: updated?.review_child_id,
           review_rating: updated?.review_rating,
@@ -860,11 +924,11 @@ export default function AddMaterialModal({
         // Dispatch event for other components to refresh
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('materialUpdated', { 
-            detail: { materialId: material.id, familyId } 
+            detail: { materialId: m.id, familyId } 
           }));
           window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
-          const subId = selectedSubjectId || material?.subject_id;
+          const subId = selectedSubjectId || m?.subject_id;
           if (subId) {
             window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subId } }));
           }
@@ -881,7 +945,7 @@ export default function AddMaterialModal({
         }
 
         // Update material_children relationships
-        const existingChildIds = (material.material_children || []).map(mc => mc.child_id);
+        const existingChildIds = (m.material_children || []).map(mc => mc.child_id);
         
         // Remove children that are no longer selected
         const toRemove = existingChildIds.filter(id => !selectedChildIds.includes(id));
@@ -891,7 +955,7 @@ export default function AddMaterialModal({
               supabase
                 .from('material_children')
                 .delete()
-                .eq('material_id', material.id)
+                .eq('material_id', m.id)
                 .eq('child_id', childId)
             )
           );
@@ -901,18 +965,18 @@ export default function AddMaterialModal({
         const toAdd = selectedChildIds.filter(id => !existingChildIds.includes(id));
         if (toAdd.length > 0) {
           await Promise.all(
-            toAdd.map((childId) => linkMaterialToChild(material.id, childId, familyId, 'planned'))
+            toAdd.map((childId) => linkMaterialToChild(m.id, childId, familyId, 'planned'))
           );
         }
 
         // Update material-child link status to 'completed' if rating is positive
         if (reviewChildId && reviewRating && reviewRating >= 4) {
-          await updateMaterialChildStatus(material.id, reviewChildId, 'completed', {
+          await updateMaterialChildStatus(m.id, reviewChildId, 'completed', {
             finished_at: new Date().toISOString().split('T')[0],
           });
         } else if (reviewChildId) {
           // Ensure link exists
-          await linkMaterialToChild(material.id, reviewChildId, familyId, 'in_use');
+          await linkMaterialToChild(m.id, reviewChildId, familyId, 'in_use');
         }
       } else {
         // Add mode: create new material
@@ -1014,15 +1078,15 @@ export default function AddMaterialModal({
 
       // Dispatch event for other components to refresh
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const materialId = material?.id || created?.id;
+        const materialId = m?.id || created?.id;
         if (materialId) {
           window.dispatchEvent(new CustomEvent('materialUpdated', { 
-            detail: { materialId, familyId, action: material ? 'updated' : 'created' } 
+            detail: { materialId, familyId, action: m ? 'updated' : 'created' } 
           }));
           window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
-          const subId = material
-            ? selectedSubjectId || material?.subject_id
+          const subId = m
+            ? selectedSubjectId || m?.subject_id
             : selectedSubjectId && selectedSubjectId !== DRAFT_SUBJECT_MATERIAL_ID
               ? selectedSubjectId
               : created?.subject_id;
@@ -1033,11 +1097,12 @@ export default function AddMaterialModal({
       }
 
       if (onSaved) {
-        onSaved(material || created);
+        onSaved(m || created);
       }
+      setScheduleLinksRefresh((x) => x + 1);
       onClose();
     } catch (error) {
-      alert(`Failed to ${material ? 'update' : 'save'} material: ${error.message || 'Unknown error'}`);
+      alert(`Failed to ${m ? 'update' : 'save'} material: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -1064,7 +1129,7 @@ export default function AddMaterialModal({
             <View style={styles.fieldRow}>
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>
-                  Document Upload {!material && <Text style={{ color: '#ef4444' }}>*</Text>}
+                  Document Upload {!effectiveMaterial && <Text style={{ color: '#ef4444' }}>*</Text>}
                 </Text>
               <TouchableOpacity
                 style={[styles.uploadButton, uploading && styles.uploadButtonDisabled]}
@@ -1233,8 +1298,28 @@ export default function AddMaterialModal({
               </View>
             </View>
 
+            {/* Planner linking (same small grey label pattern as Material Metadata below) */}
+            <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterSubject]}>
+              Planner Linking (optional)
+            </Text>
+            {effectiveMaterial?.id && familyId ? (
+              <MaterialScheduleLinksSection
+                materialId={effectiveMaterial.id}
+                familyId={familyId}
+                refreshToken={scheduleLinksRefresh}
+              />
+            ) : (
+              <View style={styles.scheduleLinksPlaceholder}>
+                <Text style={styles.scheduleLinksPlaceholderText}>
+                  After you upload or save, you will see any calendar events and plan years this attachment is linked to.
+                </Text>
+              </View>
+            )}
+
             {/* Material Metadata Section */}
-            <Text style={styles.metadataSectionTitle}>Material Metadata (optional)</Text>
+            <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterScheduleBlock]}>
+              Material Metadata (optional)
+            </Text>
 
             {/* Provider Info (optional) */}
             <View style={styles.blockSection}>
@@ -1454,9 +1539,9 @@ export default function AddMaterialModal({
             </View>
           </ScrollView>
 
-          {material ? <View style={styles.footerDivider} /> : null}
+          {effectiveMaterial ? <View style={styles.footerDivider} /> : null}
           {/* Actions - Fixed at bottom */}
-          <View style={[styles.actions, material && styles.actionsEdit]}>
+          <View style={[styles.actions, effectiveMaterial && styles.actionsEdit]}>
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={onClose}
@@ -1475,7 +1560,7 @@ export default function AddMaterialModal({
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.saveButtonText}>{material ? 'Save Changes' : 'Add Material'}</Text>
+                <Text style={styles.saveButtonText}>{effectiveMaterial ? 'Save Changes' : 'Add Material'}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -1718,6 +1803,20 @@ export default function AddMaterialModal({
 }
 
 const styles = StyleSheet.create({
+  scheduleLinksPlaceholder: {
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: '#f9fafb',
+  },
+  scheduleLinksPlaceholderText: {
+    fontSize: 13,
+    color: SUB,
+    lineHeight: 19,
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -2103,6 +2202,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  /** Tighter gap after Subject row so Planner Linking aligns with upper form rhythm */
+  metadataSectionTitleAfterSubject: {
+    marginTop: 12,
+  },
+  /** Less air between Schedule Link card and Material Metadata label */
+  metadataSectionTitleAfterScheduleBlock: {
+    marginTop: 8,
   },
   ratingContainer: {
     flexDirection: 'row',

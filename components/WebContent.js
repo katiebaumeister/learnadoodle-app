@@ -16,7 +16,7 @@ import {
 import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan'
-import { getHolidaysForRange, getEventForPlanSlot } from '../lib/services/academicYearClient'
+import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
 
@@ -661,6 +661,22 @@ function childLabelFromEvent(ev, children) {
   return names.length === 1 ? names[0] : names.join(' & ');
 }
 
+/** Synchronous read so Library tab first paint can use cached list (no empty-state flash). */
+function readMaterialsSessionSnapshot(familyId) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) {
+    return { data: null, t: null };
+  }
+  try {
+    const raw = sessionStorage.getItem(`ld_web_materials_${familyId}`);
+    if (!raw) return { data: null, t: null };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.data)) return { data: null, t: null };
+    return { data: parsed.data, t: parsed.t || Date.now() };
+  } catch {
+    return { data: null, t: null };
+  }
+}
+
 import ParentHomeScreen from './home/ParentHomeScreen';
 
 export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null }) {
@@ -807,10 +823,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Family ID state (must be declared early to avoid TDZ errors)
   // Use propFamilyId if provided; fallback to session.family_id so home/planner have familyId on first paint
   const [familyId, setFamilyId] = useState(propFamilyId || propSession?.family_id || null);
-  
-  // Materials cache for Library — filled in parallel with planner preload (see effect below) so opening Library rarely waits.
-  const [materialsCache, setMaterialsCache] = useState(null);
-  const [materialsCacheTimestamp, setMaterialsCacheTimestamp] = useState(null);
+
+  // Materials cache for Library — hydrate from sessionStorage on first paint when possible (preload + effect still refresh).
+  const _materialsSessionInitial = readMaterialsSessionSnapshot(propFamilyId || propSession?.family_id || null);
+  const [materialsCache, setMaterialsCache] = useState(() => _materialsSessionInitial.data);
+  const [materialsCacheTimestamp, setMaterialsCacheTimestamp] = useState(() => _materialsSessionInitial.t);
 
   // Hydrate Library list from session tab cache so navigation feels instant (API refresh still runs in preload).
   useEffect(() => {
@@ -2724,6 +2741,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const skipCacheClear = event?.detail?.skipCacheClear === true;
       const forceInvalidate = event?.detail?.forceInvalidate === true;
       const dropStartTime = event?.detail?.dropStartTime;
+      if (forceInvalidate && familyId) {
+        invalidateHolidaysForRangeCache(familyId);
+      }
       if (forceInvalidate && refreshDate instanceof Date && !isNaN(refreshDate.getTime())) {
         const forceMonthPrefix = `${refreshDate.getFullYear()}-${String(refreshDate.getMonth() + 1).padStart(2, '0')}`;
         setCalendarEvents((prev) => {
@@ -3058,7 +3078,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         window.removeEventListener('eventDeleted', handleEventDeletedForHome);
       }
     };
-  }, [activeTab, homeData, authUserId, homeSelectedDate, refreshCalendarData]);
+  }, [activeTab, homeData, authUserId, homeSelectedDate, refreshCalendarData, familyId]);
 
   // Listen for rebalance modal events from PlannerWeek
   useEffect(() => {
@@ -8813,13 +8833,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           setAddMaterialModalDefaultChildIds([]);
           setAddMaterialModalDefaultProviderUrl(null);
         }}
-        onSaved={() => {
-          setShowAddMaterialModal(false);
-          setAddMaterialModalDefaultRole(null);
-          setAddMaterialModalDefaultSubjectId(null);
-          setAddMaterialModalDefaultSubjectName(null);
-          setAddMaterialModalDefaultChildIds([]);
-          setAddMaterialModalDefaultProviderUrl(null);
+        onSaved={(_saved, opts) => {
+          if (!opts?.keepOpen) {
+            setShowAddMaterialModal(false);
+            setAddMaterialModalDefaultRole(null);
+            setAddMaterialModalDefaultSubjectId(null);
+            setAddMaterialModalDefaultSubjectName(null);
+            setAddMaterialModalDefaultChildIds([]);
+            setAddMaterialModalDefaultProviderUrl(null);
+          }
           if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('materialSaved'));
         }}
         familyId={familyId}

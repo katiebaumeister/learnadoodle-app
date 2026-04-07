@@ -13,6 +13,8 @@ _rate_hits = {}
 _RATE_LIMIT_WINDOW = 60  # seconds
 _RATE_LIMIT_MAX = 60  # requests per window
 
+_RATE_LIMIT_RELAXED_MAX = 300  # higher ceiling for read-heavy GET endpoints
+
 
 def _rate_limit_key(request: Request) -> str:
     client_ip = request.client.host if request.client else "unknown"
@@ -20,7 +22,7 @@ def _rate_limit_key(request: Request) -> str:
     return f"{client_ip}:{route}"
 
 
-def rate_limiter(request: Request):
+def _check_rate(request: Request, max_hits: int):
     key = _rate_limit_key(request)
     now = time.time()
     with _rate_lock:
@@ -30,8 +32,17 @@ def rate_limiter(request: Request):
             window_start = now
         hits += 1
         _rate_hits[key] = (hits, window_start)
-        if hits > _RATE_LIMIT_MAX:
+        if hits > max_hits:
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+
+
+def rate_limiter(request: Request):
+    _check_rate(request, _RATE_LIMIT_MAX)
+
+
+def rate_limiter_relaxed(request: Request):
+    """Higher ceiling for read-only GET endpoints that the frontend polls frequently."""
+    _check_rate(request, _RATE_LIMIT_RELAXED_MAX)
 
 
 def get_current_user(request: Request) -> dict:

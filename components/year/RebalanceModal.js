@@ -67,6 +67,11 @@ export default function RebalanceModal({
   /** 'sug:<uuid>' | 'bl:<uuid>' while a one-click schedule is in flight */
   const [schedulingId, setSchedulingId] = useState(null);
   const [howWorksOpen, setHowWorksOpen] = useState(false);
+  const [closeHovered, setCloseHovered] = useState(false);
+
+  React.useEffect(() => {
+    if (!visible) setCloseHovered(false);
+  }, [visible]);
 
   React.useEffect(() => {
     checkFeatureFlags().then(flags => {
@@ -731,7 +736,9 @@ export default function RebalanceModal({
       <View style={styles.modalColumn}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <RefreshCw size={20} color={colors.accent} />
+            <View style={styles.headerIconCircle}>
+              <RefreshCw size={18} color={colors.accent} />
+            </View>
             <View style={styles.headerTextBlock}>
               <Text style={styles.title}>
                 {hasRebalanceContext ? 'Shift subject series' : 'Schedule rhythm'}
@@ -743,8 +750,16 @@ export default function RebalanceModal({
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-            <X size={20} color={colors.text} />
+          <TouchableOpacity
+            onPress={handleClose}
+            style={[styles.closeButton, closeHovered && styles.closeButtonHovered]}
+            activeOpacity={0.72}
+            {...(Platform.OS === 'web' && {
+              onMouseEnter: () => setCloseHovered(true),
+              onMouseLeave: () => setCloseHovered(false),
+            })}
+          >
+            <X size={17} color={colors.text} style={{ opacity: closeHovered ? 0.78 : 0.4 }} />
           </TouchableOpacity>
         </View>
 
@@ -765,8 +780,8 @@ export default function RebalanceModal({
           ) : (
             <>
               <View style={styles.emptyState}>
-                <View style={styles.modeTag}>
-                  <Text style={styles.modeTagText}>Family · next 4 weeks</Text>
+                <View style={styles.rhythmMetaChip}>
+                  <Text style={styles.rhythmMetaChipText}>Family · Next 4 weeks</Text>
                 </View>
                 <Text style={styles.insightsKicker}>Planner status</Text>
                 <Text style={styles.oneLineSummary}>
@@ -802,24 +817,28 @@ export default function RebalanceModal({
                 )}
 
                 {!!familyId && (
-                  <TouchableOpacity
-                    style={[styles.button, styles.previewButton, previewing && styles.buttonDisabled]}
-                    onPress={handleRhythmPreview}
-                    disabled={previewing}
-                    {...(Platform.OS === 'web' && { cursor: previewing ? 'default' : 'pointer' })}
-                  >
-                    {previewing ? (
-                      <>
-                        <ActivityIndicator size="small" color={colors.accentContrast} />
-                        <Text style={styles.buttonText}>Analyzing…</Text>
-                      </>
-                    ) : (
-                      <>
-                        <Clock size={16} color={colors.accentContrast} />
-                        <Text style={styles.buttonText}>{rhythmInsights ? 'Refresh analysis' : 'Run analysis'}</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
+                  <View style={styles.rhythmCtaWrap}>
+                    <TouchableOpacity
+                      style={[styles.rhythmAnalysisButton, previewing && styles.buttonDisabled]}
+                      onPress={handleRhythmPreview}
+                      disabled={previewing}
+                      {...(Platform.OS === 'web' && { cursor: previewing ? 'default' : 'pointer' })}
+                    >
+                      {previewing ? (
+                        <>
+                          <ActivityIndicator size="small" color={colors.accent} />
+                          <Text style={styles.rhythmAnalysisButtonText}>Analyzing…</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Clock size={14} color={colors.accent} />
+                          <Text style={styles.rhythmAnalysisButtonText}>
+                            {rhythmInsights ? 'Refresh analysis' : 'Run analysis'}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 )}
                 {!familyId && (
                   <Text style={styles.description}>Sign in with a family account to run schedule rhythm.</Text>
@@ -1171,37 +1190,59 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10000,
   },
   modalColumn: {
-    backgroundColor: colors.bg,
-    borderRadius: 12,
+    backgroundColor: '#FCFCFF',
+    borderRadius: 14,
     width: '90%',
     maxWidth: 600,
     maxHeight: '88%',
     flexDirection: 'column',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.04)',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.1,
+    shadowRadius: 36,
+    elevation: 18,
+    ...(Platform.OS === 'web'
+      ? {
+          boxShadow:
+            '0 24px 56px rgba(15, 23, 42, 0.07), 0 10px 24px rgba(99, 102, 241, 0.06)',
+          backgroundImage:
+            'linear-gradient(180deg, rgba(99, 102, 241, 0.055) 0%, #FCFCFF 38%, #FCFCFF 100%)',
+        }
+      : {}),
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    padding: 16,
+    paddingTop: 22,
+    paddingBottom: 18,
+    paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: 'rgba(15, 23, 42, 0.06)',
+  },
+  headerIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.14)',
   },
   headerLeft: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+    alignItems: 'center',
+    gap: 14,
     flex: 1,
     paddingRight: 8,
   },
@@ -1210,30 +1251,36 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   headerSubtitle: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 4,
-    lineHeight: 18,
+    fontSize: 12,
+    color: 'rgba(15, 23, 42, 0.52)',
+    marginTop: 2,
+    lineHeight: 16,
   },
   closeButton: {
-    padding: 4,
+    padding: 6,
+    marginTop: -2,
+    borderRadius: 8,
+  },
+  closeButtonHovered: {
+    backgroundColor: 'rgba(15, 23, 42, 0.04)',
   },
   content: {
     flex: 1,
   },
   contentContainer: {
-    padding: 16,
+    paddingHorizontal: 20,
+    paddingTop: 18,
     paddingBottom: 32,
   },
   oneLineSummary: {
     fontSize: 13,
-    color: colors.muted,
-    lineHeight: 19,
-    marginBottom: 12,
+    color: 'rgba(15, 23, 42, 0.62)',
+    lineHeight: 17,
+    marginBottom: 20,
   },
   synopsisStrip: {
     marginBottom: 14,
@@ -1420,11 +1467,11 @@ const styles = StyleSheet.create({
   },
   rhythmStickyFooter: {
     borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingHorizontal: 16,
+    borderTopColor: 'rgba(15, 23, 42, 0.06)',
+    paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 16,
-    backgroundColor: colors.bg,
+    backgroundColor: '#FCFCFF',
   },
   footerPrimaryBtn: {
     backgroundColor: colors.greenBold || '#10b981',
@@ -1496,6 +1543,53 @@ const styles = StyleSheet.create({
   emptyState: {
     paddingVertical: 4,
   },
+  rhythmMetaChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    marginBottom: 16,
+    backgroundColor: 'rgba(99, 102, 241, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.1)',
+  },
+  rhythmMetaChipText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: 'rgba(15, 23, 42, 0.45)',
+    letterSpacing: 0.2,
+  },
+  rhythmCtaWrap: {
+    alignSelf: 'stretch',
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  rhythmAnalysisButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    marginBottom: 16,
+    backgroundColor: 'rgba(99, 102, 241, 0.11)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.2)',
+    ...(Platform.OS === 'web'
+      ? {
+          boxShadow: '0 6px 20px rgba(99, 102, 241, 0.12)',
+        }
+      : {}),
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  rhythmAnalysisButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+  },
   emptyStateTitle: {
     fontSize: 17,
     fontWeight: '600',
@@ -1511,12 +1605,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   insightsKicker: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(79, 70, 229, 0.88)',
+    letterSpacing: 0.15,
+    marginBottom: 8,
   },
   insightsIntro: {
     fontSize: 13,

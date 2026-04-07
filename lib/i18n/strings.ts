@@ -81,10 +81,6 @@ export const STRINGS = {
       emptyPlanFlowUnits: "Units",
       emptyPlanFlowSchedule: "Schedule",
       emptyPlanFlowCalendar: "Calendar",
-      emptyPlanCardScheduleTitle: "Build a schedule",
-      emptyPlanCardScheduleBody:
-        "Set days, times, and rhythm. We'll help you distribute learning automatically.",
-      emptyPlanCardScheduleCta: "Start scheduling",
       emptyPlanCardUnitsTitle: "Add lessons or units",
       emptyPlanCardUnitsBody:
         "Upload material or paste a syllabus. Structure learning before placing it on the calendar.",
@@ -95,6 +91,8 @@ export const STRINGS = {
       emptyPlanQuickBody: "Tell us what you're learning and we'll build a starter plan.",
       emptyPlanQuickCta: "Generate plan",
       emptyPlanFooterHint: "Plans connect your schedule, lessons, and progress.",
+      /** Empty list after fetch: same header as when rows exist, no onboarding cards. */
+      emptyPlanListZeroRowsHint: "No plans yet.",
     },
 
     sections: {

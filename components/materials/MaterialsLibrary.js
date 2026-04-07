@@ -13,6 +13,7 @@ import {
   Platform,
   Alert,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload, ClipboardList, PenLine, ArrowRight } from 'lucide-react';
 import { colors } from '../../theme/colors';
@@ -77,10 +78,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     return true;
   };
 
-  /** Empty array is truthy — only skip API when parent actually prefetched rows. */
+  /** Non-empty preloaded list — skip redundant fetch when parent has rows. */
   const preloadedMaterialsUsable =
     Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0;
-  
+  /** Parent passed a snapshot (including []); avoids empty-state flash while cache is still null. */
+  const hasPreloadedLibrarySnapshot = Array.isArray(preloadedMaterials);
+
   // Get child colors for dots
   const getChildDotColor = (childId) => {
     const effectiveChildren = localChildren.length > 0 ? localChildren : children;
@@ -93,7 +96,9 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   
   // 
   const [materials, setMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
-  const [allMaterials, setAllMaterials] = useState([]); // Store all materials for stats
+  const [allMaterials, setAllMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
+  /** False until parent snapshot exists or first load finishes — suppresses empty UI flash. */
+  const [libraryReady, setLibraryReady] = useState(() => Array.isArray(preloadedMaterials));
   const [error, setError] = useState(null);
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
@@ -137,29 +142,31 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     return [...byId.values()];
   }, [subjects, allSubjectsForModal]);
 
-  // Use preloaded materials if available and no filters are applied
+  // Sync from parent snapshot (including []) when filters are default — keeps list + TOTAL count stable.
   useEffect(() => {
-    if (preloadedMaterialsUsable && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
+    if (!hasPreloadedLibrarySnapshot) return;
+    setLibraryReady(true);
+    if (searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
       setMaterials(preloadedMaterials);
+      setAllMaterials(preloadedMaterials);
       setError(null);
-      return;
     }
-  }, [preloadedMaterials, preloadedMaterialsUsable, searchQuery, selectedChildId, selectedSubjectId]);
+  }, [preloadedMaterials, hasPreloadedLibrarySnapshot, searchQuery, selectedChildId, selectedSubjectId]);
 
   useEffect(() => {
     if (!familyId) {
       setError('No family ID provided');
+      setLibraryReady(true);
       return;
     }
-    
-    // Skip loading if we have a non-empty preloaded list and no filters
-    if (preloadedMaterialsUsable && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
+
+    if (hasPreloadedLibrarySnapshot && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
       return;
     }
-    
+
     loadMaterials();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects, preloadedMaterials, preloadedMaterialsUsable]);
+  }, [familyId, searchQuery, selectedChildId, selectedSubjectId, subjects, preloadedMaterials, hasPreloadedLibrarySnapshot]);
 
   // Load children if not provided
   const [localChildren, setLocalChildren] = useState(children);
@@ -213,10 +220,11 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     loadSubjects();
   }, [familyId]);
 
-  // Load all materials (without filters) for determining if user has any materials at all
+  // Load all materials for stats when we don't already have a parent snapshot of the full list.
   useEffect(() => {
-    if (!familyId || allMaterials.length > 0) return; // Only load once if empty
-    
+    if (!familyId || allMaterials.length > 0) return;
+    if (hasPreloadedLibrarySnapshot && preloadedMaterials.length === 0) return;
+
     const loadAllMaterials = async () => {
       try {
         const data = await getMaterials(familyId, {}, session ?? null);
@@ -225,9 +233,9 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         console.warn('[MaterialsLibrary] Error loading all materials:', err);
       }
     };
-    
+
     loadAllMaterials();
-  }, [familyId, allMaterials.length, session]);
+  }, [familyId, allMaterials.length, session, hasPreloadedLibrarySnapshot, preloadedMaterials]);
 
   // Set allMaterials for stats when materials are loaded (only when no filters are applied)
   useEffect(() => {
@@ -271,19 +279,21 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const loadMaterials = async (forceFromServer = false) => {
     if (!familyId) {
       setError('No family ID provided');
+      setLibraryReady(true);
       return;
     }
 
-    // Parent prefetched list arrived (e.g. Library opened right after app load): skip redundant fetch.
     if (
       !forceFromServer &&
-      preloadedMaterialsUsable &&
+      hasPreloadedLibrarySnapshot &&
       searchQuery === '' &&
       selectedChildId === '' &&
       selectedSubjectId === null
     ) {
       setMaterials(preloadedMaterials);
+      setAllMaterials(preloadedMaterials);
       setError(null);
+      setLibraryReady(true);
       return;
     }
 
@@ -318,6 +328,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       // allMaterials will be set by useEffect for stats
     } catch (err) {
       setError(err.message || 'Failed to load materials');
+    } finally {
+      setLibraryReady(true);
     }
   };
 
@@ -859,7 +871,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         return matchesRole(roleFilter, normalized);
       });
 
-  const hasNoMaterials = allMaterials.length === 0;
+  const hasNoMaterials = libraryReady && allMaterials.length === 0;
   const nothingVisible = visibleMaterials.length === 0;
 
   const handleRestoreItem = async (item) => {
@@ -1023,7 +1035,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         {/* Search, Add Material Button, and Trash */}
         <View style={styles.searchRow}>
           <Text style={styles.totalFilesText}>
-            TOTAL MATERIALS ({allMaterials.length})
+            TOTAL MATERIALS ({libraryReady ? allMaterials.length : '—'})
           </Text>
           <View style={styles.searchAndButtonContainer}>
             <View style={styles.searchContainer}>
@@ -1152,6 +1164,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           >
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
+        </View>
+      ) : !libraryReady ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.accent} />
         </View>
       ) : hasNoMaterials ? (
         <ScrollView
@@ -1797,10 +1813,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           setShowAddModal(false);
           setAddModalDefaultRole(null);
         }}
-        onSaved={() => {
-          setShowAddModal(false);
-          setAddModalDefaultRole(null);
+        onSaved={(_saved, opts) => {
           loadMaterials(true);
+          if (!opts?.keepOpen) {
+            setShowAddModal(false);
+            setAddModalDefaultRole(null);
+          }
         }}
         familyId={familyId}
         children={children}
@@ -3473,6 +3491,59 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyUseMaterialsSub: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 20,
+    marginTop: -4,
+    marginBottom: 14,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyUseMaterialsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 8,
+    alignSelf: 'stretch',
+  },
+  emptyUseCard: {
+    flexGrow: 1,
+    minWidth: 148,
+    maxWidth: '100%',
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    ...(Platform.OS === 'web' && {
+      flexBasis: '30%',
+      minWidth: 180,
+      maxWidth: 360,
+      boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)',
+    }),
+  },
+  emptyUseCardIcon: {
+    marginBottom: 6,
+  },
+  emptyUseCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyUseCardBody: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyIconContainer: {

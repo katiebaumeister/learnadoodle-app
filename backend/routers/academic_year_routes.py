@@ -29,7 +29,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from auth import get_current_user, rate_limiter
+from auth import get_current_user, rate_limiter, rate_limiter_relaxed
 from helpers import get_family_id_for_user, require_onboarding_complete
 from logger import log_event
 from supabase_client import get_admin_client
@@ -747,7 +747,7 @@ async def get_plan_health(
     family_id: str = Query(..., description="Family ID"),
     academic_year_id_param: Optional[str] = Query(None, alias="academic_year_id", description="If provided, health for this plan only; otherwise most recently updated plan"),
     user: dict = Depends(get_current_user),
-    __: None = Depends(rate_limiter),
+    __: None = Depends(rate_limiter_relaxed),
 ):
     """
     Compute plan health (actual compliance) from events in DB.
@@ -1331,7 +1331,7 @@ async def get_holidays_for_range(
     start: str = Query(..., description="Start date YYYY-MM-DD"),
     end: str = Query(..., description="End date YYYY-MM-DD"),
     user: dict = Depends(get_current_user),
-    __: None = Depends(rate_limiter),
+    __: None = Depends(rate_limiter_relaxed),
 ):
     """
     Get all holidays (from global holiday table + custom) for a family in a date range.

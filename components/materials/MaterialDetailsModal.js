@@ -17,6 +17,7 @@ import { X, Trash2, Edit2, Calendar, DollarSign, MapPin, ExternalLink, FileText,
 import { colors } from '../../theme/colors';
 import { getMaterial } from '../../lib/services/materialsClient';
 import { normalizeMaterial, normalizeUpload, roleLabel as getRoleLabel } from '../../lib/docs/roles';
+import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
 
 const FG = '#111827';
 const SUB = '#6b7280';
@@ -55,6 +56,12 @@ export default function MaterialDetailsModal({
       setShowReviewInfo(true);
     }
   }, [visible, initialMaterial]);
+
+  const [plannerHasLinks, setPlannerHasLinks] = useState(false);
+
+  useEffect(() => {
+    setPlannerHasLinks(false);
+  }, [initialMaterial?.id]);
 
   const loadMaterial = async () => {
     if (!initialMaterial?.id) return;
@@ -102,6 +109,24 @@ export default function MaterialDetailsModal({
       return child?.first_name || child?.name || 'Unknown';
     })
     .join(', ') || 'None';
+
+  const showScheduleLinks = !!(material?.id && familyId);
+  const hasProviderMetadata = !!(material.provider_name || material.provider_url);
+  const hasPurchaseMetadata = !!(
+    material.purchase_date ||
+    material.purchase_price ||
+    material.is_subscription
+  );
+  const hasReviewMetadata = !!(
+    material.review_child_id ||
+    material.review_rating ||
+    material.review_emotion ||
+    material.review_pacing_fit ||
+    material.review_difficulty ||
+    material.review_notes
+  );
+  const hasMaterialMetadataSection =
+    hasProviderMetadata || hasPurchaseMetadata || hasReviewMetadata;
 
   return (
     <Modal
@@ -253,10 +278,36 @@ export default function MaterialDetailsModal({
                   </View>
                 )}
 
-                {/* Metadata Sections */}
-                <View style={styles.section}>
+                {showScheduleLinks ? (
+                  <MaterialScheduleLinksSection
+                    materialId={material.id}
+                    familyId={familyId}
+                    refreshToken={material.updated_at || material.id}
+                    hideWhenEmpty
+                    categoryTitle="Planner Linking (optional)"
+                    categoryTitleStyle={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterSubject]}
+                    onLinkageResolved={setPlannerHasLinks}
+                  />
+                ) : null}
+
+                {hasMaterialMetadataSection ? (
+                  <View
+                    style={[
+                      styles.section,
+                      styles.metadataCollapseGroup,
+                      plannerHasLinks && styles.metadataCollapseAfterSchedule,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.metadataSectionTitle,
+                        plannerHasLinks && styles.metadataSectionTitleNoTopMargin,
+                      ]}
+                    >
+                      Material Metadata (optional)
+                    </Text>
                   {/* Provider Information - Expandable */}
-                  {(material.provider_name || material.provider_url) && (
+                  {hasProviderMetadata && (
                     <View style={styles.blockSection}>
                       <View style={styles.sectionHeader}>
                         <Text style={styles.expandableSectionTitle}>Provider Information</Text>
@@ -297,7 +348,7 @@ export default function MaterialDetailsModal({
                   )}
 
                   {/* Purchase Information - Expandable */}
-                  {(material.purchase_date || material.purchase_price || material.is_subscription) && (
+                  {hasPurchaseMetadata && (
                     <View style={styles.blockSection}>
                       <View style={styles.sectionHeader}>
                         <Text style={styles.expandableSectionTitle}>Purchase Information</Text>
@@ -332,7 +383,7 @@ export default function MaterialDetailsModal({
                   )}
 
                   {/* Rate and Review Material - Expandable */}
-                  {(material.review_child_id || material.review_rating || material.review_emotion || material.review_pacing_fit || material.review_difficulty || material.review_notes) && (
+                  {hasReviewMetadata && (
                     <View style={styles.blockSection}>
                       <View style={styles.sectionHeader}>
                         <Text style={styles.expandableSectionTitle}>Rate and Review Material</Text>
@@ -403,7 +454,8 @@ export default function MaterialDetailsModal({
                       )}
                     </View>
                   )}
-                </View>
+                  </View>
+                ) : null}
 
                 {/* Location */}
                 {material.location_hint && (
@@ -536,6 +588,29 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  metadataSectionTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: SUB,
+    marginTop: 24,
+    marginBottom: 4,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  metadataSectionTitleNoTopMargin: {
+    marginTop: 0,
+  },
+  metadataSectionTitleAfterSubject: {
+    marginTop: 12,
+  },
+  metadataCollapseGroup: {
+    gap: 12,
+  },
+  metadataCollapseAfterSchedule: {
+    marginTop: 8,
+  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -633,7 +708,6 @@ const styles = StyleSheet.create({
     borderColor: BORDER,
     borderRadius: 12,
     padding: 10,
-    marginTop: 12,
     backgroundColor: '#f9fafb',
     overflow: 'visible',
   },

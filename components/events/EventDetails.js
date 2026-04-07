@@ -112,6 +112,41 @@ function eventHasAcademicDetailsSection(ev) {
   );
 }
 
+/** Primary + multi-attach material ids on an event row (for library sync). */
+function collectMaterialIdsFromEvent(ev) {
+  if (!ev) return [];
+  const ids = [];
+  if (ev.material_id) ids.push(String(ev.material_id));
+  if (Array.isArray(ev.materials_attachment_ids)) {
+    ev.materials_attachment_ids.forEach((id) => {
+      if (id) ids.push(String(id));
+    });
+  }
+  return [...new Set(ids)];
+}
+
+/** When event save changes material links, notify Materials Library / attachment modals (same as refreshMaterials + materialUpdated). */
+function emitMaterialLinkageEventsIfChangedWeb(familyId, eventBefore, eventAfter) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId || !eventBefore || !eventAfter) return;
+  const beforeP = eventBefore.material_id ? String(eventBefore.material_id) : null;
+  const afterP = eventAfter.material_id ? String(eventAfter.material_id) : null;
+  const beforeA = JSON.stringify([...(eventBefore.materials_attachment_ids || [])].map(String).sort());
+  const afterA = JSON.stringify([...(eventAfter.materials_attachment_ids || [])].map(String).sort());
+  if (beforeP === afterP && beforeA === afterA) return;
+  const allIds = new Set([
+    ...collectMaterialIdsFromEvent(eventBefore),
+    ...collectMaterialIdsFromEvent(eventAfter),
+  ]);
+  window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
+  allIds.forEach((materialId) => {
+    window.dispatchEvent(
+      new CustomEvent('materialUpdated', {
+        detail: { materialId, familyId, action: 'event_link' },
+      })
+    );
+  });
+}
+
 /** Same rules as fetchSubjects — filter family + child-specific subjects for assignees (dedupe by name). */
 function filterSubjectsForAssignees(allSubjects, assigneeIds) {
   if (!assigneeIds?.length) return [];
@@ -3736,6 +3771,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           patch.child_id = cleanUpdates.child_id;
         }
       }
+
+      const afterEventRow = data?.[0] || { ...event, ...cleanUpdates };
+      emitMaterialLinkageEventsIfChangedWeb(familyId, event, afterEventRow);
 
       setEditing(false);
       setSchedulingBacklog(false);
