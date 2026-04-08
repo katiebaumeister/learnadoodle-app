@@ -2133,7 +2133,7 @@ export default function TaskCreateModal({
             })}
           >
           {/* Event Type - at top above Schedule on calendar/backlog */}
-          <SafeFieldRow style={[styles.fieldRow, { marginTop: 20, marginBottom: 12 }]}>
+          <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
             <View style={styles.field}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text style={styles.fieldLabel}>Event Type <Text style={{ color: '#ef4444' }}>*</Text></Text>
@@ -2296,69 +2296,73 @@ export default function TaskCreateModal({
               }
             })()}
 
+            {/* Assignee — same compact row chip as date (label + pills inline); error text below strip */}
+            {(familyMembers.length > 0 || validationErrors.assignee) && (
+              <View
+                style={[
+                  styles.chip,
+                  validationErrors.assignee && {
+                    borderWidth: 1.5,
+                    borderColor: '#ef4444',
+                  },
+                ]}
+              >
+                <View>
+                  <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
+                </View>
+                {familyMembers.length > 0 ? (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    {familyMembers.map((m) => {
+                      const isSelected = assigneeIds.some((id) => String(id) === String(m.id));
+                      return (
+                        <TouchableOpacity
+                          key={String(m.id)}
+                          onPress={() => {
+                            if (validationErrors.assignee) {
+                              setValidationErrors((prev) => ({ ...prev, assignee: null }));
+                            }
+                            if (isSelected) {
+                              setAssigneeIds(assigneeIds.filter((id) => String(id) !== String(m.id)));
+                            } else {
+                              setAssigneeIds([...assigneeIds, m.id]);
+                            }
+                          }}
+                          style={[
+                            styles.chipOption,
+                            isSelected && styles.chipOptionActive,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.chipOptionText,
+                              isSelected && styles.chipOptionTextActive,
+                            ]}
+                          >
+                            {m.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  validationErrors.assignee ? (
+                    <Text style={[styles.errorTextSmall, { flexShrink: 1 }]}>{validationErrors.assignee}</Text>
+                  ) : null
+                )}
+              </View>
+            )}
+
             {/* Labels chip */}
             {/* Labels section removed - no longer used */}
           </ScrollView>
 
-          {/* Assignee — full width below date row so error border is always visible (not clipped in horizontal scroll) */}
-          <View
-            style={{
-              width: '100%',
-              alignSelf: 'stretch',
-              marginTop: 8,
-              marginBottom: 4,
-              paddingVertical: 10,
-              paddingHorizontal: 12,
-              borderRadius: 12,
-              borderWidth: validationErrors.assignee ? 2 : 1,
-              borderColor: validationErrors.assignee ? '#ef4444' : CHIP_BORDER,
-              backgroundColor: CHIP_BG,
-              flexDirection: 'column',
-            }}
-          >
-            <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
-            {familyMembers.length > 0 ? (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 }}>
-                {familyMembers.map((m) => {
-                  const isSelected = assigneeIds.some((id) => String(id) === String(m.id));
-                  return (
-                    <TouchableOpacity
-                      key={String(m.id)}
-                      onPress={() => {
-                        if (validationErrors.assignee) {
-                          setValidationErrors((prev) => ({ ...prev, assignee: null }));
-                        }
-                        if (isSelected) {
-                          setAssigneeIds(assigneeIds.filter((id) => String(id) !== String(m.id)));
-                        } else {
-                          setAssigneeIds([...assigneeIds, m.id]);
-                        }
-                      }}
-                      style={[
-                        styles.chipOption,
-                        isSelected && styles.chipOptionActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.chipOptionText,
-                          isSelected && styles.chipOptionTextActive,
-                        ]}
-                      >
-                        {m.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            ) : null}
-            {validationErrors.assignee ? (
-              <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.assignee}</Text>
-            ) : null}
-          </View>
-
           {validationErrors.date ? (
-            <Text style={[styles.errorTextSmall, { marginTop: 4, marginBottom: 4 }]}>{validationErrors.date}</Text>
+            <Text style={[styles.errorTextSmall, { marginTop: 2, marginBottom: 2 }]}>{validationErrors.date}</Text>
+          ) : null}
+          {validationErrors.assignee && familyMembers.length > 0 ? (
+            <Text style={[styles.errorTextSmall, { marginTop: validationErrors.date ? 0 : 2, marginBottom: 4 }]}>
+              {validationErrors.assignee}
+            </Text>
           ) : null}
 
           {/* End date picker - shown below start date for multi-day events */}
@@ -4658,7 +4662,7 @@ const styles = StyleSheet.create({
   modal: {
     width: 720,
     maxWidth: '100%',
-    maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+    maxHeight: Platform.OS === 'web' ? '82vh' : '85%',
     backgroundColor: BG,
     borderRadius: 24,
     flexDirection: 'column',
@@ -4692,8 +4696,8 @@ const styles = StyleSheet.create({
   },
   chipRow: {
     paddingHorizontal: 0,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 6,
+    paddingBottom: 6,
     gap: 8,
     alignItems: 'center',
     flexDirection: 'row',
@@ -4701,8 +4705,8 @@ const styles = StyleSheet.create({
   modeToggle: {
     flexDirection: 'row',
     paddingHorizontal: 0,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
     gap: 8,
   },
   modeOption: {
@@ -4869,26 +4873,26 @@ const styles = StyleSheet.create({
   },
   bodyScroll: {
     flex: 1,
-    maxHeight: Platform.OS === 'web' ? 'calc(100vh - 200px)' : undefined,
+    maxHeight: Platform.OS === 'web' ? 'min(70vh, calc(100vh - 220px))' : undefined,
   },
   bodyContent: {
     paddingHorizontal: 20,
     paddingTop: 0,
-    paddingBottom: 8,
+    paddingBottom: 6,
   },
   timeSection: {
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 12,
-    padding: 10,
-    marginBottom: 10,
+    padding: 8,
+    marginBottom: 8,
     backgroundColor: '#f9fafb',
   },
   timeToggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   sectionLabel: {
     fontSize: 14,
