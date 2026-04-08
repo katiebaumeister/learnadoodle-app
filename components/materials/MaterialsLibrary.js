@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Plus, Search, DollarSign, FileText, X, ExternalLink, ArrowUpAZ, Calendar, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, ArrowRight } from 'lucide-react';
+import { Search, FileText, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -874,6 +874,193 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const hasNoMaterials = libraryReady && allMaterials.length === 0;
   const nothingVisible = visibleMaterials.length === 0;
 
+  /** Children / Subjects / Types filter rows — shared by empty library hero and file list. */
+  const renderMaterialFilterChipRows = () => (
+    <>
+      <View style={styles.childrenFilterRow}>
+        <Text style={styles.childrenLabelText}>Children</Text>
+        {effectiveChildren.length > 0 ? (
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.childrenFilterScroll}
+              contentContainerStyle={styles.childrenFilterScrollContent}
+            >
+              <TouchableOpacity
+                style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
+                onPress={() => {
+                  setSelectedChildId('');
+                  setSelectedSubjectId(null);
+                  setRoleFilter('all');
+                }}
+              >
+                <Text style={[styles.childrenFilterChipText, !selectedChildId && styles.childrenFilterChipTextActive]}>
+                  All Children
+                </Text>
+              </TouchableOpacity>
+              {effectiveChildren.map((child) => {
+                const isActive = selectedChildId === child.id;
+                const label = child.first_name || child.name || 'Child';
+                const childColor = getChildDotColor(child.id);
+                return (
+                  <TouchableOpacity
+                    key={child.id}
+                    style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                    onPress={() => {
+                      setSelectedChildId(isActive ? '' : child.id);
+                      setSelectedSubjectId(null);
+                      setRoleFilter('all');
+                    }}
+                  >
+                    <View
+                      style={[
+                        styles.childDot,
+                        { backgroundColor: childColor, marginRight: 6 },
+                      ]}
+                    />
+                    <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : (
+          <Text style={{ fontSize: 12, color: colors.muted, marginLeft: 12 }}>Loading children...</Text>
+        )}
+      </View>
+
+      <View style={styles.subjectsFilterRow}>
+        <Text style={styles.subjectsLabelText}>Subjects</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.subjectsFilterScroll}
+          contentContainerStyle={styles.subjectsFilterScrollContent}
+        >
+          <TouchableOpacity
+            style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
+            onPress={() => {
+              setSelectedSubjectId(null);
+              setRoleFilter('all');
+            }}
+          >
+            <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
+              All Subjects
+            </Text>
+          </TouchableOpacity>
+          {subjects
+            .filter((s) => {
+              if (!selectedChildId) return true;
+              const subjectChildIds = parseChildIds(s.child_id || '');
+              return subjectChildIds.length === 0 || subjectChildIds.includes(selectedChildId);
+            })
+            .map((subject) => {
+              const isActive = selectedSubjectId === subject.id;
+              return (
+                <TouchableOpacity
+                  key={subject.id}
+                  style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                  onPress={() => {
+                    setSelectedSubjectId(isActive ? null : subject.id);
+                    setRoleFilter('all');
+                  }}
+                >
+                  <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
+                    {subject.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+        </ScrollView>
+      </View>
+
+      <View style={styles.typesFilterRow}>
+        <Text style={styles.typesLabelText}>Types</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.typesFilterScroll}
+          contentContainerStyle={styles.typesFilterScrollContent}
+        >
+          {ROLE_CHIPS.map((roleOption) => {
+            const isActive = roleFilter === roleOption.value;
+            return (
+              <TouchableOpacity
+                key={roleOption.value}
+                style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                onPress={() => setRoleFilter(roleOption.value)}
+              >
+                <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]}>
+                  {roleOption.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </>
+  );
+
+  /** ALL FILES label + Title/Date sort header — matches list layout when materials exist. */
+  const renderListColumnHeaders = () => (
+    <>
+      <View style={styles.allFilesContainer}>
+        <Text style={styles.allFilesText}>ALL FILES</Text>
+      </View>
+      <View style={styles.listHeaderDivider} />
+      <View style={styles.listHeader}>
+        <TouchableOpacity
+          style={styles.listHeaderTitle}
+          onPress={() => {
+            if (sortBy === 'alphabetical') {
+              setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+            } else {
+              setSortBy('alphabetical');
+              setSortDirection('asc');
+            }
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.listHeaderText, sortBy === 'alphabetical' && styles.listHeaderTextActive]}>
+            Title
+          </Text>
+          {sortBy === 'alphabetical' &&
+            (sortDirection === 'asc' ? (
+              <ArrowUp size={14} color={colors.accent} />
+            ) : (
+              <ArrowDown size={14} color={colors.accent} />
+            ))}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.listHeaderDate}
+          onPress={() => {
+            if (sortBy === 'date') {
+              setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+            } else {
+              setSortBy('date');
+              setSortDirection('desc');
+            }
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.listHeaderText, sortBy === 'date' && styles.listHeaderTextActive]}>
+            Date
+          </Text>
+          {sortBy === 'date' &&
+            (sortDirection === 'desc' ? (
+              <ArrowDown size={14} color={colors.accent} />
+            ) : (
+              <ArrowUp size={14} color={colors.accent} />
+            ))}
+        </TouchableOpacity>
+      </View>
+      <View style={styles.listHeaderDivider} />
+    </>
+  );
+
   const handleRestoreItem = async (item) => {
     if (!ensureCanEditMaterials()) return;
     const { data, normalized } = item;
@@ -1120,65 +1307,21 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
       ) : hasNoMaterials ? (
-        <ScrollView
-          style={styles.emptyStateScroll}
-          contentContainerStyle={styles.emptyStateScrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.emptyStateLayout}>
-            <View style={styles.emptyHeroRow}>
-              <View style={styles.emptyIllustration}>
-                <View style={styles.emptyIllustrationBg}>
-                  <View style={styles.bookStack}>
-                    <View style={[styles.bookLayer, styles.bookLayerBack]} />
-                    <View style={[styles.bookLayer, styles.bookLayerMid]} />
-                    <View style={[styles.bookLayer, styles.bookLayerFront]} />
-                  </View>
-                  <View style={styles.calOverlay}>
-                    <Calendar size={26} color={colors.accent} strokeWidth={2} />
-                  </View>
+        <>
+          {renderMaterialFilterChipRows()}
+          {renderListColumnHeaders()}
+          <ScrollView style={styles.listContainer} contentContainerStyle={styles.listContent}>
+            <View style={[styles.listItem, Platform.OS === 'web' && { cursor: 'default' }]}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                <View style={styles.listItemContent}>
+                  <Text style={[styles.listItemTitle, { color: colors.muted, fontWeight: '500' }]}>
+                    No materials added
+                  </Text>
                 </View>
-                <View style={styles.flowMiniRow}>
-                  <View style={styles.flowMiniCard}>
-                    <Text style={styles.flowMiniCardText}>Lesson</Text>
-                  </View>
-                  <ArrowRight size={14} color={colors.muted} />
-                  <View style={styles.flowMiniCard}>
-                    <Text style={styles.flowMiniCardText}>Unit</Text>
-                  </View>
-                  <ArrowRight size={14} color={colors.muted} />
-                  <View style={styles.flowMiniCard}>
-                    <Text style={styles.flowMiniCardText}>Calendar</Text>
-                  </View>
-                </View>
-              </View>
-              <View style={styles.emptyHeroCopy}>
-                <Text style={styles.emptyKicker}>This is where your learning system lives</Text>
-                <Text style={styles.emptyTitleLarge}>Build your child&apos;s learning library</Text>
-                <Text style={styles.emptySubtitle}>
-                  Everything your planner learns from starts here — you&apos;re about to build something powerful.
-                </Text>
-                <TouchableOpacity
-                  style={styles.emptyPrimaryCta}
-                  onPress={() => {
-                    if (!ensureCanEditMaterials()) return;
-                    setAddModalDefaultRole('assignment');
-                    setShowAddModal(true);
-                  }}
-                  activeOpacity={0.88}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={18} color="#ffffff" />
-                  <Text style={styles.emptyPrimaryCtaText}>Start adding materials</Text>
-                </TouchableOpacity>
               </View>
             </View>
-
-            <Text style={styles.emptyIntegrationLine}>
-              Materials automatically connect to your planner, progress, and records.
-            </Text>
-          </View>
-        </ScrollView>
+          </ScrollView>
+        </>
       ) : (
         <>
           {/* Filters Dropdown Modal */}
@@ -1296,197 +1439,8 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
           )}
 
           <>
-            {/* Children Filter Chips Row */}
-            <View style={styles.childrenFilterRow}>
-              <Text style={styles.childrenLabelText}>Children</Text>
-              {effectiveChildren.length > 0 ? (
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.childrenFilterScroll}
-                    contentContainerStyle={styles.childrenFilterScrollContent}
-                  >
-                    <TouchableOpacity
-                      style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
-                      onPress={() => {
-                        setSelectedChildId('');
-                        setSelectedSubjectId(null);
-                        setRoleFilter('all');
-                      }}
-                    >
-                      <Text style={[styles.childrenFilterChipText, !selectedChildId && styles.childrenFilterChipTextActive]}>
-                        All Children
-                      </Text>
-                    </TouchableOpacity>
-                    {effectiveChildren.map((child) => {
-                      const isActive = selectedChildId === child.id;
-                      const label = child.first_name || child.name || 'Child';
-                      const childColor = getChildDotColor(child.id);
-                      return (
-                        <TouchableOpacity
-                          key={child.id}
-                          style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                          onPress={() => {
-                            setSelectedChildId(isActive ? '' : child.id);
-                            setSelectedSubjectId(null);
-                            setRoleFilter('all');
-                          }}
-                        >
-                          <View
-                            style={[
-                              styles.childDot,
-                              { backgroundColor: childColor, marginRight: 6 }
-                            ]}
-                          />
-                          <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
-                            {label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-              ) : (
-                <Text style={{ fontSize: 12, color: colors.muted, marginLeft: 12 }}>
-                  Loading children...
-                </Text>
-              )}
-            </View>
-
-            {/* Subjects Filter Chips Row */}
-            <View style={styles.subjectsFilterRow}>
-              <Text style={styles.subjectsLabelText}>Subjects</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.subjectsFilterScroll}
-                contentContainerStyle={styles.subjectsFilterScrollContent}
-              >
-                <TouchableOpacity
-                  style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
-                  onPress={() => {
-                    setSelectedSubjectId(null);
-                    setRoleFilter('all');
-                  }}
-                >
-                  <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
-                    All Subjects
-                  </Text>
-                </TouchableOpacity>
-                {subjects
-                  .filter(s => {
-                    // `subject.child_id` is a semicolon-separated list (text) or empty for family-wide
-                    // All Children: show all subjects
-                    if (!selectedChildId) return true;
-                    // Specific child: show family-wide or subjects assigned to that child
-                    const subjectChildIds = parseChildIds(s.child_id || '');
-                    return subjectChildIds.length === 0 || subjectChildIds.includes(selectedChildId);
-                  })
-                  .map((subject) => {
-                    const isActive = selectedSubjectId === subject.id;
-                    return (
-                      <TouchableOpacity
-                        key={subject.id}
-                        style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                        onPress={() => {
-                          setSelectedSubjectId(isActive ? null : subject.id);
-                          setRoleFilter('all');
-                        }}
-                      >
-                        <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
-                          {subject.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-              </ScrollView>
-            </View>
-
-            {/* Types Filter Chips Row */}
-            <View style={styles.typesFilterRow}>
-              <Text style={styles.typesLabelText}>Types</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.typesFilterScroll}
-                contentContainerStyle={styles.typesFilterScrollContent}
-              >
-                {ROLE_CHIPS.map((roleOption) => {
-                  const isActive = roleFilter === roleOption.value;
-                  return (
-                    <TouchableOpacity
-                      key={roleOption.value}
-                      style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                      onPress={() => setRoleFilter(roleOption.value)}
-                    >
-                      <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]}>
-                        {roleOption.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-              {/* Column Headers */}
-              <View style={styles.allFilesContainer}>
-                <Text style={styles.allFilesText}>ALL FILES</Text>
-              </View>
-              <View style={styles.listHeaderDivider} />
-              <View style={styles.listHeader}>
-                <TouchableOpacity
-                  style={styles.listHeaderTitle}
-                  onPress={() => {
-                    if (sortBy === 'alphabetical') {
-                      // Toggle direction if already sorting by alphabetical
-                      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                    } else {
-                      // Switch to alphabetical sort, default to ascending
-                      setSortBy('alphabetical');
-                      setSortDirection('asc');
-                    }
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.listHeaderText, sortBy === 'alphabetical' && styles.listHeaderTextActive]}>
-                    Title
-                  </Text>
-                  {sortBy === 'alphabetical' && (
-                    sortDirection === 'asc' ? (
-                      <ArrowUp size={14} color={colors.accent} />
-                    ) : (
-                      <ArrowDown size={14} color={colors.accent} />
-                    )
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.listHeaderDate}
-                  onPress={() => {
-                    if (sortBy === 'date') {
-                      // Toggle direction if already sorting by date
-                      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                    } else {
-                      // Switch to date sort, default to descending (newest first)
-                      setSortBy('date');
-                      setSortDirection('desc');
-                    }
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.listHeaderText, sortBy === 'date' && styles.listHeaderTextActive]}>
-                    Date
-                  </Text>
-                  {sortBy === 'date' && (
-                    sortDirection === 'desc' ? (
-                      <ArrowDown size={14} color={colors.accent} />
-                    ) : (
-                      <ArrowUp size={14} color={colors.accent} />
-                    )
-                  )}
-                </TouchableOpacity>
-              </View>
-              <View style={styles.listHeaderDivider} />
+            {renderMaterialFilterChipRows()}
+            {renderListColumnHeaders()}
 
               {nothingVisible ? (
                 <View style={styles.emptyFilteredState}>
