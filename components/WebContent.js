@@ -20,9 +20,9 @@ import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCac
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
 import {
-  isPartOfRecurringSeries,
+  isDeletableSeriesGroup,
   cleanPlannerEventId,
-  resolveSeriesMasterEventId,
+  softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
 
 // Set up error suppression immediately on module load (before React renders)
@@ -4656,8 +4656,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
         },
       });
-      const isRecurringEvent = isPartOfRecurringSeries(ev);
-      if (isRecurringEvent) {
+      const isSeriesGroup = isDeletableSeriesGroup(ev);
+      if (isSeriesGroup) {
         menuItems.push({
           text: 'Delete This Event',
           isDelete: true,
@@ -4710,19 +4710,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               destructive: true,
               onConfirm: async () => {
                 try {
-                  const masterEventId = resolveSeriesMasterEventId(ev, cleanId);
-                  let seriesQuery = supabase
-                    .from('events')
-                    .update({ deleted_at: new Date().toISOString() })
-                    .or(`id.eq.${masterEventId},parent_event_id.eq.${masterEventId},recurrence_id.eq.${masterEventId}`)
-                    .is('deleted_at', null);
-                  if (familyId) seriesQuery = seriesQuery.eq('family_id', familyId);
-                  const { error: seriesError } = await seriesQuery;
-                  if (seriesError) {
-                    const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
-                    if (rpcError || !rpcData?.success) await deletePlannerEvent(cleanId, familyId);
-                  }
-                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: masterEventId } }));
+                  if (!familyId) throw new Error('Missing family');
+                  const { error: seriesError, logEventId } = await softDeleteEventSeries(supabase, familyId, ev, cleanId);
+                  if (seriesError) throw seriesError;
+                  const idForHooks = logEventId ?? cleanId;
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks } }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 } catch (err) {
                   Alert.alert('Error', `Failed to delete series: ${err?.message || err}`);

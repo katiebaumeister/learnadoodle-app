@@ -38,8 +38,10 @@ import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
 import {
   isPartOfRecurringSeries,
+  isPlanYearBlockSeries,
+  isDeletableSeriesGroup,
   cleanPlannerEventId,
-  resolveSeriesMasterEventId,
+  softDeleteEventSeries,
 } from '../../lib/utils/recurringEventUtils';
 
 // Session-level guard: if this environment does not expose `lesson_standards`,
@@ -1510,8 +1512,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (assigneeIds.length === 0) {
       errors.assignee = 'At least one assignee is required';
     }
-    // Plan is optional when counting as instructional time (can count without attaching to a plan)
-    
+
+    if (isRecurring && placement === 'calendar') {
+      if (recurrenceEndType === 'after') {
+        const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
+        const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
+        const countValue =
+          Number.isFinite(fromNum) && fromNum >= 1 ? fromNum : fromText;
+        if (!Number.isFinite(countValue) || countValue < 1) {
+          errors.recurrenceEnd = 'Enter a number of occurrences (1 or more)';
+        }
+      } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
+        errors.recurrenceEnd = 'Select an end date for the series';
+      }
+    }
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -1524,6 +1539,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!eventType) return false;
     const isMultiDayEvent = false; // No multi-day events in new system
     if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
+    if (isRecurring && placement === 'calendar') {
+      if (recurrenceEndType === 'after') {
+        const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
+        const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
+        const countValue =
+          Number.isFinite(fromNum) && fromNum >= 1 ? fromNum : fromText;
+        if (!Number.isFinite(countValue) || countValue < 1) return false;
+      } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
+        return false;
+      }
+    }
     return true;
   };
 
@@ -2018,6 +2044,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       } catch (e) {
         // Invalid recurrence rule, ignore
       }
+    } else if (isPartOfRecurringSeries(event) || isPlanYearBlockSeries(event)) {
+      // Instance rows may omit recurrence_rule; master fetch fills RRULE details. Plan-year slots share a block id.
+      setIsRecurring(true);
+      setRecurrenceType('weekly');
+      setRecurrenceInterval(null);
+      setRecurrenceIntervalText('');
+      setRecurrenceEndType('never');
+      setRecurrenceEndAfter(null);
+      setRecurrenceEndAfterText('');
+      setRecurrenceEndDate(null);
     } else {
       setIsRecurring(false);
       setRecurrenceType('daily');
@@ -2034,6 +2070,46 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setSchedulingBacklog(false);
     }
   }, [event, initialSchedulingMode]);
+
+  // Recurring instances often omit recurrence_rule on the row; load the series master's rule for the toggle + recurrence UI.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!event?.id || event.recurrence_rule) return;
+      if (!isPartOfRecurringSeries(event) || isPlanYearBlockSeries(event)) return;
+      const masterId = event.parent_event_id || event.recurrence_id;
+      const selfId = cleanPlannerEventId(String(event.id));
+      if (!masterId || masterId === selfId) return;
+      const { data, error } = await supabase
+        .from('events')
+        .select('recurrence_rule')
+        .eq('id', masterId)
+        .maybeSingle();
+      if (cancelled || error || !data?.recurrence_rule) return;
+      try {
+        const rule = typeof data.recurrence_rule === 'string' ? JSON.parse(data.recurrence_rule) : data.recurrence_rule;
+        setIsRecurring(true);
+        setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
+        setRecurrenceInterval(rule.interval || null);
+        setRecurrenceIntervalText(rule.interval ? rule.interval.toString() : '');
+        if (rule.count) {
+          setRecurrenceEndType('after');
+          setRecurrenceEndAfter(rule.count);
+          setRecurrenceEndAfterText(rule.count.toString());
+        } else if (rule.until) {
+          setRecurrenceEndType('on');
+          setRecurrenceEndDate(new Date(rule.until));
+        } else {
+          setRecurrenceEndType('never');
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.recurrence_rule, event?.parent_event_id, event?.recurrence_id, event?.generated_by, event?.source_block_id]);
 
   // Load materials, subjects when editing starts or when event loads (for view mode)
   useEffect(() => {
@@ -2367,7 +2443,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDeleting(true);
     try {
       const cleanId = cleanPlannerEventId(String(event.id));
-      const masterEventId = resolveSeriesMasterEventId(event, cleanId);
       const { data: { user: authUser } } = await supabase.auth.getUser();
       let userFamilyId = familyId || event.family_id;
       if (authUser) {
@@ -2381,25 +2456,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (!userFamilyId) {
         throw new Error('Missing family');
       }
-      let seriesQuery = supabase
-        .from('events')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('family_id', userFamilyId)
-        .or(`id.eq.${masterEventId},parent_event_id.eq.${masterEventId},recurrence_id.eq.${masterEventId}`)
-        .is('deleted_at', null);
-      const { error: seriesError } = await seriesQuery;
+      const { error: seriesError, logEventId } = await softDeleteEventSeries(supabase, userFamilyId, event, cleanId);
       if (seriesError) throw seriesError;
       toast.push('Series deleted', 'success');
-      if (onEventDeleted) onEventDeleted(masterEventId);
+      const idForHooks = logEventId ?? cleanId;
+      if (onEventDeleted) onEventDeleted(idForHooks);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: masterEventId } }));
+        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks } }));
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
       }
       try {
         const eventDate = event.start_ts
           ? new Date(event.start_ts).toISOString().split('T')[0]
           : new Date().toISOString().split('T')[0];
-        logDeleteEvent(masterEventId, eventDate, event.child_id);
+        logDeleteEvent(idForHooks, eventDate, event.child_id);
       } catch (_) {}
     } catch (err) {
       const msg = err?.message || 'Failed to delete series';
@@ -2741,7 +2811,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return;
     }
 
-    if (isPartOfRecurringSeries(event)) {
+    if (isDeletableSeriesGroup(event)) {
       setShowRecurringDeleteModal(true);
       return;
     }
@@ -5134,7 +5204,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.allDayLabel}>Recurring</Text>
                   <Switch
                     value={isRecurring}
-                    onValueChange={setIsRecurring}
+                    onValueChange={(v) => {
+                      setIsRecurring(v);
+                      if (validationErrors.recurrenceEnd) {
+                        setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                      }
+                    }}
                     trackColor={{ false: BORDER, true: '#AECBFA' }}
                     thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
                   />
@@ -5371,7 +5446,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       {['never', 'after', 'on'].map((endType) => (
               <TouchableOpacity
                           key={endType}
-                          onPress={() => setRecurrenceEndType(endType)}
+                          onPress={() => {
+                            setRecurrenceEndType(endType);
+                            if (validationErrors.recurrenceEnd) {
+                              setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                            }
+                          }}
                           style={[
                             {
                               paddingVertical: 6,
@@ -5410,8 +5490,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Number of occurrences</Text>
                       <TextInput
                         style={{
-                          borderWidth: 1,
-                          borderColor: BORDER,
+                          borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? 1.5 : 1,
+                          borderColor:
+                            validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? '#ef4444' : BORDER,
                           borderRadius: 10,
                           width: 100,
                           marginBottom: 0,
@@ -5422,6 +5503,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         }}
                         value={recurrenceEndAfterText}
                         onChangeText={(text) => {
+                          if (validationErrors.recurrenceEnd) {
+                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                          }
                           if (text === '' || /^\d+$/.test(text)) {
                             setRecurrenceEndAfterText(text);
                             const num = parseInt(text, 10);
@@ -5449,8 +5533,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>End date</Text>
                       <TouchableOpacity
                         style={{
-                          borderWidth: 1,
-                          borderColor: BORDER,
+                          borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? 1.5 : 1,
+                          borderColor:
+                            validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? '#ef4444' : BORDER,
                           borderRadius: 10,
                           marginBottom: 0,
                           paddingVertical: 6,
@@ -5458,6 +5543,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           height: 'auto',
                         }}
                 onPress={() => {
+                          if (validationErrors.recurrenceEnd) {
+                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                          }
                           if (recurrenceEndDate) {
                             setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
                           } else {
@@ -5475,6 +5563,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     </View>
                   )}
                 </View>
+                {validationErrors.recurrenceEnd ? (
+                  <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceEnd}</Text>
+                ) : null}
               </View>
             )}
           </View>
@@ -6570,10 +6661,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             }}
           >
             <Text style={[{ fontSize: 18, fontWeight: '700', color: '#111827' }, webCooper('700')]}>
-              Delete recurring event?
+              {isPlanYearBlockSeries(event) ? 'Delete plan lessons?' : 'Delete recurring event?'}
             </Text>
             <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280', lineHeight: 20 }}>
-              This event is part of a series. Delete only this occurrence, or remove every occurrence in the series.
+              {isPlanYearBlockSeries(event)
+                ? 'This lesson is part of your year plan schedule. Delete only this day, or remove every matching lesson from the calendar for this plan block.'
+                : 'This event is part of a series. Delete only this occurrence, or remove every occurrence in the series.'}
             </Text>
             <View style={{ marginTop: 22, gap: 12 }}>
               <TouchableOpacity
@@ -7553,6 +7646,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                                     key={idx}
                                     onPress={() => {
                                       setRecurrenceEndDate(day);
+                                      if (validationErrors.recurrenceEnd) {
+                                        setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                                      }
                                       setShowEndDateCalendarPicker(false);
                                     }}
                                     style={{

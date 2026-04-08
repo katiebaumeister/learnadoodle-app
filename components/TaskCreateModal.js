@@ -1388,66 +1388,75 @@ export default function TaskCreateModal({
     return eventType && ['Appointment', 'Travel', 'Activity', 'Sport'].includes(eventType);
   };
 
-  // Validation function
-  const validateFields = () => {
+  /** Single source of truth for required-field validation (inline errors + Add button state). */
+  const computeFieldErrors = () => {
     const errors = {};
-    
+
     if (!title.trim()) {
       errors.title = 'Title is required';
     }
-    
+
     if (!dueDate) {
       errors.date = 'Date is required';
     }
-    
-    // End date is required for multi-day event types (Project, Trip, Holiday, Other)
+
     const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
     if (isMultiDayEventType && placement === 'calendar' && !eventEndDate) {
       errors.endDate = 'End date is required for ' + eventType + ' events';
     }
     if (isMultiDayEventType && eventEndDate && dueDate) {
-      // Compare dates only (ignore time)
       const startDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
       const endDateOnly = new Date(eventEndDate.getFullYear(), eventEndDate.getMonth(), eventEndDate.getDate());
       if (endDateOnly < startDateOnly) {
         errors.endDate = 'End date must be on or after start date';
       }
     }
-    
-    // Time is required if calendar placement and not all day
+
     if (placement === 'calendar' && !allDay && !startTime.trim()) {
       errors.time = 'Start time is required';
     }
-    
+
     if (!eventType) {
       errors.eventType = 'Event type is required';
     }
-    
+
+    if (assigneeIds.length === 0) {
+      errors.assignee =
+        familyMembers.length === 0
+          ? 'Add a child in Family settings to assign this event.'
+          : 'Select at least one assignee';
+    }
+
+    if (isRecurring && placement === 'calendar') {
+      if (recurrenceEndType === 'after') {
+        const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
+        const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
+        const countValue =
+          Number.isFinite(fromNum) && fromNum >= 1 ? fromNum : fromText;
+        if (!Number.isFinite(countValue) || countValue < 1) {
+          errors.recurrenceEnd = 'Enter a number of occurrences (1 or more)';
+        }
+      } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
+        errors.recurrenceEnd = 'Select an end date for the series';
+      }
+    }
+
+    return errors;
+  };
+
+  const validateFields = () => {
+    const errors = computeFieldErrors();
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  // Check if form is valid (for button disabled state)
-  const isFormValid = () => {
-    if (!title.trim()) return false;
-    if (assigneeIds.length === 0) return false;
-    if (!dueDate) return false;
-    if (placement === 'calendar' && !allDay && !startTime.trim()) return false;
-    if (!eventType) return false;
-    return true;
-  };
+  const isFormValid = () => Object.keys(computeFieldErrors()).length === 0;
 
   const handleCreate = async (skipConflictValidation = false, allowOverlaps = false) => {
-    // Always validate required fields, but skip conflict validation if skipConflictValidation is true
-    // (since we're showing a conflict warning and user explicitly chose to proceed)
-    if (!skipConflictValidation && !validateFields()) {
-      toast.push('Please fill in all required fields', 'error');
-      return;
-    }
-    
-    // Still check basic required fields even when skipping conflict validation
-    if (!title.trim() || !dueDate || assigneeIds.length === 0 || !eventType) {
-      toast.push('Please fill in all required fields', 'error');
+    // Always validate required fields (including when continuing from conflict UI). skipConflictValidation
+    // only affects overlap handling later, not whether we run field validation.
+    if (!validateFields()) {
+      toast.push('Fix the highlighted fields below.', 'error');
       return;
     }
 
@@ -2245,7 +2254,16 @@ export default function TaskCreateModal({
               } else {
                 // Single date picker for regular events
                 return (
-                  <View style={styles.chip}>
+                  <View
+                    style={[
+                      styles.chip,
+                      validationErrors.date && {
+                        borderWidth: 1.5,
+                        borderColor: '#ef4444',
+                        borderRadius: 8,
+                      },
+                    ]}
+                  >
                     {eventType === 'Project' && (
                       <Text style={[styles.chipLabel, { marginRight: 8 }]}>Start:</Text>
                     )}
@@ -2257,6 +2275,9 @@ export default function TaskCreateModal({
                     </TouchableOpacity>
                     <TouchableOpacity 
                       onPress={() => {
+                        if (validationErrors.date) {
+                          setValidationErrors((prev) => ({ ...prev, date: null }));
+                        }
                         setCalendarViewMonth(dueDate);
                         setShowCalendarPicker(true);
                       }}
@@ -2275,48 +2296,70 @@ export default function TaskCreateModal({
               }
             })()}
 
-            {/* Assignee chip */}
-            {familyMembers.length > 0 && (
-              <View style={styles.chip}>
-                <View>
-                  <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                  {familyMembers.map((m) => {
-                    const isSelected = assigneeIds.includes(m.id);
-                    return (
-                      <TouchableOpacity
-                        key={m.id}
-                        onPress={() => {
-                          if (isSelected) {
-                            setAssigneeIds(assigneeIds.filter(id => id !== m.id));
-                          } else {
-                            setAssigneeIds([...assigneeIds, m.id]);
-                          }
-                        }}
-                        style={[
-                          styles.chipOption,
-                          isSelected && styles.chipOptionActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.chipOptionText,
-                            isSelected && styles.chipOptionTextActive,
-                          ]}
-                        >
-                          {m.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
-
             {/* Labels chip */}
             {/* Labels section removed - no longer used */}
           </ScrollView>
+
+          {/* Assignee — full width below date row so error border is always visible (not clipped in horizontal scroll) */}
+          <View
+            style={{
+              width: '100%',
+              alignSelf: 'stretch',
+              marginTop: 8,
+              marginBottom: 4,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderRadius: 12,
+              borderWidth: validationErrors.assignee ? 2 : 1,
+              borderColor: validationErrors.assignee ? '#ef4444' : CHIP_BORDER,
+              backgroundColor: CHIP_BG,
+              flexDirection: 'column',
+            }}
+          >
+            <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
+            {familyMembers.length > 0 ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                {familyMembers.map((m) => {
+                  const isSelected = assigneeIds.some((id) => String(id) === String(m.id));
+                  return (
+                    <TouchableOpacity
+                      key={String(m.id)}
+                      onPress={() => {
+                        if (validationErrors.assignee) {
+                          setValidationErrors((prev) => ({ ...prev, assignee: null }));
+                        }
+                        if (isSelected) {
+                          setAssigneeIds(assigneeIds.filter((id) => String(id) !== String(m.id)));
+                        } else {
+                          setAssigneeIds([...assigneeIds, m.id]);
+                        }
+                      }}
+                      style={[
+                        styles.chipOption,
+                        isSelected && styles.chipOptionActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.chipOptionText,
+                          isSelected && styles.chipOptionTextActive,
+                        ]}
+                      >
+                        {m.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
+            {validationErrors.assignee ? (
+              <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.assignee}</Text>
+            ) : null}
+          </View>
+
+          {validationErrors.date ? (
+            <Text style={[styles.errorTextSmall, { marginTop: 4, marginBottom: 4 }]}>{validationErrors.date}</Text>
+          ) : null}
 
           {/* End date picker - shown below start date for multi-day events */}
           {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (
@@ -2422,6 +2465,9 @@ export default function TaskCreateModal({
                         value={isRecurring}
                         onValueChange={(value) => {
                           setIsRecurring(value);
+                          if (validationErrors.recurrenceEnd) {
+                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                          }
                         }}
                         trackColor={{ false: BORDER, true: '#AECBFA' }}
                         thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
@@ -2940,7 +2986,7 @@ export default function TaskCreateModal({
                             {...(Platform.OS === 'web' && { type: 'button' })}
                             onPress={() => {
                               setShouldAutoAdjust(false);
-                              handleCreate(true, true); // Skip validation AND allow overlaps - user explicitly wants to save despite conflict
+                              handleCreate(true, true); // Skip overlap re-check; required fields still validated in handleCreate
                             }}
                             style={cb.ghostButton}
                           >
@@ -3024,7 +3070,12 @@ export default function TaskCreateModal({
                           {['never', 'after', 'on'].map((endType) => (
                             <TouchableOpacity
                               key={endType}
-                              onPress={() => setRecurrenceEndType(endType)}
+                              onPress={() => {
+                                setRecurrenceEndType(endType);
+                                if (validationErrors.recurrenceEnd) {
+                                  setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                                }
+                              }}
                               style={[
                                 styles.dropdownOption,
                                 recurrenceEndType === endType && styles.dropdownOptionActive,
@@ -3046,9 +3097,19 @@ export default function TaskCreateModal({
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Number of occurrences</Text>
                           <TextInput
-                            style={[styles.input, { width: 100, marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' }]}
+                            style={[
+                              styles.input,
+                              { width: 100, marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' },
+                              validationErrors.recurrenceEnd && recurrenceEndType === 'after' && {
+                                borderColor: '#ef4444',
+                                borderWidth: 1.5,
+                              },
+                            ]}
                             value={recurrenceEndAfterText}
                             onChangeText={(text) => {
+                              if (validationErrors.recurrenceEnd) {
+                                setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                              }
                               // Allow any numeric input for free editing
                               if (text === '' || /^\d+$/.test(text)) {
                                 setRecurrenceEndAfterText(text);
@@ -3077,8 +3138,18 @@ export default function TaskCreateModal({
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>End date</Text>
                           <TouchableOpacity
-                            style={[styles.input, { marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' }]}
+                            style={[
+                              styles.input,
+                              { marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' },
+                              validationErrors.recurrenceEnd && recurrenceEndType === 'on' && {
+                                borderColor: '#ef4444',
+                                borderWidth: 1.5,
+                              },
+                            ]}
                             onPress={() => {
+                              if (validationErrors.recurrenceEnd) {
+                                setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                              }
                               // Initialize calendar view month to current end date or 30 days from start
                               if (recurrenceEndDate) {
                                 setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
@@ -3110,6 +3181,9 @@ export default function TaskCreateModal({
                         </TouchableOpacity>
                       </View>
                     )}
+                    {validationErrors.recurrenceEnd ? (
+                      <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceEnd}</Text>
+                    ) : null}
                   </View>
                 )}
               </View>
@@ -3827,7 +3901,7 @@ export default function TaskCreateModal({
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleCreate}
-              disabled={submitting || !isFormValid()}
+              disabled={submitting}
               style={[
                 styles.createButton,
                 (submitting || !isFormValid()) && styles.createButtonDisabled,
@@ -4179,6 +4253,9 @@ export default function TaskCreateModal({
                     setEndDateCalendarViewMonth(today);
                     setRecurrenceEndDate(today);
                     setShowEndDateCalendarPicker(false);
+                    if (validationErrors.recurrenceEnd) {
+                      setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                    }
                   }}
                   style={{ padding: 4 }}
                 >
@@ -4263,6 +4340,9 @@ export default function TaskCreateModal({
                                 onPress={() => {
                                   setRecurrenceEndDate(day);
                                   setShowEndDateCalendarPicker(false);
+                                  if (validationErrors.recurrenceEnd) {
+                                    setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                                  }
                                 }}
                                 style={{
                                   flex: 1,
